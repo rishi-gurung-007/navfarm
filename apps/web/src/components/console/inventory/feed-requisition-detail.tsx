@@ -151,6 +151,19 @@ export function FeedRequisitionDetail({
     shipment: { enabled: false, reason: t("rqActionUnavailable") },
     receipt: { enabled: false, reason: t("rqActionUnavailable") },
   };
+  const releaseComplete = view.document_status === "RELEASED" || actions.release.reason?.toLowerCase().includes("already released");
+  const workflowBlocker = releaseComplete
+    ? (!actions.shipment.enabled && actions.shipment.reason
+      ? `Release completed. Transfer Shipment is unavailable: ${actions.shipment.reason}`
+      : "Release completed. Post the Transfer Shipment to continue.")
+    : !actions.release.enabled && actions.release.reason
+      ? `Release is unavailable: ${actions.release.reason}`
+    : !actions.shipment.enabled && actions.shipment.reason
+      ? `Transfer Shipment is unavailable: ${actions.shipment.reason}`
+      : !actions.receipt.enabled && actions.receipt.reason
+        ? `Transfer Receipt is unavailable: ${actions.receipt.reason}`
+        : null;
+  const needsBinDietAssignment = !actions.release.enabled && Boolean(actions.release.reason?.includes("mill BIN assignment"));
   const transfers = view.transfers ?? [];
   const chosenTransfer = transfers.find((transfer) => transfer.transfer_id === transferId) ?? null;
   const chosenShipment = chosenTransfer?.open_shipments.find((shipment) => shipment.shipment_id === shipmentId) ?? null;
@@ -250,6 +263,7 @@ export function FeedRequisitionDetail({
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
       {error && <InlineAlert>{error}</InlineAlert>}
+      {workflowBlocker && <InlineAlert>{workflowBlocker}{needsBinDietAssignment && <> <a className="font-medium underline" href="/master-data/bin-diet-assignment">Open BIN Diet Assignments</a></>}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <FeedRequisitionDocument
           view={view}

@@ -19,6 +19,12 @@ export const REQ_STATUS_LABEL: LabelMap = {
   REJECTED: { key: "reqStatusRejected", variant: "danger" },
   CANCELLED: { key: "reqStatusCancelled", variant: "neutral" },
   POSTED: { key: "reqStatusPosted", variant: "success" },
+  RELEASED: { key: "reqDocumentReleased", variant: "info" },
+  TRANSFER_OPEN: { key: "reqFulfilmentOpen", variant: "info" },
+  PARTIALLY_SHIPPED: { key: "reqFulfilmentPartShipped", variant: "warning" },
+  SHIPPED: { key: "reqFulfilmentShipped", variant: "success" },
+  PARTIALLY_RECEIVED: { key: "reqFulfilmentPartReceived", variant: "warning" },
+  RECEIVED: { key: "reqFulfilmentReceived", variant: "success" },
 };
 
 export const PRIORITY_LABEL: LabelMap = {

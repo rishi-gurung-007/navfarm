@@ -57,6 +57,8 @@ interface ListRow {
   req_no: string;
   requisition_type: string | null;
   status: string;
+  document_status?: string | null;
+  fulfilment_status?: string | null;
   priority: string | null;
   required_date: string | null;
   submission_deadline: string | null;
@@ -81,6 +83,13 @@ const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase track
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
+
+const workflowStatus = (row: Pick<ListRow, "status" | "document_status" | "fulfilment_status">) =>
+  row.fulfilment_status && row.fulfilment_status !== "NOT_APPLICABLE"
+    ? row.fulfilment_status
+    : row.document_status === "RELEASED"
+      ? "RELEASED"
+      : row.status;
 
 export function FeedRequisitionPanel() {
   const { t } = useLanguage();
@@ -282,7 +291,7 @@ export function FeedRequisitionPanel() {
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{r.farm_code ?? unavailable}</td>
                 <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
-                <td className={TD}><Badge variant={variantOf(REQ_STATUS_LABEL, r.status)} className={SMALL_BADGE}>{labelOf(REQ_STATUS_LABEL, r.status, t)}</Badge></td>
+                <td className={TD}><Badge variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))} className={SMALL_BADGE}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</Badge></td>
                 <td className={TD}>{r.priority ? <Badge variant={variantOf(PRIORITY_LABEL, r.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, r.priority, t)}</Badge> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>
                 <td className={TD}>{formatDateShort(r.submission_deadline)}</td>

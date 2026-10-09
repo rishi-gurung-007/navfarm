@@ -110,6 +110,8 @@ export function requisitionListFields() {
     req_no: R.req_no,
     requisition_type: R.requisition_type,
     status: R.status,
+    document_status: R.document_status,
+    fulfilment_status: R.fulfilment_status,
     priority: R.priority,
     required_date: R.required_date,
     submission_deadline: R.submission_deadline,

@@ -126,6 +126,13 @@ export interface FeedRequisitionDocumentView {
   transfers?: FeedRequisitionTransfer[];
 }
 
+export const requisitionWorkflowStatus = (view: Pick<FeedRequisitionDocumentView, "status" | "document_status" | "fulfilment_status">) =>
+  view.fulfilment_status && view.fulfilment_status !== "NOT_APPLICABLE"
+    ? view.fulfilment_status
+    : view.document_status === "RELEASED"
+      ? "RELEASED"
+      : view.status;
+
 export interface FeedWorkflowAction {
   enabled: boolean;
   reason: string | null;
@@ -371,7 +378,7 @@ export function FeedRequisitionDocument({
           requiredDate: header?.required_delivery_date ? formatDateShort(header.required_delivery_date) : null,
           supply: labelOf(SUPPLY_LABEL, view.supply_source, t),
           purpose: labelOf(PURPOSE_LABEL, view.purpose, t),
-          status: <Badge variant={variantOf(REQ_STATUS_LABEL, view.status)}>{labelOf(REQ_STATUS_LABEL, view.status, t)}</Badge>,
+          status: <Badge variant={variantOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view))}>{labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}</Badge>,
           priority: view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
           deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,
           saved: { approvedBy: header?.approved_by_name, approvedAt: dateTime(view.approved_at), linkedTransfer: header?.linked_transfer_no, forecastRun: header?.forecast_run_no },
