@@ -15,6 +15,14 @@ import { generateCompositeCode } from './composite-code.util';
 import { CodePreviewDto } from './dto/code-preview.dto';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
+const normalizeMaster = (value: string | null | undefined): string | null =>
+  value ? value.toUpperCase().replaceAll('-', '_') : null;
+
+/** A series has issued numbers once its counter has moved or a last number is on record. */
+const hasIssuedNumbers = (row: { last_no_used?: string | null; current_seq?: number | string | null }): boolean =>
+  !!row.last_no_used || Number(row.current_seq ?? 0) > 0;
+
+
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -598,10 +606,9 @@ export class NumberSeriesService {
     // resolution above entirely and showed the bare sequence ("006") instead
     // of the type-prefixed code ("FARM-006") the save will actually produce.
     if (query.master === 'LOCATION') {
-      if (query.type && record.location_type === undefined) {
-        record.location_type = query.type;
-      } else if (!query.type && record.location_type === undefined) {
-        record.location_type = series.no_series_code || series.prefix || 'LOC';
+      const explicitPrefix = series.prefix || series.no_series_code;
+      if (record.location_type === undefined) {
+        record.location_type = explicitPrefix || query.type || 'FARM';
       }
     }
     return { ...settings, preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code };
@@ -823,7 +830,18 @@ export class NumberSeriesService {
     if (!supplied?.trim()) return null;
     const code = supplied.trim().toUpperCase();
     if (code === current) return null;
-    return this.manualCode(master, code, tenantId, companyId, type);
+
+    const table = MASTER_TABLES[master.toLowerCase().replaceAll('_', '-')];
+    if (!table || !MASTER_CODE_COLUMNS[master]) throw new BadRequestException('Unsupported master code.');
+    const columns = getTableColumns(table);
+    const column = columns[MASTER_CODE_COLUMNS[master]];
+    const width = Number(column.getSQLType().match(/\((\d+)\)/)?.[1] || 255);
+    if (!code || code.length > width) throw new BadRequestException(`Code must contain 1 to ${width} characters.`);
+    const [duplicate] = await this.db.select().from(table).where(and(
+      ...scopeKeyConditions(columns, tenantId, companyId), eq(column, code),
+    )).limit(1);
+    if (duplicate) throw new ConflictException(`Code '${code}' already exists in this scope.`);
+    return code;
   }
 
   /**
@@ -921,6 +939,8 @@ export class NumberSeriesService {
     if (existing.length > 0) {
       throw new ConflictException(`Number series '${dto.series_code}' already exists in this scope.`);
     }
+
+    await this.assertSingleSeriesPerMaster(dto.document_type, tenantId, dto.company_id || null);
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
@@ -1028,6 +1048,31 @@ export class NumberSeriesService {
     );
     if (conflict) throw new BadRequestException(conflict);
 
+    // Same rule as updateNoSeriesRow: a series that has issued numbers keeps its
+    // master, prefix, segments and length. Only its name, and whether it is
+    // active, stay editable.
+    if (hasIssuedNumbers({ last_no_used: series.last_generated_code, current_seq: series.current_seq }) || (await this.masterHasRecords(series.document_type, tenantId, series.company_id))) {
+      const sameList = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      const changed: string[] = [];
+      if (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(series.document_type)) changed.push('Applies To (Master)');
+      if (dto.prefix !== undefined && (dto.prefix || null) !== (series.prefix || null)) changed.push('Prefix');
+      if (dto.separator !== undefined && dto.separator !== series.separator) changed.push('Separator');
+      if (dto.seq_length !== undefined && dto.seq_length !== series.seq_length) changed.push('Sequence Length');
+      if (dto.reset_frequency !== undefined && dto.reset_frequency !== series.reset_frequency) changed.push('Reset Frequency');
+      if (dto.allow_manual !== undefined && !!dto.allow_manual !== !!series.allow_manual) changed.push('Allow Manual');
+      if (dto.code_segments !== undefined && !sameList(dto.code_segments?.length ? dto.code_segments : null, series.code_segments)) changed.push('Code Segments');
+      if (dto.prefix_position !== undefined && (dto.prefix_position || 'END') !== (series.prefix_position || 'END')) changed.push('Prefix Position');
+      if (dto.seq_separator !== undefined && (dto.seq_separator || null) !== (series.seq_separator || null)) changed.push('Sequence Separator');
+      if (changed.length) {
+        throw new BadRequestException(
+          `This number series has already issued numbers, so ${changed.join(', ')} can no longer be changed. You can still rename it or block it.`,
+        );
+      }
+    }
+    if (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(series.document_type)) {
+      await this.assertSingleSeriesPerMaster(dto.document_type, tenantId, series.company_id || null, id);
+    }
+
     const updates: any = { updated_by: userPayload?.userId || null };
     if (dto.series_name !== undefined) updates.description = dto.series_name;
     if (dto.document_type !== undefined) updates.document_type = dto.document_type;
@@ -1086,6 +1131,50 @@ export class NumberSeriesService {
   // from the series_code-keyed engine above.
   // ---------------------------------------------------------------------
 
+  /**
+   * Each master has exactly one number series per company. Item is the one
+   * exception: items are numbered per category, so several series may apply.
+   * `exceptId` lets a series be re-saved without counting itself.
+   */
+  /**
+   * True once the master this series numbers already has records. A series whose
+   * counter never moved can still have issued codes — seed scripts and imports
+   * write the code directly — so the counter alone cannot be trusted. Item is
+   * excluded: several series share it, so records say nothing about this one.
+   */
+  private async masterHasRecords(master: string | null | undefined, tenantId: string | null | undefined, companyId: string | null | undefined): Promise<boolean> {
+    const key = normalizeMaster(master);
+    if (!key || key === 'ITEM' || !tenantId) return false;
+    const table = MASTER_TABLES[key.toLowerCase().replaceAll('_', '-')];
+    if (!table) return false;
+    const columns = getTableColumns(table);
+    if (!columns.tenant_id) return false;
+    const [row] = await this.db.select({ one: sql<number>`1` }).from(table).where(and(...scopeKeyConditions(columns, tenantId, companyId))).limit(1);
+    return !!row;
+  }
+
+  private async assertSingleSeriesPerMaster(
+    master: string | null | undefined,
+    tenantId: string | null,
+    companyId: string | null,
+    exceptId?: string,
+  ): Promise<void> {
+    const key = normalizeMaster(master);
+    if (!key || key === 'ITEM') return;
+    const conditions: any[] = [
+      or(eq(schema.noSeries.document_type, key), eq(schema.noSeries.master_type, key))!,
+    ];
+    if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
+    conditions.push(companyId ? eq(schema.noSeries.company_id, companyId) : isNull(schema.noSeries.company_id));
+    if (exceptId) conditions.push(ne(schema.noSeries.id, exceptId));
+    const [duplicate] = await this.db.select({ id: schema.noSeries.id, code: schema.noSeries.code }).from(schema.noSeries).where(and(...conditions)).limit(1);
+    if (duplicate) {
+      throw new ConflictException(
+        `A number series (${duplicate.code}) already exists for this master. Each master can have only one series — only Item can have several. Edit the existing series instead.`,
+      );
+    }
+  }
+
   async createNoSeriesRow(dto: CreateNoSeriesDto, tenantId?: string, companyId?: string | null) {
     if (dto.code && dto.code.length > 20) {
       throw new BadRequestException('Series Code cannot exceed 20 characters.');
@@ -1121,6 +1210,8 @@ export class NumberSeriesService {
     const documentType = (dto.document_type || (dto as any).master_type || null)?.toUpperCase()?.replaceAll('-', '_');
     const targetCompanyId = dto.company_id || companyId || null;
 
+    await this.assertSingleSeriesPerMaster(documentType, tenantId ?? null, targetCompanyId);
+
     // If setting this series as default, automatically uncheck is_default on any existing series for the same master type in the same scope
     if (isDefault && documentType) {
       const unsetConditions: any[] = [
@@ -1146,6 +1237,7 @@ export class NumberSeriesService {
         .where(and(...unsetConditions));
     }
 
+    const cleanPrefix = dto.prefix || dto.no_series_code || null;
     const newRecord = {
       id,
       tenant_id: tenantId || null,
@@ -1154,7 +1246,8 @@ export class NumberSeriesService {
       description: dto.description || null,
       document_type: documentType,
       master_type: documentType,
-      no_series_code: dto.no_series_code || null,
+      prefix: cleanPrefix,
+      no_series_code: dto.no_series_code || cleanPrefix || null,
       seq_length: dto.seq_length ?? 4,
       increment_by: dto.increment_by ?? 1,
       is_default: isDefault,
@@ -1553,8 +1646,9 @@ export class NumberSeriesService {
     const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
     const normalizedSubType = type ? type.toUpperCase().replaceAll('-', '_') : null;
 
-    // 0. If a subtype is passed, check if a specific series exists for it (e.g. NS-FEED, NS-MED, ITEM_FEED, LOCATION_FARM)
-    if (normalizedSubType) {
+    // 0. If a subtype is passed, check if a specific series exists for it (e.g. LOCATION_FARM)
+    // NOTE: For ITEM, standard item creation must NOT be hijacked by subtype templates like NS-FEED.
+    if (normalizedSubType && normalizedType !== 'ITEM') {
       const subConditions = [
         or(
           eq(schema.noSeries.code, `NS-${normalizedSubType}`),
@@ -1650,7 +1744,11 @@ export class NumberSeriesService {
         .select()
         .from(schema.noSeries)
         .where(and(...conditions))
-        .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`);
+        .orderBy(
+          sql`${schema.noSeries.company_id} IS NOT NULL DESC`,
+          sql`${schema.noSeries.is_default} DESC`,
+          sql`${schema.noSeries.created_at} ASC`,
+        );
 
       return rows[0] || null;
     } catch {
@@ -1790,6 +1888,42 @@ export class NumberSeriesService {
       throw new BadRequestException('Increment By must be at least 1.');
     }
 
+    // Once a series has issued a number it is part of live records' identity:
+    // moving it to another master, or changing its prefix, length or step,
+    // would make new codes disagree with the ones already out there.
+    if (hasIssuedNumbers(existing) || (await this.masterHasRecords(existing.document_type ?? existing.master_type, existing.tenant_id, existing.company_id))) {
+      const structural: Array<[string, unknown]> = [
+        ['Applies To (Master)', dto.document_type],
+        ['Prefix / Pattern', dto.no_series_code ?? dto.prefix],
+        ['Sequence Length', dto.seq_length],
+        ['Increment By', dto.increment_by],
+        ['Manual Numbers', dto.manual_nos],
+        ['Last No. Used', dto.last_no_used],
+        ['Default', dto.is_default],
+      ];
+      const attempted = structural.filter(([, v]) => v !== undefined).map(([label]) => label);
+      const wouldChange =
+        (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(existing.document_type ?? existing.master_type)) ||
+        ((dto.no_series_code ?? dto.prefix) !== undefined && (dto.no_series_code ?? dto.prefix) !== (existing.no_series_code ?? existing.prefix)) ||
+        (dto.seq_length !== undefined && dto.seq_length !== existing.seq_length) ||
+        (dto.increment_by !== undefined && dto.increment_by !== existing.increment_by) ||
+        (dto.manual_nos !== undefined && !!dto.manual_nos !== !!existing.manual_nos) ||
+        (dto.last_no_used !== undefined && dto.last_no_used !== existing.last_no_used) ||
+        (dto.is_default !== undefined && !!dto.is_default !== !!existing.is_default);
+      if (wouldChange) {
+        throw new BadRequestException(
+          `This number series has already issued numbers, so ${attempted.join(', ')} can no longer be changed. You can still edit its description or block it.`,
+        );
+      }
+    }
+
+    if (dto.document_type !== undefined) {
+      const nextMaster = normalizeMaster(dto.document_type);
+      if (nextMaster !== normalizeMaster(existing.document_type ?? existing.master_type)) {
+        await this.assertSingleSeriesPerMaster(nextMaster, existing.tenant_id ?? null, existing.company_id ?? null, id);
+      }
+    }
+
     const updates: Partial<typeof schema.noSeries.$inferInsert> = {
       updated_at: toMysqlTimestamp() as any,
     };
@@ -1800,7 +1934,11 @@ export class NumberSeriesService {
       updates.document_type = normalizedDoc;
       updates.master_type = normalizedDoc;
     }
-    if (dto.no_series_code !== undefined) updates.no_series_code = dto.no_series_code;
+    if (dto.no_series_code !== undefined || dto.prefix !== undefined) {
+      const synched = dto.prefix ?? dto.no_series_code;
+      updates.no_series_code = synched;
+      updates.prefix = synched;
+    }
     if (dto.seq_length !== undefined) updates.seq_length = dto.seq_length;
     if (dto.increment_by !== undefined) updates.increment_by = dto.increment_by;
     if (dto.is_default !== undefined) updates.is_default = dto.is_default;

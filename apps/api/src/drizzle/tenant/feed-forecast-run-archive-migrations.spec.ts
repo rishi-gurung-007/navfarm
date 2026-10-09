@@ -3,14 +3,14 @@ import { join } from "node:path";
 import { getTableConfig } from "drizzle-orm/mysql-core";
 import * as schema from "../../core/database/schema";
 
-const tag = "0153_feed_forecast_run_archive";
+const tag = "0160_feed_forecast_run_archive";
 const read = () => readFileSync(join(__dirname, `${tag}.sql`), "utf8");
 
 describe("Tenant migration 0153 — current feed forecast run lifecycle", () => {
   it("is journalled immediately after feed requisition transfer links", () => {
     const entries = JSON.parse(readFileSync(join(__dirname, "meta/_journal.json"), "utf8")).entries;
-    expect(entries.find((entry: any) => entry.idx === 153)).toEqual({
-      idx: 153, version: "5", when: 1792000000022, tag, breakpoints: true,
+    expect(entries.find((entry: any) => entry.idx === 159)).toEqual({
+      idx: 159, version: "5", when: 1792000000028, tag, breakpoints: true,
     });
   });
 

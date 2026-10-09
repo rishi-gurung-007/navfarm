@@ -3,16 +3,16 @@ import { join } from 'node:path';
 import * as schema from '../../core/database/schema';
 
 const dir = __dirname;
-const tag = '0152_feed_requisition_transfers';
+const tag = '0159_feed_requisition_transfers';
 const read = () => readFileSync(join(dir, `${tag}.sql`), 'utf8');
 
 describe('Tenant migration 0152 — feed requisition transfer links', () => {
   it('journals the next migration after feed requisition reasons', () => {
     const entries = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<Record<string, unknown>>;
-    expect(entries.find((entry) => entry.idx === 152)).toEqual({
-      idx: 152,
+    expect(entries.find((entry) => entry.idx === 158)).toEqual({
+      idx: 158,
       version: '5',
-      when: 1792000000021,
+      when: 1792000000027,
       tag,
       breakpoints: true,
     });

@@ -5,7 +5,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 
@@ -42,7 +42,6 @@ describe('AnimalService', () => {
     entry_date: '2026-01-01',
     item_id: 'item-1',
     acquisition_cost: 2857.57,
-    landing_cost: 200,
   };
 
   const nobLobResolution = {
@@ -182,6 +181,31 @@ describe('AnimalService', () => {
       expect(inserted[0].dam_animal_id).toBeNull();
     });
 
+    it('fills the sire and dam serial from the registered parents, overriding anything typed', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ animal_id: 'sire-1', rfid_tag: 'RFID-SIRE-9', animal_code: 'PIG-2026-0100' }))
+        .mockReturnValueOnce(found({ animal_id: 'dam-1', rfid_tag: null, animal_code: 'PIG-2026-0200' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+
+      await service.create({
+        ...baseDto,
+        sire_animal_id: '11111111-1111-4111-8111-111111111111',
+        dam_animal_id: '22222222-2222-4222-8222-222222222222',
+        sire_serial_no: 'typed-by-hand',
+      } as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(inserted[0].sire_serial_no).toBe('RFID-SIRE-9');
+      expect(inserted[0].dam_serial_no).toBe('PIG-2026-0200'); // no RFID: falls back to the animal code
+    });
+
     it('stores nothing rather than an empty string when the boxes are left blank', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
@@ -208,7 +232,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' })) // generateAnimalCode resolves the series prefix from the LOB
-        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001', total_opening_asset_value: '3057.57' })); // findOne
+        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001', total_opening_asset_value: '2857.57' })); // findOne
 
       const insertedRecords: any[] = [];
       mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
@@ -217,12 +241,12 @@ describe('AnimalService', () => {
 
       expect(numberSeriesService.generateNext).toHaveBeenCalledWith('ANIMAL_PIGGERY', 'tenant-123', 'comp-1', undefined, expect.any(Object));
       const animalInsert = insertedRecords[0];
-      expect(animalInsert.total_opening_asset_value).toBe('3057.57');
+      expect(animalInsert.total_opening_asset_value).toBe('2857.57');
       expect(animalInsert.animal_code).toBe('PIG-2026-0001');
       expect(result.animal_code).toBe('PIG-2026-0001');
       const ledgerInsert = insertedRecords[1];
       expect(ledgerInsert.entry_type).toBe('ACQUISITION');
-      expect(ledgerInsert.cost_amount).toBe('3057.57');
+      expect(ledgerInsert.cost_amount).toBe('2857.57');
     });
 
     it('runs number issuance, Animal insert, and opening ledger insert in one transaction', async () => {
@@ -248,11 +272,12 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({ animal_id: 'existing-animal' }));
+        .mockReturnValueOnce(found({ animal_id: 'existing-animal', animal_code: 'PIG-2026-0007' }));
 
       await expect(
-        service.create({ ...baseDto, rfid_tag: 'RFID-001' }, 'tenant-123'),
-      ).rejects.toThrow(ConflictException);
+        service.create({ ...baseDto, rfid_tag: ' rfid-001 ' }, 'tenant-123'),
+      ).rejects.toThrow("RFID tag 'RFID-001' is already assigned to animal PIG-2026-0007.");
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('refuses to create an Animal row in a Count Only Batch', async () => {
@@ -510,40 +535,36 @@ describe('AnimalService', () => {
   // BBP §6: "teat count < 15 is a hard block at selection" — regardless of TSI score. There is
   // no dedicated gilt-selection endpoint in this codebase yet, so the guard sits on every path
   // that can carry no_of_teats onto a GILT: create() and update().
-  describe('teat count guard (BBP §6)', () => {
-    it('refuses to update a gilt with a teat count below 15, regardless of TSI', async () => {
+  describe('teat count guard', () => {
+    it('refuses to update an animal with a teat count below 1', async () => {
       mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }));
 
       await expect(
-        service.update('a-1', { no_of_teats: 14, tsi: 99.9 }, 'tenant-123'),
+        service.update('a-1', { no_of_teats: 0, tsi: 99.9 }, 'tenant-123'),
       ).rejects.toThrow(/teat/i);
     });
 
-    it('allows updating a gilt whose teat count is 15 or above', async () => {
+    it('refuses to update an animal with a teat count above 99', async () => {
+      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }));
+
+      await expect(
+        service.update('a-1', { no_of_teats: 100 }, 'tenant-123'),
+      ).rejects.toThrow(/teat/i);
+    });
+
+    it('allows updating an animal with a teat count in 1..99 range, including below 15', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', no_of_teats: 15 }));
+        .mockReturnValueOnce(found({ animal_id: 'a-1', no_of_teats: 12 }));
 
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
 
       await expect(
-        service.update('a-1', { no_of_teats: 15 }, 'tenant-123'),
+        service.update('a-1', { no_of_teats: 12 }, 'tenant-123'),
       ).resolves.toBeDefined();
     });
 
-    it('does not apply the teat-count block to non-gilt animal types', async () => {
-      mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'SOW' }))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', no_of_teats: 10 }));
-
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
-
-      await expect(
-        service.update('a-1', { no_of_teats: 10 }, 'tenant-123'),
-      ).resolves.toBeDefined();
-    });
-
-    it('refuses to create a gilt with a teat count below 15', async () => {
+    it('refuses to create an animal with a teat count outside 1..99', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
         .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
@@ -552,7 +573,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, animal_type: 'GILT', no_of_teats: 14 } as any, 'tenant-123'),
+        service.create({ ...baseDto, animal_type: 'GILT', no_of_teats: 0 } as any, 'tenant-123'),
       ).rejects.toThrow(/teat/i);
     });
   });
@@ -636,7 +657,7 @@ describe('AnimalService', () => {
       await service.create(noCost as any, 'tenant-123');
 
       expect(inserted[0].acquisition_cost).toBe('1500');
-      expect(inserted[0].total_opening_asset_value).toBe('1700');
+      expect(inserted[0].total_opening_asset_value).toBe('1500');
     });
 
     it('refuses a non-purchased entry that sends no cost, since nothing can supply it', async () => {

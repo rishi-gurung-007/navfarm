@@ -48,4 +48,25 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list[list.length - 1]).toBe('demo-chapters.ts');
     expect(list.filter((s) => s === 'demo-chapters.ts')).toHaveLength(1);
   });
+
+  it('passes the volume to the chapters step only', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light' });
+    expect(plan[plan.length - 1].args).toContain('--volume=light');
+    expect(plan.slice(0, -1).every((s) => !s.args.some((a) => a.startsWith('--volume')))).toBe(true);
+    expect(buildPlan({ chaptersOnly: false, skipReset: false }).pop()!.args.some((a) => a.startsWith('--volume'))).toBe(false);
+  });
+
+  it('the small preset swaps the four-farm step for the role-structured one and keeps the order', () => {
+    const list = scripts(buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }));
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    expect(list.indexOf('seed-nine-farm-demo.ts')).toBeGreaterThan(list.indexOf('seed-farm-masters.ts'));
+    expect(list.indexOf('seed-nine-farm-demo.ts')).toBeLessThan(list.indexOf('stamp-master-nob-lob.ts'));
+    expect(list[list.length - 1]).toBe('demo-chapters.ts');
+  });
+
+  it('the small preset seeds no batches; other runs still do', () => {
+    const small = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }).pop()!;
+    expect(small.args).toContain('--no-batches');
+    expect(buildPlan({ chaptersOnly: false, skipReset: false }).pop()!.args).not.toContain('--no-batches');
+  });
 });

@@ -173,7 +173,6 @@ export async function enrichDemoMasters(conn: mysql.Connection, tenantId: string
        no_of_teats = COALESCE(no_of_teats, CASE WHEN gender = 'F' THEN 14 ELSE NULL END),
        grading = COALESCE(grading, 'A'),
        age_at_entry_weeks = COALESCE(age_at_entry_weeks, 30),
-       serial_number = COALESCE(serial_number, ear_tag),
        notes = COALESCE(notes, ?)
      WHERE tenant_id = ?`, [DEMO_NOTE, tenantId]);
   // Amortisation over a five-year productive life, 20% residual — the shape the

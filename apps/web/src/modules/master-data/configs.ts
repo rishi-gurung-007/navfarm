@@ -59,7 +59,7 @@ const location: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
+    { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, createOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
       key: "location_type", label: "Location Type", type: "select-entity", required: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
@@ -258,7 +258,7 @@ const stage: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", section: "Identification" },
-    { key: "stage_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the stage name via the number series. After create, the code follows the series when the name changes — refused while a batch or log still uses the old code.", placeholder: "QUARANTINE", section: "Identification" },
+    { key: "stage_code", label: "Code", type: "text", createOnly: true, required: true, helpText: "Leave blank to derive from the stage name via the number series. Can be customized.", placeholder: "QUARANTINE", section: "Identification" },
     { key: "stage_name", label: "Name", type: "text", required: true, placeholder: "Quarantine", section: "Identification" },
     {
       key: "stage_category", label: "Category", type: "select", required: true, section: "Identification",
@@ -352,6 +352,7 @@ const numberSeries: MasterDataConfig = {
       label: "Applies To (Master)",
       type: "select",
       required: true,
+      lockWhenIssued: true,
       options: [
         { value: "ITEM", label: "Item" },
         { value: "SUPPLIER", label: "Supplier" },
@@ -379,14 +380,14 @@ const numberSeries: MasterDataConfig = {
         { value: "LOT", label: "Lot" },
         { value: "SERIAL", label: "Serial" },
       ],
-      helpText: "Select which master entity this number sequence generates codes for.",
+      helpText: "Select which master entity this number sequence generates codes for. Each master can have only one series (only Item can have several), and it cannot be changed once the series has issued a number.",
     },
     { key: "description", label: "Description", type: "text", maxLength: 50, placeholder: "Vendor Supplier Series", helpText: "Human readable label (max 50 characters)." },
-    { key: "no_series_code", label: "Prefix / Code Pattern", type: "text", required: true, maxLength: 20, placeholder: "SUP-", helpText: "Prefix pattern (max 20 characters, e.g. SUP- with 3 digits generates SUP-001)." },
-    { key: "seq_length", label: "Digits (Sequence Length)", type: "number", nativeNumber: true, defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
-    { key: "increment_by", label: "Increment By", type: "number", defaultValue: "1", min: 1, max: 100, step: "1", required: true, helpText: "How much to add on each generation (between 1 and 100)." },
-    { key: "is_default", label: "Is Default for this Master", type: "boolean", defaultValue: "true", helpText: "If checked, forms for this master will use this number series by default." },
-    { key: "manual_nos", label: "Allow Manual Numbers", type: "boolean", helpText: "If checked, users can overwrite the generated number on the form." },
+    { key: "no_series_code", label: "Prefix / Code Pattern", type: "text", required: true, lockWhenIssued: true, maxLength: 20, placeholder: "SUP-", helpText: "Prefix pattern (max 20 characters, e.g. SUP- with 3 digits generates SUP-001)." },
+    { key: "seq_length", label: "Digits (Sequence Length)", type: "number", nativeNumber: true, lockWhenIssued: true, defaultValue: "4", min: 1, max: 10, step: "1", required: true, helpText: "Length of digits for zero-padding (1 to 10 digits, e.g. 3 for -001, 4 for -0001)." },
+    { key: "increment_by", label: "Increment By", type: "number", lockWhenIssued: true, defaultValue: "1", min: 1, max: 100, step: "1", required: true, helpText: "How much to add on each generation (between 1 and 100)." },
+    { key: "is_default", label: "Is Default for this Master", type: "boolean", lockWhenIssued: true, defaultValue: "true", helpText: "If checked, forms for this master will use this number series by default." },
+    { key: "manual_nos", label: "Allow Manual Numbers", type: "boolean", lockWhenIssued: true, helpText: "If checked, users can overwrite the generated number on the form." },
     { key: "blocked", label: "Blocked", type: "boolean", helpText: "If checked, this series cannot be used to generate numbers." },
   ],
 };
@@ -471,7 +472,7 @@ const animal: MasterDataConfig = {
     // columns of code, name, farm code and farm name read as one run-on line.
     {
       key: "breed_id", label: "Breed", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_name", "location_name"],
+      entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"],
       section: "Identification",
     },
     {
@@ -479,9 +480,7 @@ const animal: MasterDataConfig = {
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
     },
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
-    { key: "serial_number", label: "Serial Number", type: "text", maxLength: 50, helpText: "Asset tag from item_lot_serials, distinct from RFID / Tattoo number.", section: "Identification" },
-    { key: "rfid_tag", label: "RFID", type: "text", helpText: "Unique if set.", section: "Identification" },
-    { key: "ear_tag", label: "Tattoo Number", type: "text", section: "Identification" },
+    { key: "rfid_tag", label: "RFID", type: "text", maxLength: 50, helpText: "The only tag an animal carries. Each animal needs its own RFID; a tag already used by another animal is refused.", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image", type: "image", uploadEndpoint: "/animal/upload-image", section: "Identification" },
     // D42 (Rishi, 29 Sep): a parent is either a registered animal here — picked,
     // and the list is narrowed to the right sex so a boar is never offered as a
@@ -490,20 +489,20 @@ const animal: MasterDataConfig = {
     // animal, whatever its entry type and whether or not a parent is picked, so
     // neither carries a visibleWhen, a requiredWhen or a dependsOn.
     {
-      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "sire_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
       helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here."
     },
     {
-      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, section: "Lineage",
-      helpText: "The sire's number as the papers give it. Use this for a bought or imported animal whose sire is not in NAVFarm."
+      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "sire_animal_id", section: "Lineage",
+      helpText: "Filled in automatically when a Sire is selected. Type it only when the sire is not registered here, using the number on its papers."
     },
     {
-      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "ear_tag"], section: "Lineage",
+      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "dam_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
       helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here."
     },
     {
-      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, section: "Lineage",
-      helpText: "The dam's number as the papers give it. Use this for a bought or imported animal whose dam is not in NAVFarm."
+      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "dam_animal_id", section: "Lineage",
+      helpText: "Filled in automatically when a Dam is selected. Type it only when the dam is not registered here, using the number on its papers."
     },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
@@ -520,7 +519,7 @@ const animal: MasterDataConfig = {
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
-    { key: "source_receipt_id", searchable: true, label: "Source Goods Receipt", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on. Leave empty if N/A for local purchase.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on. Leave empty if N/A for local purchase.", section: "Acquisition" },
     { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // LIVESTOCK is the item type seeded for living biological assets. There is
     // no LIVING_ASSET item type; using it here left this required picker empty.
@@ -550,16 +549,14 @@ const animal: MasterDataConfig = {
           { key: "entry_type", equals: ["PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"] },
         ],
       },
-      helpText: "Purchase price or production cost per animal. Required if no Source Goods Receipt is selected.",
+      helpText: "Purchase price or production cost per animal. Required if no Source GRN is selected.",
       section: "Acquisition",
     },
-    { key: "landing_cost", label: "Landing Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, createOnly: true, helpText: "Transport/import duty/quarantine charges for imported animals.", section: "Acquisition" },
-    // Acquisition Cost + Landing Cost, computed by the service on save. Shown
-    // rather than hidden because it is the figure the opening bio-asset value
-    // and the whole amortisation schedule are built from, so it belongs where
-    // the two numbers that make it are. Read-only: the service recomputes it
-    // from those two on every write, so an entered figure would be overwritten.
-    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, createOnly: true, helpText: "Acquisition Cost + Landing Cost. Calculated on save.", section: "Acquisition" },
+    // Equal to the Acquisition Cost, set by the service on save. Shown rather than
+    // hidden because it is the figure the opening bio-asset value and the whole
+    // amortisation schedule are built from. Read-only: the service recomputes it
+    // on every write, so an entered figure would be overwritten.
+    { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, createOnly: true, helpText: "Equal to the Acquisition Cost. Calculated on save.", section: "Acquisition" },
     // Bio-Asset shows for males too (Rishi, 2026-09-15, reversing the
     // female-only call of 2026-09-08). Book value, amortisation and residual
     // value are IAS 41 figures that apply to any biological asset — a boar
@@ -574,7 +571,7 @@ const animal: MasterDataConfig = {
     { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
-    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 0, max: 99, helpText: "BBP §6: below 15 blocks this gilt from selection regardless of TSI score.", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 1, max: 99, maxLength: 2, helpText: "Count of functional teats (1–99).", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, max: 999, helpText: "Total Sow Index score.", section: "Bio-Asset" },
     // Grading is a whole number 0–99, typed rather than picked: the old
     // three-option select (1/2/3) could not record any other grade. Stored as
@@ -582,15 +579,9 @@ const animal: MasterDataConfig = {
     { key: "grading", label: "Grading", type: "number", min: 0, max: 99, step: "1", maxLength: 2, helpText: "Whole number from 0 to 99.", section: "Bio-Asset" },
     { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
-    { key: "current_location_id", label: "Current Pen", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location?locationType=PEN", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], helpText: "Animals are placed in Pens only. Choose where this animal is: a batch or a pen location.", section: "Current Position" },
-    {
-      key: "status", label: "Status", type: "select", section: "Current Position",
-      // The four disposal statuses are absent on purpose: the API refuses them
-      // here, because they are what Dispose records. Offering an option that
-      // can only ever fail is worse than not offering it.
-      options: ["ACTIVE", "QUARANTINE", "SICK", "PREGNANT", "LACTATING", "DRY"].map((v) => ({ value: v, label: v })),
-      helpText: "Sold, slaughtered, died or culled are recorded through Dispose, not here.",
-    },
+    // Not a column: it only narrows the Current Location list to Sheds or Pens.
+    { key: "location_type", label: "Location Type", type: "select", filterOnly: true, createOnly: true, defaultValue: "PEN", options: [{ value: "SHED", label: "Shed" }, { value: "PEN", label: "Pen" }], helpText: "Choose whether the animal is kept in a whole Shed or in a Pen.", section: "Current Position" },
+    { key: "current_location_id", label: "Current Location", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], dependsOn: "location_type", dependsOnMode: "query", queryParams: { location_type: "locationType" }, helpText: "Choose where this animal is: a batch or a location on your farm.", section: "Current Position" },
     // editOnly, not because they are uninteresting at registration but because
     // CreateAnimalDto does not accept them and the API runs
     // forbidNonWhitelisted — sending them on create would 400 the whole form.
@@ -687,7 +678,7 @@ const uom: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this unit is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this unit is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "uom_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG, which then stays fixed. After create, a series-derived code follows the series when the name changes.", placeholder: "KG" },
+    { key: "uom_code", label: "Code", type: "text", createOnly: true, required: true, helpText: "Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG.", placeholder: "KG" },
     { key: "uom_name", label: "Name", type: "text", required: true, placeholder: "Kilogram", pattern: "[A-Za-z ]*", helpText: "Name of the unit (e.g. Kilogram, Litre). Letters and spaces only." },
     {
       key: "uom_type", label: "UOM Type", type: "select", required: true,
@@ -734,7 +725,7 @@ const uomConversion: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this conversion is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this conversion is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "conversion_code", label: "Code", type: "text", placeholder: "CONV-001" },
+    { key: "conversion_code", label: "Code", type: "text", createOnly: true, placeholder: "CONV-001" },
     // The four fields below are the whole of the client's "UOM Conversion" sheet
     // (Unit Of Measure.xlsx). Their wording is the sheet's own, not a paraphrase.
     {
@@ -834,7 +825,6 @@ const itemTemplateConfig: MasterDataConfig = {
     { key: "category_code", label: "Category" },
     { key: "sub_category", label: "Sub Category" },
     { key: "valuation_method", label: "Valuation Method" },
-    { key: "is_active", label: "Active" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
@@ -965,6 +955,19 @@ const itemTemplateConfig: MasterDataConfig = {
 // seven fields cannot drift apart.
 const WHEN_INVENTORIED = { anyOf: [{ key: "is_inventoriable", equals: true }] };
 
+/**
+ * Why an item's Tracking is locked: tracking can change only while nothing carries lot or serial numbers
+ * for it — no stock on hand and no open document (the API's `trackingBlockers`). The row carries both counts.
+ */
+const trackingLockReason = (row: Record<string, unknown>): string | undefined => {
+  const onHand = Number(row.on_hand_qty ?? 0);
+  const open = Number(row.open_documents ?? 0);
+  const parts: string[] = [];
+  if (onHand > 0) parts.push(`${onHand} ${String(row.uom_primary ?? "")} on hand — consume it or adjust it out first`.replace("  ", " "));
+  if (open > 0) parts.push(`${open} open document${open === 1 ? "" : "s"} name this item — post or cancel ${open === 1 ? "it" : "them"} first`);
+  return parts.join(" · ") || undefined;
+};
+
 const item: MasterDataConfig = {
   key: "item",
   owner: "BC",
@@ -1011,7 +1014,7 @@ const item: MasterDataConfig = {
     { key: "item_template_id", label: "Item Template ID", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this item is used across all business verticals.", section: "Classification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
-    { key: "item_code", label: "Code", type: "text", readOnly: true, helpText: "Assigned from the Item number series unless manual entry is selected.", section: "Identification" },
+    { key: "item_code", label: "Code", type: "text", createOnly: true, helpText: "Assigned from the Item number series; can be customized.", section: "Identification" },
     { key: "item_type", label: "Item Type", type: "select-entity", required: true, entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification" },
     { key: "item_name", label: "Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     {
@@ -1056,7 +1059,7 @@ const item: MasterDataConfig = {
       },
       helpText: "Choose a Primary and Secondary UOM; the factor comes from UOM Conversion.",
     },
-    { key: "valuation_method", label: "Valuation Method", type: "select-entity", entityEndpoint: "/costing-method", entityValueKey: "method_code", entityLabelKeys: ["method_code", "method_name"], helpText: "Leave blank to inherit the LOB default.", section: "Units & Valuation" },
+    { key: "valuation_method", label: "Valuation Method", type: "select-entity", lockWhenRowFlag: "has_inventory", lockReason: () => "this item already has inventory entries — create a new item for a different valuation method", entityEndpoint: "/costing-method", entityValueKey: "method_code", entityLabelKeys: ["method_code", "method_name"], helpText: "Leave blank to inherit the LOB default. Cannot be changed once the item has inventory entries.", section: "Units & Valuation" },
     // Asked immediately after the method that demands it, and only then: on any
     // other method the cost is not merely optional, it has no meaning.
     { key: "standard_cost", label: "Standard Cost", type: "number", step: "0.01", min: 0, section: "Units & Valuation", visibleWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, requiredWhen: { anyOf: [{ key: "valuation_method", equals: "STANDARD" }] }, helpText: "Per Primary UOM. Required when Valuation Method is STANDARD." },
@@ -1069,9 +1072,9 @@ const item: MasterDataConfig = {
     // The series also used to sit in the Classification card, beside Nature of
     // Business, while the switches that make it mandatory sat in another card
     // entirely. All three now stand together, in the order they are decided.
-    { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
+    { key: "is_tracked", label: "Item Tracking", type: "boolean", filterOnly: true, lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason, seedFromAnyTrue: ["is_lot_tracked", "is_serial_tracked"], clearsWhenOff: { tracking_type: "", tracking_series_id: "" }, helpText: "Track individual lots or serial numbers of this item through the chain.", section: "Tracking" },
     {
-      key: "tracking_type", label: "Tracked By", type: "select", control: "toggle", filterOnly: true,
+      key: "tracking_type", label: "Tracked By", type: "select", control: "toggle", filterOnly: true, lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason,
       options: [{ value: "LOT", label: "Lot" }, { value: "SERIAL", label: "Serial" }],
       defaultValue: "LOT",
       booleanColumns: { LOT: "is_lot_tracked", SERIAL: "is_serial_tracked" },
@@ -1088,7 +1091,7 @@ const item: MasterDataConfig = {
     // is its parent, so switching Lot to Serial clears the choice, and the API
     // clears the column when tracking is turned off.
     {
-      key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity",
+      key: "tracking_series_id", label: "Tracking No. Series", type: "select-entity", lockWhenRowFlag: "tracking_locked", lockReason: trackingLockReason,
       entityEndpoint: "/no-series", entityValueKey: "id", entityLabelKeys: ["code", "description"],
       dependsOn: "tracking_type", dependsOnMode: "query", queryParams: { tracking_type: "document_type" }, requiresParent: true,
       labelWhen: { key: "tracking_type", labels: { LOT: "Lot No. Series", SERIAL: "Serial No. Series" } },
@@ -1165,7 +1168,7 @@ const species: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this species is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this species is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
-    { key: "species_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the species name via the number series. After create, the code follows the series when the name changes.", placeholder: "PIG" },
+    { key: "species_code", label: "Code", type: "text", createOnly: true, required: true, helpText: "Leave blank to derive from the species name via the number series.", placeholder: "PIG" },
     { key: "species_name", label: "Name", type: "text", required: true, placeholder: "Domestic Pig" },
   ],
 };
@@ -1188,7 +1191,7 @@ const breed: MasterDataConfig = {
     { key: "company_id", label: "Company (blank = global)", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", required: true, entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this breed applies to all LOBs under the selected NOB.", section: "Identification" },
-    { key: "breed_code", label: "Code", type: "text", required: true, createOnly: true, helpText: "Leave blank to derive from the breed name via the BREED series. After create, the code follows the series when the name changes.", section: "Identification" },
+    { key: "breed_code", label: "Code", type: "text", createOnly: true, required: true, helpText: "Leave blank to derive from the breed name via the BREED series; can be customized.", section: "Identification" },
     { key: "breed_name", label: "Name", type: "text", required: true, placeholder: "Yorkshire", section: "Identification" },
     { key: "species_id", label: "Species", type: "select-entity", entityEndpoint: "/species", entityValueKey: "species_id", entityLabelKeys: ["species_code", "species_name"], section: "Identification" },
     {
@@ -1213,7 +1216,7 @@ const breed: MasterDataConfig = {
     { key: "productive_life_months", label: "Productive Life (months)", type: "number", min: 0, section: "Reproduction — Female (Sow)" },
     { key: "productive_life_cycles", label: "Productive Life Cycles", type: "number", min: 0, helpText: "Expected number of parities in productive life. A parity count only applies to a female.", section: "Reproduction — Female (Sow)" },
     { key: "boar_doses_per_week", label: "Doses per Week", type: "number", step: "0.01", min: 0, helpText: "Semen doses collected per week — a male KPI.", section: "Reproduction — Male (Boar)" },
-    { key: "boar_productive_life_months", label: "Productive Life (months)", type: "number", min: 0, helpText: "How long a boar stays productive — amortisation input for a male.", section: "Reproduction — Male (Boar)" },
+    { key: "boar_productive_life_months", label: "Boar Productive Life (months)", type: "number", min: 0, helpText: "How long a boar stays productive — amortisation input for a male.", section: "Reproduction — Male (Boar)" },
     { key: "mature_age_months", label: "Mature Age (months)", type: "number", min: 0, section: "Productive Life" },
     { key: "residual_value_pct", label: "Residual Value %", type: "number", step: "0.01", min: 0, helpText: "Salvage value as percent of opening asset value — amortisation input.", section: "Productive Life" },
     { key: "age_labels", label: "Stage Age Labels", type: "json", section: "Productive Life", helpText: "Stage labels by week range (JSON), shown on the data entry screen header." },
@@ -1242,11 +1245,10 @@ const breedLifecycleStage: MasterDataConfig = {
   fields: [
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this lifecycle row is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this lifecycle row is shared across all LOBs under the selected NOB." },
-    { key: "lifecycle_code", label: "Code", type: "text", placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
+    { key: "lifecycle_code", label: "Code", type: "text", createOnly: true, placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
     // breed_id is set at creation and is immutable — UpdateBreedLifecycleStageDto does not
-    // accept it. readOnly: true keeps it visible in the edit form for context but tells
-    // MasterDataTable's save loop to exclude it from the PATCH body (see MasterDataTable.tsx ~L1561).
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, readOnly: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
+    // accept it. createOnly: true allows picking it on creation and disables it on edit.
+    { key: "breed_id", label: "Breed", type: "select-entity", required: true, createOnly: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
     { key: "stage_id", label: "Stage", type: "select-entity", required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"] },
     {
       key: "category", label: "Category", type: "select",
@@ -1415,7 +1417,7 @@ const reason: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this reason is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this reason is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "reason_code", label: "Code", type: "text", required: true, createOnly: true },
+    { key: "reason_code", label: "Code", type: "text", createOnly: true, required: true },
     {
       key: "category", label: "Category", type: "select", required: true,
       options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER", "SCAN", "ADJUSTMENT", "REQUISITION"].map((value) => ({ value, label: value })),
@@ -1654,7 +1656,7 @@ const disease: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this disease is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this disease is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "disease_code", label: "Code", type: "text", required: true, placeholder: "DIS-ND" },
+    { key: "disease_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "DIS-ND" },
     { key: "disease_name", label: "Name", type: "text", required: true, placeholder: "Newcastle Disease" },
     { key: "scientific_name", label: "Scientific Name", type: "text", placeholder: "Avian paramyxovirus 1" },
     { key: "symptoms", label: "Symptoms", type: "textarea" },
@@ -1679,7 +1681,7 @@ const feedFormula: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "formula_code", label: "Code", type: "text", required: true, placeholder: "FORM-BR-STARTER" },
+    { key: "formula_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "FORM-BR-STARTER" },
     { key: "formula_name", label: "Name", type: "text", required: true, placeholder: "Broiler Starter Feed Formula" },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], filterOnly: true, helpText: "Scopes the Produced Item picker below — feed formulas aren't NOB/LOB-scoped themselves." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", filterOnly: true },
@@ -1729,7 +1731,7 @@ const supplier: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this supplier is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this supplier is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "supplier_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as SUP-001", helpText: "Generated automatically from this company's Supplier sequence.", section: "Identification" },
+    { key: "supplier_code", label: "Code", type: "text", createOnly: true, placeholder: "Generated as SUP-001", helpText: "Generated automatically from this company's Supplier sequence; can be customized.", section: "Identification" },
     { key: "supplier_name", label: "Name", type: "text", required: true, maxLength: 50, placeholder: "Feed Ingredients Corp Ltd", section: "Identification" },
     {
       key: "vendor_type", label: "Vendor Type", type: "select", section: "Identification",
@@ -1753,7 +1755,7 @@ const supplier: MasterDataConfig = {
     { key: "bank_account_no", label: "Bank Account Number", type: "text", maxLength: 50, helpText: "Stored encrypted. Enter a value here to replace it; leave blank to keep the existing one.", section: "Banking" },
     { key: "bank_ifsc", label: "Bank IFSC / Routing Code", type: "text", maxLength: 50, section: "Banking" },
     { key: "bank_account_last4", label: "Bank Account (masked)", type: "text", hideInForm: true, section: "Banking" },
-    { key: "health_cert_url", label: "Health Certificate URL", type: "text", maxLength: 50, helpText: "Required for ANIMAL_SUPPLIER — checked before a Goods Receipt from this vendor can post.", section: "Compliance" },
+    { key: "health_cert_url", label: "Health Certificate URL", type: "text", maxLength: 50, helpText: "Required for ANIMAL_SUPPLIER — checked before a GRN from this vendor can post.", section: "Compliance" },
     { key: "breeding_farm_code", label: "Breeding Farm Registration No.", type: "text", maxLength: 50, helpText: "Required for ANIMAL_SUPPLIER / BREEDING_FARM.", section: "Compliance" },
   ],
 };
@@ -1777,7 +1779,7 @@ const customer: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this customer is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this customer is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "customer_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as CUS-001", helpText: "Generated automatically from this company's Customer sequence.", section: "Identification" },
+    { key: "customer_code", label: "Code", type: "text", createOnly: true, placeholder: "Generated as CUS-001", helpText: "Generated automatically from this company's Customer sequence; can be customized.", section: "Identification" },
     { key: "customer_name", label: "Name", type: "text", required: true, placeholder: "John Doe Wholesalers", section: "Identification" },
     { key: "email", label: "Email", type: "email", placeholder: "billing@johndoe.com", section: "Contact" },
     { key: "mobile", label: "Mobile", type: "text", required: true, section: "Contact" },
@@ -1811,7 +1813,7 @@ const resource: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this resource is shared across all business verticals.", section: "Identification" },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this resource is shared across all LOBs under the selected NOB.", section: "Identification" },
-    { key: "resource_code", label: "Code", type: "text", readOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence.", section: "Identification" },
+    { key: "resource_code", label: "Code", type: "text", createOnly: true, placeholder: "Generated as RES-001", helpText: "Generated automatically from this company's Resource sequence; can be customized.", section: "Identification" },
     // Form order: Resource Code, Resource Type, Resource Sub-Type, Resource Name.
     {
       key: "resource_type", label: "Resource Type", type: "select", required: true, section: "Identification",
@@ -1889,7 +1891,7 @@ const glAccount: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this G/L account is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this G/L account is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "account_code", label: "Code", type: "text", required: true, placeholder: "101000", section: "Identification" },
+    { key: "account_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "101000", section: "Identification" },
     { key: "account_name", label: "Name", type: "text", required: true, placeholder: "Cash at Bank", section: "Identification" },
     {
       key: "account_type", label: "Account Type", type: "select", required: true, section: "Identification",
@@ -1915,7 +1917,7 @@ const glMapping: MasterDataConfig = {
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "mapping_code", label: "Code", type: "text", placeholder: "MAP-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
+    { key: "mapping_code", label: "Code", type: "text", createOnly: true, placeholder: "MAP-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
     { key: "item_category_id", label: "Item Category", type: "select-entity", entityEndpoint: "/item-category", entityValueKey: "category_id", entityLabelKeys: ["category_code", "category_name"] },
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank to match all NOBs." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank to match all LOBs under the selected NOB." },
@@ -1928,16 +1930,17 @@ const glMapping: MasterDataConfig = {
       // curated subset. Grouped by originating document/flow for scannability.
       options: [
         // Inventory documents
-        { value: "PURCHASE", label: "Purchase — Goods Receipt" },
-        { value: "CONSUMPTION", label: "Consumption — Goods Issue" },
-        { value: "TRANSFER_SHIPMENT", label: "Transfer Out — Stock Transfer (Shipment)" },
-        { value: "TRANSFER_RECEIPT", label: "Transfer In — Stock Transfer (Receipt)" },
+        { value: "PURCHASE", label: "Purchase — GRN" },
+        { value: "CONSUMPTION", label: "Consumption" },
+        { value: "TRANSFER_SHIPMENT", label: "Transfer Out — Transfer Order (Shipment)" },
+        { value: "TRANSFER_RECEIPT", label: "Transfer In — Transfer Order (Receipt)" },
         { value: "VARIANCE_POSITIVE", label: "Stock Adjustment — Positive Variance" },
         { value: "VARIANCE_NEGATIVE", label: "Stock Adjustment — Negative Variance" },
         // Batch — STANDARD/FIFO costing
         { value: "BATCH_INPUT", label: "Batch — Input Draw (on Activation)" },
         { value: "BATCH_CONSUMPTION", label: "Batch — Daily Consumption" },
         { value: "BATCH_OUTPUT", label: "Batch — Output (on Close)" },
+        { value: "OUTPUT", label: "Batch — Output Entry (finished goods in, WIP out)" },
         { value: "BATCH_IMPAIRMENT", label: "Batch — By-Product / Waste Impairment (at-cost vs NRV)" },
         { value: "MORTALITY", label: "Batch — Mortality Write-off" },
         { value: "OVERHEAD", label: "Batch — Overhead" },
@@ -1987,7 +1990,7 @@ const costCenter: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this cost centre is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this cost centre is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "cost_center_code", label: "Code", type: "text", required: true, placeholder: "DEPT-ADMIN" },
+    { key: "cost_center_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "DEPT-ADMIN" },
     { key: "cost_center_name", label: "Name", type: "text", required: true, placeholder: "Administrative Department" },
     {
       key: "cost_center_type", label: "Cost Center Type", type: "select", required: true,
@@ -2040,9 +2043,9 @@ const country: MasterDataConfig = {
     { key: "flag_emoji", label: "Flag" },
   ],
   fields: [
-    { key: "iso2", label: "Code", type: "text", required: true, placeholder: "ZW", helpText: "The two-letter ISO 3166-1 alpha-2 code. This is what currencies and addresses store." },
+    { key: "iso2", label: "Code", type: "text", createOnly: true, required: true, placeholder: "ZW", helpText: "The two-letter ISO 3166-1 alpha-2 code. This is what currencies and addresses store." },
     { key: "country_name", label: "Name", type: "text", required: true, placeholder: "Zimbabwe" },
-    { key: "iso3", label: "ISO3 Code", type: "text", required: true, placeholder: "ZWE", helpText: "The three-letter ISO 3166-1 alpha-3 code." },
+    { key: "iso3", label: "ISO3 Code", type: "text", createOnly: true, required: true, placeholder: "ZWE", helpText: "The three-letter ISO 3166-1 alpha-3 code." },
     { key: "phone_code", label: "Dialing Code", type: "text", placeholder: "+263" },
     { key: "flag_emoji", label: "Flag", type: "text", placeholder: "🇿🇼" },
   ],
@@ -2065,7 +2068,7 @@ const currency: MasterDataConfig = {
     { key: "decimal_places", label: "Decimals" },
   ],
   fields: [
-    { key: "iso_code", label: "Code", type: "text", required: true, placeholder: "USD", helpText: "The three-letter ISO 4217 code. Saved uppercase, and unique." },
+    { key: "iso_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "USD", helpText: "The three-letter ISO 4217 code. Saved uppercase, and unique." },
     { key: "currency_name", label: "Name", type: "text", required: true, placeholder: "US Dollar" },
     { key: "symbol", label: "Symbol", type: "text", required: true, placeholder: "$" },
     {

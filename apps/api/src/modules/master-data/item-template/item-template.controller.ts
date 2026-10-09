@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Query,
   Param,
@@ -89,6 +90,19 @@ export class ItemTemplateController {
     return {
       success: true,
       message: 'Item template deleted successfully.',
+      data: result,
+    };
+  }
+
+  @Patch(':id/restore')
+  @RequirePermission('MASTER_DATA', 'ITEM', 'edit')
+  @ApiOperation({ summary: 'Restore Item Template' })
+  @ApiParam({ name: 'id', description: 'Item Template UUID' })
+  async restore(@Param('id') id: string) {
+    const result = await this.itemTemplateService.restore(id);
+    return {
+      success: true,
+      message: 'Item template restored successfully.',
       data: result,
     };
   }

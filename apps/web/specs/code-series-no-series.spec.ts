@@ -83,5 +83,27 @@ describe("useCodeSeries on a tenant with no number series", () => {
     // Managed code fields should not block save with required error
     expect(transformedField.required).toBe(false);
   });
+
+  it("does not overwrite explicitly provided code with series preview even when allowManual is false", async () => {
+    get.mockResolvedValue({ generated: true, allowManual: false, preview: "ITM0006" });
+
+    const { result } = renderHook(() => useCodeSeries("item", {}, true));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // When value is undefined, it suggests preview
+    expect(result.current.value("item_code", undefined)).toBe("ITM0006");
+    // When value is already set (e.g. from template "FEED001"), it respects the set value
+    expect(result.current.value("item_code", "FEED001")).toBe("FEED001");
+  });
+
+  it("does not overwrite value when hook is disabled (e.g. editing or from template)", async () => {
+    get.mockResolvedValue({ generated: true, allowManual: false, preview: "ITM0006" });
+
+    // enabled = false (modalOpen && !editing is false)
+    const { result } = renderHook(() => useCodeSeries("item", {}, false));
+
+    expect(result.current.value("item_code", "FEED001")).toBe("FEED001");
+    expect(result.current.value("item_code", "EXISTING-CODE")).toBe("EXISTING-CODE");
+  });
 });
 

@@ -320,7 +320,19 @@ export class ItemTemplateService {
 
   async delete(id: string) {
     await this.findOne(id);
-    await this.db.delete(schema.itemTemplate).where(eq(schema.itemTemplate.id, id));
-    return { id };
+    await this.db
+      .update(schema.itemTemplate)
+      .set({ is_active: false, updated_at: toMysqlTimestamp() })
+      .where(eq(schema.itemTemplate.id, id));
+    return { id, is_active: false };
+  }
+
+  async restore(id: string) {
+    await this.findOne(id);
+    await this.db
+      .update(schema.itemTemplate)
+      .set({ is_active: true, updated_at: toMysqlTimestamp() })
+      .where(eq(schema.itemTemplate.id, id));
+    return this.findOne(id);
   }
 }

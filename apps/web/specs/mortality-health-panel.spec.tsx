@@ -52,7 +52,7 @@ describe('MortalityHealthPanel treatment posting', () => {
     get.mockImplementation(async (path: string) => {
       if (path.startsWith('/batch?')) return [{ batch_id: 'batch-id', batch_no: 'batch-no', opening_quantity: 2 }];
       if (path === '/batch/batch-id') return { transactions: [] };
-      if (path.startsWith('/animal?')) return ['animal-one', 'animal-two'].map(animal_id => ({ animal_id, ear_tag: animal_id }));
+      if (path.startsWith('/animal?')) return ['animal-one', 'animal-two'].map(animal_id => ({ animal_id, rfid_tag: animal_id }));
       if (path.startsWith('/item?')) return { data: path.includes('itemType=VACCINE') ? [vaccine] : [], total: path.includes('itemType=VACCINE') ? 1 : 0 };
       return [];
     });

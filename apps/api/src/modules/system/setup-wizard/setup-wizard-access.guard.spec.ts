@@ -115,9 +115,9 @@ describe('SetupWizardAccessGuard', () => {
 
   it('asks for a company when a company step arrives without one', async () => {
     const guard = guardFor({ admin: true, target: 'company' });
-    await expect(guard.canActivate(context({ user: user('TENANT_ADMIN'), body: {} }))).rejects.toThrow('company_id is required');
+    await expect(guard.canActivate(context({ user: user('TENANT_ADMIN'), body: {} }))).rejects.toThrow('A company must be selected.');
     // A non-string id is not an id — guards run before validation.
-    await expect(guard.canActivate(context({ user: user('TENANT_ADMIN'), body: { company_id: ['x'] } }))).rejects.toThrow('company_id is required');
+    await expect(guard.canActivate(context({ user: user('TENANT_ADMIN'), body: { company_id: ['x'] } }))).rejects.toThrow('A company must be selected.');
   });
 
   it('lets a same-company standard user read company details (currency formatting)', async () => {

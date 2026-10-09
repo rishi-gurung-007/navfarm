@@ -13,6 +13,7 @@
  *   pnpm nx run api:db-demo-chapters -- --apply --chapter=identity
  *   pnpm nx run api:db-demo-chapters -- --apply --force-on-existing
  *   pnpm nx run api:db-demo-chapters -- --apply --volume=full
+ *   pnpm nx run api:db-demo-chapters -- --apply --no-batches   # masters, stock and registered animals only
  *
  * `--volume` picks how much data each of the nine farms gets:
  *   standard (default) — Rishi's full numbers on POR100/RIC100/VIL100, lighter
@@ -35,18 +36,28 @@ import { dailyEntriesChapter } from './demo/chapters/04-daily-entries';
 import { breedingChapter } from './demo/chapters/05-breeding';
 import { approvalsChapter } from './demo/chapters/06-approvals';
 import { feedPlanningChapter } from './demo/chapters/07-feed-planning';
+import { bioAssetExitChapter } from './demo/chapters/08-bio-asset-exit';
+import { costingScenariosChapter } from './demo/chapters/09-costing-scenarios';
 import { VOLUME_PROFILES, type VolumeProfileName } from './demo/farms';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter];
+/** Chapters that post against batches — left out by `--no-batches`. */
+const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit']);
 
-function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName } {
+/** Chapters that touch no batch and are safe to run again on a tenant that already has its own batches. */
+const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios']);
+
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, costingScenariosChapter];
+
+function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName; noBatches: boolean } {
   let apply = false;
   let chapter: string | undefined;
   let forceOnExisting = false;
   let volume: VolumeProfileName = 'standard';
+  let noBatches = false;
   for (const arg of argv) {
     if (arg === '--apply') apply = true;
+    else if (arg === '--no-batches') noBatches = true;
     else if (arg === '--force-on-existing') forceOnExisting = true;
     else if (arg.startsWith('--chapter=')) chapter = arg.slice('--chapter='.length);
     else if (arg.startsWith('--volume=')) {
@@ -55,9 +66,9 @@ function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnE
         throw new Error(`Unknown volume '${value}'. Use one of: ${VOLUME_PROFILES.join(', ')}.`);
       }
       volume = value;
-    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing, --volume=<${VOLUME_PROFILES.join('|')}>.`);
+    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing, --no-batches, --volume=<${VOLUME_PROFILES.join('|')}>.`);
   }
-  return { apply, chapter, forceOnExisting, volume };
+  return { apply, chapter, forceOnExisting, volume, noBatches };
 }
 
 async function resolveTenantDbForGuard(app: Awaited<ReturnType<typeof bootApp>>) {
@@ -78,7 +89,7 @@ const DEMO_TENANT_CODE = 'devco';
 type MySql2MasterDb = MySql2Database<typeof masterSchema>;
 
 async function main() {
-  const { apply, chapter: only, forceOnExisting, volume } = parseArgs(process.argv.slice(2));
+  const { apply, chapter: only, forceOnExisting, volume, noBatches } = parseArgs(process.argv.slice(2));
 
   const app = await bootApp();
   const log = (line: string) => console.log(line);
@@ -91,7 +102,7 @@ async function main() {
     const [{ count }] = await tenantDb
       .select({ count: sql<number>`count(*)` })
       .from(schema.batchHeader);
-    if (count > 0 && !forceOnExisting) {
+    if (count > 0 && !forceOnExisting && !(only && RESUME_SAFE_CHAPTERS.has(only))) {
       throw new Error(
         `batch_header already holds ${count} row(s). Rebuilding would double-post the demo — ` +
           'run the full db-rebuild-demo chain, or pass --force-on-existing only against a scratch tenant.',
@@ -99,8 +110,10 @@ async function main() {
     }
 
     ctx = await buildDemoContext(app, log, volume);
+    ctx.withBatches = !noBatches;
 
-    const runnable = CHAPTERS.filter((c) => !only || c.name === only);
+    // Without batches there is nothing for daily entries, breeding, approvals or the bio-asset exit to act on.
+    const runnable = CHAPTERS.filter((c) => (!only || c.name === only) && !(noBatches && BATCH_CHAPTERS.has(c.name)));
     if (only && runnable.length === 0) {
       throw new Error(`No chapter named '${only}'. Available: ${CHAPTERS.map((c) => c.name).join(', ')}.`);
     }

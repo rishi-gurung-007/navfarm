@@ -9,6 +9,7 @@ import { CreateFeedFormulaDto, UpdateFeedFormulaDto, QueryFeedFormulaDto } from 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -35,7 +36,7 @@ export class FeedFormulaService {
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('FEED_FORMULA', null, tenantId, dto.company_id);
     if (!seriesCode) {
       if (!dto.formula_code) {
-        throw new BadRequestException('formula_code is required — no number series is configured for feed formulas.');
+        throw new BadRequestException('Enter a Code for this feed formula — no number series is configured for feed formulas.');
       }
       return dto.formula_code.toUpperCase();
     }
@@ -177,7 +178,7 @@ export class FeedFormulaService {
     const [formula] = await this.db
       .select()
       .from(schema.feedFormulaMaster)
-      .where(and(eq(schema.feedFormulaMaster.formula_id, id), isNull(schema.feedFormulaMaster.deleted_at)))
+      .where(eq(schema.feedFormulaMaster.formula_id, id))
       .limit(1);
 
     if (!formula) {
@@ -233,6 +234,7 @@ export class FeedFormulaService {
   async update(id: string, dto: UpdateFeedFormulaDto, tenantId: string, userPayload?: any) {
     const formula = await this.findOne(id);
 
+    assertCodeUnchanged('Feed formula', formula.formula_code, dto.formula_code);
     if (dto.formula_code && dto.formula_code.toUpperCase() !== formula.formula_code) {
       const existing = await this.db
         .select()

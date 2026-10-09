@@ -6,7 +6,7 @@ import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 
-export type SiloDocumentLabel = 'Stock Transfer' | 'Goods Receipt';
+export type SiloDocumentLabel = 'Transfer Order' | 'GRN';
 
 /**
  * One home for the rules that decide what a silo may hold (spec D9):
@@ -100,8 +100,8 @@ export class SiloFeedService {
     documentLabel?: SiloDocumentLabel;
   }): Promise<void> {
     const { siloId, siloName, companyId, tenantId, itemIds } = params;
-    const documentLabel = params.documentLabel ?? 'Stock Transfer';
-    const documentNoun = documentLabel === 'Goods Receipt' ? 'receipt' : 'transfer';
+    const documentLabel = params.documentLabel ?? 'Transfer Order';
+    const documentNoun = documentLabel === 'GRN' ? 'receipt' : 'transfer';
 
     // A silo holds ONE feed item at a time, so a document that carries two of
     // them into the same silo is refused on the document alone, before any

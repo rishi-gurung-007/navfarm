@@ -1,7 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
+import { formatValidationErrors } from './common/validation-messages';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import express from 'express';
@@ -64,6 +65,9 @@ async function bootstrap() {
     transform: true,
     forbidNonWhitelisted: true,
     transformOptions: { enableImplicitConversion: true },
+    // Sentences a person can act on, not "parent_location_id must be a UUID".
+    exceptionFactory: (errors) =>
+      new BadRequestException({ statusCode: 400, message: formatValidationErrors(errors), error: 'Bad Request' }),
   }));
 
   // Global exception filters

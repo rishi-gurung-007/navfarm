@@ -20,9 +20,34 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
+import { allocateSharesToParts } from './consumption-split';
+import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
+
+const round = (n: number) => Math.round(n * 1e4) / 1e4;
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * A consumption entry that has passed every check and is waiting to be issued. A day post collects them
+ * so each activity's animals are issued together, as one ledger entry (see postCollected).
+ */
+export interface PendingConsumption {
+  entryId: string;
+  batchId: string;
+  tenantId: string;
+  userPayload?: UserContext;
+  dto: CreateBatchDailyDataDto;
+  line: typeof schema.schedulerLine.$inferSelect;
+  header: typeof schema.schedulerHeader.$inferSelect;
+  farmId: string | null;
+  item: typeof schema.itemMaster.$inferSelect | undefined;
+  resolvedItemId: string;
+  sourceWarehouseId: string | undefined;
+  deferFeedAlerts: boolean;
+}
 
 /**
  * Turns one scheduler_line checklist answer into whatever the "LINE TYPE
@@ -70,7 +95,7 @@ export class BatchDailyDataService {
     // BatchService.postBatchDay/postStageDay post a whole day's drafts through
     // here one line at a time; they pass this and re-check the silo levels
     // once for the day (Ruling M6), not once per line.
-    opts: { deferFeedAlerts?: boolean } = {},
+    opts: { deferFeedAlerts?: boolean; collector?: PendingConsumption[] } = {},
   ) {
     // Throws (404/403) if the batch doesn't exist or isn't in the caller's
     // farm/company/lob scope — BatchService.findOne is the shared, audited
@@ -100,9 +125,20 @@ export class BatchDailyDataService {
       );
     }
     if (line.lot_required && !dto.lot_no && !dto.serial_no) {
-      throw new BadRequestException(
-        `'${line.activity_name}' requires a lot or serial number.`,
-      );
+      // Only an item tracked by lot or serial has one to name: lines generated before this rule was
+      // applied can carry lot_required on an untracked item, which is priced by its costing method alone.
+      const [tracked] = line.item_id
+        ? await this.db
+            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked })
+            .from(schema.itemMaster)
+            .where(eq(schema.itemMaster.item_id, line.item_id))
+            .limit(1)
+        : [];
+      if (!line.item_id || tracked?.lot || tracked?.serial) {
+        throw new BadRequestException(
+          `'${line.activity_name}' requires a lot or serial number.`,
+        );
+      }
     }
 
     // ANIMAL_WISE batches have no single current stage — this scheduler_header
@@ -117,6 +153,7 @@ export class BatchDailyDataService {
         company_id: schema.batchHeader.company_id,
         shed_id: schema.batchHeader.shed_id,
         location_id: schema.batchHeader.location_id,
+        batch_no: schema.batchHeader.batch_no,
         // The last resort when resolving where a consumption line draws its
         // stock from: a batch whose scheduler records no shed or pen still
         // belongs to a farm, and that farm's store is the right source.
@@ -127,7 +164,7 @@ export class BatchDailyDataService {
       .limit(1);
     if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !dto.animal_id) {
       throw new BadRequestException(
-        `Batch '${batchId}' is ANIMAL_WISE — animal_id is required for data entry.`,
+        `Batch '${batchId}' is Animal Wise — choose an animal for data entry.`,
       );
     }
     if (dto.animal_id) {
@@ -266,6 +303,8 @@ export class BatchDailyDataService {
     let postingReference: string | null = null;
     let alertTriggered = false;
     let alertNote: string | null = null;
+    // What the daily row records as remarks: the user's text, plus the lot split of a multi-lot entry.
+    let dailyRemarks: string | null | undefined = dto.remarks;
 
     switch (line.line_type) {
       case 'CONSUMPTION':
@@ -295,7 +334,7 @@ export class BatchDailyDataService {
           );
         if (dto.entered_value == null)
           throw new BadRequestException(
-            'entered_value is required for this line.',
+            'Enter a value for this line.',
           );
         const [item] = await this.db
           .select()
@@ -308,33 +347,8 @@ export class BatchDailyDataService {
         // resolve, so it is left exactly as it was.
         let sourceWarehouseId: string | undefined;
         if (line.line_type === 'CONSUMPTION') {
-          // If specific serial number(s) are supplied, resolve warehouse to the warehouse
-          // holding those serials so we draw from the exact warehouse where the stock physically exists.
-          if (dto.serial_no) {
-            const serials = dto.serial_no
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean);
-            if (serials.length > 0) {
-              const [serialLayer] = await this.db
-                .select({ warehouse_id: schema.inventoryLedger.warehouse_id })
-                .from(schema.inventoryLedger)
-                .where(
-                  and(
-                    eq(schema.inventoryLedger.tenant_id, tenantId),
-                    eq(schema.inventoryLedger.company_id, header.company_id),
-                    eq(schema.inventoryLedger.item_id, resolvedItemId),
-                    eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
-                    inArray(schema.inventoryLedger.serial_no, serials),
-                    sql`CAST(${schema.inventoryLedger.remaining_quantity} AS DECIMAL(18,4)) > 0`,
-                  ),
-                )
-                .limit(1);
-              if (serialLayer?.warehouse_id) {
-                sourceWarehouseId = serialLayer.warehouse_id;
-              }
-            }
-          }
+          // Serial numbers are issued from wherever they are: applyFifo finds the location that holds them
+          // and overrides this one, so the location resolved here is only the default.
           if (!sourceWarehouseId) {
             sourceWarehouseId = await this.resolveConsumptionWarehouse(
               header.location_id,
@@ -346,6 +360,31 @@ export class BatchDailyDataService {
             );
           }
         }
+        if (line.line_type === 'CONSUMPTION') {
+          const pending: PendingConsumption = {
+            entryId,
+            batchId,
+            tenantId,
+            userPayload,
+            dto,
+            line,
+            header,
+            farmId: batchRow?.farm_id ?? null,
+            item,
+            resolvedItemId,
+            sourceWarehouseId,
+            deferFeedAlerts: !!opts.deferFeedAlerts,
+          };
+          // A day post hands in a collector: the activity's animals are issued together afterwards, as one ledger entry.
+          if (opts.collector) {
+            opts.collector.push(pending);
+            return this.findForDate(batchId, dto.entry_date, tenantId);
+          }
+          await this.postConsumptionGroup([pending]);
+          return this.findForDate(batchId, dto.entry_date, tenantId);
+        }
+
+        // OUTPUT: stock comes in, there is nothing to draw — one entry, as it always was.
         const updated = await this.batchService.addTransaction(
           batchId,
           {
@@ -356,18 +395,6 @@ export class BatchDailyDataService {
             uom: item?.uom_primary || 'PCS',
             rate: dto.rate,
             animal_id: dto.animal_id,
-            // Threaded down to InventoryLedgerService.applyFifo, which only
-            // considers layers received into this warehouse. That filter is
-            // itself the "is there enough feed in the silo?" check — applyFifo
-            // already throws BadRequestException when the layers come up short
-            // ("Insufficient stock for item ..."), so no second balance check
-            // is written here; one would only be able to disagree with it.
-            source_warehouse_id: sourceWarehouseId,
-            // Previously dropped here even though the lot_required guard above
-            // already demanded one — a lot/serial-tracked item could never
-            // actually be logged through this path: assertTracking() rejected
-            // the ledger write for having no lot/serial, since it never
-            // arrived past this object literal.
             lot_no: dto.lot_no,
             serial_no: dto.serial_no,
             remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
@@ -384,14 +411,13 @@ export class BatchDailyDataService {
             t.transaction_type === line.line_type,
         );
         posted = true;
-        postingReference =
-          matchingTx[matchingTx.length - 1]?.transaction_id || null;
+        postingReference = matchingTx[matchingTx.length - 1]?.transaction_id || null;
         break;
       }
       case 'DESCRIPTIVE': {
         if (dto.entered_value == null && !dto.entered_text) {
           throw new BadRequestException(
-            'entered_value or entered_text is required for this line.',
+            'Enter a value or text for this line.',
           );
         }
         if (dto.entered_value != null) {
@@ -542,13 +568,45 @@ export class BatchDailyDataService {
               eq(schema.schedulerHeader.scheduler_id, header.scheduler_id),
             );
         }
+
+        // Transaction Ledger Structure (Row 11): Record DESCRIPTIVE entry into inventory_ledger only if non-zero value
+        const valNum = dto.entered_value != null ? Number(dto.entered_value) : 0;
+        if (Math.abs(valNum) > 0.0001) {
+          await this.db.insert(schema.inventoryLedger).values({
+            ledger_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: header.company_id,
+            item_id: line.item_id || null,
+            item_code: line.kpi_metric || 'DESCRIPTIVE',
+            item_description: line.activity_name,
+            document_type: 'BATCH',
+            document_no: batchRow?.batch_no || batchId,
+            document_line_id: line.line_id,
+            posting_date: dto.entry_date,
+            external_reference_no: dto.entered_text || null,
+            entry_type: 'DESCRIPTIVE',
+            transaction_type: 'DESCRIPTIVE',
+            quantity: valNum.toString(),
+            remaining_quantity: null,
+            uom: line.kpi_uom || 'OBSERVATION',
+            rate: '0',
+            amount: '0',
+            batch_no: batchRow?.batch_no || null,
+            location_id: header.location_id || batchRow?.location_id || null,
+            warehouse_id: batchRow?.shed_id || header.location_id || null,
+            nob_id: header.nob_id || null,
+            lob_id: header.lob_id,
+            created_by: userPayload?.userId || null,
+          });
+        }
+        posted = true;
         break;
       }
       case 'OVERHEAD':
       case 'RESOURCE': {
         if (dto.entered_value == null)
           throw new BadRequestException(
-            'entered_value is required for this line.',
+            'Enter a value for this line.',
           );
         let quantity = dto.entered_value;
         let rate = dto.rate ?? null;
@@ -652,12 +710,43 @@ export class BatchDailyDataService {
         posted = true;
         postingReference =
           matchingTx[matchingTx.length - 1]?.transaction_id || null;
+
+        // Transaction Ledger Structure (Row 11): Record OVERHEAD entry into inventory_ledger only if non-zero amount
+        const totalAmount = Number((quantity * (rate ?? 0)).toFixed(4));
+        if (Math.abs(totalAmount) > 0.0001) {
+          await this.db.insert(schema.inventoryLedger).values({
+            ledger_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: header.company_id,
+            item_id: line.item_id || null,
+            item_code: line.line_type === 'RESOURCE' ? (line.activity_name || 'RESOURCE') : 'OVERHEAD',
+            item_description: dto.remarks || line.activity_name,
+            document_type: 'BATCH',
+            document_no: batchRow?.batch_no || batchId,
+            document_line_id: matchingTx[matchingTx.length - 1]?.transaction_id || line.line_id,
+            posting_date: dto.entry_date,
+            external_reference_no: dto.remarks || null,
+            entry_type: 'OVERHEAD',
+            transaction_type: 'OVERHEAD',
+            quantity: (-Math.abs(quantity)).toString(),
+            remaining_quantity: null,
+            uom: 'PCS',
+            rate: (rate ?? 0).toString(),
+            amount: (-Math.abs(totalAmount)).toString(),
+            batch_no: batchRow?.batch_no || null,
+            location_id: header.location_id || batchRow?.location_id || null,
+            warehouse_id: batchRow?.shed_id || header.location_id || null,
+            nob_id: header.nob_id || null,
+            lob_id: header.lob_id,
+            created_by: userPayload?.userId || null,
+          });
+        }
         break;
       }
       case 'TRANSFER': {
         if (!dto.destination_batch_id)
           throw new BadRequestException(
-            'TRANSFER lines require destination_batch_id.',
+            'A transfer line needs a destination batch.',
           );
         // Animal-wise entries already name the exact animal — that's the whole
         // transfer, no FIFO guess needed. Whole-batch entries only say how many
@@ -669,7 +758,7 @@ export class BatchDailyDataService {
         } else {
           if (dto.entered_value == null && line.standard_qty == null) {
             throw new BadRequestException(
-              "entered_value (or the line's standard_qty) is required to know how many head to move.",
+              "Enter how many head to move (or set the line's standard quantity).",
             );
           }
           const headcount = Math.round(
@@ -719,9 +808,51 @@ export class BatchDailyDataService {
         break;
       }
       default:
-        throw new BadRequestException(`Unknown line_type '${line.line_type}'.`);
+        throw new BadRequestException(`Unknown line type '${line.line_type}'.`);
     }
 
+    await this.recordEntry({
+      entryId,
+      tenantId,
+      userPayload,
+      dto,
+      line,
+      header,
+      batchId,
+      posted,
+      postingReference,
+      alertTriggered,
+      alertNote,
+      remarks: dailyRemarks,
+    });
+
+    // CONSUMPTION re-checks the silo levels in postConsumptionGroup. Of the lines that reach here only OUTPUT
+    // moves item stock; the rest (overhead, resources, animal transfers) leave every silo where it was. This
+    // method opens no transaction of its own, so each write above has committed by here; the evaluation itself
+    // never throws (Ruling M6).
+    if (!opts.deferFeedAlerts && line.line_type === 'OUTPUT') {
+      await this.reevaluateFeedLevels(batchRow?.farm_id, tenantId);
+    }
+
+    return this.findForDate(batchId, dto.entry_date, tenantId);
+  }
+
+  /** Writes the day's row for an entry — posted or not — and its audit line. */
+  private async recordEntry(args: {
+    entryId: string;
+    tenantId: string;
+    userPayload?: UserContext;
+    dto: CreateBatchDailyDataDto;
+    line: { line_id: string };
+    header: { company_id: string };
+    batchId: string;
+    posted: boolean;
+    postingReference: string | null;
+    alertTriggered: boolean;
+    alertNote: string | null;
+    remarks: string | null | undefined;
+  }) {
+    const { entryId, tenantId, userPayload, dto, line, header, batchId, posted, postingReference, alertTriggered, alertNote, remarks } = args;
     await this.db
       .insert(schema.batchDailyData)
       .values({
@@ -735,11 +866,12 @@ export class BatchDailyDataService {
         entered_value: dto.entered_value?.toString() ?? null,
         entered_text: dto.entered_text || null,
         lot_no: dto.lot_no || null,
+        serial_no: dto.serial_no || null,
         posted,
         posting_reference: postingReference,
         alert_triggered: alertTriggered,
         alert_note: alertNote,
-        remarks: dto.remarks || null,
+        remarks: remarks || null,
         created_by: userPayload?.userId || null,
         updated_by: userPayload?.userId || null,
       })
@@ -748,11 +880,12 @@ export class BatchDailyDataService {
           entered_value: dto.entered_value?.toString() ?? null,
           entered_text: dto.entered_text || null,
           lot_no: dto.lot_no || null,
+          serial_no: dto.serial_no || null,
           posted,
           posting_reference: postingReference,
           alert_triggered: alertTriggered,
           alert_note: alertNote,
-          remarks: dto.remarks || null,
+          remarks: remarks || null,
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         },
@@ -765,22 +898,105 @@ export class BatchDailyDataService {
       action: 'CREATE',
       entityName: 'batch_daily_data',
       entityId: entryId,
-      newValues: {
-        line_id: line.line_id,
-        batch_id: batchId,
-        entry_date: dto.entry_date,
-      },
+      newValues: { line_id: line.line_id, batch_id: batchId, entry_date: dto.entry_date },
     });
+  }
 
-    // Only CONSUMPTION and OUTPUT lines move item stock; the rest (overhead,
-    // resources, animal transfers) leave every silo where it was. This method
-    // opens no transaction of its own, so each write above has committed by
-    // here; the evaluation itself never throws (Ruling M6).
-    if (!opts.deferFeedAlerts && (line.line_type === 'CONSUMPTION' || line.line_type === 'OUTPUT')) {
-      await this.reevaluateFeedLevels(batchRow?.farm_id, tenantId);
+  /**
+   * Issues the consumptions a day post collected. Entries for the same activity (line, item, location, date,
+   * lots) are issued together as ONE ledger entry, whatever the number of animals; entries with serial
+   * numbers are issued one by one, since each names its own units.
+   */
+  async postCollected(collected: PendingConsumption[]): Promise<void> {
+    const groups = new Map<string, PendingConsumption[]>();
+    for (const p of collected) {
+      const key = p.dto.serial_no
+        ? `serial|${p.entryId}`
+        : [p.line.line_id, p.resolvedItemId, p.sourceWarehouseId ?? '', p.dto.entry_date, p.dto.lot_no ?? ''].join('|');
+      groups.set(key, [...(groups.get(key) ?? []), p]);
     }
+    for (const group of groups.values()) await this.postConsumptionGroup(group);
+  }
 
-    return this.findForDate(batchId, dto.entry_date, tenantId);
+  /**
+   * One activity's consumption for a group of entries (a single entry is a group of one): the quantities are
+   * added, the lots chosen are filled in order, a silo that is short gives what it has and the farm store the
+   * rest, and each location issued from gets one ledger entry. Every animal keeps its own share of the
+   * quantity and the cost (see BatchService.postConsumptionGroup), and its own daily row.
+   */
+  private async postConsumptionGroup(group: PendingConsumption[]): Promise<void> {
+    const first = group[0];
+    const { dto, line, header, item, resolvedItemId, tenantId, userPayload, batchId } = first;
+    const shares = group.map((p) => ({ animal_id: p.dto.animal_id, quantity: Number(p.dto.entered_value) }));
+    const total = round(shares.reduce((n, s) => n + s.quantity, 0));
+
+    // Which lots, in what order — several ticked lots are filled from the nearest expiry on.
+    const lotResult = await this.planLots({ ...dto, entered_value: total }, line, item?.item_type, resolvedItemId, first.sourceWarehouseId, header.company_id, tenantId, Boolean(item?.is_lot_tracked));
+    const allocations = lotResult.shares;
+    const lots = allocations.length > 1 ? allocations.map((a) => ({ lotNo: a.lot_no as string, quantity: a.quantity as number })) : undefined;
+    const singleLot = allocations.length === 1 ? allocations[0].lot_no : undefined;
+
+    // A silo that holds the item but not enough of it gives what it has and the farm store the rest.
+    const split =
+      !lots && !singleLot && !dto.serial_no && first.sourceWarehouseId
+        ? await this.splitSiloShortfall(first.sourceWarehouseId, resolvedItemId, total, first.farmId, header.company_id, tenantId)
+        : null;
+    const parts: Array<{ warehouseId: string | undefined; quantity: number }> = split
+      ? split.shares
+      : [{ warehouseId: first.sourceWarehouseId, quantity: total }];
+    const sharesByPart = allocateSharesToParts(shares, parts);
+
+    const posted: Array<{ transactions: Array<{ transaction_id: string; animal_id?: string }> }> = [];
+    const issue = async () => {
+      for (let i = 0; i < parts.length; i++) {
+        posted.push(
+          await this.batchService.postConsumptionGroup(
+            batchId,
+            {
+              item_id: resolvedItemId,
+              uom: item?.uom_primary || 'PCS',
+              transaction_date: dto.entry_date,
+              source_warehouse_id: parts[i].warehouseId,
+              lots,
+              lot_no: lots ? undefined : singleLot ?? dto.lot_no,
+              serial_no: dto.serial_no,
+              remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
+              shares: sharesByPart[i],
+            },
+            tenantId,
+            userPayload,
+          ),
+        );
+      }
+    };
+    // The locations issue together or not at all.
+    if (parts.length > 1) await withTenantTransaction(this.cls, issue);
+    else await issue();
+
+    // What each animal's daily row records about how the stock was drawn.
+    const notes = [...lotResult.notes];
+    if (lots) notes.push(`Lots: ${lots.map((l) => `${l.lotNo} ×${l.quantity}`).join(', ')}`);
+    if (split) notes.push(split.note);
+
+    const reference = (animalId: string | undefined) =>
+      posted.flatMap((p) => p.transactions).find((t) => (t.animal_id ?? undefined) === animalId)?.transaction_id ?? null;
+    for (const p of group) {
+      await this.recordEntry({
+        entryId: p.entryId,
+        tenantId,
+        userPayload,
+        dto: p.dto,
+        line,
+        header,
+        batchId,
+        posted: true,
+        postingReference: reference(p.dto.animal_id),
+        alertTriggered: false,
+        alertNote: null,
+        remarks: notes.length ? `${p.dto.remarks ? `${p.dto.remarks} — ` : ''}${notes.join('; ')}`.slice(0, 500) : p.dto.remarks,
+      });
+    }
+    if (group.some((p) => !p.deferFeedAlerts)) await this.reevaluateFeedLevels(first.farmId, tenantId);
   }
 
   /**
@@ -834,28 +1050,7 @@ export class BatchDailyDataService {
       farm_id: schema.locationMaster.farm_id,
     };
     // The farm's own store, which every fallback below ends at.
-    const storeOfFarm = async (farmId: string | null) => {
-      if (!farmId) return null;
-      const [store] = await this.db
-        .select({ location_id: schema.locationMaster.location_id })
-        .from(schema.locationMaster)
-        .where(
-          and(
-            eq(schema.locationMaster.location_type, 'STORE'),
-            eq(schema.locationMaster.is_active, true),
-            isNull(schema.locationMaster.deleted_at),
-            or(
-              eq(schema.locationMaster.farm_id, farmId),
-              eq(schema.locationMaster.parent_location_id, farmId),
-            ),
-          ),
-        )
-        // First by code, as the feed forecast picks a farm's store, so a farm
-        // that somehow carries two draws on the one the forecast reports.
-        .orderBy(schema.locationMaster.location_code)
-        .limit(1);
-      return store?.location_id ?? null;
-    };
+    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId);
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -921,6 +1116,200 @@ export class BatchDailyDataService {
     throw new BadRequestException(
       `'${activityName ?? 'This line'}' cannot be posted — no silo attached to this batch's shed holds this item, and its farm has no store to draw from. Attach or fill a silo for this item, or create the farm's store location.`,
     );
+  }
+
+  /** The farm's own active store, first by code — the one the feed forecast reports. */
+  private async storeOfFarm(farmId: string | null): Promise<string | null> {
+    if (!farmId) return null;
+    const [store] = await this.db
+      .select({ location_id: schema.locationMaster.location_id })
+      .from(schema.locationMaster)
+      .where(
+        and(
+          eq(schema.locationMaster.location_type, 'STORE'),
+          eq(schema.locationMaster.is_active, true),
+          isNull(schema.locationMaster.deleted_at),
+          or(
+            eq(schema.locationMaster.farm_id, farmId),
+            eq(schema.locationMaster.parent_location_id, farmId),
+          ),
+        ),
+      )
+      // First by code, as the feed forecast picks a farm's store, so a farm
+      // that somehow carries two draws on the one the forecast reports.
+      .orderBy(schema.locationMaster.location_code)
+      .limit(1);
+    return store?.location_id ?? null;
+  }
+
+  /**
+   * A silo that holds the item but has less of it than the entry needs: the silo gives what it has
+   * and the farm's store the rest, as two shares of one entry. Returns null — the entry draws from
+   * its one resolved location as before — when the source is not a silo, the silo covers it, the
+   * farm has no store, or the store is the source already.
+   */
+  private async splitSiloShortfall(
+    warehouseId: string,
+    itemId: string,
+    quantity: number,
+    farmId: string | null,
+    companyId: string,
+    tenantId: string,
+  ): Promise<{ shares: Array<{ quantity: number; warehouseId: string }>; note: string } | null> {
+    const [source] = await this.db
+      .select({ type: schema.locationMaster.location_type, code: schema.locationMaster.location_code })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, warehouseId))
+      .limit(1);
+    if (source?.type !== 'SILO') return null;
+    const [held] = await this.db
+      .select({ total: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+      .from(schema.inventoryLedger)
+      .where(
+        and(
+          eq(schema.inventoryLedger.tenant_id, tenantId),
+          eq(schema.inventoryLedger.company_id, companyId),
+          eq(schema.inventoryLedger.warehouse_id, warehouseId),
+          eq(schema.inventoryLedger.item_id, itemId),
+          inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
+        ),
+      );
+    const inSilo = round(Number(held?.total ?? 0));
+    if (inSilo >= quantity - 0.0001) return null;
+    const storeId = await this.storeOfFarm(farmId);
+    if (!storeId || storeId === warehouseId) return null;
+    const [store] = await this.db
+      .select({ code: schema.locationMaster.location_code })
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, storeId))
+      .limit(1);
+    const rest = round(quantity - inSilo);
+    const shares = [
+      ...(inSilo > 0 ? [{ quantity: inSilo, warehouseId }] : []),
+      { quantity: rest, warehouseId: storeId },
+    ];
+    const note = `Drawn: ${inSilo > 0 ? `${source.code} ×${inSilo}, ` : ''}${store?.code ?? 'farm store'} ×${rest}`;
+    return { shares, note };
+  }
+
+  /**
+   * The shares a consumption posts as, and what to record about them. One lot (or none) is the single
+   * share it always was. Several lots ticked are filled in order from what each holds at the location
+   * the entry draws from, and the entry is refused — before anything posts — when they cannot cover it.
+   *
+   * Rules on the lots chosen: an expired lot of a medicine or vaccine is refused (feed is allowed, and
+   * noted); a lot chosen against the suggestion — the usable lot with the earliest expiry, then the
+   * oldest receipt — is allowed and noted as an override, so it can be found afterwards.
+   */
+  private async planLots(
+    dto: CreateBatchDailyDataDto,
+    line: { line_type: string; activity_name: string },
+    itemType: string | null | undefined,
+    itemId: string,
+    warehouseId: string | undefined,
+    companyId: string,
+    tenantId: string,
+    lotTracked = false,
+  ): Promise<{ shares: Array<{ lot_no?: string; quantity: number | undefined }>; notes: string[] }> {
+    const lots = parseLotList(dto.lot_no);
+    if (line.line_type !== 'CONSUMPTION' || dto.serial_no || (lots.length === 0 && !lotTracked)) {
+      return { shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }], notes: [] };
+    }
+    // What each lot holds at this location, read off the lots themselves (not any receipt's remaining quantity).
+    const rows = await lotBalances(this.db, { tenantId, companyId, itemId, warehouseId });
+    const today = new Date().toISOString().slice(0, 10);
+    const stock = rows
+      .map((r) => ({ lot_no: r.lot_no, remaining: r.quantity, expiry_date: r.expiry_date, receipt_date: r.receipt_date }))
+      .filter((r) => r.remaining > 0.0001);
+    const isExpired = (l: { expiry_date: string | null }) => !!l.expiry_date && String(l.expiry_date).slice(0, 10) < today;
+    const notes: string[] = [];
+
+    // A lot-tracked item posted with no lot named (a bulk entry, a seed, an API client): the stock leaves
+    // the in-date lot with the nearest expiry first, then the next, exactly as the picker would have suggested.
+    // Expired stock is never taken on the system's own choice.
+    if (lots.length === 0) {
+      const usable = stock.filter((l) => !isExpired(l));
+      const quantity = Number(dto.entered_value);
+      const { allocations, shortBy } = allocateAcrossLots(usable, quantity, today);
+      if (shortBy > 0.0001) {
+        const held = usable.reduce((n, l) => n + l.remaining, 0);
+        throw new BadRequestException(
+          `'${line.activity_name}': ${round(held)} in date${warehouseId ? ' at this location' : ''}, ${round(shortBy)} short of ${quantity} — name the lots to use (an expired lot must be chosen deliberately) or lower the quantity.`,
+        );
+      }
+      notes.push(`Lots chosen by nearest expiry: ${allocations.map((a) => `${a.lot_no} ${a.quantity}`).join(', ')}`);
+      return { shares: allocations, notes };
+    }
+
+    const chosen = orderLots(stock.filter((s) => lots.includes(s.lot_no)), today);
+
+    const expired = chosen.filter(isExpired);
+    if (expired.length) {
+      const named = expired.map((l) => `${l.lot_no} (expired ${String(l.expiry_date).slice(0, 10)})`).join(', ');
+      if (itemType === 'MEDICINE' || itemType === 'VACCINE') {
+        throw new BadRequestException(`'${line.activity_name}': ${named} — expired medicine and vaccine cannot be used. Choose a lot that is in date.`);
+      }
+      notes.push(`Expired lot used: ${expired.map((l) => l.lot_no).join(', ')}`);
+    }
+    const suggested = orderLots(stock, today).find((l) => !isExpired(l));
+    if (suggested && chosen.length && chosen[0].lot_no !== suggested.lot_no) {
+      notes.push(`Lot override: used ${chosen[0].lot_no}, suggested ${suggested.lot_no}`);
+    }
+
+    if (lots.length === 1) return { shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }], notes };
+
+    const quantity = Number(dto.entered_value);
+    const { allocations, shortBy } = allocateAcrossLots(chosen, quantity, today);
+    if (shortBy > 0.0001) {
+      const held = lots.map((l) => `${l} (${chosen.find((s) => s.lot_no === l)?.remaining ?? 0})`).join(', ');
+      throw new BadRequestException(
+        `'${line.activity_name}': the lots ticked hold ${held}${warehouseId ? ' at this location' : ''}, ${round(shortBy)} short of ${quantity} — tick another lot or lower the quantity.`,
+      );
+    }
+    return { shares: allocations, notes };
+  }
+
+  /**
+   * Where a CONSUMPTION line will draw its stock — the same answer posting uses
+   * (`resolveConsumptionWarehouse`), asked before posting so the lot and serial pickers can list only
+   * what is at that location. Returns no warehouse, with the reason, when nowhere resolves: the page
+   * then shows the pickers unscoped and posting gives the real refusal.
+   */
+  async consumptionSourceForLine(batchId: string, lineId: string, tenantId: string) {
+    await this.batchService.findOne(batchId);
+    const [row] = await this.db
+      .select({
+        item_id: schema.schedulerLine.item_id,
+        activity_name: schema.schedulerLine.activity_name,
+        line_type: schema.schedulerLine.line_type,
+        batch_id: schema.schedulerHeader.batch_id,
+        company_id: schema.schedulerHeader.company_id,
+        location_id: schema.schedulerHeader.location_id,
+        farm_id: schema.batchHeader.farm_id,
+      })
+      .from(schema.schedulerLine)
+      .innerJoin(schema.schedulerHeader, eq(schema.schedulerHeader.scheduler_id, schema.schedulerLine.scheduler_id))
+      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.schedulerHeader.batch_id))
+      .where(eq(schema.schedulerLine.line_id, lineId))
+      .limit(1);
+    if (!row || row.batch_id !== batchId) throw new NotFoundException(`Scheduler line '${lineId}' not found on this batch.`);
+    if (row.line_type !== 'CONSUMPTION' || !row.item_id) {
+      return { warehouse_id: null, warehouse_code: null, warehouse_name: null, location_type: null, message: 'This line draws no stock.' };
+    }
+    try {
+      const warehouseId = await this.resolveConsumptionWarehouse(row.location_id, row.item_id, row.activity_name, row.farm_id, row.company_id, tenantId);
+      const [where] = await this.db
+        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name, type: schema.locationMaster.location_type })
+        .from(schema.locationMaster)
+        .where(eq(schema.locationMaster.location_id, warehouseId))
+        .limit(1);
+      return { warehouse_id: warehouseId, warehouse_code: where?.code ?? null, warehouse_name: where?.name ?? null, location_type: where?.type ?? null, message: null };
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        return { warehouse_id: null, warehouse_code: null, warehouse_name: null, location_type: null, message: err.message };
+      }
+      throw err;
+    }
   }
 
   async findForDate(batchId: string, entryDate: string, tenantId: string) {

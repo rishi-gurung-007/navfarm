@@ -52,6 +52,23 @@ export class BatchDailyDataController {
     return { success: true, message: 'Entry posted.', data: result };
   }
 
+  @Get('consumption-source')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @ApiOperation({
+    summary: 'The location (silo or farm store) a consumption line will draw its stock from',
+  })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'lineId', description: 'Scheduler line UUID', required: true })
+  async consumptionSource(
+    @Param('batchId') batchId: string,
+    @Query('lineId') lineId: string,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.batchDailyDataService.consumptionSourceForLine(batchId, lineId, tenantId);
+    return { success: true, message: 'Consumption source resolved.', data: result };
+  }
+
   @Get()
   @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
   @ApiOperation({

@@ -151,11 +151,11 @@ export class SchedulerHeaderService {
         // Corrupt master data is the caller's to fix in Breed Master, so it is
         // answered as a 400 naming the stage and the unit — not a bare 500.
         throw new BadRequestException(
-          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calc_unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
+          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calculation unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
         );
       }
       const { fromDay, toDay } = range;
-      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
+      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
       lines.push({
         line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
         activity_name: `${stage.stage_name} Feed — ${feedItem?.item_name ?? 'Unknown Item'}`, stage_id: stageId, occurrence: 'DAILY', start_day: fromDay, end_day: toDay,
@@ -163,7 +163,8 @@ export class SchedulerHeaderService {
         nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: row.feed_item_id,
         item_description: feedItem?.item_name ?? null,
         standard_qty: row.feed_qty_per_head_per_day_kg, qty_basis: 'PER_HEAD',
-        allow_qty_edit: true, lot_required: true,
+        // A lot is asked for only when the item is tracked by lot or serial — the same rule the line form applies.
+        allow_qty_edit: true, lot_required: Boolean(feedItem?.is_lot_tracked || feedItem?.is_serial_tracked),
       });
     }
 
@@ -214,7 +215,7 @@ export class SchedulerHeaderService {
         is_mandatory: true, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
         nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: item.item_id,
         item_description: item.item_name,
-        qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: true,
+        qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: Boolean(item.is_lot_tracked || item.is_serial_tracked),
       });
       customDaysByLine[lineId] = [entry.day];
     }
@@ -293,8 +294,8 @@ export class SchedulerHeaderService {
     // right now, not the batch's original opening_quantity (which would ignore
     // every mortality/transfer that happened in earlier stages). Preference order:
     // (1) a live animal_register count, for LOBs that track individual animals
-    //     (BIO_ASSET costing only — registerPlaceholderAnimals() never runs for
-    //     STANDARD-costed batches, so this is legitimately 0 for those);
+    //     (Animal Wise batches, whose animals come from the register; a Batch Wise
+    //     batch is a bare headcount with no animal rows, so this is 0 for those);
     // (2) the prior stage's own scheduler_header.animal_count, which already
     //     carries forward whatever mortality/head-count corrections were posted
     //     against it — this is the only place a STANDARD-costed batch's running
@@ -869,18 +870,18 @@ export class SchedulerHeaderService {
   /** Enforces the "LINE TYPE REFERENCE" matrix: which fields a line_type requires. */
   private assertLineTypeFields(line_type: string, dto: CreateSchedulerLineDto | UpdateSchedulerLineDto, effective: Record<string, unknown>) {
     const spec = LINE_TYPE_FIELDS[line_type];
-    if (!spec) throw new BadRequestException(`Unknown line_type '${line_type}'.`);
+    if (!spec) throw new BadRequestException(`Unknown line type '${line_type}'.`);
     const missing = spec.required.filter((key) => effective[key] === undefined || effective[key] === null || effective[key] === '');
     if (missing.length) {
       throw new ConflictException(`${line_type} lines require: ${missing.join(', ')}.`);
     }
     if (dto.occurrence === 'WEEKLY') {
       if (effective.day_of_week == null) {
-        throw new ConflictException('Occurrence WEEKLY requires day_of_week.');
+        throw new ConflictException('A weekly occurrence needs a day of the week.');
       }
       const dow = Number(effective.day_of_week);
       if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
-        throw new ConflictException('Occurrence WEEKLY day_of_week must be an integer between 1 (Monday) and 7 (Sunday).');
+        throw new ConflictException('For a weekly occurrence the day of the week must be between 1 (Monday) and 7 (Sunday).');
       }
     }
     if (dto.occurrence === 'MONTHLY') {
@@ -897,7 +898,7 @@ export class SchedulerHeaderService {
     const startDay = effective.start_day as number | undefined;
     const endDay = effective.end_day as number | null | undefined;
     if (startDay != null && endDay != null && endDay < startDay) {
-      throw new ConflictException(`end_day (${endDay}) cannot be earlier than start_day (${startDay}).`);
+      throw new ConflictException(`End Day (${endDay}) cannot be earlier than Start Day (${startDay}).`);
     }
   }
 

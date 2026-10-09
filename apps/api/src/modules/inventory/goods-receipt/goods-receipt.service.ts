@@ -9,6 +9,7 @@ import { assertCompanyInScope, farmScope, locationReferenceScopeConditions, asse
 import { CreateGoodsReceiptDto, UpdateGoodsReceiptDto, QueryGoodsReceiptDto } from './dto/goods-receipt.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
+import { hasSerial } from '../inventory-ledger/serial-utils';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
@@ -60,7 +61,7 @@ export class GoodsReceiptService {
       .where(eq(schema.locationMaster.location_id, warehouseId))
       .limit(1);
     if (row && (row.is_active === false || row.deleted_at)) {
-      throw new BadRequestException('The selected warehouse is inactive.');
+      throw new BadRequestException('The selected location is inactive.');
     }
   }
 
@@ -93,7 +94,7 @@ export class GoodsReceiptService {
       companyId: receipt.company_id,
       tenantId,
       itemIds: [...new Set(lines.map((l) => l.item_id))],
-      documentLabel: 'Goods Receipt',
+      documentLabel: 'GRN',
     });
   }
 
@@ -111,7 +112,7 @@ export class GoodsReceiptService {
 
   async create(dto: CreateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
     await this.assertWarehouseActive(dto.warehouse_id);
     return withTenantTransaction(this.cls, async () => {
       const receiptId = randomUUID();
@@ -231,12 +232,14 @@ export class GoodsReceiptService {
           const seen = new Set<string>();
           for (const s of serials) {
             if (seen.has(s)) {
-              throw new BadRequestException(`Duplicate serial number '${s}' in Goods Receipt.`);
+              throw new BadRequestException(`Duplicate serial number '${s}' in GRN.`);
             }
             seen.add(s);
           }
 
-          const existingLedger = await executor
+          // The text search only narrows the rows; whole serials are compared below, so SN1 is not
+          // refused because SN10 was received.
+          const narrowed = await executor
             .select({ serial_no: schema.inventoryLedger.serial_no })
             .from(schema.inventoryLedger)
             .where(
@@ -244,14 +247,15 @@ export class GoodsReceiptService {
                 eq(schema.inventoryLedger.tenant_id, tenantId),
                 eq(schema.inventoryLedger.item_id, item.item_id),
                 eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
-                inArray(schema.inventoryLedger.serial_no, serials),
+                or(...serials.map((s) => like(schema.inventoryLedger.serial_no, `%${s}%`)))!,
               ),
             )
-            .limit(1);
+            .limit(1000);
+          const existingLedger = narrowed.filter((row) => serials.some((s) => hasSerial(row.serial_no, s))).slice(0, 1);
 
           if (existingLedger.length > 0) {
             throw new BadRequestException(
-              `Serial number '${existingLedger[0].serial_no}' has already been received for item '${item.item_code}'.`,
+              `Serial number from '${existingLedger[0].serial_no}' has already been received for item '${item.item_code}'.`,
             );
           }
         } else {
@@ -267,22 +271,20 @@ export class GoodsReceiptService {
           serials = gen.numbers;
         }
 
-        for (const sn of serials) {
-          rowsToInsert.push({
-            line_id: randomUUID(),
-            receipt_id: receiptId,
-            line_no: currentLineNo++,
-            item_id: line.item_id,
-            quantity: '1',
-            uom: line.uom,
-            rate: line.rate?.toString() || null,
-            amount: line.rate ? line.rate.toString() : null,
-            lot_no: line.lot_no || null,
-            serial_no: sn,
-            expiry_date: line.expiry_date || null,
-            remarks: line.remarks || null,
-          });
-        }
+        rowsToInsert.push({
+          line_id: randomUUID(),
+          receipt_id: receiptId,
+          line_no: currentLineNo++,
+          item_id: line.item_id,
+          quantity: qty.toString(),
+          uom: line.uom,
+          rate: line.rate?.toString() || null,
+          amount: line.rate ? (qty * line.rate).toString() : null,
+          lot_no: line.lot_no || null,
+          serial_no: serials.join(', '),
+          expiry_date: line.expiry_date || null,
+          remarks: line.remarks || null,
+        });
       } else {
         rowsToInsert.push({
           line_id: randomUUID(),
@@ -319,7 +321,7 @@ export class GoodsReceiptService {
       .limit(1);
 
     if (!receipt) {
-      throw new NotFoundException(`Goods Receipt with ID '${id}' not found.`);
+      throw new NotFoundException(`GRN with ID '${id}' not found.`);
     }
 
     const lines = await this.db
@@ -362,7 +364,7 @@ export class GoodsReceiptService {
 
   private assertDraft(receipt: { status: string }) {
     if (receipt.status !== 'DRAFT') {
-      throw new BadRequestException(`Goods Receipt cannot be modified — it is already ${receipt.status}.`);
+      throw new BadRequestException(`GRN cannot be modified — it is already ${receipt.status}.`);
     }
   }
 
@@ -370,7 +372,7 @@ export class GoodsReceiptService {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
     if (dto.warehouse_id !== undefined) {
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
       await this.assertWarehouseActive(dto.warehouse_id);
     }
 
@@ -435,7 +437,7 @@ export class GoodsReceiptService {
       newValues: { status: 'CANCELLED', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Goods Receipt '${receipt.receipt_no}' has been cancelled.` };
+    return { success: true, message: `GRN '${receipt.receipt_no}' has been cancelled.` };
   }
 
   /**
@@ -453,7 +455,7 @@ export class GoodsReceiptService {
       await this.assertWarehouseActive(receipt.warehouse_id);
 
       if (!receipt.lines || receipt.lines.length === 0) {
-        throw new BadRequestException('Cannot post a Goods Receipt with no lines.');
+        throw new BadRequestException('Cannot post a GRN with no lines.');
       }
 
       // Spec: ANIMAL_SUPPLIER vendors must have a valid health certificate on file before
@@ -474,7 +476,7 @@ export class GoodsReceiptService {
       await this.assertSiloDestination(receipt, receipt.lines, tenantId);
 
       // Claim the DRAFT -> POSTED transition atomically before writing any
-      // ledger/GL entries — see goods-issue.service.ts's post() for the full
+      // ledger/GL entries — see goods-receipt.service.ts's post() for the full
       // rationale (closes both the double-post race and the "retry after a
       // partial failure duplicates the successful lines" hole).
       const [claim] = await this.db
@@ -488,7 +490,7 @@ export class GoodsReceiptService {
         .where(and(eq(schema.goodsReceipt.receipt_id, id), eq(schema.goodsReceipt.status, 'DRAFT')));
 
       if (claim.affectedRows === 0) {
-        throw new BadRequestException('Goods Receipt cannot be posted — it was already posted by another request.');
+        throw new BadRequestException('GRN cannot be posted — it was already posted by another request.');
       }
 
       for (const line of receipt.lines) {
@@ -524,7 +526,9 @@ export class GoodsReceiptService {
 
             if (item?.tracking_series_id) {
               if (line.serial_no) {
-                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, line.serial_no);
+                const serialList = line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean);
+                const lastSerial = serialList[serialList.length - 1] || line.serial_no;
+                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, lastSerial);
               } else if (line.lot_no) {
                 await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, line.lot_no);
               }

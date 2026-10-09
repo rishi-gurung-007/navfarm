@@ -64,6 +64,9 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
   { transaction_type: 'BATCH_INPUT', debit_account_code: '1020', credit_account_code: '1010' },
   { transaction_type: 'BATCH_CONSUMPTION', debit_account_code: '1020', credit_account_code: '1010' },
   { transaction_type: 'BATCH_OUTPUT', debit_account_code: '1030', credit_account_code: '1020' },
+  // A batch's output line (finished goods in, WIP out) — the ledger entry a non-bio batch's
+  // OUTPUT transaction writes. Without this row posting it fails: "No GL mapping is set up for 'OUTPUT'".
+  { transaction_type: 'OUTPUT', debit_account_code: '1030', credit_account_code: '1020' },
   { transaction_type: 'MORTALITY', debit_account_code: '5010', credit_account_code: '1020' },
   // Mid-batch by-product/waste removal at NRV — the gap between what it cost
   // to produce and what it's actually worth, relieved from WIP the same way
@@ -94,6 +97,6 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
 
 export const STARTER_WAREHOUSE = {
   warehouse_code: 'WH-MAIN',
-  warehouse_name: 'Main Warehouse',
+  warehouse_name: 'Main Location',
   warehouse_type: 'GENERAL',
 };

@@ -670,7 +670,7 @@ export default function StageWiseConsumptionOutputPanel() {
             const stg = a.current_stage_code || a.stage_code || a.current_stage_name;
             return {
               animal_id: a.animal_id,
-              label: `${a.ear_tag || a.animal_code}${stg ? ` [${stg}]` : ""}`,
+              label: `${a.rfid_tag || a.animal_code}${stg ? ` [${stg}]` : ""}`,
             };
           })
         );

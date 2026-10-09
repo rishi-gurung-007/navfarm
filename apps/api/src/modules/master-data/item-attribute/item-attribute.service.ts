@@ -9,6 +9,7 @@ import { CreateItemAttributeDto, UpdateItemAttributeDto, QueryItemAttributeDto }
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -34,7 +35,7 @@ export class ItemAttributeService {
     const companyId = dto.company_id || null;
 
     if (dto.data_type === 'LIST' && (!dto.list_values || dto.list_values.length === 0)) {
-      throw new ConflictException('LIST attributes require at least one entry in list_values.');
+      throw new ConflictException('A list attribute needs at least one value in its list.');
     }
     const attributeCode = await this.numberSeriesService.resolveNewCode('ITEM_ATTRIBUTE', dto.attribute_code, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
 
@@ -102,7 +103,7 @@ export class ItemAttributeService {
     const [attribute] = await this.db
       .select()
       .from(schema.itemAttributeMaster)
-      .where(and(eq(schema.itemAttributeMaster.attribute_id, id), isNull(schema.itemAttributeMaster.deleted_at)))
+      .where(eq(schema.itemAttributeMaster.attribute_id, id))
       .limit(1);
 
     if (!attribute) {
@@ -170,6 +171,7 @@ export class ItemAttributeService {
   async update(id: string, dto: UpdateItemAttributeDto, tenantId: string, userPayload?: any) {
     const attribute = await this.findOne(id);
 
+    assertCodeUnchanged('Item attribute', attribute.attribute_code, dto.attribute_code);
     if (dto.attribute_code && dto.attribute_code.toUpperCase() !== attribute.attribute_code) {
       const codeConditions = [
         eq(schema.itemAttributeMaster.tenant_id, tenantId),
@@ -199,21 +201,7 @@ export class ItemAttributeService {
       updated_at: toMysqlTimestamp(),
     };
 
-    // ITEM_ATTRIBUTE is a named series (code = the uppercased name). Renaming an
-    // attribute recomposes its code from the new name. Item attribute values
-    // reference the attribute by UUID, not by code, so the code follows freely.
-    if (dto.attribute_name !== undefined && dto.attribute_name.trim() !== attribute.attribute_name) {
-      updates.attribute_code = await this.numberSeriesService.renameCode(
-        'ITEM_ATTRIBUTE',
-        { ...attribute, attribute_name: dto.attribute_name },
-        tenantId,
-        attribute.company_id,
-      );
-    } else if (dto.attribute_code !== undefined && dto.attribute_code.toUpperCase() !== attribute.attribute_code) {
-      throw new ConflictException(
-        `Attribute codes follow the number series and cannot be typed over. Rename the attribute's name and the code follows it.`,
-      );
-    }
+    // attribute_code is its identity: a rename of attribute_name never touches it.
     if (dto.nob_id !== undefined) updates.nob_id = dto.nob_id;
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
     if (dto.attribute_name !== undefined) updates.attribute_name = dto.attribute_name;

@@ -1,9 +1,16 @@
 /**
  * Small helpers shared by every demo step that reads the livestock item
  * catalog or creates a batch through BatchService — factored out of chapter
- * `03-batches-and-animals` so `db-seed-animals` (registered breeding stock
- * only, no count-only batches) can reuse the exact same, already-tested
- * logic rather than a second copy that could drift from it.
+ * `03-batches-and-animals` so `db-seed-animals` (breeding stock only, no
+ * headcount batches) can reuse the exact same, already-tested logic rather
+ * than a second copy that could drift from it.
+ *
+ * The app has two batch types and the demo uses each as designed:
+ *   BATCH_WISE   — bulk animals bought in as one headcount (`createBatchEnsurer`):
+ *                  a bio asset that grows on daily consumption and is later
+ *                  harvested or sold. No animal_register rows.
+ *   ANIMAL_WISE  — animals already in the Animal Register, picked by id
+ *                  (`createAnimalWiseBatchEnsurer`); each keeps its own stage.
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
@@ -91,7 +98,6 @@ export function shedForStage(farm: DemoFarm, stageCode: string): DemoShed | null
 export interface EnsureBatchOpts {
   ref: string;
   farm: DemoFarm;
-  animalTracking: 'REGISTERED' | 'COUNT_ONLY';
   stageId: string;
   stageCode: string;
   breedId: string;
@@ -134,9 +140,9 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
       {
         company_id: ctx.companyId,
         lob_id: PIGGERY_LOB_ID,
-        // BATCH_WISE always — this seed always supplies input_lines/opening_quantity
-        // (never animal_ids), and BIO_ASSET + breed_id already registers one
-        // animal_register placeholder row per head via registerPlaceholderAnimals().
+        // BATCH_WISE: bulk animals as one headcount (input_lines + opening_quantity),
+        // costed as a bio asset. It creates no animal_register rows — animals taken
+        // from the register go in an ANIMAL_WISE batch instead.
         tracking_mode: 'BATCH_WISE',
         costing_method: 'BIO_ASSET',
         breed_id: opts.breedId,
@@ -151,24 +157,80 @@ export function createBatchEnsurer(db: MySql2Database<typeof schema>, batches: B
       },
       ctx.tenantId,
     );
-    // BatchService.create() never sets animal_tracking, and derives farm_id
-    // only from a placed shed (NULL when shedForStage found none — the seed
-    // runs with no active farm in CLS). AnimalService.create() reads both to
-    // decide whether, and where, an individual animal may be placed in this
-    // batch, so a REGISTERED batch (sows/gilts/boars created one by one) needs
-    // them set explicitly. Count-only batches keep animal_tracking's default
-    // and still need farm_id when unplaced; writing it on a placed batch is
-    // the same value.
+    // BatchService.create() derives farm_id only from a placed shed (NULL when
+    // shedForStage found none — the seed runs with no active farm in CLS), so an
+    // unplaced batch still needs its farm written.
     await db
       .update(schema.batchHeader)
-      .set({
-        farm_id: opts.farm.farmId,
-        ...(opts.animalTracking === 'REGISTERED' ? { animal_tracking: 'REGISTERED' as const } : {}),
-      })
+      .set({ farm_id: opts.farm.farmId })
       .where(eq(schema.batchHeader.batch_id, created.batch_id));
     await batches.activate(created.batch_id, ctx.tenantId);
-    ctx.log(`${tag} created + activated ${opts.animalTracking} batch ${created.batch_no} at ${opts.stageCode} in ${shed?.code ?? 'no shed'} (${opts.openingQuantity} head)`);
+    ctx.log(`${tag} created + activated BATCH_WISE (headcount) batch ${created.batch_no} at ${opts.stageCode} in ${shed?.code ?? 'no shed'} (${opts.openingQuantity} head)`);
     return created.batch_id;
   };
 }
 
+
+export interface EnsureAnimalWiseBatchOpts {
+  ref: string;
+  farm: DemoFarm;
+  breedId: string;
+  /** The shed the batch is placed in; its silos feed every stage's scheduler. */
+  shed: DemoShed | null;
+  startDate: string;
+  /** Animal_register ids, already created and not yet in any batch. */
+  animalIds: string[];
+}
+
+export type AnimalWiseBatchEnsurer = (opts: EnsureAnimalWiseBatchOpts) => Promise<string>;
+
+/**
+ * Create-activate an ANIMAL_WISE batch per its DEMO remarks token, resume-safe.
+ * The animals are chosen from the register (`animal_ids`), so there is no
+ * opening quantity, no input line and no acquisition posting: their cost is
+ * already on the goods receipt each animal was registered against. One
+ * scheduler is created per distinct stage the animals stand in.
+ */
+export function createAnimalWiseBatchEnsurer(db: MySql2Database<typeof schema>, batches: BatchService, ctx: DemoContext): AnimalWiseBatchEnsurer {
+  return async function ensureAnimalWiseBatch(opts: EnsureAnimalWiseBatchOpts): Promise<string> {
+    const tag = tagOf(opts.farm);
+    const [existing] = await db
+      .select({ batch_id: schema.batchHeader.batch_id, status: schema.batchHeader.status })
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.remarks, opts.ref))
+      .limit(1);
+    if (existing) {
+      if (existing.status === 'DRAFT') {
+        await batches.activate(existing.batch_id, ctx.tenantId);
+        ctx.log(`${tag} batch ${opts.ref} was DRAFT — activated now`);
+      } else {
+        ctx.log(`${tag} batch ${opts.ref} already ${existing.status} — skipped`);
+      }
+      return existing.batch_id;
+    }
+    if (opts.animalIds.length === 0) throw new Error(`demo: ${opts.ref} has no unassigned animals to build an Animal Wise batch from.`);
+
+    const created = await batches.create(
+      {
+        company_id: ctx.companyId,
+        lob_id: PIGGERY_LOB_ID,
+        tracking_mode: 'ANIMAL_WISE',
+        costing_method: 'BIO_ASSET',
+        breed_id: opts.breedId,
+        ...(opts.shed ? { shed_id: opts.shed.shedId } : {}),
+        start_date: opts.startDate,
+        uom: 'HEAD',
+        remarks: opts.ref,
+        animal_ids: opts.animalIds,
+      },
+      ctx.tenantId,
+    );
+    await db
+      .update(schema.batchHeader)
+      .set({ farm_id: opts.farm.farmId })
+      .where(eq(schema.batchHeader.batch_id, created.batch_id));
+    await batches.activate(created.batch_id, ctx.tenantId);
+    ctx.log(`${tag} created + activated ANIMAL_WISE batch ${created.batch_no} from the register (${opts.animalIds.length} animal(s), shed ${opts.shed?.code ?? 'none'})`);
+    return created.batch_id;
+  };
+}

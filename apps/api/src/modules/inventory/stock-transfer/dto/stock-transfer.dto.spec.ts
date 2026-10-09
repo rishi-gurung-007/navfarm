@@ -9,8 +9,8 @@ import { QueryStockTransferDto } from './stock-transfer.dto';
  * any string (StockTransferService.findAll filters with a plain eq()).
  */
 describe('QueryStockTransferDto — status filter documentation', () => {
-  it('the Swagger enum lists all five statuses', () => {
+  it('the Swagger enum lists all transfer lifecycle statuses', () => {
     const options = Reflect.getMetadata('swagger/apiModelProperties', QueryStockTransferDto.prototype, 'status');
-    expect(options.enum).toEqual(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'POSTED', 'CANCELLED']);
+    expect(options.enum).toEqual(['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'POSTED', 'CANCELLED']);
   });
 });

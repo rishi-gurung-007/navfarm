@@ -9,6 +9,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateReasonDto, QueryReasonDto, UpdateReasonDto } from './reason.dto';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const table = schema.reasonMaster;
 @Injectable()
@@ -78,9 +79,16 @@ export class ReasonService {
   async update(id: string, dto: UpdateReasonDto, tenantId: string, user?: any) {
     const before = await this.findOne(id, tenantId);
     if (dto.applicable_stages !== undefined) await this.assertStages(dto.applicable_stages, tenantId, before.company_id);
-    // Renaming a code used in posting logic would silently change its meaning.
-    if (dto.reason_code !== undefined && dto.reason_code.trim().toUpperCase() !== before.reason_code) throw new BadRequestException('Reason codes cannot be renamed. Deactivate the old reason and create a new one.');
-    const updates = { ...dto, reason_code: before.reason_code, reason_name: dto.reason_name?.trim() ?? before.reason_name, updated_by: user?.userId, updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
+    assertCodeUnchanged('Reason', before.reason_code, dto.reason_code);
+    let reason_code = before.reason_code;
+    if (dto.reason_code !== undefined && dto.reason_code.trim()) {
+      const trimmed = dto.reason_code.trim().toUpperCase();
+      if (trimmed !== before.reason_code) {
+        const edited = await this.numbering.editedCode('REASON', trimmed, before.reason_code, tenantId, before.company_id);
+        if (edited) reason_code = edited;
+      }
+    }
+    const updates = { ...dto, reason_code, reason_name: dto.reason_name?.trim() ?? before.reason_name, updated_by: user?.userId, updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
     await this.db.update(table).set(updates).where(and(eq(table.reason_id, id), ...this.scope(tenantId)));
     return this.log('UPDATE', await this.findOne(id, tenantId), user, before);
   }

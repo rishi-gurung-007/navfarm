@@ -645,7 +645,7 @@ export class BatchOutputLineInput {
   @IsNotEmpty()
   uom: string;
 
-  @ApiProperty({ description: 'Destination warehouse UUID' })
+  @ApiProperty({ description: 'Destination location UUID' })
   @IsUUID()
   @IsNotEmpty()
   warehouse_id: string;
@@ -823,7 +823,7 @@ export class DisposeBioAssetDto {
   output_quantity?: number;
 
   @ApiProperty({
-    description: 'Destination warehouse UUID (required for HARVEST)',
+    description: 'Destination location UUID (required for HARVEST)',
     required: false,
   })
   @IsUUID()

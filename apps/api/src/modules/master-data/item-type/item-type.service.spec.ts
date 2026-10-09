@@ -129,9 +129,8 @@ describe('ItemTypeService', () => {
       expect(numberSeries.renameCode).not.toHaveBeenCalled();
     });
 
-    // The ITEM_TYPE series is a named one: the code derives from the type
-    // name, so renaming the type recomposes the code from the new name.
-    it('recomposes the type_code from the new name via the series rename on a real rename', async () => {
+    // type_code is the type's identity: renaming the type's name leaves it alone.
+    it('keeps the type_code when the type is renamed', async () => {
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([tenantType])) // findOne
         .mockReturnValueOnce(makeSelectResult([{ ...tenantType, type_name: 'Feed concentrate' }])); // findOne after update
@@ -139,13 +138,8 @@ describe('ItemTypeService', () => {
 
       await service.update('type-2', { type_name: 'Feed concentrate' }, 'tenant-123');
 
-      expect(numberSeries.renameCode).toHaveBeenCalledWith(
-        'ITEM_TYPE',
-        expect.objectContaining({ type_name: 'Feed concentrate' }),
-        'tenant-123',
-        tenantType.company_id,
-      );
-      expect(set.mock.calls[0][0].type_code).toBe('RENAMED');
+      expect(numberSeries.renameCode).not.toHaveBeenCalled();
+      expect(set.mock.calls[0][0].type_code).toBeUndefined();
     });
 
     it('refuses to deactivate a system item type', async () => {

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const dir = __dirname;
-const tag = '0150_mill_bin_location_foundation';
+const tag = '0157_mill_bin_location_foundation';
 const read = () => readFileSync(join(dir, `${tag}.sql`), 'utf8');
 const statements = () => read()
   .split('--> statement-breakpoint')
@@ -12,14 +12,13 @@ const statements = () => read()
 describe('Tenant migration 0150 — MILL/BIN location foundation', () => {
   it('uses the next free journal index and a timestamp after 0149', () => {
     const entries = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<Record<string, unknown>>;
-    expect(entries.find((entry) => entry.idx === 150)).toEqual({
-      idx: 150,
+    expect(entries.find((entry) => entry.idx === 156)).toEqual({
+        idx: 156,
       version: '5',
-      when: 1792000000019,
+        when: 1792000000025,
       tag,
       breakpoints: true,
     });
-    expect(entries.find((entry) => entry.idx === 146)).toBeUndefined();
   });
 
   it('adds nullable canonical-KG MILL and BIN columns without destructive SQL', () => {

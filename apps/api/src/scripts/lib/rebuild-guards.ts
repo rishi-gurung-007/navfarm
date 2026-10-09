@@ -17,9 +17,19 @@ export function assertSafeRebuildTarget(env: Record<string, string | undefined>,
   }
 }
 
-export function parseRebuildArgs(argv: string[]): { apply: boolean; chaptersOnly: boolean; skipReset: boolean } {
+const VOLUMES = ['full', 'standard', 'light'];
+const PRESETS = ['small'];
+
+export function parseRebuildArgs(argv: string[]): { apply: boolean; chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string } {
   const known = new Set(['--apply', '--chapters-only', '--skip-reset']);
-  const unknown = argv.filter((a) => !known.has(a));
-  if (unknown.length) throw new Error(`Unknown flags: ${unknown.join(', ')}. Use --apply, --chapters-only, --skip-reset.`);
-  return { apply: argv.includes('--apply'), chaptersOnly: argv.includes('--chapters-only'), skipReset: argv.includes('--skip-reset') };
+  const valued = (flag: string) => argv.find((a) => a.startsWith(`${flag}=`));
+  const volumeArg = valued('--volume');
+  const presetArg = valued('--preset');
+  const unknown = argv.filter((a) => !known.has(a) && a !== volumeArg && a !== presetArg);
+  if (unknown.length) throw new Error(`Unknown flags: ${unknown.join(', ')}. Use --apply, --chapters-only, --skip-reset, --volume=<${VOLUMES.join('|')}>, --preset=<${PRESETS.join('|')}>.`);
+  const volume = volumeArg?.slice('--volume='.length);
+  if (volume !== undefined && !VOLUMES.includes(volume)) throw new Error(`Unknown volume '${volume}'. Use one of: ${VOLUMES.join(', ')}.`);
+  const preset = presetArg?.slice('--preset='.length);
+  if (preset !== undefined && !PRESETS.includes(preset)) throw new Error(`Unknown preset '${preset}'. Use one of: ${PRESETS.join(', ')}.`);
+  return { apply: argv.includes('--apply'), chaptersOnly: argv.includes('--chapters-only'), skipReset: argv.includes('--skip-reset'), volume, preset };
 }

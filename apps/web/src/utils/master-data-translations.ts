@@ -108,7 +108,7 @@ export const masterDataLabelTranslations: Record<string, Partial<Record<Exclude<
   "Company": { hi: "कंपनी", mr: "कंपनी", es: "Empresa", fr: "Entreprise", bn: "কোম্পানি", te: "కంపెనీ", ta: "நிறுவனம்" },
   "Company (blank = global)": { hi: "कंपनी (खाली = वैश्विक)", mr: "कंपनी (रिकामे = जागतिक)", es: "Empresa (en blanco = global)", fr: "Entreprise (vide = global)", bn: "কোম্পানি (খালি = বৈশ্বিক)", te: "కంపెనీ (ఖాళీ = గ్లోబల్)", ta: "நிறுவனம் (காலி = உலகளாவிய)" },
   "Composition": { hi: "संरचना", mr: "रचना", es: "Composición", fr: "Composition", bn: "গঠন", te: "కూర్పు", ta: "கலவை" },
-  "Consumption — Goods Issue": { hi: "खपत — माल निर्गम", mr: "वापर — माल निर्गम", es: "Consumo — Emisión de Bienes", fr: "Consommation — Sortie de Marchandises", bn: "খরচ — পণ্য ইস্যু", te: "వినియోగం — గూడ్స్ ఇష్యూ", ta: "நுகர்வு — பொருள் வழங்கல்" },
+  "Consumption": { hi: "खपत", mr: "वापर", es: "Consumo", fr: "Consommation", bn: "ব্যবহার", te: "వినియోగం", ta: "நுகர்வு" },
   "Cost Center Code": { hi: "लागत केंद्र कोड", mr: "खर्च केंद्र कोड", es: "Código de Centro de Costos", fr: "Code de Centre de Coûts", bn: "খরচ কেন্দ্র কোড", te: "వ్యయ కేంద్రం కోడ్", ta: "செலவு மையம் குறியீடு" },
   "Cost Center Name": { hi: "लागत केंद्र नाम", mr: "खर्च केंद्र नाव", es: "Nombre de Centro de Costos", fr: "Nom du Centre de Coûts", bn: "খরচ কেন্দ্রের নাম", te: "వ్యయ కేంద్రం పేరు", ta: "செலவு மையம் பெயர்" },
   "Cost Center Type": { hi: "लागत केंद्र प्रकार", mr: "खर्च केंद्र प्रकार", es: "Tipo de Centro de Costos", fr: "Type de Centre de Coûts", bn: "খরচ কেন্দ্রের ধরন", te: "వ్యయ కేంద్రం రకం", ta: "செலவு மையம் வகை" },

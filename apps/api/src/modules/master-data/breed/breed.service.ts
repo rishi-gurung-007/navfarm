@@ -25,6 +25,7 @@ import {
   farmScope,
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -37,7 +38,7 @@ export class BreedService {
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
     private readonly nobLobResolution: NobLobResolutionService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -134,7 +135,7 @@ export class BreedService {
     const [species] = await this.db
       .select()
       .from(schema.speciesMaster)
-      .where(and(eq(schema.speciesMaster.species_id, id), isNull(schema.speciesMaster.deleted_at)))
+      .where(eq(schema.speciesMaster.species_id, id))
       .limit(1);
 
     if (!species) {
@@ -180,6 +181,7 @@ export class BreedService {
   async updateSpecies(id: string, dto: UpdateSpeciesDto, tenantId: string, userPayload?: any) {
     const species = await this.findOneSpecies(id);
 
+    assertCodeUnchanged('Species', species.species_code, dto.species_code);
     if (dto.species_code && dto.species_code.toUpperCase() !== species.species_code) {
       const duplicateConditions = [
         eq(schema.speciesMaster.tenant_id, tenantId),
@@ -212,17 +214,25 @@ export class BreedService {
     // SPECIES is a named series (code = the uppercased name) and breeds point at
     // a species by UUID, so a rename's code follows freely — no string-held
     // reference can go stale.
-    if (dto.species_name !== undefined && dto.species_name.trim() !== species.species_name
-        && species.species_code === species.species_name.replaceAll(/\s+/g, '_').toUpperCase()) {
+    if (dto.species_code !== undefined && dto.species_code.trim()) {
+      const trimmed = dto.species_code.trim().toUpperCase();
+      if (trimmed !== species.species_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'SPECIES',
+          trimmed,
+          species.species_code,
+          tenantId,
+          species.company_id,
+        );
+        if (edited) updates.species_code = edited;
+      }
+    } else if (dto.species_name !== undefined && dto.species_name.trim() !== species.species_name
+      && species.species_code === species.species_name.replaceAll(/\s+/g, '_').toUpperCase()) {
       updates.species_code = await this.numberSeriesService.renameCode(
         'SPECIES',
         { ...species, species_name: dto.species_name },
         tenantId,
         species.company_id,
-      );
-    } else if (dto.species_code !== undefined && dto.species_code.toUpperCase() !== species.species_code) {
-      throw new ConflictException(
-        `Species codes follow the number series and cannot be typed over. Rename the species' name and the code follows it.`,
       );
     }
     if (dto.species_name !== undefined) updates.species_name = dto.species_name;
@@ -322,7 +332,10 @@ export class BreedService {
   // ========================================================
 
   async createBreed(dto: CreateBreedDto, tenantId: string, userPayload?: any) {
-    const companyId = dto.company_id || null;
+    const area: any = this.cls.get('activeOperationalArea');
+    const clsCompanyId = typeof this.cls.get('companyId') === 'string' ? (this.cls.get('companyId') as string) : null;
+    const areaCompanyId = area && typeof area.company_id === 'string' ? area.company_id : null;
+    const companyId = dto.company_id || areaCompanyId || clsCompanyId || null;
 
     // Verify species exists if provided
     const species = dto.species_id ? await this.findOneSpecies(dto.species_id) : null;
@@ -338,7 +351,7 @@ export class BreedService {
     });
     if (!resolvedNobLob.nob_id) {
       throw new BadRequestException(
-        "Cannot determine this breed's Nature of Business — this company's operational areas span multiple business verticals. Specify nob_id explicitly.",
+        "Cannot determine this breed's Nature of Business — this company's operational areas span multiple business verticals. Choose the Nature of Business explicitly.",
       );
     }
     const nobId = resolvedNobLob.nob_id;
@@ -348,74 +361,75 @@ export class BreedService {
     // Resolve the breed code — a series (breed_type first, then BREED alone) if
     // one is configured, else the user-supplied code.
     const newBreed = await this.db.transaction(async (tx) => {
-    const breedCode = await this.resolveBreedCode(dto, tenantId, companyId, tx);
+      const breedCode = await this.resolveBreedCode(dto, tenantId, companyId, tx);
 
-    // Verify duplicate breed code in company scope
-    const duplicateConditions = [
-      eq(schema.breedMaster.tenant_id, tenantId),
-      eq(schema.breedMaster.breed_code, breedCode),
-      isNull(schema.breedMaster.deleted_at),
-    ];
-    if (companyId) {
-      duplicateConditions.push(eq(schema.breedMaster.company_id, companyId));
-    } else {
-      duplicateConditions.push(isNull(schema.breedMaster.company_id));
-    }
+      // Verify duplicate breed code in company scope
+      const duplicateConditions = [
+        eq(schema.breedMaster.tenant_id, tenantId),
+        eq(schema.breedMaster.breed_code, breedCode),
+        isNull(schema.breedMaster.deleted_at),
+      ];
+      if (companyId) {
+        duplicateConditions.push(eq(schema.breedMaster.company_id, companyId));
+      } else {
+        duplicateConditions.push(isNull(schema.breedMaster.company_id));
+      }
 
-    const existing = await tx
-      .select()
-      .from(schema.breedMaster)
-      .where(and(...duplicateConditions))
-      .limit(1);
+      const existing = await tx
+        .select()
+        .from(schema.breedMaster)
+        .where(and(...duplicateConditions))
+        .limit(1);
 
-    if (existing.length > 0) {
-      throw new ConflictException(`Breed with code '${breedCode}' already exists.`);
-    }
+      if (existing.length > 0) {
+        throw new ConflictException(`Breed with code '${breedCode}' already exists.`);
+      }
 
-    const breedId = randomUUID();
-    const newBreed = {
-      breed_id: breedId,
-      tenant_id: tenantId,
-      company_id: companyId,
-      nob_id: nobId,
-      lob_id: lobId,
-      breed_code: breedCode,
-      breed_name: dto.breed_name,
-      species_id: dto.species_id || null,
-      species: dto.species || species?.species_name || null, // legacy fallback
-      breed_type: dto.breed_type || 'MEAT',
-      avg_growth_rate_g_day: dto.avg_growth_rate_g_day?.toString() || null,
-      avg_fcr: dto.avg_fcr?.toString() || null,
-      avg_mortality_pct: dto.avg_mortality_pct?.toString() || null,
-      avg_lay_rate_pct: dto.avg_lay_rate_pct?.toString() || null,
-      incubation_days: dto.incubation_days ?? null,
-      gestation_days: dto.gestation_days ?? null,
-      avg_litter_size: dto.avg_litter_size?.toString() || null,
-      mature_age_months: dto.mature_age_months ?? null,
-      productive_life_months: dto.productive_life_months ?? null,
-      premature_years: dto.premature_years?.toString() || null,
-      avg_yield_per_unit: dto.avg_yield_per_unit?.toString() || null,
-      lactation_days: dto.lactation_days ?? null,
-      residual_value_pct: dto.residual_value_pct?.toString() || null,
-      productive_life_cycles: dto.productive_life_cycles ?? null,
-      avg_litter_size_born: dto.avg_litter_size_born?.toString() || null,
-      avg_litter_size_weaned: dto.avg_litter_size_weaned?.toString() || null,
-      avg_weaning_weight_kg: dto.avg_weaning_weight_kg?.toString() || null,
-      farrowing_rate_pct: dto.farrowing_rate_pct?.toString() || null,
-      boar_doses_per_week: dto.boar_doses_per_week?.toString() || null,
-      boar_productive_life_months: dto.boar_productive_life_months ?? null,
-      vaccination_schedule: dto.vaccination_schedule ? JSON.stringify(dto.vaccination_schedule) : null,
-      age_labels: dto.age_labels ? JSON.stringify(dto.age_labels) : null,
-      description: dto.description || null,
-      is_active: true,
-      status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
-      created_by: userPayload?.userId || null,
-      updated_by: userPayload?.userId || null,
-    };
+      const breedId = randomUUID();
+      const newBreed = {
+        breed_id: breedId,
+        tenant_id: tenantId,
+        company_id: companyId,
+        nob_id: nobId,
+        lob_id: lobId,
+        breed_code: breedCode,
+        breed_name: dto.breed_name,
+        species_id: dto.species_id || null,
+        species: dto.species || species?.species_name || null, // legacy fallback
+        breed_type: dto.breed_type || 'MEAT',
+        avg_growth_rate_g_day: dto.avg_growth_rate_g_day?.toString() || null,
+        avg_fcr: dto.avg_fcr?.toString() || null,
+        avg_mortality_pct: dto.avg_mortality_pct?.toString() || null,
+        avg_lay_rate_pct: dto.avg_lay_rate_pct?.toString() || null,
+        incubation_days: dto.incubation_days ?? null,
+        gestation_days: dto.gestation_days ?? null,
+        avg_litter_size: dto.avg_litter_size?.toString() || null,
+        mature_age_months: dto.mature_age_months ?? null,
+        productive_life_months: dto.productive_life_months ?? null,
+        premature_years: dto.premature_years?.toString() || null,
+        avg_yield_per_unit: dto.avg_yield_per_unit?.toString() || null,
+        lactation_days: dto.lactation_days ?? null,
+        residual_value_pct: dto.residual_value_pct?.toString() || null,
+        productive_life_cycles: dto.productive_life_cycles ?? null,
+        avg_litter_size_born: dto.avg_litter_size_born?.toString() || null,
+        avg_litter_size_weaned: dto.avg_litter_size_weaned?.toString() || null,
+        avg_weaning_weight_kg: dto.avg_weaning_weight_kg?.toString() || null,
+        farrowing_rate_pct: dto.farrowing_rate_pct?.toString() || null,
+        boar_doses_per_week: dto.boar_doses_per_week?.toString() || null,
+        boar_productive_life_months: dto.boar_productive_life_months ?? null,
+        vaccination_schedule: dto.vaccination_schedule ? JSON.stringify(dto.vaccination_schedule) : null,
+        age_labels: dto.age_labels ? JSON.stringify(dto.age_labels) : null,
+        description: dto.description || null,
+        is_blocked: dto.is_blocked ?? false,
+        is_active: dto.is_blocked ? false : true,
+        status: dto.is_blocked ? 'INACTIVE' : 'ACTIVE',
+        extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+        created_by: userPayload?.userId || null,
+        updated_by: userPayload?.userId || null,
+      };
 
-    await tx.insert(schema.breedMaster).values(newBreed);
-    return newBreed;
+      await tx.insert(schema.breedMaster).values(newBreed);
+      return newBreed;
     });
 
     await this.auditService.log({
@@ -431,12 +445,89 @@ export class BreedService {
     return this.findOneBreed(newBreed.breed_id, tenantId);
   }
 
+  async createBreedsBulk(dtos: CreateBreedDto[], tenantId: string, userPayload?: any) {
+    if (!dtos || !dtos.length) {
+      throw new BadRequestException('No breed items provided for bulk creation.');
+    }
+    const results: any[] = [];
+    const errors: { index: number; code?: string; error: string }[] = [];
+
+    for (let i = 0; i < dtos.length; i++) {
+      try {
+        const item = await this.createBreed(dtos[i], tenantId, userPayload);
+        results.push(item);
+      } catch (err: any) {
+        // If conflict on existing code, update the existing record so re-imports refresh benchmark data
+        if (err instanceof ConflictException && dtos[i]?.breed_code) {
+          try {
+            const area: any = this.cls.get('activeOperationalArea');
+            const clsCompanyId = typeof this.cls.get('companyId') === 'string' ? (this.cls.get('companyId') as string) : null;
+            const areaCompanyId = area && typeof area.company_id === 'string' ? area.company_id : null;
+            const companyId = dtos[i].company_id || areaCompanyId || clsCompanyId || null;
+
+            const duplicateConditions = [
+              eq(schema.breedMaster.tenant_id, tenantId),
+              eq(schema.breedMaster.breed_code, dtos[i].breed_code!),
+              isNull(schema.breedMaster.deleted_at),
+            ];
+            if (companyId) {
+              duplicateConditions.push(eq(schema.breedMaster.company_id, companyId));
+            } else {
+              duplicateConditions.push(isNull(schema.breedMaster.company_id));
+            }
+
+            const [existing] = await this.db
+              .select()
+              .from(schema.breedMaster)
+              .where(and(...duplicateConditions))
+              .limit(1);
+
+            if (existing) {
+              const updated = await this.updateBreed(existing.breed_id, dtos[i] as any, tenantId, userPayload);
+              results.push(updated);
+              continue;
+            }
+          } catch (updateErr: any) {
+            errors.push({
+              index: i,
+              code: dtos[i]?.breed_code,
+              error: updateErr?.message || err?.message || 'Failed to update existing breed',
+            });
+            continue;
+          }
+        }
+
+        errors.push({
+          index: i,
+          code: dtos[i]?.breed_code,
+          error: err?.message || 'Failed to create breed',
+        });
+      }
+    }
+
+    if (errors.length > 0 && results.length === 0) {
+      throw new BadRequestException({
+        message: 'All items in bulk upload failed validation.',
+        errors,
+      });
+    }
+
+    return {
+      success: true,
+      totalCount: dtos.length,
+      createdCount: results.length,
+      failedCount: errors.length,
+      items: results,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+
   async findOneBreed(id: string, tenantId: string) {
     const scope = farmScope(this.cls);
     const conditions: any[] = [
       eq(schema.breedMaster.breed_id, id),
       eq(schema.breedMaster.tenant_id, tenantId),
-      isNull(schema.breedMaster.deleted_at),
       ...restrictedScopeConditions(scope, {
         companyId: schema.breedMaster.company_id,
         lobId: schema.breedMaster.lob_id,
@@ -538,14 +629,19 @@ export class BreedService {
     // A hand-typed code (Rishi enters codes matching the breed's code on other
     // farms; allow_manual is for exactly that) is left alone: it was never
     // following the series, so it has nothing to follow.
-    if (dto.breed_name !== undefined && dto.breed_name.trim() !== breed.breed_name
-        && breed.breed_code === breed.breed_name.replaceAll(/\s+/g, '_').toUpperCase()) {
-      updates.breed_code = await this.numberSeriesService.renameCode(
-        'BREED',
-        { ...breed, breed_name: dto.breed_name },
-        tenantId,
-        breed.company_id,
-      );
+    assertCodeUnchanged('Breed', breed.breed_code, dto.breed_code);
+    if (dto.breed_code !== undefined && dto.breed_code.trim()) {
+      const trimmed = dto.breed_code.trim().toUpperCase();
+      if (trimmed !== breed.breed_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'BREED',
+          trimmed,
+          breed.breed_code,
+          tenantId,
+          breed.company_id,
+        );
+        if (edited) updates.breed_code = edited;
+      }
     }
     if (dto.breed_name !== undefined) updates.breed_name = dto.breed_name;
     if (dto.species_id !== undefined) updates.species_id = dto.species_id;
@@ -574,6 +670,11 @@ export class BreedService {
     if (dto.vaccination_schedule !== undefined) updates.vaccination_schedule = JSON.stringify(dto.vaccination_schedule);
     if (dto.age_labels !== undefined) updates.age_labels = JSON.stringify(dto.age_labels);
     if (dto.description !== undefined) updates.description = dto.description;
+    if (dto.is_blocked !== undefined) {
+      updates.is_blocked = dto.is_blocked;
+      if (dto.is_active === undefined) updates.is_active = !dto.is_blocked;
+      if (dto.status === undefined) updates.status = dto.is_blocked ? 'INACTIVE' : 'ACTIVE';
+    }
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
@@ -839,6 +940,44 @@ export class BreedService {
     return this.findOneLifecycleStage(lifecycleId);
   }
 
+  async createLifecycleStagesBulk(dtos: CreateBreedLifecycleStageDto[], tenantId: string, userPayload?: any) {
+    if (!dtos || !dtos.length) {
+      throw new BadRequestException('No breed lifecycle stage items provided for bulk creation.');
+    }
+    const results: any[] = [];
+    const errors: { index: number; code?: string; error: string }[] = [];
+
+    for (let i = 0; i < dtos.length; i++) {
+      try {
+        const item = await this.createLifecycleStage(dtos[i], tenantId, userPayload);
+        results.push(item);
+      } catch (err: any) {
+        errors.push({
+          index: i,
+          code: dtos[i]?.lifecycle_code,
+          error: err?.message || 'Failed to create lifecycle stage',
+        });
+      }
+    }
+
+    if (errors.length > 0 && results.length === 0) {
+      throw new BadRequestException({
+        message: 'All items in bulk upload failed validation.',
+        errors,
+      });
+    }
+
+    return {
+      success: true,
+      totalCount: dtos.length,
+      createdCount: results.length,
+      failedCount: errors.length,
+      items: results,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+
   async findOneLifecycleStage(id: string) {
     const [lifecycleStage] = await this.db
       .select({
@@ -969,6 +1108,7 @@ export class BreedService {
     const updates: any = {};
     // Blank means "untouched": the form posts "" for every optional field, and the
     // 24 live rows created before this column existed still hold NULL.
+    assertCodeUnchanged('Lifecycle stage', lifecycleStage.lifecycle_code, dto.lifecycle_code);
     const lifecycleCode = await this.numberSeriesService.editedCode('BREED_LIFECYCLE_STAGE', dto.lifecycle_code, lifecycleStage.lifecycle_code, tenantId, null);
     if (lifecycleCode) updates.lifecycle_code = lifecycleCode;
     if (dto.stage_id !== undefined) updates.stage_id = dto.stage_id;

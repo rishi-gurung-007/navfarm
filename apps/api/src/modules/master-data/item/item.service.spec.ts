@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('ItemService', () => {
   let service: ItemService;
@@ -354,12 +354,12 @@ describe('ItemService', () => {
         });
 
       await expect(service.findAll({}, 'tenant-123')).resolves.toEqual({
-        data: [legacyItem], total: 1, limit: 50, offset: 0,
+        data: [{ ...legacyItem, tracking_locked: false }], total: 1, limit: 50, offset: 0,
       });
     });
   });
 
-  it('does not allow the generated company-wide Item Code to be changed', async () => {
+  it('refuses to change an item code after it is created', async () => {
     mockDbSelect
       .mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -375,7 +375,60 @@ describe('ItemService', () => {
       });
 
     await expect(service.update('item-1', { item_code: 'RAW-0001' }, 'tenant-123'))
-      .rejects.toThrow(ConflictException);
+      .rejects.toThrow(BadRequestException);
+  });
+
+  describe('valuation method and tracking lock', () => {
+    const itemRow = {
+      item_id: 'item-1', item_code: 'ITM-0001', company_id: 'comp-1',
+      valuation_method: 'FIFO', is_lot_tracked: false, is_serial_tracked: false, tracking_series_id: null,
+    };
+    const selectItem = () =>
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([itemRow]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }),
+        });
+
+    it('refuses to change the valuation method once the item has inventory entries', async () => {
+      selectItem();
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ledger_id: 'l-1' }]) }) }),
+      });
+
+      await expect(service.update('item-1', { valuation_method: 'STANDARD' } as any, 'tenant-123'))
+        .rejects.toThrow('Valuation Method cannot be changed because this item already has inventory entries.');
+    });
+
+    // Tracking may change only while nothing carries lot or serial numbers for the item.
+    const guard = (dto: object) => (service as any).assertCostingAndTrackingUnlocked({ ...itemRow, uom_primary: 'KG' }, dto);
+    const blockers = (value: { onHand: number; byLot: Array<{ lot: string | null; quantity: number }>; openDocuments: string[] }) =>
+      jest.spyOn(service, 'trackingBlockers').mockResolvedValue(value);
+
+    it('refuses a tracking change while stock is on hand, naming the lots', async () => {
+      blockers({ onHand: 50, byLot: [{ lot: 'LOT00001', quantity: 20 }, { lot: 'LOT00002', quantity: 30 }], openDocuments: [] });
+      await expect(guard({ is_serial_tracked: true }))
+        .rejects.toThrow('Tracking cannot be changed for ITM-0001 while 50 KG is on hand (LOT00001: 20, LOT00002: 30)');
+    });
+
+    it('refuses a tracking change while an open document names the item', async () => {
+      blockers({ onHand: 0, byLot: [], openDocuments: ['GR-000012', 'TO-000003'] });
+      await expect(guard({ is_lot_tracked: true }))
+        .rejects.toThrow('open documents still name it: GR-000012, TO-000003');
+    });
+
+    it('allows a tracking change once nothing is on hand and nothing is open — history stays as posted', async () => {
+      blockers({ onHand: 0, byLot: [], openDocuments: [] });
+      await expect(guard({ is_serial_tracked: true })).resolves.toBeUndefined();
+    });
+
+    it('does not look for blockers when tracking is not being changed', async () => {
+      const spy = blockers({ onHand: 50, byLot: [], openDocuments: [] });
+      await expect(guard({ item_name: 'Renamed', is_lot_tracked: false })).resolves.toBeUndefined();
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 
   it('initializes one company ITEM counter after the highest existing item code', async () => {
@@ -614,4 +667,3 @@ describe('ItemService', () => {
     });
   });
 });
-

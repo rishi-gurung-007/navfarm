@@ -2,7 +2,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { itemKindCondition } from './item-kind-filter';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, getTableColumns, count } from 'drizzle-orm';
+import { eq, ne, and, like, or, isNull, getTableColumns, count, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -11,6 +11,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
+import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -172,7 +174,7 @@ export class ItemService {
   /** standard_cost is mandatory when valuation_method is STANDARD, per spec. */
   private assertStandardCost(valuationMethod?: string | null, standardCost?: number | null) {
     if (valuationMethod === 'STANDARD' && standardCost == null) {
-      throw new BadRequestException('standard_cost is required when valuation_method is STANDARD.');
+      throw new BadRequestException('Enter a Standard Cost — it is required when the Valuation Method is Standard.');
     }
   }
 
@@ -278,9 +280,9 @@ export class ItemService {
 
     // 4. One company-wide ITEM sequence is shared by all Item Types.
     await this.ensureCompanyItemSeries(tenantId, companyId);
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM', dto.item_type, tenantId, companyId) || 'ITEM';
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM', undefined, tenantId, companyId) || 'ITEM';
     const itemCode = dto.item_code?.trim()
-      ? await this.numberSeriesService.manualCode('ITEM', dto.item_code, tenantId, companyId, dto.item_type)
+      ? await this.numberSeriesService.manualCode('ITEM', dto.item_code, tenantId, companyId, undefined)
       : await this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
 
     const itemId = randomUUID();
@@ -606,6 +608,17 @@ export class ItemService {
         category_code: schema.itemCategoryMaster.category_code,
         category_name: schema.itemCategoryMaster.category_name,
         template_code: schema.itemTemplate.template_code,
+        // Lets the form lock Valuation Method once any ledger entry exists.
+        has_inventory: sql<number>`exists (select 1 from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id})`.mapWith(Boolean),
+        // Tracking (lot / serial) can change only while nothing carries lot or serial numbers for the item:
+        // no stock on hand, and no open document naming it. See trackingBlockers.
+        on_hand_qty: sql<number>`(select coalesce(sum(${schema.inventoryLedger.remaining_quantity}), 0) from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id} and ${schema.inventoryLedger.quantity} > 0 and ${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER'))`.mapWith(Number),
+        open_documents: sql<number>`(
+          (select count(*) from ${schema.goodsReceiptLine} gl join ${schema.goodsReceipt} g on g.receipt_id = gl.receipt_id where gl.item_id = ${schema.itemMaster.item_id} and g.status = 'DRAFT' and g.deleted_at is null)
+          + (select count(*) from ${schema.stockTransferLine} tl join ${schema.stockTransfer} t on t.transfer_id = tl.transfer_id where tl.item_id = ${schema.itemMaster.item_id} and t.status in ('DRAFT', 'IN_TRANSIT'))
+          + (select count(*) from ${schema.stockAdjustmentLine} al join ${schema.stockAdjustment} a on a.adjustment_id = al.adjustment_id where al.item_id = ${schema.itemMaster.item_id} and a.status = 'DRAFT')
+          + (select count(*) from ${schema.batchInputLine} bl join ${schema.batchHeader} b on b.batch_id = bl.batch_id where bl.item_id = ${schema.itemMaster.item_id} and b.status = 'DRAFT')
+        )`.mapWith(Number),
       })
       .from(schema.itemMaster)
       .leftJoin(
@@ -630,11 +643,105 @@ export class ItemService {
       )
       .where(and(...conditions));
 
-    return { data, total: Number(counted?.total ?? 0), limit, offset };
+    // The form locks Tracking while stock is on hand or an open document names the item.
+    const rows = data.map((row) => ({ ...row, tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0 }));
+    return { data: rows, total: Number(counted?.total ?? 0), limit, offset };
+  }
+
+  /** True once any inventory ledger row (receipt, issue, transfer, adjustment) exists for the item. */
+  async hasInventory(itemId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ ledger_id: schema.inventoryLedger.ledger_id })
+      .from(schema.inventoryLedger)
+      .where(eq(schema.inventoryLedger.item_id, itemId))
+      .limit(1);
+    return !!row;
+  }
+
+  /**
+   * What stands in the way of changing an item's tracking (lot, serial, or none): stock on hand, whose
+   * layers carry lot or serial numbers that the new setting would strand, and open documents (draft
+   * receipts, transfers on the way or in draft, draft adjustments, draft batches) whose lines carry
+   * them too. Finished history does not block: past entries keep the lot or serial they were posted with.
+   */
+  async trackingBlockers(itemId: string): Promise<{ onHand: number; byLot: Array<{ lot: string | null; quantity: number }>; openDocuments: string[] }> {
+    // Stock on hand is what the receipts still hold; which lot each unit sits in is read off the lots
+    // themselves (a lot's stock is not any receipt's remaining quantity).
+    const [owner] = await this.db.select({ tenant_id: schema.itemMaster.tenant_id }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, itemId)).limit(1);
+    const [held] = await this.db
+      .select({ quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+      .from(schema.inventoryLedger)
+      .where(and(
+        eq(schema.inventoryLedger.item_id, itemId),
+        sql`${schema.inventoryLedger.quantity} > 0`,
+        sql`${schema.inventoryLedger.remaining_quantity} > 0`,
+        sql`${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER')`,
+      ));
+    const total = Number(held?.quantity ?? 0);
+    const lots = owner ? (await lotBalances(this.db, { tenantId: owner.tenant_id, itemId })).filter((l) => l.quantity > 0.0001) : [];
+    const byLot: Array<{ lot: string | null; quantity: number }> = lots.map((l) => ({ lot: l.lot_no, quantity: l.quantity }));
+    const withoutLot = Math.round((total - lots.reduce((n, l) => n + l.quantity, 0)) * 1e4) / 1e4;
+    if (withoutLot > 0.0001) byLot.push({ lot: null, quantity: withoutLot });
+
+    const open: string[] = [];
+    const drafts = await Promise.all([
+      this.db.select({ no: schema.goodsReceipt.receipt_no }).from(schema.goodsReceiptLine)
+        .innerJoin(schema.goodsReceipt, eq(schema.goodsReceipt.receipt_id, schema.goodsReceiptLine.receipt_id))
+        .where(and(eq(schema.goodsReceiptLine.item_id, itemId), eq(schema.goodsReceipt.status, 'DRAFT'), isNull(schema.goodsReceipt.deleted_at))),
+      this.db.select({ no: schema.stockTransfer.transfer_no }).from(schema.stockTransferLine)
+        .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
+        .where(and(eq(schema.stockTransferLine.item_id, itemId), sql`${schema.stockTransfer.status} in ('DRAFT', 'IN_TRANSIT')`)),
+      this.db.select({ no: schema.stockAdjustment.adjustment_no }).from(schema.stockAdjustmentLine)
+        .innerJoin(schema.stockAdjustment, eq(schema.stockAdjustment.adjustment_id, schema.stockAdjustmentLine.adjustment_id))
+        .where(and(eq(schema.stockAdjustmentLine.item_id, itemId), eq(schema.stockAdjustment.status, 'DRAFT'))),
+      this.db.select({ no: schema.batchHeader.batch_no }).from(schema.batchInputLine)
+        .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchInputLine.batch_id))
+        .where(and(eq(schema.batchInputLine.item_id, itemId), eq(schema.batchHeader.status, 'DRAFT'))),
+    ]);
+    for (const rows of drafts) for (const r of rows) if (!open.includes(r.no)) open.push(r.no);
+    return { onHand: total, byLot, openDocuments: open };
+  }
+
+  /**
+   * Valuation method decides how existing stock layers were costed, so it cannot change once the item
+   * has any inventory entry. Tracking decides which lot or serial each unit carries, so it can change
+   * only while nothing carries them: no stock on hand and no open document (trackingBlockers). A
+   * receipt line of the old type would otherwise fail on its own post, and stock received under lots
+   * could never be issued once serials are demanded.
+   */
+  private async assertCostingAndTrackingUnlocked(
+    item: typeof schema.itemMaster.$inferSelect,
+    dto: UpdateItemDto,
+  ): Promise<void> {
+    const trackingChanged =
+      (dto.is_lot_tracked !== undefined && !!dto.is_lot_tracked !== !!item.is_lot_tracked) ||
+      (dto.is_serial_tracked !== undefined && !!dto.is_serial_tracked !== !!item.is_serial_tracked) ||
+      (dto.tracking_series_id !== undefined && (dto.tracking_series_id || null) !== (item.tracking_series_id || null));
+    const valuationChanged = dto.valuation_method !== undefined && (dto.valuation_method || null) !== (item.valuation_method || null);
+    if (!trackingChanged && !valuationChanged) return;
+
+    if (valuationChanged && (await this.hasInventory(item.item_id))) {
+      throw new BadRequestException(
+        'Valuation Method cannot be changed because this item already has inventory entries. Create a new item if you need a different one.',
+      );
+    }
+    if (!trackingChanged) return;
+
+    const { onHand, byLot, openDocuments } = await this.trackingBlockers(item.item_id);
+    const reasons: string[] = [];
+    if (onHand > 0.0001) {
+      const lots = byLot.map((l) => `${l.lot ?? 'no lot'}: ${l.quantity}`).join(', ');
+      reasons.push(`${onHand} ${item.uom_primary} is on hand (${lots}) — consume it or adjust it out first`);
+    }
+    if (openDocuments.length > 0) reasons.push(`open documents still name it: ${openDocuments.join(', ')} — post or cancel them first`);
+    if (reasons.length) {
+      throw new BadRequestException(`Tracking cannot be changed for ${item.item_code} while ${reasons.join('; and ')}.`);
+    }
   }
 
   async update(id: string, dto: UpdateItemDto, tenantId: string, userPayload?: any) {
     const item = await this.findOne(id);
+    await this.assertCostingAndTrackingUnlocked(item, dto);
 
     if (dto.category_id) {
       const [category] = await this.db
@@ -657,37 +764,24 @@ export class ItemService {
       updated_at: toMysqlTimestamp(),
     };
 
+    assertCodeUnchanged('Item', item.item_code, dto.item_code);
     if (dto.item_code && dto.item_code.trim() !== item.item_code) {
-      let allowManual = false;
-      if (item.item_template_id) {
-        const [tmpl] = await this.db
-          .select({ manual_nos: schema.noSeries.manual_nos })
-          .from(schema.itemTemplate)
-          .innerJoin(schema.noSeries, eq(schema.itemTemplate.no_series_id, schema.noSeries.id))
-          .where(eq(schema.itemTemplate.id, item.item_template_id))
-          .limit(1);
-        if (tmpl?.manual_nos) {
-          allowManual = true;
-        }
+      const trimmedCode = dto.item_code.trim().toUpperCase();
+      const [dup] = await this.db
+        .select({ id: schema.itemMaster.item_id })
+        .from(schema.itemMaster)
+        .where(and(
+          eq(schema.itemMaster.tenant_id, tenantId),
+          eq(schema.itemMaster.item_code, trimmedCode),
+          ne(schema.itemMaster.item_id, id),
+          isNull(schema.itemMaster.deleted_at),
+          item.company_id ? eq(schema.itemMaster.company_id, item.company_id) : isNull(schema.itemMaster.company_id),
+        ))
+        .limit(1);
+      if (dup) {
+        throw new ConflictException(`Item code '${trimmedCode}' already exists in this scope.`);
       }
-      if (!allowManual) {
-        throw new ConflictException('Item Code is generated from the company-wide ITEM sequence and cannot be changed.');
-      } else {
-        const [dup] = await this.db
-          .select({ id: schema.itemMaster.item_id })
-          .from(schema.itemMaster)
-          .where(and(
-            eq(schema.itemMaster.tenant_id, tenantId),
-            eq(schema.itemMaster.item_code, dto.item_code.trim()),
-            isNull(schema.itemMaster.deleted_at),
-            item.company_id ? eq(schema.itemMaster.company_id, item.company_id) : isNull(schema.itemMaster.company_id),
-          ))
-          .limit(1);
-        if (dup && dup.id !== id) {
-          throw new ConflictException(`Generated item code [${dto.item_code.trim()}] already exists. Check No. Series Last No. Used.`);
-        }
-        updates.item_code = dto.item_code.trim();
-      }
+      updates.item_code = trimmedCode;
     }
 
     const effectiveItemType = dto.item_type ?? item.item_type;

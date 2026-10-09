@@ -123,7 +123,7 @@ export class ItemController {
     return {
       success: true,
       message: 'Item details retrieved.',
-      data: result
+      data: { ...result, has_inventory: await this.itemService.hasInventory(id) },
     };
   }
 

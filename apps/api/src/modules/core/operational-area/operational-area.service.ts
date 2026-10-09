@@ -381,7 +381,7 @@ export class OperationalAreaService {
       if (!user) throw new NotFoundException(`No user exists with the email ${dto.email}. Invite them from User Management first.`);
       userId = user.user_id;
     }
-    if (!userId) throw new BadRequestException('Provide either user_id or the email of an existing user.');
+    if (!userId) throw new BadRequestException('Choose an existing user, or enter the email of one.');
 
     const [already] = await this.db
       .select({ assignment_id: schema.userOperationalAreaAssignment.assignment_id })

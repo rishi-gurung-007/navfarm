@@ -28,7 +28,7 @@ const GESTATION_DAYS = 116; // Z-Line-Sow, breed_master.gestation_days
 const LACTATION_DAYS = 28;
 
 interface SowPlan {
-  ear_tag: string;
+  rfid_tag: string;
   /** Day offsets back from today — the whole cycle slides with the run date. */
   matingDaysAgo: number;
   outcome: 'COMPLETED' | 'PREGNANT' | 'FAILED';
@@ -41,13 +41,13 @@ interface SowPlan {
 
 const SOW_PLANS: SowPlan[] = [
   // Farrowed 148 days ago, weaned 120 days ago — a finished cycle.
-  { ear_tag: 'DEMO-SOW-01', matingDaysAgo: 148 + GESTATION_DAYS, outcome: 'COMPLETED', piglets_born_live: 14, piglets_stillborn: 1, avg_birth_weight_kg: 1.4, piglets_weaned: 13, avg_weaning_weight_kg: 6.8 },
-  { ear_tag: 'DEMO-SOW-02', matingDaysAgo: 146 + GESTATION_DAYS, outcome: 'COMPLETED', piglets_born_live: 12, piglets_stillborn: 0, avg_birth_weight_kg: 1.35, piglets_weaned: 11, avg_weaning_weight_kg: 6.5 },
+  { rfid_tag: 'DEMO-SOW-01', matingDaysAgo: 148 + GESTATION_DAYS, outcome: 'COMPLETED', piglets_born_live: 14, piglets_stillborn: 1, avg_birth_weight_kg: 1.4, piglets_weaned: 13, avg_weaning_weight_kg: 6.8 },
+  { rfid_tag: 'DEMO-SOW-02', matingDaysAgo: 146 + GESTATION_DAYS, outcome: 'COMPLETED', piglets_born_live: 12, piglets_stillborn: 0, avg_birth_weight_kg: 1.35, piglets_weaned: 11, avg_weaning_weight_kg: 6.5 },
   // Confirmed pregnant, farrowing still ahead.
-  { ear_tag: 'DEMO-SOW-03', matingDaysAgo: 45, outcome: 'PREGNANT' },
-  { ear_tag: 'DEMO-SOW-04', matingDaysAgo: 40, outcome: 'PREGNANT' },
+  { rfid_tag: 'DEMO-SOW-03', matingDaysAgo: 45, outcome: 'PREGNANT' },
+  { rfid_tag: 'DEMO-SOW-04', matingDaysAgo: 40, outcome: 'PREGNANT' },
   // Served, check came back negative.
-  { ear_tag: 'DEMO-SOW-05', matingDaysAgo: 50, outcome: 'FAILED' },
+  { rfid_tag: 'DEMO-SOW-05', matingDaysAgo: 50, outcome: 'FAILED' },
 ];
 
 function dateDaysAgo(days: number): string {
@@ -79,7 +79,7 @@ export const breedingChapter: DemoChapter = {
     const [boar] = await db
       .select({ animal_id: schema.animalRegister.animal_id })
       .from(schema.animalRegister)
-      .where(eq(schema.animalRegister.ear_tag, 'DEMO-BOAR-01'))
+      .where(eq(schema.animalRegister.rfid_tag, 'DEMO-BOAR-01'))
       .limit(1);
     if (!boar) throw new Error('05-breeding: boar DEMO-BOAR-01 not found — run 03-batches-and-animals first.');
 
@@ -87,9 +87,9 @@ export const breedingChapter: DemoChapter = {
       const [sow] = await db
         .select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code, parity_count: schema.animalRegister.parity_count })
         .from(schema.animalRegister)
-        .where(eq(schema.animalRegister.ear_tag, plan.ear_tag))
+        .where(eq(schema.animalRegister.rfid_tag, plan.rfid_tag))
         .limit(1);
-      if (!sow) throw new Error(`05-breeding: sow ${plan.ear_tag} not found.`);
+      if (!sow) throw new Error(`05-breeding: sow ${plan.rfid_tag} not found.`);
 
       const matingDate = dateDaysAgo(plan.matingDaysAgo);
 
@@ -113,9 +113,9 @@ export const breedingChapter: DemoChapter = {
           actor,
         );
         record = { breeding_id: created.breeding_id, conception_result: created.conception_result, expected_farrowing_date: created.expected_farrowing_date };
-        ctx.log(`${plan.ear_tag}: mated ${matingDate} (natural, DEMO-BOAR-01) — expected farrowing ${created.expected_farrowing_date}`);
+        ctx.log(`${plan.rfid_tag}: mated ${matingDate} (natural, DEMO-BOAR-01) — expected farrowing ${created.expected_farrowing_date}`);
       } else {
-        ctx.log(`${plan.ear_tag}: mating ${matingDate} already recorded — skipped`);
+        ctx.log(`${plan.rfid_tag}: mating ${matingDate} already recorded — skipped`);
       }
 
       // ── Pregnancy check (skip once the result is known).
@@ -129,7 +129,7 @@ export const breedingChapter: DemoChapter = {
             ctx.tenantId,
             actor,
           );
-          ctx.log(`${plan.ear_tag}: pregnancy check ${checkDate} — ${result}`);
+          ctx.log(`${plan.rfid_tag}: pregnancy check ${checkDate} — ${result}`);
         }
       }
 
@@ -158,7 +158,7 @@ export const breedingChapter: DemoChapter = {
           actor,
         );
         farrow = { farrow_id: created.farrow_id, piglets_weaned: 0 };
-        ctx.log(`${plan.ear_tag}: farrowed ${farrowingDate} — ${plan.piglets_born_live} live, ${plan.piglets_stillborn ?? 0} stillborn (parity ${sow.parity_count + 1})`);
+        ctx.log(`${plan.rfid_tag}: farrowed ${farrowingDate} — ${plan.piglets_born_live} live, ${plan.piglets_stillborn ?? 0} stillborn (parity ${sow.parity_count + 1})`);
       }
 
       // ── Weaning 28 days later (skip when already weaned).
@@ -174,7 +174,7 @@ export const breedingChapter: DemoChapter = {
           ctx.tenantId,
           actor,
         );
-        ctx.log(`${plan.ear_tag}: weaned ${weaningDate} — ${plan.piglets_weaned} piglets at ${plan.avg_weaning_weight_kg} kg`);
+        ctx.log(`${plan.rfid_tag}: weaned ${weaningDate} — ${plan.piglets_weaned} piglets at ${plan.avg_weaning_weight_kg} kg`);
       }
     }
   },

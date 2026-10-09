@@ -25,6 +25,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   activity: schema.activityMaster,
   supplier: schema.supplierMaster, customer: schema.customerMaster, resource: schema.resourceMaster,
   'gl-account': schema.glAccountMaster, 'gl-mapping': schema.glMappingMaster, 'cost-center': schema.costCenterMaster,
+  'item-application': schema.inventoryApplication, 'inventory-application': schema.inventoryApplication,
 };
 
 export interface MasterScope {

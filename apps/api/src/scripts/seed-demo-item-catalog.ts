@@ -36,6 +36,7 @@ import { seriesCodeFor } from './lib/seed-series-code';
 import {
   ITEM_CATALOG_1,
   ITEM_CATALOG_2,
+  COSTING_TEST_ITEMS,
   ITEM_CATEGORY_CATALOG,
   ITEM_SUBCATEGORY_CATALOG,
   SEED_KEY_BY_ITEM_NAME,
@@ -62,7 +63,7 @@ const database = process.env.DEV_TENANT_DATABASE || `nf_${(process.env.DEV_TENAN
  * piglet), and key-dedup silently dropped the weaned one.
  */
 function tripleCCatalog(): typeof ITEM_CATALOG_1 {
-  const merged = [...ITEM_CATALOG_1];
+  const merged = [...ITEM_CATALOG_1, ...COSTING_TEST_ITEMS];
   const seen = new Set(ITEM_CATALOG_1.map((i) => i.name));
   for (const item of ITEM_CATALOG_2) {
     if (!seen.has(item.name)) merged.push(item);
@@ -165,6 +166,7 @@ async function run() {
           valuation_method: item.val,
           standard_cost: item.cost,
           is_biological_asset: item.bio,
+          is_lot_tracked: item.lot ?? false,
           is_inventoriable: true,
           is_active: true,
         });

@@ -407,7 +407,7 @@ export async function seedPiggeryData() {
           .where(eq(schema.animalRegister.company_id, comp1Id))).map((r: { code: string }) => r.code);
         const animalCode = (await seriesCodeFor(db, { tenantId, companyId: comp1Id }, 'ANIMAL', { dob }, takenAnimals)) ?? a.code;
         await db.insert(schema.animalRegister).values({
-          animal_id: aId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, animal_code: animalCode, animal_type: a.type, breed_id: a.breed.breed_id, gender: a.gender, entry_type: 'PURCHASED_LOCAL', entry_date: '2026-01-10', dob, item_id: itId, ear_tag: a.tag, rfid_tag: a.rfid, acquisition_cost: a.cost, total_opening_asset_value: a.cost, book_value: a.cost, current_bio_asset_value: a.cost, parity_count: a.parity, total_piglets_born_live: a.born, total_piglets_weaned: a.weaned, current_stage_id: stage?.stage_id, current_location_id: locId, status: a.status, is_active: true, created_by: c1AdminId,
+          animal_id: aId, tenant_id: tenantId, company_id: comp1Id, nob_id: nobId, lob_id: lobId, animal_code: animalCode, animal_type: a.type, breed_id: a.breed.breed_id, gender: a.gender, entry_type: 'PURCHASED_LOCAL', entry_date: '2026-01-10', dob, item_id: itId, rfid_tag: a.rfid, acquisition_cost: a.cost, total_opening_asset_value: a.cost, book_value: a.cost, current_bio_asset_value: a.cost, parity_count: a.parity, total_piglets_born_live: a.born, total_piglets_weaned: a.weaned, current_stage_id: stage?.stage_id, current_location_id: locId, status: a.status, is_active: true, created_by: c1AdminId,
         });
       }
       animalMap1.set(a.code, aId!);

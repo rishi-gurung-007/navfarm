@@ -45,6 +45,7 @@
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
+import { selectDemoFarmCodes } from './lib/demo-farm-selection';
 import * as bcrypt from 'bcryptjs';
 import {
   formatSeriesCode,
@@ -74,7 +75,7 @@ interface FarmSeed {
 // template folders. GRA100 / LIO100 / RIC100 are the codes Rishi assigned
 // where the template left the code blank (decision of 15 Sep); the other six
 // are the client's own.
-const FARMS: FarmSeed[] = [
+const ALL_FARMS: FarmSeed[] = [
   { code: 'MUL100', name: 'MULTIPLIER GRASMERE FARM NORTON', address: 'Grasmere Farm, Norton', role: 'MULTIPLIER', shortName: 'Multiplier' },
   { code: 'POR100', name: 'PORTA FARM', address: 'Kintyre Estate, Norton', role: 'FARROW_TO_FINISH', shortName: 'Porta' },
   { code: 'AI100', name: 'AI STATION', address: 'Grasmere Farm, Norton', role: 'AI_STATION', shortName: 'AI Station' },
@@ -85,6 +86,10 @@ const FARMS: FarmSeed[] = [
   { code: 'RIC100', name: 'RICHLANDS FARM', address: 'Douglyn, Shamva', role: 'FARROW_TO_FINISH', shortName: 'Richlands' },
   { code: 'VIL100', name: 'VILLA FRANCA FARM', address: 'Glendale', role: 'FARROW_TO_FINISH', shortName: 'Villa Franca' },
 ];
+
+/** The farms this run seeds: all nine, or the DEMO_FARMS subset the chapters will also use. */
+const SELECTED_FARM_CODES = selectDemoFarmCodes(process.env.DEMO_FARMS) as readonly string[];
+const FARMS: FarmSeed[] = ALL_FARMS.filter((f) => SELECTED_FARM_CODES.includes(f.code));
 
 /* ------------------------------------------------------------------------- */
 /* Sheds, pens and silos                                                      */
@@ -252,7 +257,7 @@ function buildBreedSeeds(): BreedSeed[] {
     seeds.push({ farm: 'AI100', name, line: 'BOAR', benchmarks: BOAR_BENCHMARKS, provenance: 'AI STATION submitted no Breed Master; line names taken from the only sheet that codes them (LEARIG).' });
   }
 
-  return seeds;
+  return seeds.filter((seed) => SELECTED_FARM_CODES.includes(seed.farm));
 }
 
 /**

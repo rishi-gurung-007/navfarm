@@ -520,11 +520,12 @@ describe('NumberSeriesService', () => {
 
   describe('updateNoSeriesRow and createNoSeriesRow default exclusivity', () => {
     it('unsets is_default on other series of the same master type when updating to default', async () => {
+      // Item: the one master that may have several series, so promoting one to default matters.
       const existingSeries = {
         id: 'series-loc-1',
-        code: 'LOCATION',
-        document_type: 'LOCATION',
-        master_type: 'LOCATION',
+        code: 'ITEM',
+        document_type: 'ITEM',
+        master_type: 'ITEM',
         tenant_id: 'tenant-123',
         company_id: 'comp-1',
         is_default: false,
@@ -584,8 +585,8 @@ describe('NumberSeriesService', () => {
           where: jest.fn().mockReturnValue({
             limit: jest.fn().mockResolvedValue([{
               id: 'new-id',
-              code: 'NS-LOC-2',
-              document_type: 'LOCATION',
+              code: 'NS-ITM-2',
+              document_type: 'ITEM',
               is_default: true,
             }]),
           }),
@@ -593,7 +594,7 @@ describe('NumberSeriesService', () => {
       });
 
       const created = await service.createNoSeriesRow(
-        { code: 'NS-LOC-2', document_type: 'LOCATION', is_default: true },
+        { code: 'NS-ITM-2', document_type: 'ITEM', is_default: true },
         'tenant-123',
         'comp-1',
       );
@@ -601,6 +602,73 @@ describe('NumberSeriesService', () => {
       expect(mockDbUpdate).toHaveBeenCalled();
       expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ is_default: false }));
       expect(created.is_default).toBe(true);
+    });
+  });
+
+  describe('one series per master, locked once numbers are issued', () => {
+    const selectOnce = (rows: any[]) =>
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }),
+        }),
+      });
+
+    it('refuses a second series for a master other than Item', async () => {
+      selectOnce([]); // code uniqueness
+      selectOnce([{ id: 'series-loc-1', code: 'LOCATION' }]); // a LOCATION series already exists
+
+      await expect(
+        service.createNoSeriesRow({ code: 'NS-LOC-2', document_type: 'LOCATION' }, 'tenant-123', 'comp-1'),
+      ).rejects.toThrow(ConflictException);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses to change the master, prefix or length of a series that has issued numbers', async () => {
+      selectOnce([{
+        id: 'series-loc-1', code: 'LOCATION', document_type: 'LOCATION', master_type: 'LOCATION',
+        tenant_id: 'tenant-123', company_id: 'comp-1', seq_length: 3, last_no_used: 'LOC-001', current_seq: 1,
+      }]);
+
+      await expect(service.updateNoSeriesRow('series-loc-1', { seq_length: 5 })).rejects.toThrow(BadRequestException);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('still lets a series that has issued numbers be blocked or re-described', async () => {
+      const row = {
+        id: 'series-loc-1', code: 'LOCATION', document_type: 'LOCATION', master_type: 'LOCATION',
+        tenant_id: 'tenant-123', company_id: 'comp-1', seq_length: 3, last_no_used: 'LOC-001', current_seq: 1,
+      };
+      selectOnce([row]);
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      selectOnce([{ ...row, blocked: true }]);
+
+      const updated = await service.updateNoSeriesRow('series-loc-1', { description: 'Locations', blocked: true });
+      expect(updated.blocked).toBe(true);
+    });
+
+    it('treats a series as issued when its master already has records, even if its counter never moved', async () => {
+      const row = {
+        id: 'series-loc-1', code: 'LOCATION', document_type: 'LOCATION', master_type: 'LOCATION',
+        tenant_id: 'tenant-123', company_id: 'comp-1', seq_length: 3, last_no_used: null, current_seq: 0,
+      };
+      selectOnce([row]);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ one: 1 }]) }) }),
+      });
+
+      await expect(service.updateNoSeriesRow('series-loc-1', { seq_length: 5 })).rejects.toThrow('already issued numbers');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('allows the first series for a master that has none', async () => {
+      selectOnce([]); // code uniqueness
+      selectOnce([]); // no LOCATION series yet
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      selectOnce([{ id: 'new-id', code: 'NS-LOC', document_type: 'LOCATION' }]);
+
+      const created = await service.createNoSeriesRow({ code: 'NS-LOC', document_type: 'LOCATION' }, 'tenant-123', 'comp-1');
+      expect(created.code).toBe('NS-LOC');
     });
   });
 });

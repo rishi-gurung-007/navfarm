@@ -43,6 +43,26 @@ async function run() {
       const tenantDb = drizzle(tenantPool, { schema: tenant, mode: 'default' });
 
       try {
+        // The Mac development tenant has the older Feed Forecast lineage (its
+        // journal is beyond the Windows baseline and it already owns feed
+        // loading tables).  Never let the canonical Windows migration folder
+        // run against that lineage: it would replay overlapping columns.
+        const [journalRows] = await tenantPool.query<mysql.RowDataPacket[]>(
+          'SELECT id FROM __drizzle_migrations ORDER BY id DESC LIMIT 1',
+        );
+        const [loadingTables] = await tenantPool.query<mysql.RowDataPacket[]>(
+          "SHOW TABLES LIKE 'feed_loading_sheet'",
+        );
+        const latestId = Number(journalRows[0]?.id ?? 0);
+        const hasFeedLoading = loadingTables.length > 0;
+        const canonicalBaseline = latestId === 0 || (latestId <= 142 && !hasFeedLoading);
+        const canonicalComplete = latestId >= 164;
+        if (!canonicalBaseline && !canonicalComplete) {
+          throw new Error(
+            `Unsupported tenant migration lineage (latest journal id ${latestId}, feed_loading_sheet=${hasFeedLoading}). ` +
+            'This database requires a reviewed conversion path and was not modified.',
+          );
+        }
         await migrate(tenantDb as any, {
           migrationsFolder: resolve(process.cwd(), 'src/drizzle/tenant'),
         });

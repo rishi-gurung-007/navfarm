@@ -35,7 +35,7 @@ export class ItemTypeService {
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM_TYPE', null, tenantId, companyId);
     if (!seriesCode) {
       if (!dto.type_code) {
-        throw new BadRequestException('type_code is required — no number series is configured for item types.');
+        throw new BadRequestException('Enter a Code for this item type — no number series is configured for item types.');
       }
       return dto.type_code.toUpperCase();
     }
@@ -127,7 +127,7 @@ export class ItemTypeService {
     const [itemType] = await this.db
       .select()
       .from(schema.itemTypeMaster)
-      .where(and(eq(schema.itemTypeMaster.item_type_id, id), isNull(schema.itemTypeMaster.deleted_at)))
+      .where(eq(schema.itemTypeMaster.item_type_id, id))
       .limit(1);
 
     if (!itemType) {
@@ -166,25 +166,8 @@ export class ItemTypeService {
   async update(id: string, dto: UpdateItemTypeDto, tenantId: string, userPayload?: any) {
     const itemType = await this.findOne(id);
 
-    // type_code is not sent by the form (UpdateItemTypeDto does not carry it):
-    // it follows the ITEM_TYPE series instead. That series is a named one — the
-    // code is the uppercased type name — so renaming the type recomposes the
-    // code from the new name, refused while any item still carries the old code
-    // (item_master.item_type holds the code string with no foreign key, so a
-    // silent rename would orphan every item filed under it). The rename is the
-    // ONLY writer of type_code here: a caller-supplied dto.type_code cast past
-    // the DTO is ignored, because item.service gates withdrawal_days on the
-    // literal MEDICINE/VACCINE codes and a smuggled rename would silently
-    // disable that food-safety rule.
-    let typeCode: string | undefined;
-    if (dto.type_name !== undefined && dto.type_name.trim() !== itemType.type_name) {
-      typeCode = await this.numberSeriesService.renameCode(
-        'ITEM_TYPE',
-        { ...itemType, type_name: dto.type_name },
-        tenantId,
-        itemType.company_id,
-      );
-    }
+    // type_code is its identity and never changes after create, so a rename of
+    // the type's name leaves the code (and every item filed under it) alone.
 
     // Blocking the row is unchanged: an inactive MEDICINE type is what
     // remove() refuses to allow.
@@ -199,7 +182,6 @@ export class ItemTypeService {
 
     if (dto.code_prefix !== undefined) updates.code_prefix = dto.code_prefix.toUpperCase();
     if (dto.type_name !== undefined) updates.type_name = dto.type_name;
-    if (typeCode !== undefined) updates.type_code = typeCode;
     if (dto.description !== undefined) updates.description = dto.description;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;

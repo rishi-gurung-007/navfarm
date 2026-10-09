@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Feed TDD alignment (spec 2026-10-03): 0141 adds the workbook's columns; 0142
+ * Feed TDD alignment (spec 2026-10-03): 0148 adds the workbook's columns; 0149
  * drops the feed-era columns the workbook does not have. Columns that existed
  * before the feed forecast (silo_reorder_days, feed_wastage_pct) are kept.
  */
@@ -21,15 +21,15 @@ const journal = () =>
     breakpoints: boolean;
   }>;
 
-describe('Tenant migration 0141 — feed TDD alignment (additive)', () => {
-  it('is journalled at idx 141 after 0140', () => {
-    expect(journal().find((e) => e.idx === 141)).toEqual({
-      idx: 141, version: '5', when: 1792000000010, tag: '0141_feed_tdd_alignment', breakpoints: true,
+describe('Tenant migration 0148 — feed TDD alignment (additive)', () => {
+  it('is journalled at idx 148 after 0147', () => {
+    expect(journal().find((e) => e.idx === 148)).toEqual({
+      idx: 148, version: '5', when: 1792000000017, tag: '0148_feed_tdd_alignment', breakpoints: true,
     });
   });
 
   it('adds exactly the workbook columns and nothing destructive', () => {
-    const sql = statements('0141_feed_tdd_alignment');
+    const sql = statements('0148_feed_tdd_alignment');
     expect(sql).toEqual([
       'ALTER TABLE `feed_planning_setting` ADD `safety_stock_kg` decimal(14,2);',
       'ALTER TABLE `feed_planning_setting` ADD `bag_size_kg` decimal(14,2);',
@@ -46,21 +46,21 @@ describe('Tenant migration 0141 — feed TDD alignment (additive)', () => {
 });
 
 /**
- * 0137 created feed_stock_count with columns the service never writes
+ * 0144 created feed_stock_count with columns the service never writes
  * (total_silos NOT NULL …) and without the workflow columns it does write
  * (submitted_by, approved_by, posted_by and their timestamps), so a stock
- * count could not be saved on a freshly migrated tenant. 0142 brings that
+ * count could not be saved on a freshly migrated tenant. 0149 brings that
  * lineage to the shape schema.ts and the service use, without dropping data.
  */
-describe('Tenant migration 0142 — reconcile feed_stock_count with the code', () => {
-  it('is journalled at idx 142', () => {
-    expect(journal().find((e) => e.idx === 142)).toEqual({
-      idx: 142, version: '5', when: 1792000000011, tag: '0142_reconcile_feed_stock_count', breakpoints: true,
+describe('Tenant migration 0149 — reconcile feed_stock_count with the code', () => {
+  it('is journalled at idx 149', () => {
+    expect(journal().find((e) => e.idx === 149)).toEqual({
+      idx: 149, version: '5', when: 1792000000018, tag: '0149_reconcile_feed_stock_count', breakpoints: true,
     });
   });
 
   it('adds the workflow columns and relaxes the unused NOT NULLs, nothing destructive', () => {
-    const sql = statements('0142_reconcile_feed_stock_count');
+    const sql = statements('0149_reconcile_feed_stock_count');
     expect(sql).toEqual([
       'ALTER TABLE `feed_stock_count` ADD `submitted_by` varchar(36);',
       'ALTER TABLE `feed_stock_count` ADD `submitted_at` timestamp;',
@@ -83,15 +83,15 @@ describe('Tenant migration 0142 — reconcile feed_stock_count with the code', (
  * Logistic, 21 Aug 2026; Engine Step 9) — is a child table. Days Remaining is
  * "Displayed to 1 decimal" (Silo Balance row 9), so the INT column widens.
  */
-describe('Tenant migration 0143 — requisition line batch breakdown (additive)', () => {
-  it('is journalled at idx 143 after 0142', () => {
-    expect(journal().find((e) => e.idx === 143)).toEqual({
-      idx: 143, version: '5', when: 1792000000012, tag: '0143_requisition_line_batch', breakpoints: true,
+describe('Tenant migration 0150 — requisition line batch breakdown (additive)', () => {
+  it('is journalled at idx 150 after 0149', () => {
+    expect(journal().find((e) => e.idx === 150)).toEqual({
+      idx: 150, version: '5', when: 1792000000019, tag: '0150_requisition_line_batch', breakpoints: true,
     });
   });
 
   it('creates requisition_line_batch, widens days_remaining, nothing destructive', () => {
-    const sql = statements('0143_requisition_line_batch');
+    const sql = statements('0150_requisition_line_batch');
     expect(sql).toEqual([
       [
         'CREATE TABLE `requisition_line_batch` (',
@@ -127,15 +127,15 @@ describe('Tenant migration 0143 — requisition line batch breakdown (additive)'
  * this amends forward rather than editing it. Widening only — no clamp in the
  * writer, which would silently distort a number the workbook displays.
  */
-describe('Tenant migration 0144 — widen requisition_line.days_remaining range (additive)', () => {
-  it('is journalled at idx 144 after 0143', () => {
-    expect(journal().find((e) => e.idx === 144)).toEqual({
-      idx: 144, version: '5', when: 1792000000013, tag: '0144_widen_requisition_line_days_remaining', breakpoints: true,
+describe('Tenant migration 0151 — widen requisition_line.days_remaining range (additive)', () => {
+  it('is journalled at idx 151 after 0150', () => {
+    expect(journal().find((e) => e.idx === 151)).toEqual({
+      idx: 151, version: '5', when: 1792000000020, tag: '0151_widen_requisition_line_days_remaining', breakpoints: true,
     });
   });
 
   it('widens days_remaining to decimal(10,1), nothing destructive', () => {
-    const sql = statements('0144_widen_requisition_line_days_remaining');
+    const sql = statements('0151_widen_requisition_line_days_remaining');
     expect(sql).toEqual([
       'ALTER TABLE `requisition_line` MODIFY COLUMN `days_remaining` decimal(10,1);',
     ]);
@@ -155,15 +155,15 @@ describe('Tenant migration 0144 — widen requisition_line.days_remaining range 
  * index to include it, since otherwise two stage groups of the same batch
  * feeding the same shed collide on (line_id, batch_id, shed_id).
  */
-describe('Tenant migration 0145 — requisition_line_batch carries the real batch id and its own stage (additive)', () => {
-  it('is journalled at idx 145 after 0144', () => {
-    expect(journal().find((e) => e.idx === 145)).toEqual({
-      idx: 145, version: '5', when: 1792000000014, tag: '0145_requisition_line_batch_stage', breakpoints: true,
+describe('Tenant migration 0152 — requisition_line_batch carries the real batch id and its own stage (additive)', () => {
+  it('is journalled at idx 152 after 0151', () => {
+    expect(journal().find((e) => e.idx === 152)).toEqual({
+      idx: 152, version: '5', when: 1792000000021, tag: '0152_requisition_line_batch_stage', breakpoints: true,
     });
   });
 
   it('adds stage_id and widens the unique index to include it via a safe add-then-swap (MySQL refuses to drop the sole index an existing FK depends on), nothing destructive', () => {
-    const sql = statements('0145_requisition_line_batch_stage');
+    const sql = statements('0152_requisition_line_batch_stage');
     expect(sql).toEqual([
       'ALTER TABLE `requisition_line_batch` ADD COLUMN `stage_id` varchar(36);',
       'ALTER TABLE `requisition_line_batch` ADD CONSTRAINT `requisition_line_batch_stage_id_fk` FOREIGN KEY (`stage_id`) REFERENCES `stage_master`(`stage_id`) ON DELETE set null ON UPDATE no action;',

@@ -179,6 +179,6 @@ describe('FeedForecastTabs navigation copy', () => {
     render(<FeedForecastTabs tab="feed-requisition" onTabChange={() => undefined} />);
     const tabList = screen.getByRole('tablist');
     const tabTexts = Array.from(tabList.querySelectorAll('[role="tab"]')).map((t) => t.textContent);
-    expect(tabTexts).toEqual(['Dashboard', 'Calculation', 'Feed Plan', 'Requisition', 'Physical Stock Count']);
+    expect(tabTexts).toEqual(['Dashboard', 'Calculation', 'Feed Plan', 'Requisition', 'Feed Mill Consolidation', 'Feed Loading Instructions', 'Physical Stock Count']);
   });
 });

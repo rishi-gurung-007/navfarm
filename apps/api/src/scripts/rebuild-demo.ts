@@ -17,6 +17,9 @@
  *   pnpm nx run api:db-rebuild-demo -- --apply                  # rebuild for real
  *   pnpm nx run api:db-rebuild-demo -- --apply --skip-reset     # reseed masters onto the existing schema
  *   pnpm nx run api:db-rebuild-demo -- --apply --chapters-only  # only re-post the demo chapters
+ *   pnpm nx run api:db-rebuild-demo -- --apply --volume=light   # rebuild with the small dataset
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=small   # two farms, light volume
+ *   pnpm nx run api:db-reset-seed                               # the same, as the one-command reset (also `pnpm seed`)
  */
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
@@ -114,13 +117,31 @@ export const MASTER_STEPS: Step[] = [
 // correct here; the guard's value is preserved for direct invocations.
 const CHAPTERS_STEP: Step = { label: 'Post demo operational chapters (Task 2)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing'] };
 
-export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean }): Step[] {
+/**
+ * The small preset (`--preset=small`, `pnpm seed`): the two real Triple C farms the chapters are
+ * written around, at the light volume, with their stock and registered animals but no batches or
+ * schedulers. The four-farm feed fixture is swapped for the role-structured
+ * sheds those chapters need (gilt, dry sow, farrowing, weaner, grower, finisher, boar houses with
+ * silos, pens and lifecycle stages), restricted to these farms through DEMO_FARMS.
+ */
+export const SMALL_PRESET = { farms: 'MUL100,POR100', volume: 'light' } as const;
+const FOUR_FARM_STEP_SCRIPT = 'seed-four-farm-feed-demo.ts';
+const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and lifecycles for the small preset farms', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
+
+export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string }): Step[] {
+  // --volume=<full|standard|light> sizes the chapters' data; left out, the chapters use their own default.
+  // The small preset seeds no batches or schedulers (`--no-batches`): the person using the app creates them.
+  const extra = [...(opts.volume ? [`--volume=${opts.volume}`] : []), ...(opts.preset === 'small' ? ['--no-batches'] : [])];
+  const chapters: Step = extra.length ? { ...CHAPTERS_STEP, args: [...CHAPTERS_STEP.args, ...extra] } : CHAPTERS_STEP;
   // --chapters-only means exactly that: skip the reset and every master step,
   // and only re-post the chapters onto whatever masters already exist.
-  if (opts.chaptersOnly) return [CHAPTERS_STEP];
+  if (opts.chaptersOnly) return [chapters];
   const steps: Step[] = [];
   if (!opts.skipReset) steps.push(RESET_STEP);
-  steps.push(...MASTER_STEPS, CHAPTERS_STEP);
+  const masters = opts.preset === 'small'
+    ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? SMALL_FARM_STEP : step))
+    : MASTER_STEPS;
+  steps.push(...masters, chapters);
   return steps;
 }
 
@@ -201,8 +222,12 @@ async function main() {
   // MySQL. Everything below assumes that guarantee already holds.
   assertSafeRebuildTarget(process.env, []);
 
-  const { apply, chaptersOnly, skipReset } = parseRebuildArgs(process.argv.slice(2));
-  const plan = buildPlan({ chaptersOnly, skipReset });
+  const args = parseRebuildArgs(process.argv.slice(2));
+  const { apply, chaptersOnly, skipReset } = args;
+  // The preset implies its volume unless one was given, and scopes every child step to its farms.
+  const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
+  if (args.preset === 'small') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 
   // The real target list, derived the same way setup-fresh-database.ts
   // derives it — not a list pre-filtered by the guard's own regex — asserted

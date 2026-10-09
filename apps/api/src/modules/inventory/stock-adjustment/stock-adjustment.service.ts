@@ -54,7 +54,7 @@ export class StockAdjustmentService {
 
   async create(dto: CreateStockAdjustmentDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
     return withTenantTransaction(this.cls, async () => {
       const adjustmentId = randomUUID();
       const adjustmentNo = await this.db.transaction(async (tx) => {
@@ -226,7 +226,7 @@ export class StockAdjustmentService {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
     if (dto.warehouse_id !== undefined) {
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Warehouse');
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
     }
 
     const updates: any = {
@@ -293,7 +293,7 @@ export class StockAdjustmentService {
       }
 
       // Claim the DRAFT -> POSTED transition atomically before writing any
-      // ledger/GL entries — see goods-issue.service.ts's post() for the full
+      // ledger/GL entries — see goods-receipt.service.ts's post() for the full
       // rationale (closes both the double-post race and the "retry after a
       // partial failure duplicates the successful lines" hole).
       const [claim] = await this.db

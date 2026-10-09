@@ -746,7 +746,7 @@ export const uomMaster = mysqlTable('uom_master', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' })
-}, (table) => [ uniqueIndex('uq_uom_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.uom_code) ]);
+}, (table) => [uniqueIndex('uq_uom_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.uom_code)]);
 
 export const itemCategoryMaster = mysqlTable('item_category_master', {
   category_id: varchar('category_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -1016,7 +1016,7 @@ export const uomConversionMaster = mysqlTable('uom_conversion_master', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' })
-}, (table) => [ uniqueIndex('uq_uom_conversion_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.conversion_code) ]);
+}, (table) => [uniqueIndex('uq_uom_conversion_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.conversion_code)]);
 
 export const itemAttributeMaster = mysqlTable('item_attribute_master', {
   attribute_id: varchar('attribute_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -1052,7 +1052,7 @@ export const itemAttributeMaster = mysqlTable('item_attribute_master', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' })
-}, (table) => [ uniqueIndex('uq_item_attribute_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.attribute_code) ]);
+}, (table) => [uniqueIndex('uq_item_attribute_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.attribute_code)]);
 
 export const itemAttributeValues = mysqlTable('item_attribute_values', {
   value_id: varchar('value_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -1085,7 +1085,7 @@ export const speciesMaster = mysqlTable('species_master', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' })
-}, (table) => [ uniqueIndex('uq_species_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.species_code) ]);
+}, (table) => [uniqueIndex('uq_species_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.species_code)]);
 
 export const breedMaster = mysqlTable('breed_master', {
   breed_id: varchar('breed_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -1643,7 +1643,7 @@ export const supplierMaster = mysqlTable('supplier_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_supplier_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.supplier_code) ]);
+}, (table) => [uniqueIndex('uq_supplier_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.supplier_code)]);
 
 export const supplierMasterRelations = relations(supplierMaster, ({ one }) => ({
   company: one(companyMaster, {
@@ -1680,7 +1680,7 @@ export const customerMaster = mysqlTable('customer_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_customer_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.customer_code) ]);
+}, (table) => [uniqueIndex('uq_customer_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.customer_code)]);
 
 export const customerMasterRelations = relations(customerMaster, ({ one }) => ({
   company: one(companyMaster, {
@@ -1891,7 +1891,7 @@ export const activityMaster = mysqlTable('activity_master', {
   default_item_id: varchar('default_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   default_resource_id: varchar('default_resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'restrict' }),
   default_occurrence: varchar('default_occurrence', { length: 10 }), // DAILY, WEEKLY, MONTHLY, ONCE, CUSTOM
-  default_qty_basis: varchar('default_qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  default_qty_basis: varchar('default_qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH
   default_output_basis: varchar('default_output_basis', { length: 20 }), // PER_SOW, PER_PEN, PER_BATCH
   default_kpi_metric: varchar('default_kpi_metric', { length: 50 }),
   default_capture_per: varchar('default_capture_per', { length: 20 }), // AVERAGE, TOTAL, PER_HEAD
@@ -1932,7 +1932,7 @@ export const diseaseMaster = mysqlTable('disease_master', {
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
   extension_config: json('extension_config')
-}, (table) => [ uniqueIndex('uq_disease_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.disease_code) ]);
+}, (table) => [uniqueIndex('uq_disease_master_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.disease_code)]);
 
 export const diseaseMasterRelations = relations(diseaseMaster, ({ one }) => ({
   company: one(companyMaster, {
@@ -2431,7 +2431,7 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   // company_id is direct now rather than inherited through the breed, so the
   // scope key carries it the same way the other 22 masters do.
-}, (table) => [ uniqueIndex('uq_breed_lifecycle_stages_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.lifecycle_code) ]);
+}, (table) => [uniqueIndex('uq_breed_lifecycle_stages_scope_code').on(table.tenant_id, sql`(coalesce(${table.company_id}, ''))`, table.lifecycle_code)]);
 
 // no_series_master was dropped 2026-09-23 (migration 0112) once the
 // no_series_master -> no_series consolidation (docs/decisions.md) moved every
@@ -2553,7 +2553,7 @@ export const batchInputLine = mysqlTable('batch_input_line', {
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
 }, (table) => ({
   batchFk: foreignKey({
     columns: [table.batch_id],
@@ -3064,7 +3064,7 @@ export const schedulerLine = mysqlTable('scheduler_line', {
   // when auto-generated, but the TDD explicitly wants this writable afterward.
   item_description: varchar('item_description', { length: 200 }),
   standard_qty: decimal('standard_qty', { precision: 18, scale: 6 }),
-  qty_basis: varchar('qty_basis', { length: 20 }), // PER_HEAD, TOTAL_BATCH, PER_PEN, FIXED
+  qty_basis: varchar('qty_basis', { length: 20 }), // PER_HEAD (standard x animals), TOTAL_BATCH (the standard is the whole stage's)
   allow_qty_edit: boolean('allow_qty_edit').default(true).notNull(),
   lot_required: boolean('lot_required').default(false).notNull(),
   creates_inventory: boolean('creates_inventory').default(false).notNull(), // OUTPUT only
@@ -3639,12 +3639,15 @@ export const feedAlert = mysqlTable('feed_alert', {
 // are made via new offsetting entries, matching standard ERP ledger practice.
 export const inventoryLedger = mysqlTable('inventory_ledger', {
   ledger_id: varchar('ledger_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  // Readable Entry No. (1, 2, 3 ...) per tenant, assigned by the trg_inventory_ledger_entry_no
+  // trigger on insert (migration 0139); leave it out of inserts. ledger_id stays the internal key.
+  entry_no: bigint('entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
-  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   item_code: varchar('item_code', { length: 255 }).notNull(), // denormalized snapshot at posting time
   item_description: varchar('item_description', { length: 200 }).notNull(),
-  document_type: varchar('document_type', { length: 30 }).notNull(), // GOODS_RECEIPT, GOODS_ISSUE, TRANSFER, ADJUSTMENT
+  document_type: varchar('document_type', { length: 30 }).notNull(), // GOODS_RECEIPT, TRANSFER, ADJUSTMENT, BATCH (older rows may hold GOODS_ISSUE)
   document_no: varchar('document_no', { length: 50 }).notNull(),
   document_line_id: varchar('document_line_id', { length: 36 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
@@ -3659,7 +3662,7 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
   expiry_date: date('expiry_date', { mode: 'string' }),
   batch_no: varchar('batch_no', { length: 50 }), // denormalized from batch_header.batch_no (Phase 5) for query convenience
   location_id: varchar('location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
@@ -3688,6 +3691,9 @@ export const inventoryApplication = mysqlTable('inventory_application', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   inbound_ledger_id: varchar('inbound_ledger_id', { length: 36 }).notNull(),
   outbound_ledger_id: varchar('outbound_ledger_id', { length: 36 }).notNull(),
+  // Entry Nos. of the two ledger rows, filled by trg_inventory_application_entry_no on insert.
+  inbound_entry_no: bigint('inbound_entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
+  outbound_entry_no: bigint('outbound_entry_no', { mode: 'number', unsigned: true }).notNull().default(0),
   applied_qty: decimal('applied_qty', { precision: 18, scale: 4 }).notNull(),
   applied_cost_amount: decimal('applied_cost_amount', { precision: 18, scale: 4 }).notNull(),
   application_date: date('application_date', { mode: 'string' }).notNull(),
@@ -3705,6 +3711,24 @@ export const inventoryApplication = mysqlTable('inventory_application', {
     name: 'inv_app_outbound_ledger_fk'
   }).onDelete('restrict'),
 }));
+
+// The lots (and serials) one ledger entry physically issued from — an entry that took 36 kg over two lots has
+// one row in inventory_ledger and two lines here. Written with the entry, never edited (a reversal writes
+// opposite lines). Quantity carries the entry's sign. See migration 0141.
+export const inventoryLedgerLine = mysqlTable('inventory_ledger_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  ledger_id: varchar('ledger_id', { length: 36 }).notNull().references(() => inventoryLedger.ledger_id, { onDelete: 'restrict' }),
+  line_no: int('line_no').notNull(),
+  item_id: varchar('item_id', { length: 36 }).notNull(),
+  warehouse_id: varchar('warehouse_id', { length: 36 }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: text('serial_no'),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  expiry_date: date('expiry_date', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+});
 
 // Living/biological asset value-change log (mortality, growth, fair-value
 // adjustments, transformation). Auto-written by BIO_ASSET batch lifecycle
@@ -3783,7 +3807,7 @@ export const goodsReceiptLine = mysqlTable('goods_receipt_line', {
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
   expiry_date: date('expiry_date', { mode: 'string' }),
   remarks: varchar('remarks', { length: 500 }),
 });
@@ -3821,7 +3845,6 @@ export const animalRegister = mysqlTable('animal_register', {
   source_batch_id: varchar('source_batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   rfid_tag: varchar('rfid_tag', { length: 50 }),
-  ear_tag: varchar('ear_tag', { length: 50 }),
   ear_tag_image_url: varchar('ear_tag_image_url', { length: 500 }), // URL only for now; direct upload moves to Cloudflare R2 later
   sire_animal_id: varchar('sire_animal_id', { length: 36 }),
   dam_animal_id: varchar('dam_animal_id', { length: 36 }),
@@ -3832,7 +3855,6 @@ export const animalRegister = mysqlTable('animal_register', {
   sire_serial_no: varchar('sire_serial_no', { length: 100 }),
   dam_serial_no: varchar('dam_serial_no', { length: 100 }),
   acquisition_cost: decimal('acquisition_cost', { precision: 18, scale: 4 }).notNull(),
-  landing_cost: decimal('landing_cost', { precision: 18, scale: 4 }),
   total_opening_asset_value: decimal('total_opening_asset_value', { precision: 18, scale: 4 }).notNull(), // CALC at create
   current_stage_id: varchar('current_stage_id', { length: 36 }),
   current_batch_id: varchar('current_batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
@@ -3853,7 +3875,6 @@ export const animalRegister = mysqlTable('animal_register', {
   no_of_teats: int('no_of_teats'),
   tsi: decimal('tsi', { precision: 10, scale: 2 }),
   grading: varchar('grading', { length: 20 }),
-  serial_number: varchar('serial_number', { length: 50 }),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(), // ACTIVE, QUARANTINE, SICK, PREGNANT, LACTATING, DRY, CULLED, DEAD, SOLD, SLAUGHTERED
   disposal_date: date('disposal_date', { mode: 'string' }),
   disposal_type: varchar('disposal_type', { length: 20 }), // SOLD, SLAUGHTERED, DIED, TRANSFERRED
@@ -4002,46 +4023,6 @@ export const goodsReceiptLineRelations = relations(goodsReceiptLine, ({ one }) =
   item: one(itemMaster, { fields: [goodsReceiptLine.item_id], references: [itemMaster.item_id] }),
 }));
 
-export const goodsIssue = mysqlTable('goods_issue', {
-  issue_id: varchar('issue_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
-  issue_no: varchar('issue_no', { length: 50 }).notNull(),
-  posting_date: date('posting_date', { mode: 'string' }).notNull(),
-  warehouse_id: varchar('warehouse_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
-  cost_center_id: varchar('cost_center_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'restrict' }),
-  remarks: text('remarks'),
-  status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
-  posted_at: timestamp('posted_at', { mode: 'string' }),
-  posted_by: varchar('posted_by', { length: 36 }),
-  created_by: varchar('created_by', { length: 36 }),
-  updated_by: varchar('updated_by', { length: 36 }),
-  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
-  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
-  deleted_at: timestamp('deleted_at', { mode: 'string' }),
-}, (table) => [
-  // Defense in depth alongside the row-locked generator in goods-issue.service.ts —
-  // a duplicate issue_no under concurrent inserts fails loudly instead of
-  // silently corrupting the document sequence.
-  uniqueIndex('uq_goods_issue_tenant_company_no').on(table.tenant_id, table.company_id, table.issue_no),
-]);
-
-export const goodsIssueLine = mysqlTable('goods_issue_line', {
-  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
-  issue_id: varchar('issue_id', { length: 36 }).notNull().references(() => goodsIssue.issue_id, { onDelete: 'cascade' }),
-  line_no: int('line_no').notNull(),
-  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
-  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
-  uom: varchar('uom', { length: 20 }).notNull(),
-  // Which receipt layer this consumption draws down — required at post() when
-  // item_master.is_lot_tracked/is_serial_tracked says so (inventory-ledger.service.ts
-  // assertTracking()), so the lot/serial travels onto the inventory_ledger row the
-  // way it already does for goods_receipt_line.
-  lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
-  remarks: varchar('remarks', { length: 500 }),
-});
-
 export const stockTransfer = mysqlTable('stock_transfer', {
   transfer_id: varchar('transfer_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
@@ -4083,7 +4064,7 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
-  // Same tracking contract as goods_issue_line — carried from the shipment leg
+  // Same tracking contract as stock transfer line — carried from the shipment leg
   // onto the receipt leg (the receipt copies what the shipment consumed) so a lot/serial doesn't lose
   // its identity crossing warehouses.
   lot_no: varchar('lot_no', { length: 50 }),
@@ -4175,7 +4156,8 @@ export const transferReceiptLine = mysqlTable('transfer_receipt_line', {
   uom: varchar('uom', { length: 20 }).notNull(),
   // Copied from the shipment line (spec: receipt copies from shipment).
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
+  remarks: text('remarks'),
 });
 
 export const stockAdjustment = mysqlTable('stock_adjustment', {
@@ -4211,7 +4193,7 @@ export const stockAdjustmentLine = mysqlTable('stock_adjustment_line', {
   uom: varchar('uom', { length: 20 }).notNull(),
   rate: decimal('rate', { precision: 18, scale: 6 }), // required only when quantity is positive (validated at DTO level)
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
   remarks: varchar('remarks', { length: 500 }),
 }, (table) => ({
   adjustmentFk: foreignKey({
@@ -4219,18 +4201,6 @@ export const stockAdjustmentLine = mysqlTable('stock_adjustment_line', {
     foreignColumns: [stockAdjustment.adjustment_id],
     name: 'stock_adj_line_adjustment_id_fk'
   }).onDelete('cascade'),
-}));
-
-export const goodsIssueRelations = relations(goodsIssue, ({ one, many }) => ({
-  company: one(companyMaster, { fields: [goodsIssue.company_id], references: [companyMaster.company_id] }),
-  warehouse: one(locationMaster, { fields: [goodsIssue.warehouse_id], references: [locationMaster.location_id] }),
-  costCenter: one(costCenterMaster, { fields: [goodsIssue.cost_center_id], references: [costCenterMaster.cost_center_id] }),
-  lines: many(goodsIssueLine),
-}));
-
-export const goodsIssueLineRelations = relations(goodsIssueLine, ({ one }) => ({
-  issue: one(goodsIssue, { fields: [goodsIssueLine.issue_id], references: [goodsIssue.issue_id] }),
-  item: one(itemMaster, { fields: [goodsIssueLine.item_id], references: [itemMaster.item_id] }),
 }));
 
 export const stockTransferRelations = relations(stockTransfer, ({ one, many }) => ({

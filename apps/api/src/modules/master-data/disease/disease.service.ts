@@ -9,6 +9,7 @@ import { CreateDiseaseDto, UpdateDiseaseDto, QueryDiseaseDto } from './dto/disea
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -40,7 +41,7 @@ export class DiseaseService {
     const seriesCode = await this.numberSeriesService.resolveSeriesFor('DISEASE', null, tenantId, dto.company_id);
     if (!seriesCode) {
       if (!dto.disease_code) {
-        throw new BadRequestException('disease_code is required — no number series is configured for diseases.');
+        throw new BadRequestException('Enter a Code for this disease — no number series is configured for diseases.');
       }
       return dto.disease_code.toUpperCase();
     }
@@ -124,7 +125,7 @@ export class DiseaseService {
     const [disease] = await this.db
       .select()
       .from(schema.diseaseMaster)
-      .where(and(eq(schema.diseaseMaster.disease_id, id), isNull(schema.diseaseMaster.deleted_at)))
+      .where(eq(schema.diseaseMaster.disease_id, id))
       .limit(1);
 
     if (!disease) {
@@ -164,6 +165,7 @@ export class DiseaseService {
   async update(id: string, dto: UpdateDiseaseDto, tenantId: string, userPayload?: any) {
     const disease = await this.findOne(id);
 
+    assertCodeUnchanged('Disease', disease.disease_code, dto.disease_code);
     if (dto.disease_code && dto.disease_code.toUpperCase() !== disease.disease_code) {
       const existing = await this.db
         .select()

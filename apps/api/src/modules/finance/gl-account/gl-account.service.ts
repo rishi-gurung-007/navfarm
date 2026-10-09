@@ -10,6 +10,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -103,7 +104,7 @@ export class GlAccountService {
   /** No series configured for GL_ACCOUNT[_<type>] — manual entry, exactly as before this feature existed. */
   private async createManual(dto: CreateGlAccountDto, tenantId: string, userPayload?: any) {
     if (!dto.account_code) {
-      throw new BadRequestException('account_code is required — no number series is configured for G/L accounts.');
+      throw new BadRequestException('Enter a Code for this G/L account — no number series is configured for G/L accounts.');
     }
 
     // Check unique account code in this company
@@ -278,6 +279,7 @@ export class GlAccountService {
   async update(id: string, dto: UpdateGlAccountDto, tenantId: string, userPayload?: any) {
     const account = await this.findOne(id);
 
+    assertCodeUnchanged('G/L account', account.account_code, dto.account_code);
     if (dto.account_code && dto.account_code !== account.account_code) {
       const existing = await this.db
         .select()

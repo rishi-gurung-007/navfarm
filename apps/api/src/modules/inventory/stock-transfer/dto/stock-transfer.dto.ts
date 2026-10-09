@@ -42,6 +42,26 @@ export class StockTransferLineInput {
   @IsOptional()
   serial_no?: string;
 
+  @ApiProperty({ description: 'Planned shipment date (YYYY-MM-DD)', required: false })
+  @IsDateString()
+  @IsOptional()
+  shipment_date?: string;
+
+  @ApiProperty({ description: 'Planned receipt date (YYYY-MM-DD)', required: false })
+  @IsDateString()
+  @IsOptional()
+  receipt_date?: string;
+
+  @ApiProperty({ description: 'Unit cost estimate', required: false })
+  @IsNumber()
+  @IsOptional()
+  unit_cost?: number;
+
+  @ApiProperty({ description: 'Line total amount', required: false })
+  @IsNumber()
+  @IsOptional()
+  amount?: number;
+
   @ApiProperty({ description: 'Line remarks', required: false })
   @IsString()
   @IsOptional()
@@ -59,12 +79,12 @@ export class CreateStockTransferDto {
   @IsNotEmpty()
   company_id: string;
 
-  @ApiProperty({ description: 'Source warehouse UUID' })
+  @ApiProperty({ description: 'Source location UUID' })
   @IsUUID()
   @IsNotEmpty()
   from_warehouse_id: string;
 
-  @ApiProperty({ description: 'Destination warehouse UUID' })
+  @ApiProperty({ description: 'Destination location UUID' })
   @IsUUID()
   @IsNotEmpty()
   to_warehouse_id: string;
@@ -214,10 +234,25 @@ export class QueryStockTransferDto {
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'POSTED', 'CANCELLED'] })
+  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'POSTED', 'CANCELLED'] })
   @IsOptional()
   @IsString()
   status?: string;
+
+  @ApiProperty({ description: 'Filter by transfer direction relative to active farm scope', required: false, enum: ['OUTBOUND', 'INBOUND', 'ALL'] })
+  @IsOptional()
+  @IsString()
+  direction?: 'OUTBOUND' | 'INBOUND' | 'ALL';
+
+  @ApiProperty({ description: 'Filter by source location UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  fromWarehouseId?: string;
+
+  @ApiProperty({ description: 'Filter by destination location UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  toWarehouseId?: string;
 
   @ApiProperty({ description: 'Search transfer no.', required: false })
   @IsOptional()
@@ -238,3 +273,139 @@ export class QueryStockTransferDto {
   @Min(0)
   offset?: number;
 }
+
+export class ReceiveStockTransferLineInput {
+  @ApiProperty({ description: 'Transfer Order Line UUID' })
+  @IsUUID()
+  @IsNotEmpty()
+  line_id: string;
+
+  @ApiProperty({ description: 'Received good quantity', example: 20 })
+  @IsNumber()
+  @Min(0)
+  @IsNotEmpty()
+  received_quantity: number;
+
+  @ApiProperty({ description: 'DOA (Dead on Arrival) / damaged transit waste quantity', example: 4, required: false })
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  doa_quantity?: number;
+
+  @ApiProperty({ description: 'DOA reason code or remarks', required: false })
+  @IsString()
+  @IsOptional()
+  doa_remarks?: string;
+
+  @ApiProperty({ description: 'Line inspection / discrepancy remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+
+  @ApiProperty({ description: 'Actual receipt date (YYYY-MM-DD)', required: false })
+  @IsDateString()
+  @IsOptional()
+  receipt_date?: string;
+}
+
+export class ReceiveStockTransferDto {
+  @ApiProperty({ description: 'Receipt posting date', example: '2026-08-06', required: false })
+  @IsDateString()
+  @IsOptional()
+  posting_date?: string;
+
+  @ApiProperty({ description: 'Receipt remarks / condition of goods', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+
+  @ApiProperty({ description: 'Lines with received quantities', type: [ReceiveStockTransferLineInput], required: false })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReceiveStockTransferLineInput)
+  @IsOptional()
+  lines?: ReceiveStockTransferLineInput[];
+}
+
+export class ShipStockTransferLineInput {
+  @ApiProperty({ description: 'Transfer Order Line UUID', required: false })
+  @IsUUID()
+  @IsOptional()
+  line_id?: string;
+
+  @ApiProperty({ description: 'Item UUID', required: false })
+  @IsString()
+  @IsOptional()
+  item_id?: string;
+
+  @ApiProperty({ description: 'Quantity to ship', example: 20 })
+  @IsNumber()
+  @IsPositive()
+  @IsNotEmpty()
+  quantity: number;
+
+  @ApiProperty({ description: 'Unit of measure code', required: false })
+  @IsString()
+  @IsOptional()
+  uom?: string;
+
+  @ApiProperty({ description: 'Lot number', required: false })
+  @IsString()
+  @IsOptional()
+  lot_no?: string;
+
+  @ApiProperty({ description: 'Serial number', required: false })
+  @IsString()
+  @IsOptional()
+  serial_no?: string;
+
+  @ApiProperty({ description: 'Shipment date (YYYY-MM-DD)', required: false })
+  @IsDateString()
+  @IsOptional()
+  shipment_date?: string;
+
+  @ApiProperty({ description: 'Expected receipt date (YYYY-MM-DD)', required: false })
+  @IsDateString()
+  @IsOptional()
+  receipt_date?: string;
+
+  @ApiProperty({ description: 'Line remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+}
+
+export class ShipStockTransferDto {
+  @ApiProperty({ description: 'Shipment posting date', example: '2026-08-06', required: false })
+  @IsDateString()
+  @IsOptional()
+  posting_date?: string;
+
+  @ApiProperty({ description: 'Vehicle / truck number', required: false })
+  @IsString()
+  @IsOptional()
+  vehicle_no?: string;
+
+  @ApiProperty({ description: 'Driver name', required: false })
+  @IsString()
+  @IsOptional()
+  driver_name?: string;
+
+  @ApiProperty({ description: 'Waybill reference', required: false })
+  @IsString()
+  @IsOptional()
+  waybill_ref?: string;
+
+  @ApiProperty({ description: 'Shipping remarks or notes', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+
+  @ApiProperty({ description: 'Lines with quantities to ship', type: [ShipStockTransferLineInput], required: false })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ShipStockTransferLineInput)
+  @IsOptional()
+  lines?: ShipStockTransferLineInput[];
+}
+

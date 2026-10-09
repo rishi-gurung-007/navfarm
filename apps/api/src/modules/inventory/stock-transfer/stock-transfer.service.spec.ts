@@ -43,6 +43,7 @@ describe('StockTransferService', () => {
   // a collaborator whose call StockTransferService is responsible for
   // making, with the right arguments, before its own capacity check runs.
   const mockAssertCanReceive = jest.fn();
+  const mockWriteNegativeEntry = jest.fn().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
 
   /** Awaitable at any point, so .where(), .limit() and .offset() all resolve. */
   const chain = (result: unknown[]) => {
@@ -91,6 +92,7 @@ describe('StockTransferService', () => {
     mockResolveConversionFactor.mockReset().mockResolvedValue(1);
     // Accepts by default; a test that cares about a refusal overrides it.
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
+    mockWriteNegativeEntry.mockReset().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
     mockDbInsert.mockImplementation((table: unknown) => ({
       values: jest.fn(async (v: any) => {
@@ -115,7 +117,19 @@ describe('StockTransferService', () => {
         StockTransferService,
         { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-        { provide: InventoryLedgerService, useValue: { transferShipmentRemainingValue: jest.fn().mockResolvedValue(0), writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }), writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }), transferShipmentRate: jest.fn().mockResolvedValue(2.5), getStockBalance: mockGetStockBalance } },
+        {
+          provide: InventoryLedgerService,
+          useValue: {
+            writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
+            getStockBalance: mockGetStockBalance,
+            writeNegativeEntry: mockWriteNegativeEntry,
+            writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'led-2' }),
+            transferShipmentRemainingValue: jest.fn().mockResolvedValue(0),
+            writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
+            writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
+            transferShipmentRate: jest.fn().mockResolvedValue(2.5),
+          },
+        },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
         { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
         { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
@@ -284,7 +298,7 @@ describe('StockTransferService', () => {
   describe('farm scope', () => {
     const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
 
-    it('lists only transfers touching a warehouse on the active farm', async () => {
+    it('lists only transfers touching a location on the active farm', async () => {
       useFarmScope(cls, grasmere);
       await service.findAll({} as any, 'tenant-1');
       expect(renderedWhere()).toContain('location_master lf');
@@ -303,21 +317,21 @@ describe('StockTransferService', () => {
       expect(renderedWhere()).toContain('`stock_transfer`.`company_id` = ?');
     });
 
-    it('refuses transferring from a source warehouse on another farm', async () => {
+    it('refuses transferring from a source location on another farm', async () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
       await expect(service.create({ ...validTransferDto, from_warehouse_id: 'store-k' } as any, 'tenant-1'))
-        .rejects.toThrow('Source warehouse is not on your active farm.');
+        .rejects.toThrow('Source location is not on your active farm.');
     });
 
-    it('refuses a destination warehouse outside the active company even for a farm transfer', async () => {
+    it('refuses a destination location outside the active company even for a farm transfer', async () => {
       useFarmScope(cls, grasmere);
       mockDbSelect
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
 
       await expect(service.create(validTransferDto as any, 'tenant-1'))
-        .rejects.toThrow('Destination warehouse is not on your active farm.');
+        .rejects.toThrow('Destination location is not on your active farm.');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -333,7 +347,7 @@ describe('StockTransferService', () => {
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
 
       await expect(service.post('tr-1', 'tenant-1'))
-        .rejects.toThrow('Destination warehouse is not on your active farm.');
+        .rejects.toThrow('Destination location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
@@ -353,7 +367,7 @@ describe('StockTransferService', () => {
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-other', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
 
       await expect(service.update('tr-1', { to_warehouse_id: 'wh-other' } as any, 'tenant-1'))
-        .rejects.toThrow('Destination warehouse is not on your active farm.');
+        .rejects.toThrow('Destination location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -386,28 +400,28 @@ describe('StockTransferService', () => {
       expect(forCalls).toContain('update');
     };
 
-    it('post loads the transfer by its source warehouse, locked', async () => {
+    it('post loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow("Stock Transfer with ID 'tr-1' not found.");
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('update loads the transfer by its source warehouse, locked', async () => {
+    it('update loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.update('tr-1', { remarks: 'x' } as any, 'tenant-1')).rejects.toThrow("Stock Transfer with ID 'tr-1' not found.");
+      await expect(service.update('tr-1', { remarks: 'x' } as any, 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('remove loads the transfer by its source warehouse, locked', async () => {
+    it('remove loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.remove('tr-1', 'tenant-1')).rejects.toThrow("Stock Transfer with ID 'tr-1' not found.");
+      await expect(service.remove('tr-1', 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('post checks the source warehouse against the active farm, not only the company', async () => {
+    it('post checks the source location against the active farm, not only the company', async () => {
       // The draft is reachable (say, by an admin without a farm selected
       // earlier) but its source now sits on Kintyre. post() used to check the
       // source with farmId: null and let a Grasmere user drain it.
@@ -421,11 +435,11 @@ describe('StockTransferService', () => {
         from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
       });
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow('Source warehouse is not on your active farm.');
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow('Source location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
-    it('update re-validates an unchanged source warehouse', async () => {
+    it('update re-validates an unchanged source location', async () => {
       // Only lines change in the body; the source must still be the editor's.
       useFarmScope(cls, grasmere);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
@@ -441,7 +455,7 @@ describe('StockTransferService', () => {
         });
 
       await expect(service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 999, uom: 'KG' }] } as any, 'tenant-1'))
-        .rejects.toThrow('Source warehouse is not on your active farm.');
+        .rejects.toThrow('Source location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -492,7 +506,7 @@ describe('StockTransferService', () => {
       const result = await service.remove('tr-1', 'tenant-1', { userId: 'u-1' } as any);
 
       expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED' }));
-      expect(result).toEqual({ success: true, message: "Stock Transfer 'TR-000001' has been cancelled." });
+      expect(result).toEqual({ success: true, message: "Transfer Order 'TR-000001' has been cancelled." });
     });
 
     it('update() still edits a DRAFT with no events', async () => {
@@ -747,7 +761,7 @@ describe('StockTransferService', () => {
         draft([{ line_id: 'ln-1', item_id: 'item-starter', quantity: '10', uom: 'KG' }]) as any,
       );
       mockAssertCanReceive.mockRejectedValue(new Error(
-        "Cannot post this Stock Transfer — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
+        "Cannot post this Transfer Order — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
       ));
 
       await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
@@ -755,7 +769,7 @@ describe('StockTransferService', () => {
       // The item rules ran before the capacity balances were even fetched.
       expect(mockAssertCanReceive).toHaveBeenCalledWith({
         siloId: 'silo-1', siloName: 'Feed Silo 01', companyId: 'co-1', tenantId: 'tenant-1',
-        itemIds: ['item-starter'], documentLabel: 'Stock Transfer',
+        itemIds: ['item-starter'], documentLabel: 'Transfer Order',
       });
     });
 
@@ -767,7 +781,7 @@ describe('StockTransferService', () => {
         ]) as any,
       );
       mockAssertCanReceive.mockRejectedValue(new Error(
-        "Cannot post this Stock Transfer — silo 'Feed Silo 01' holds one feed item at a time and this transfer carries 2 different items.",
+        "Cannot post this Transfer Order — silo 'Feed Silo 01' holds one feed item at a time and this transfer carries 2 different items.",
       ));
 
       await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
@@ -798,6 +812,261 @@ describe('StockTransferService', () => {
 
       await expect(service.post('tr-1', 'tenant-1')).resolves.toBeDefined();
       expect(mockGetStockBalance).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('two-step transfer (ship and receive)', () => {
+    const getTransferDraft = () => ({
+      transfer_id: 'tr-1',
+      transfer_no: 'TR-000001',
+      company_id: 'co-1',
+      from_warehouse_id: 'wh-1',
+      to_warehouse_id: 'wh-2',
+      status: 'DRAFT',
+      posting_date: '2026-10-03',
+      lines: [{ line_id: 'ln-1', line_no: 1, item_id: 'item-1', quantity: '50', uom: 'KG' }],
+    });
+
+    it('refuses shipment if available stock is less than requested quantity', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      mockGetStockBalance.mockResolvedValue([
+        { item_id: 'item-1', uom: 'KG', on_hand_qty: 20 },
+      ]);
+
+      await expect(service.ship('tr-1', 'tenant-1')).rejects.toThrow(/source location has 20 KG available, but 50 KG was requested/);
+    });
+
+    it('ships transfer successfully and transitions status to IN_TRANSIT', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      mockGetStockBalance.mockResolvedValue([
+        { item_id: 'item-1', uom: 'KG', on_hand_qty: 100 },
+      ]);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      const result = await service.ship('tr-1', 'tenant-1');
+      expect(result.status).toBe('IN_TRANSIT');
+    });
+
+    it('ships transfer with ShipStockTransferDto including partial quantities and logistics info', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      mockGetStockBalance.mockResolvedValue([
+        { item_id: 'item-1', lot_no: 'LOT-99', uom: 'KG', on_hand_qty: 100 },
+      ]);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      const result = await service.ship(
+        'tr-1',
+        {
+          vehicle_no: 'TRK-9901',
+          driver_name: 'John Moyo',
+          waybill_ref: 'WB-2026-001',
+          lines: [{ item_id: 'item-1', quantity: 30, lot_no: 'LOT-99' }],
+        },
+        'tenant-1',
+      );
+      expect(result.status).toBe('IN_TRANSIT');
+    });
+
+    it('refuses to receive a transfer that is not in IN_TRANSIT status', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'DRAFT' } as any);
+
+      await expect(service.receive('tr-1', {}, 'tenant-1')).rejects.toThrow(/is DRAFT, expected 'IN_TRANSIT'/);
+    });
+
+    it('refuses receipt when received quantity exceeds shipped quantity', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      await expect(
+        service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 60 }] }, 'tenant-1'),
+      ).rejects.toThrow(/Received quantity \(60\) cannot exceed shipped quantity \(50\)/);
+    });
+
+    it('receives transfer successfully and transitions status to RECEIVED', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      const result = await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 50 }] }, 'tenant-1');
+      expect(result.status).toBe('RECEIVED');
+    });
+
+    it('receives transfer with DOA quantity, auto-adjusts transit mortality, and marks order as RECEIVED', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      const result = await service.receive(
+        'tr-1',
+        {
+          lines: [
+            {
+              line_id: 'ln-1',
+              received_quantity: 46,
+              doa_quantity: 4,
+              doa_remarks: '4 pigs dead on arrival during transport',
+            },
+          ],
+        },
+        'tenant-1',
+      );
+      expect(result.status).toBe('RECEIVED');
+      expect(mockWriteNegativeEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quantity: 4,
+          transactionType: 'VARIANCE_NEGATIVE',
+          documentType: 'STOCK_ADJUSTMENT',
+        }),
+      );
+    });
+
+    it('correctly calculates remaining 400 qty when 600 of 1000 is shipped (partial shipment)', async () => {
+      const order1000 = {
+        ...getTransferDraft(),
+        lines: [
+          {
+            line_id: 'ln-1000',
+            line_no: 1,
+            item_id: 'item-1',
+            quantity: 1000,
+            uom: 'KG',
+          },
+        ],
+      };
+
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(order1000 as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      mockGetStockBalance.mockResolvedValue([
+        { item_id: 'item-1', lot_no: 'LOT-1', uom: 'KG', on_hand_qty: 1200 },
+      ]);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      // When shipping 600 of 1000
+      jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([]);
+      jest.spyOn(service, 'findOne').mockImplementation(async () => {
+        // Mock ledger entries after shipping 600
+        const mockLedger = [
+          {
+            document_line_id: 'ln-1000',
+            item_id: 'item-1',
+            transaction_type: 'TRANSFER_SHIPMENT',
+            quantity: -600,
+          },
+        ];
+        const enriched = (service as any).enrichLinesWithQuantities(order1000.lines, mockLedger);
+        return { ...order1000, status: 'IN_TRANSIT', lines: enriched } as any;
+      });
+
+      const result = await service.ship(
+        'tr-1',
+        { lines: [{ line_id: 'ln-1000', quantity: 600 }] },
+        'tenant-1',
+      );
+
+      expect(result.lines[0].quantity).toBe(1000); // Ordered quantity preserved
+      expect(result.lines[0].qty_shipped).toBe(600); // 600 shipped
+      expect(result.lines[0].qty_to_ship).toBe(400); // 400 remaining to ship
+      expect(result.lines[0].qty_in_transit).toBe(600); // 600 currently in transit
+    });
+
+    it('correctly isolates good received quantity and DOA quantity on receiver end', () => {
+      const lines = [
+        { line_id: 'ln-feed', item_id: 'item-feed', quantity: '100', remarks: '' },
+      ];
+      const mockLedger = [
+        {
+          document_line_id: 'ln-feed',
+          item_id: 'item-feed',
+          transaction_type: 'TRANSFER_SHIPMENT',
+          quantity: -75,
+        },
+        {
+          document_line_id: 'ln-feed',
+          item_id: 'item-feed',
+          transaction_type: 'TRANSFER_RECEIPT',
+          quantity: 70,
+          external_reference_no: 'DOA:5',
+        },
+        {
+          document_line_id: 'ln-feed',
+          item_id: 'item-feed',
+          transaction_type: 'TRANSFER_RECEIPT',
+          quantity: 5,
+          external_reference_no: 'DOA_IN_TRANSIT',
+        },
+      ];
+
+      const enriched = (service as any).enrichLinesWithQuantities(lines, mockLedger, 'RECEIVED');
+      expect(enriched[0].qty_shipped).toBe(75);
+      expect(enriched[0].qty_received).toBe(70); // Good quantity received
+      expect(enriched[0].qty_doa).toBe(5); // DOA in-transit loss
+      expect(enriched[0].doa_quantity).toBe(5);
+      expect(enriched[0].qty_in_transit).toBe(0); // 75 shipped - (70 good + 5 doa) = 0
+      expect(enriched[0].qty_to_receive).toBe(0);
+    });
+
+    it('refuses to close order when stock is still in transit', async () => {
+      const order = getTransferDraft();
+      jest.spyOn(service as any, 'loadForClose').mockResolvedValue(order as any);
+      jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([
+        { document_line_id: 'ln-1', item_id: 'item-1', transaction_type: 'TRANSFER_SHIPMENT', quantity: -50 },
+      ]);
+
+      await expect(service.close('tr-1', 'tenant-1')).rejects.toThrow(/units are still In Transit/);
+    });
+
+    it('successfully short-closes order when in-transit is zero and remaining balance exists', async () => {
+      const order = getTransferDraft();
+      jest.spyOn(service as any, 'loadForClose').mockResolvedValue(order as any);
+      jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([]);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...order, status: 'RECEIVED' } as any);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
+
+      const closed = await service.close('tr-1', 'tenant-1');
+      expect(closed.status).toBe('RECEIVED');
     });
   });
 });

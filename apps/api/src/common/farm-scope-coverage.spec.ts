@@ -13,12 +13,10 @@ import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-
 import { AnimalMovementLogController } from '../modules/piggery/animal-movement-log/animal-movement-log.controller';
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
-import { GoodsIssueController } from '../modules/inventory/goods-issue/goods-issue.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
 import { InventoryLedgerController } from '../modules/inventory/inventory-ledger/inventory-ledger.controller';
 import { FeedForecastController } from '../modules/inventory/feed-forecast/feed-forecast.controller';
-import { FeedSettingsController } from '../modules/inventory/feed-settings/feed-settings.controller';
 import { FeedAlertController } from '../modules/inventory/feed-alert/feed-alert.controller';
 import { AlertController } from '../modules/production/alert/alert.controller';
 import { MilkController } from '../modules/production/milk/milk.controller';
@@ -31,6 +29,7 @@ import { RequisitionController } from '../modules/procurement/requisition/requis
 import { FeedRequisitionController } from '../modules/procurement/feed-requisition/feed-requisition.controller';
 import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 import { FeedStockCountController } from '../modules/inventory/feed-stock-count/feed-stock-count.controller';
+import { FeedSettingsController } from '../modules/inventory/feed-settings/feed-settings.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -54,8 +53,8 @@ import { FeedStockCountController } from '../modules/inventory/feed-stock-count/
 const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController,
   ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
-  GoodsReceiptController, GoodsIssueController, StockAdjustmentController, StockTransferController,
-  InventoryLedgerController, FeedForecastController, FeedSettingsController, FeedAlertController,
+  GoodsReceiptController, StockAdjustmentController, StockTransferController,
+  InventoryLedgerController, FeedForecastController, FeedAlertController,
   AlertController, MilkController, QcController, QrCodeController,
   BioAssetLedgerController,
   FinancialReportsController,
@@ -64,6 +63,7 @@ const SCOPED = {
   FeedRequisitionController,
   ResourceLedgerController,
   FeedStockCountController,
+  FeedSettingsController,
 };
 
 const EXEMPT: Record<string, string> = {

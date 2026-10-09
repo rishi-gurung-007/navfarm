@@ -187,7 +187,7 @@ export default function AnimalPanel() {
   const [createNobId, setCreateNobId]   = useState("");
   const [createForm, setCreateForm]     = useState<Row>({
     animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10),
-    breed_id: "", item_id: "", acquisition_cost: "", dob: "", ear_tag: "", rfid_tag: "",
+    breed_id: "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "",
     source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE",
   });
 
@@ -369,7 +369,6 @@ export default function AnimalPanel() {
         item_id: createForm.item_id,
         acquisition_cost: Number(createForm.acquisition_cost),
         dob: createForm.dob || undefined,
-        ear_tag: createForm.ear_tag || undefined,
         rfid_tag: createForm.rfid_tag || undefined,
         source_receipt_id: createForm.source_receipt_id || undefined,
         source_batch_id: createForm.source_batch_id || undefined,
@@ -489,7 +488,7 @@ export default function AnimalPanel() {
 
         <Button id="animal-create-btn" size="sm" onClick={() => {
           setCreateNobId("");
-          setCreateForm({ animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10), breed_id: "", item_id: "", acquisition_cost: "", dob: "", ear_tag: "", rfid_tag: "", source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE", lob_id: "" });
+          setCreateForm({ animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10), breed_id: "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "", source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE", lob_id: "" });
           setCreateError("");
           setCreateOpen(true);
         }}>
@@ -510,7 +509,7 @@ export default function AnimalPanel() {
               <TableHead>{t("anpColBreed")}</TableHead>
               <TableHead>{t("anpColStatus")}</TableHead>
               <TableHead>{t("anpColEntryDate")}</TableHead>
-              <TableHead>{t("anpColEarTag")}</TableHead>
+              <TableHead>{t("anpRfidTag")}</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -540,7 +539,7 @@ export default function AnimalPanel() {
                   <StatusBadge status={row.status || "ACTIVE"} label={statusLabel(row.status || "ACTIVE")} />
                 </TableCell>
                 <TableCell style={S.muted}>{formatDate(row.entry_date)}</TableCell>
-                <TableCell style={S.muted}>{row.ear_tag || "—"}</TableCell>
+                <TableCell style={S.muted}>{row.rfid_tag || "—"}</TableCell>
                 <TableCell>
                   <button
                     aria-label={t("anpViewAnimal")}
@@ -665,12 +664,6 @@ export default function AnimalPanel() {
             <input id="ca-dob" type="date" className={inputCls} value={createForm.dob} onChange={(e) => setCreateForm((f) => ({ ...f, dob: e.target.value }))} />
           </div>
 
-          {/* Ear tag */}
-          <div>
-            <label className="nf-label" htmlFor="ca-ear-tag">{t("anpEarTag")}</label>
-            <input id="ca-ear-tag" type="text" className={inputCls} placeholder={t("anpEarTagPlaceholder")} value={createForm.ear_tag} onChange={(e) => setCreateForm((f) => ({ ...f, ear_tag: e.target.value }))} />
-          </div>
-
           {/* RFID */}
           <div>
             <label className="nf-label" htmlFor="ca-rfid">{t("anpRfidTag")}</label>
@@ -776,7 +769,6 @@ export default function AnimalPanel() {
                 [t("anpFieldEntryType"), entryTypeLabel(viewing.entry_type)],
                 [t("anpFieldEntryDate"), formatDate(viewing.entry_date)],
                 [t("anpFieldDateOfBirth"), formatDate(viewing.dob)],
-                [t("anpFieldEarTag"), viewing.ear_tag || "—"],
                 [t("anpFieldRfidTag"), viewing.rfid_tag || "—"],
                 [t("anpFieldAcquisitionCost"), viewing.acquisition_cost ? formatMoney(Number(viewing.acquisition_cost)) : "—"],
                 [t("anpFieldBookValue"), viewing.book_value ? formatMoney(Number(viewing.book_value)) : "—"],

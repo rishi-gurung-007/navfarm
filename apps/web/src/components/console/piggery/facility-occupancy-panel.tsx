@@ -243,7 +243,7 @@ export default function FacilityOccupancyPanel() {
             <div className="max-h-96 overflow-y-auto rounded-[var(--radius-sm)] border" style={S.surface}>
               {locationAnimals.map((a) => (
                 <div key={a.animal_id} className="flex items-center justify-between border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: "var(--border)" }}>
-                  <span className="font-mono font-semibold" style={S.accent}>{a.ear_tag || a.animal_code}</span>
+                  <span className="font-mono font-semibold" style={S.accent}>{a.rfid_tag || a.animal_code}</span>
                   <span style={S.muted}>{a.animal_type}</span>
                   <span style={S.muted}>{a.status}</span>
                 </div>

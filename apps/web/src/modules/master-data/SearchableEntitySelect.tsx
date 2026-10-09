@@ -131,7 +131,7 @@ function SearchableEntityPanel({
   }
 
   return (
-    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? "min-w-[280px]" : ""}`}>
+    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? "min-w-[480px]" : "min-w-[280px]") : ""}`}>
       <div className="relative shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -359,9 +359,10 @@ export function SearchableEntitySelect({
   const selected = options.find((o) => String(o[valueKey]) === String(value));
   const selectedText = selected ? (() => {
     if (getSelectedLabel) return getSelectedLabel(selected);
-    if (!getLabelParts || !columnHeaders?.length) return getLabel(selected);
+    if (!getLabelParts) return getLabel(selected);
 
     const parts = getLabelParts(selected);
+    if (!columnHeaders?.length) return parts[1] || parts[0] || getLabel(selected);
     const normalizedHeaders = columnHeaders.map((header) => header.trim().toLowerCase());
     const codeIndex = normalizedHeaders.findIndex((header) => /\b(code|no\.?|number)\b/.test(header));
     const descriptionIndex = normalizedHeaders.findIndex((header) => /\b(description|desc)\b/.test(header));

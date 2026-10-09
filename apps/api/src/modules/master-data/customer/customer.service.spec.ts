@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CustomerService } from './customer.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 describe('CustomerService', () => {
@@ -13,6 +13,7 @@ describe('CustomerService', () => {
   const mockDbUpdate = jest.fn();
   const mockEnsureCompanySeries = jest.fn();
   const mockGenerateNext = jest.fn();
+  const mockEditedCode = jest.fn();
 
   const mockDb = {
     select: mockDbSelect,
@@ -26,6 +27,7 @@ describe('CustomerService', () => {
     mockDbUpdate.mockReset();
     mockEnsureCompanySeries.mockReset().mockResolvedValue(undefined);
     mockGenerateNext.mockReset().mockResolvedValue('CUS-001');
+    mockEditedCode.mockReset().mockImplementation((_master, supplied) => Promise.resolve(supplied));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -47,6 +49,7 @@ describe('CustomerService', () => {
           useValue: {
             ensureCompanySeries: mockEnsureCompanySeries,
             generateNext: mockGenerateNext,
+            editedCode: mockEditedCode,
           },
         },
       ],
@@ -133,12 +136,28 @@ describe('CustomerService', () => {
   });
 
   describe('update', () => {
-    it('should reject changes to the generated customer code', async () => {
+    it('refuses to change the customer code after it is created', async () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ customer_id: 'c-1', company_id: 'comp-1', customer_code: 'CUS-001' }]) }) }),
       });
 
-      await expect(service.update('c-1', { customer_code: 'CUS-099' }, 'tenant-123')).rejects.toThrow(ConflictException);
+      await expect(service.update('c-1', { customer_code: 'CUS-099' }, 'tenant-123')).rejects.toThrow(BadRequestException);
+      expect(mockEditedCode).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('accepts an update that repeats the stored customer code', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ customer_id: 'c-1', company_id: 'comp-1', customer_code: 'CUS-001' }]) }) }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ customer_id: 'c-1', company_id: 'comp-1', customer_code: 'CUS-001' }]) }) }),
+        });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      const res = await service.update('c-1', { customer_code: 'cus-001' }, 'tenant-123');
+      expect(res.customer_code).toBe('CUS-001');
     });
   });
 });

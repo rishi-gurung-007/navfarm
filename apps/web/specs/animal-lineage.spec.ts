@@ -15,9 +15,9 @@ describe("D42 — Sire and Dam: pick a registered parent, or type what the paper
     expect(field("dam_animal_id")!.entityEndpoint).toBe("/animal?gender=F");
   });
 
-  it("labels a parent by code and tattoo number, so two animals are told apart", () => {
-    expect(field("sire_animal_id")!.entityLabelKeys).toEqual(["animal_code", "ear_tag"]);
-    expect(field("dam_animal_id")!.entityLabelKeys).toEqual(["animal_code", "ear_tag"]);
+  it("labels a parent by code and RFID tag, so two animals are told apart", () => {
+    expect(field("sire_animal_id")!.entityLabelKeys).toEqual(["animal_code", "rfid_tag"]);
+    expect(field("dam_animal_id")!.entityLabelKeys).toEqual(["animal_code", "rfid_tag"]);
   });
 
   it("carries a serial-number field beside each picker, in the Lineage section", () => {

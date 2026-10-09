@@ -27,6 +27,11 @@ export interface DemoContext {
   demoFarms: DemoFarm[];
   /** Which volume profile this run was asked for — `--volume=`, default 'standard'. */
   volume: VolumeProfileName;
+  /**
+   * False for the small seed (`--no-batches`): masters, stock and registered animals only, so the
+   * person using the app creates the Animal Wise and Batch Wise batches (and their schedulers) themselves.
+   */
+  withBatches: boolean;
   log(line: string): void;
 }
 

@@ -66,7 +66,7 @@ function errorMessage(payload: unknown, fallback: string): string {
   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
     candidate = (candidate as { message?: unknown }).message ?? candidate;
   }
-  if (Array.isArray(candidate)) return candidate.join(', ');
+  if (Array.isArray(candidate)) return candidate.join(' ');
   return typeof candidate === 'string' ? candidate : fallback;
 }
 
@@ -161,11 +161,10 @@ async function refreshAccessToken(): Promise<string> {
   return refreshPromise;
 }
 
-export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, ...init } = options;
-  const headers = new Headers(init.headers);
-  const isFormData = body instanceof FormData || (body && typeof (body as any).append === 'function');
-  if (!isFormData) headers.set('Content-Type', 'application/json');
+/** The headers every authenticated call carries: token, tenant, and the active workspace/company/area/farm scope. */
+function scopedHeaders(base: HeadersInit | undefined, tenantId: string | null | undefined, json: boolean): Headers {
+  const headers = new Headers(base);
+  if (json) headers.set('Content-Type', 'application/json');
   const token = stored(AUTH_STORAGE.accessToken);
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (tenantId) headers.set('x-tenant-id', tenantId);
@@ -187,6 +186,42 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   const activeFarmId = stored('active_farm_id');
   if (activeFarmId && !isFarmBoundUser) headers.set('x-active-farm-id', activeFarmId);
   else headers.delete('x-active-farm-id');
+  return headers;
+}
+
+export interface ApiDownload {
+  blob: Blob;
+  filename: string;
+  /** Response headers the caller may care about (the export reports whether it was cut short). */
+  headers: Headers;
+}
+
+/**
+ * Fetches a file the API generates (an Excel or CSV export) with the same
+ * authentication, refresh and scope headers as every other call. apiRequest
+ * always parses JSON, which a spreadsheet is not.
+ */
+export async function apiDownload(path: string, fallbackName = 'download', retry = true): Promise<ApiDownload> {
+  const headers = scopedHeaders(undefined, stored(AUTH_STORAGE.tenantId), false);
+  const response = await fetch(`${API_BASE_URL}${path}`, { method: 'GET', headers });
+  if (response.status === 401 && stored(AUTH_STORAGE.accessToken) && retry) {
+    await refreshAccessToken();
+    return apiDownload(path, fallbackName, false);
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new ApiError(errorMessage(payload, `Download failed (${response.status}).`), response.status, payload);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  return { blob: await response.blob(), filename: match ? decodeURIComponent(match[1]) : fallbackName, headers: response.headers };
+}
+
+export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, ...init } = options;
+  const isFormData = body instanceof FormData || (body && typeof (body as any).append === 'function');
+  const headers = scopedHeaders(init.headers, tenantId, !isFormData);
+  const token = stored(AUTH_STORAGE.accessToken);
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,

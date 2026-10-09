@@ -148,6 +148,8 @@ describe('SchedulerHeaderService', () => {
         line_type: 'CONSUMPTION', stage_id: 'stage-gest', item_id: 'item-feed',
         item_description: 'Gestation Feed 14%', standard_qty: '2.2000', qty_basis: 'PER_HEAD',
         activity_name: 'Gestation Feed — Gestation Feed 14%', start_day: 1, end_day: 114,
+        // The feed item is not lot or serial tracked, so the line does not ask for a lot.
+        lot_required: false,
       }));
       expect(result.lines).toHaveLength(1);
       expect(result.lines[0].uom).toBe('KG');

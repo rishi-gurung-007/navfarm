@@ -93,7 +93,7 @@ export interface TargetingInfo {
   mode: "COUNT_ONLY" | "REGISTERED";
   default_scope: "BATCH" | "STAGE_ANIMALS";
   /** [] for COUNT_ONLY */
-  stage_animals: Array<{ animal_id: string; animal_code: string; ear_tag: string | null }>;
+  stage_animals: Array<{ animal_id: string; animal_code: string; rfid_tag: string | null }>;
 }
 
 /** GET /batch/:batchId/daily-data/form?date=&stageId= — fields added, none removed. */

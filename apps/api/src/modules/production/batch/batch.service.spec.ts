@@ -48,7 +48,8 @@ describe('BatchService', () => {
         BatchService,
         {
           provide: ClsService,
-          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+          // 'tenantPostingTransaction' true: a day's posting joins the transaction the unit test stands in for.
+          useValue: { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) },
         },
         {
           provide: AuditLogService,
@@ -75,7 +76,7 @@ describe('BatchService', () => {
         },
         {
           provide: 'BATCH_DAILY_DATA_POSTER',
-          useValue: { postEntry: jest.fn().mockResolvedValue({}), reevaluateFeedLevels: jest.fn().mockResolvedValue(undefined) },
+          useValue: { postEntry: jest.fn().mockResolvedValue({}), postCollected: jest.fn().mockResolvedValue(undefined), reevaluateFeedLevels: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();
@@ -129,20 +130,44 @@ describe('BatchService', () => {
       expect(result.batch_no).toBe('BATCH-000001');
     });
 
-    it('rejects an ANIMAL_WISE batch with no animal_ids', async () => {
-      await expect(
-        service.create(
-          {
-            tracking_mode: 'ANIMAL_WISE',
-            company_id: 'comp-1',
-            lob_id: 'lob-piggery',
-            costing_method: 'FIFO',
-            start_date: '2026-01-01',
-            uom: 'HEAD',
-          } as any,
-          'tenant-123',
-        ),
-      ).rejects.toThrow('animal_ids is required for ANIMAL_WISE batches.');
+    it('saves an ANIMAL_WISE draft with no animals, opening quantity 0 and nothing claimed', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { nob_id: 'nob-1', costing_method_allowed: 'FIFO,STANDARD' },
+              ]),
+          }),
+        }),
+      });
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'BATCH-000001',
+        tracking_mode: 'ANIMAL_WISE',
+      } as any);
+
+      await service.create(
+        {
+          tracking_mode: 'ANIMAL_WISE',
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'FIFO',
+          start_date: '2026-01-01',
+          uom: 'HEAD',
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(values).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'DRAFT', tracking_mode: 'ANIMAL_WISE', opening_quantity: '0' }),
+      );
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects an ANIMAL_WISE batch that includes an already-assigned animal', async () => {
@@ -186,7 +211,7 @@ describe('BatchService', () => {
           } as any,
           'tenant-123',
         ),
-      ).rejects.toThrow('Animal(s) already assigned to a batch: PIG-0001.');
+      ).rejects.toThrow('These animals already belong to a batch: PIG-0001.');
     });
 
     it('assigns unassigned animals to the new batch, keyed by their own stage, without input_lines', async () => {
@@ -330,6 +355,11 @@ describe('BatchService', () => {
           status: 'ACTIVE',
           tracking_mode: 'ANIMAL_WISE',
         } as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ animal_id: 'a-1' }]) }),
+        }),
+      });
 
       const updateCalls: { table: any; set: any; where: any }[] = [];
       mockDbUpdate.mockImplementation((table: any) => ({
@@ -351,6 +381,26 @@ describe('BatchService', () => {
         (c) => c.table === schema.schedulerHeader,
       );
       expect(schedulerUpdate?.set.scheduler_status).toBe('ACTIVE');
+    });
+
+    it('refuses to activate an ANIMAL_WISE batch that has no animals', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        status: 'DRAFT',
+        tracking_mode: 'ANIMAL_WISE',
+        input_lines: [],
+        stage_id: null,
+      } as any);
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      });
+
+      await expect(service.activate('batch-1', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(
+        'Add at least one animal to this batch before creating it.',
+      );
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('still rejects a BATCH_WISE batch with no input lines', async () => {
@@ -601,12 +651,12 @@ describe('BatchService', () => {
         const result = await service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' });
         expect(result.status).toBe('LOCKED');
         expect(poster.postEntry).toHaveBeenCalledTimes(2);
-        for (const call of (poster.postEntry as jest.Mock).mock.calls) expect(call[4]).toEqual({ deferFeedAlerts: true });
+        for (const call of (poster.postEntry as jest.Mock).mock.calls) expect(call[4]).toEqual({ deferFeedAlerts: true, collector: expect.any(Array) });
         expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
         expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
       });
 
-      it('still re-checks once when a later line throws, then rethrows', async () => {
+      it('does not re-check when a later line throws — the whole day rolls back, then rethrows', async () => {
         const poster = arrange();
         (poster.postEntry as jest.Mock)
           .mockResolvedValueOnce({})
@@ -614,8 +664,8 @@ describe('BatchService', () => {
         await expect(
           service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
         ).rejects.toThrow('line 2 refused');
-        expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
-        expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+        // The day posts together or not at all: line 1 went back with line 2, so no silo moved.
+        expect(poster.reevaluateFeedLevels).not.toHaveBeenCalled();
         expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
       });
 
@@ -908,6 +958,23 @@ describe('BatchService', () => {
     });
   });
 
+  describe('expected quantity of a scheduler line', () => {
+    const expected = (line: object, animals: number, stageAnimals?: number) =>
+      (service as any).computeExpectedQty({ standard_qty: '2', ...line }, animals, stageAnimals);
+
+    it('per head is the standard times the animals — and a line with no basis reads as per head', () => {
+      expect(expected({ qty_basis: 'PER_HEAD' }, 4)).toBe(8);
+      expect(expected({ qty_basis: null }, 4)).toBe(8);
+      expect(expected({ qty_basis: 'PER_HEAD' }, 1)).toBe(2);
+    });
+
+    it('per batch is the whole stage\'s standard, shared out per animal in an animal-wise stage', () => {
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 4)).toBe(2);
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 1, 2)).toBe(1);
+      expect(expected({ qty_basis: 'TOTAL_BATCH' }, 1, 3)).toBeCloseTo(0.6667, 4);
+    });
+  });
+
   describe('postBatchDay', () => {
     const batchWiseBatch = {
       ...activeBatch,
@@ -1082,7 +1149,7 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
-        { deferFeedAlerts: true },
+        { deferFeedAlerts: true, collector: expect.any(Array) },
       );
       expect(dailyDataPoster.postEntry).toHaveBeenCalledWith(
         'batch-1',
@@ -1093,7 +1160,7 @@ describe('BatchService', () => {
         }),
         'tenant-123',
         { userId: 'user-1' },
-        { deferFeedAlerts: true },
+        { deferFeedAlerts: true, collector: expect.any(Array) },
       );
       // Ruling M6: the lines defer their silo-level re-check, and the day
       // makes it once, for the batch's farm, after every line has posted.
@@ -1106,7 +1173,7 @@ describe('BatchService', () => {
       expect(calledDtos.every((dto) => dto.draft === undefined)).toBe(true);
     });
 
-    it('re-checks the farm\'s silo levels once even when a later draft line throws, then rethrows', async () => {
+    it('does not re-check silo levels when a later draft line throws — the whole day rolls back, then rethrows', async () => {
       jest
         .spyOn(service, 'findOne')
         .mockResolvedValueOnce(batchWiseBatch as any);
@@ -1129,8 +1196,8 @@ describe('BatchService', () => {
       await expect(
         service.postBatchDay('batch-1', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
       ).rejects.toThrow('line 2 refused');
-      expect(poster.reevaluateFeedLevels).toHaveBeenCalledTimes(1);
-      expect(poster.reevaluateFeedLevels).toHaveBeenCalledWith('farm-1', 'tenant-123');
+      // Line 1 went back with line 2, so no silo moved and nothing is re-checked.
+      expect(poster.reevaluateFeedLevels).not.toHaveBeenCalled();
       expect(mockDbInsert).not.toHaveBeenCalled(); // the day was not locked
     });
 

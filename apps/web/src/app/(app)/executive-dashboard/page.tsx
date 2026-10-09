@@ -443,7 +443,7 @@ const APPROVALS_QUEUE = [
     overdue: false,
   },
   {
-    type: 'Goods issue',
+    type: 'Stock adjustment',
     item: 'Medicine Store',
     by: 'A. Iyer',
     age: '1d',
@@ -876,7 +876,7 @@ export default function ExecutiveDashboardPage() {
 
           <Panel
             title="Inventory Valuation"
-            subtitle="$ thousands, FIFO cost, by warehouse"
+            subtitle="$ thousands, FIFO cost, by location"
           >
             <ResponsiveContainer width="100%" height={220}>
               <BarChart

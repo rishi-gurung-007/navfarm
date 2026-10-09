@@ -10,6 +10,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { EncryptionService } from '../../system/encryption/encryption.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -35,10 +36,10 @@ export class SupplierService {
   /** ANIMAL_SUPPLIER needs both docs; BREEDING_FARM needs its registration code. */
   private assertVendorTypeRequirements(vendorType: string, healthCertUrl?: string | null, breedingFarmCode?: string | null) {
     if (vendorType === 'ANIMAL_SUPPLIER' && (!healthCertUrl || !breedingFarmCode)) {
-      throw new BadRequestException('ANIMAL_SUPPLIER vendors require both health_cert_url and breeding_farm_code.');
+      throw new BadRequestException('An animal supplier needs both a Health Certificate URL and a Breeding Farm Registration No.');
     }
     if (vendorType === 'BREEDING_FARM' && !breedingFarmCode) {
-      throw new BadRequestException('BREEDING_FARM vendors require breeding_farm_code.');
+      throw new BadRequestException('A breeding farm supplier needs a Breeding Farm Registration No.');
     }
   }
 
@@ -165,7 +166,7 @@ export class SupplierService {
     const [supplier] = await this.db
       .select()
       .from(schema.supplierMaster)
-      .where(and(eq(schema.supplierMaster.supplier_id, id), isNull(schema.supplierMaster.deleted_at)))
+      .where(eq(schema.supplierMaster.supplier_id, id))
       .limit(1);
 
     if (!supplier) {
@@ -220,8 +221,26 @@ export class SupplierService {
   async update(id: string, dto: UpdateSupplierDto, tenantId: string, userPayload?: any) {
     const supplier = await this.findOne(id);
 
-    if (dto.supplier_code && dto.supplier_code.toUpperCase() !== supplier.supplier_code) {
-      throw new ConflictException('Supplier Code is generated from the company-wide SUPPLIER sequence and cannot be changed.');
+    const updates: any = {
+      updated_by: userPayload?.userId || null,
+      updated_at: toMysqlTimestamp(),
+    };
+
+    assertCodeUnchanged('Supplier', supplier.supplier_code, dto.supplier_code);
+    if (dto.supplier_code && dto.supplier_code.trim()) {
+      const trimmed = dto.supplier_code.trim().toUpperCase();
+      if (trimmed !== supplier.supplier_code) {
+        const edited = await this.numberSeriesService.editedCode(
+          'SUPPLIER',
+          trimmed,
+          supplier.supplier_code,
+          tenantId,
+          supplier.company_id,
+        );
+        if (edited) {
+          updates.supplier_code = edited;
+        }
+      }
     }
 
     // Re-validate COND rules against the effective (post-update) values, same "dto value if
@@ -230,11 +249,6 @@ export class SupplierService {
     const effectiveHealthCertUrl = dto.health_cert_url !== undefined ? dto.health_cert_url : supplier.health_cert_url;
     const effectiveBreedingFarmCode = dto.breeding_farm_code !== undefined ? dto.breeding_farm_code : supplier.breeding_farm_code;
     this.assertVendorTypeRequirements(effectiveVendorType, effectiveHealthCertUrl, effectiveBreedingFarmCode);
-
-    const updates: any = {
-      updated_by: userPayload?.userId || null,
-      updated_at: toMysqlTimestamp(),
-    };
 
     if (dto.supplier_name !== undefined) updates.supplier_name = dto.supplier_name;
     if (dto.email !== undefined) updates.email = dto.email;

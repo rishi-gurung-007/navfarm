@@ -88,7 +88,7 @@ export class CreateAnimalDto {
   @IsNotEmpty()
   entry_date: string;
 
-  @ApiProperty({ description: 'Goods Receipt UUID this animal arrived on — required if entry_type is PURCHASED_IMPORTED/PURCHASED_LOCAL', required: false })
+  @ApiProperty({ description: 'GRN UUID this animal arrived on — required if entry_type is PURCHASED_IMPORTED/PURCHASED_LOCAL', required: false })
   @IsUUID()
   @IsOptional()
   source_receipt_id?: string;
@@ -103,15 +103,10 @@ export class CreateAnimalDto {
   @IsNotEmpty()
   item_id: string;
 
-  @ApiProperty({ description: 'RFID ear tag number for scanning — unique if set', required: false })
+  @ApiProperty({ description: 'RFID tag number, the only tag identifier an animal carries; unique within the tenant', required: false })
   @IsString()
   @IsOptional()
   rfid_tag?: string;
-
-  @ApiProperty({ description: 'Ear tag number', required: false })
-  @IsString()
-  @IsOptional()
-  ear_tag?: string;
 
   @ApiProperty({ description: 'URL to a photo of the ear tag — file upload will move to Cloudflare R2 later', required: false })
   @IsString()
@@ -138,13 +133,13 @@ export class CreateAnimalDto {
   dam_serial_no?: string;
 
 
-  // animal_register.acquisition_cost/landing_cost are decimal(18,4) (schema.ts);
+  // animal_register.acquisition_cost is decimal(18,4) (schema.ts);
   // the bound below is that column's own ceiling (14 integer digits), not a
   // client-specified business limit — it stops an unbounded typed number from
   // overflowing the column, nothing more.
   @ApiProperty({
     description:
-      "Purchase price per animal. Omit for a purchased entry — the API reads it off the source goods receipt line and discards anything sent. Required for every other entry type, which has no document to read it from; the service enforces that rather than this DTO, because the form legitimately omits the field for purchases.",
+      "Purchase price per animal. Omit for a purchased entry — the API reads it off the source GRN line and discards anything sent. Required for every other entry type, which has no document to read it from; the service enforces that rather than this DTO, because the form legitimately omits the field for purchases.",
     required: false,
   })
   @IsNumber({ maxDecimalPlaces: 4 })
@@ -152,13 +147,6 @@ export class CreateAnimalDto {
   @Max(99999999999999.9999)
   @IsOptional()
   acquisition_cost?: number;
-
-  @ApiProperty({ description: 'Transport/import duty/quarantine charges per head for imported animals', required: false })
-  @IsNumber({ maxDecimalPlaces: 4 })
-  @Min(0)
-  @Max(99999999999999.9999)
-  @IsOptional()
-  landing_cost?: number;
 
   @ApiProperty({ description: 'Current production stage UUID', required: false })
   @IsUUID()
@@ -214,13 +202,6 @@ export class CreateAnimalDto {
   @IsOptional()
   grading?: number;
 
-  // Column is varchar(50) (schema.ts).
-  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
-  @IsString()
-  @IsOptional()
-  @MaxLength(50)
-  serial_number?: string;
-
   @ApiProperty({ description: 'Notes', required: false })
   @IsString()
   @IsOptional()
@@ -252,11 +233,6 @@ export class UpdateAnimalDto {
   @IsString()
   @IsOptional()
   rfid_tag?: string;
-
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  ear_tag?: string;
 
   @ApiProperty({ required: false })
   @IsString()
@@ -384,13 +360,6 @@ export class UpdateAnimalDto {
   @IsOptional()
   grading?: number;
 
-  // Column is varchar(50) (schema.ts).
-  @ApiProperty({ description: 'Serial number (asset tag), distinct from RFID/ear tag', required: false, maxLength: 50 })
-  @IsString()
-  @IsOptional()
-  @MaxLength(50)
-  serial_number?: string;
-
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
@@ -465,7 +434,7 @@ export class QueryAnimalDto extends MasterListQueryDto {
   @IsUUID()
   currentLocationId?: string;
 
-  @ApiProperty({ description: 'Search animal_code, rfid_tag, or ear_tag', required: false })
+  @ApiProperty({ description: 'Search animal_code or rfid_tag', required: false })
   @IsOptional()
   @IsString()
   search?: string;
