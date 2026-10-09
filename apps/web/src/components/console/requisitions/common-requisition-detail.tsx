@@ -3,10 +3,9 @@
 /**
  * The common requisition (Item / Fixed Asset / Service) document and its
  * actions: Save, Submit, Reopen, Release, Link PO, Ship and Receive (Part E,
- * Task 12). Approve and Reject are not here: the Requisition page puts them
- * under the document (RequisitionDecision). There is no link to the Approvals
- * inbox — it no longer lists requisitions (decisions, 5 Oct); the document's
- * own Approval / Approved by / Approved at fields show the decision.
+ * Task 12). Approve and Reject are supplied by RequisitionDecision on the
+ * Requisition page and by the shared approval request in the Approvals inbox;
+ * workflow metadata does not expand the common requisition's field contract.
  *
  * The API's PUT /requisition/:id is a FULL REPLACE (omitted remarks,
  * required_date, justification, sender_department_id and direct_transfer
@@ -22,6 +21,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -111,10 +111,25 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     let live = true;
     api
       .get(`/requisition/options?company_id=${draft.company_id}${draft.farm_id ? `&farm_id=${draft.farm_id}` : ""}`)
-      .then((res) => { if (live) setOptions(unwrap<CommonRequisitionOptions>(res)); })
+      .then((res) => {
+        if (!live) return;
+        const nextOptions = unwrap<CommonRequisitionOptions>(res);
+        setOptions(nextOptions);
+        if (!id && nextOptions.requester) {
+          const requester = nextOptions.requester;
+          setDraft((current) => ({
+            ...current,
+            requester_user_id: requester.user_id,
+            requester_login: requester.login,
+            requester_name: requester.name,
+            requester_department_id: requester.department_id,
+            requester_department_name: requester.department_name,
+          }));
+        }
+      })
       .catch(() => undefined); // without options the pickers stay empty; the rest of the document still edits
     return () => { live = false; };
-  }, [needsOptions, draft.company_id, draft.farm_id]);
+  }, [needsOptions, draft.company_id, draft.farm_id, id]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -191,6 +206,29 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
       <input id="crq-posting-date" type="date" className="nf-input-sm" style={inputStyle} value={postingDate} onChange={(e) => setPostingDate(e.target.value)} />
     </Field>
   );
+  const actionBar = (
+    <div className="flex flex-wrap items-end gap-2">
+      {actions.includes("reopen") && <Button size="sm" variant="outline" onClick={reopen} disabled={busy}>{t("crqReopen")}</Button>}
+      <Button size="sm" onClick={release} disabled={busy || !actions.includes("release")}>{t("crqRelease")}</Button>
+      {draft.purpose === "PURCHASE" && (
+        <>
+          <Field className="w-56" label={t("crqPoNo")} htmlFor="crq-po-no">
+            <input id="crq-po-no" className="nf-input-sm" style={inputStyle} value={poNo}
+              disabled={busy || !actions.includes("linkPo")} onChange={(e) => setPoNo(e.target.value)} />
+          </Field>
+          <Button size="sm" onClick={linkPo} disabled={busy || !actions.includes("linkPo") || !poNo.trim()}>{t("crqLinkPo")}</Button>
+        </>
+      )}
+      {draft.purpose === "STORE" && (
+        <>
+          <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")}
+            disabled={busy || !actions.includes("ship")}>{t("crqShip")}</Button>
+          <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")}
+            disabled={busy || !actions.includes("receive")}>{t("crqReceive")}</Button>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -200,34 +238,18 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{draft.req_no}</h2>
         </div>
       )}
+      <DialogHeaderActions>{actionBar}</DialogHeaderActions>
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
           onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
       </div>
       <div className="flex shrink-0 flex-col gap-3">
-        {/* The dialog scrolls as one, and whoever pressed an action is at
-            these buttons — so the success notice is shown here, and scrolled
-            into view, not at the top of the document out of sight. */}
+        {/* Keep action results after the affected lines and scroll them into
+            view; drafting controls live in the dialog footer and later
+            workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
         {error && <div ref={errorRef}><InlineAlert>{error}</InlineAlert></div>}
         {notice && <div ref={noticeRef}><InlineAlert variant="success">{notice}</InlineAlert></div>}
-        <div className="flex flex-wrap items-end gap-2">
-          {actions.includes("save") && <Button size="sm" variant="outline" onClick={save} disabled={busy}>{t("crqSave")}</Button>}
-          {actions.includes("submit") && <Button size="sm" onClick={submit} disabled={busy}>{t("crqSubmit")}</Button>}
-          {actions.includes("reopen") && <Button size="sm" variant="outline" onClick={reopen} disabled={busy}>{t("crqReopen")}</Button>}
-          {actions.includes("release") && <Button size="sm" onClick={release} disabled={busy}>{t("crqRelease")}</Button>}
-          {actions.includes("linkPo") && (
-            <>
-              <Field className="w-56" label={t("crqPoNo")} htmlFor="crq-po-no">
-                <input id="crq-po-no" className="nf-input-sm" style={inputStyle} value={poNo} onChange={(e) => setPoNo(e.target.value)} />
-              </Field>
-              <Button size="sm" onClick={linkPo} disabled={busy || !poNo.trim()}>{t("crqLinkPo")}</Button>
-            </>
-          )}
-          {actions.includes("ship") && <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")} disabled={busy}>{t("crqShip")}</Button>}
-          {actions.includes("receive") && <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")} disabled={busy}>{t("crqReceive")}</Button>}
-        </div>
-
         {panel === "ship" && actions.includes("ship") && (
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
@@ -268,6 +290,16 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           </div>
         )}
       </div>
+      {(actions.includes("save") || actions.includes("submit")) && (
+        <DialogFooterActions>
+          {actions.includes("save") && (
+            <Button size="sm" variant={id ? "outline" : undefined} onClick={save} disabled={busy}>
+              {t(id ? "crqSave" : "crqCreate")}
+            </Button>
+          )}
+          {id && actions.includes("submit") && <Button size="sm" onClick={submit} disabled={busy}>{t("crqSubmit")}</Button>}
+        </DialogFooterActions>
+      )}
     </>
   );
 }

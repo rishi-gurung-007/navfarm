@@ -79,7 +79,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
     .filter((e) => e.op === 'insert' && e.table === schema.auditLog)
     .flatMap((e) => (Array.isArray(e.values) ? e.values : [e.values]))
     .map((v: any) => ({ action: v.action, newValues: v.new_values, oldValues: v.old_values }));
-  return { service, approvals, evaluated, as, writes, audits };
+  return { service, approvals, forecast, evaluated, as, writes, audits };
 }
 
 describe('isEditableFeedRequisition (D25)', () => {
@@ -122,7 +122,7 @@ describe('Feed requisition approval authority (Task 7)', () => {
    * row does not carry) — this proves it agrees with the common path's rule
    * on exactly which user types are exempt.
    */
-  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN'] as const)(
     'lets a %s approve the manual feed requisition they submitted themselves, and still records them as the approver',
     async (userType) => {
       const admin = { userId: 'u-manager', userType };
@@ -130,6 +130,7 @@ describe('Feed requisition approval authority (Task 7)', () => {
         [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
         [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
         [schema.requisitionLine, [[LINE_6000]]],
+        [schema.userRoleAssignment, [[MANAGER_GRANT]]],
       ]));
       await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', admin)))
         .resolves.toMatchObject({ status: 'APPROVED' });
@@ -138,8 +139,8 @@ describe('Feed requisition approval authority (Task 7)', () => {
     },
   );
 
-  it.each(['OPERATIONAL_ADMIN', 'STANDARD_USER'] as const)(
-    'still refuses a %s approving the manual feed requisition they submitted — the 4 Oct exemption names only Tenant/Company admins',
+  it.each(['STANDARD_USER'] as const)(
+    'still refuses a %s approving the manual feed requisition they submitted',
     async (userType) => {
       const nonExempt = { userId: 'u-manager', userType };
       const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
@@ -293,6 +294,17 @@ describe('FeedRequisitionService.submit (D25)', () => {
 });
 
 describe('Feed requisition decided in the Approvals inbox (D25)', () => {
+  it('refreshes an Actual Feed Plan after an approved run-linked requisition commits', async () => {
+    const { approvals, forecast, as } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUEST], [{ ...REQUEST, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, production_date: '2026-10-08', feed_forecast_run_id: 'run-1' }], [{ productionDate: '2026-10-08', feedForecastRunId: 'run-1' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    const refresh = jest.spyOn(forecast, 'generateFeedPlanVersion').mockResolvedValue({} as any);
+    await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN));
+    expect(refresh).toHaveBeenCalledWith('farm-grs', '2026-10-08', 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' });
+  });
+
   it('approving updates the requisition and the request together, then re-evaluates alerts after commit', async () => {
     const { approvals, as, writes, evaluated } = setup(new Map<unknown, unknown[][]>([
       [schema.approvalRequest, [[REQUEST], [{ ...REQUEST, status: 'APPROVED' }]]],

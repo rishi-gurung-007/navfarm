@@ -16,7 +16,7 @@ describe('FeedForecastService.siloStatus', () => {
     sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 }],
     store: null, items: { r1: 'Weaner Diet R1' },
-    batches: [{ batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000, segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }] }],
+    batches: [{ batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000, segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }] }],
     feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 40, kgPerHeadPerDay: 2.0, wastagePct: 0 }],
   };
   const siloFact = {
@@ -146,7 +146,7 @@ describe('FeedForecastService.siloStatus', () => {
     const slowShortage = {
       ...input,
       silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 950 }],
-      batches: [{ batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 100,
+      batches: [{ batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 100,
         segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-09-23', end: null, projected: false }] }],
       feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1',
         fromDay: 1, toDay: 90, kgPerHeadPerDay: 1, wastagePct: 0 }],

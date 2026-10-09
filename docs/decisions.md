@@ -3173,3 +3173,140 @@ This supersedes earlier statements that Calculation is review-only, that feed
 workflow stops at approval, or that Feed Planning belongs in Inventory Setup.
 Mill Consolidation, Loading Instruction and a dedicated Feed Transfer Order
 Receipt page remain deferred.
+
+## 2026-10-08 — Mill BIN release setup stays in the shared master framework
+
+The approved feed Release workflow requires an active MILL → BIN topology, a
+Production Slot and an exact-date BIN Diet Assignment. These are setup records,
+not Feed Forecast results and not workbook example transactions. Production
+Slots and BIN Diet Assignments therefore appear as tabs beside Location through
+the existing `/master-data/[key]` framework; no standalone page is introduced.
+
+The assignment records BIN, Feed Item, Production Date, Production Slot and
+Diet Priority. It validates the existing BIN feed form and Feed Item diet/type,
+and prevents silently changing a BIN to another item while positive stock
+remains. No MILL, BIN, slot, assignment, capacity, truck target or order
+multiple is seeded as client truth. Release remains disabled with a specific
+reason until users configure the real values for the requisition's exact
+production date.
+
+## 2026-10-08 — Feed Forecast Calculation uses one control row and no result filters
+
+Rishi clarified the Calculation tab after reviewing the running screen:
+
+1. Farm, Planning Date, View and its applicable Date/Range/Reporting Period
+   controls form one row. The current state action is aligned at the right of
+   that same row: Calculate before a result, Save Run after calculation, and
+   the saved-calculation actions after saving.
+2. Shed, Silo, Batch, Feed Item and Bulk/Bagged result filters are removed.
+   The calculation grid always displays the complete authoritative Farm result.
+   This supersedes the optional display-filter statement in the 8 Oct Feed
+   Forecast page design; it does not change the calculation API or saved data.
+3. A saved calculation with a material shortage and no linked requisition
+   shows Create Feed Requisition. Once that exact saved calculation has a
+   linked requisition, the same action position shows View Requisition instead.
+   With neither a shortage nor a linked requisition, no requisition action is
+   shown. An unrelated requisition for the Farm does not satisfy this link.
+
+## 2026-10-08 — Retained weekly Feed Plan calculation (implementation interpretation)
+
+This records how the already-approved workbook rule is implemented; it is not
+presented as a new client field or default. A Feed Plan is a retained,
+versioned operational document for the ISO production week. Its evidence is
+the five fully completed Wednesday–Tuesday weeks immediately before the
+production cycle. For each Feed Item, posted consumption is divided by the
+corresponding lifecycle/scheduler-expected consumption to produce an observed
+adjustment factor, and that factor is applied to the saved forecast's target
+week lifecycle demand. When the comparable historical expected total is zero,
+the factor is 1 so the saved lifecycle projection remains visible rather than
+being replaced with zero or `NaN`.
+
+A version generated before an approved linked requisition is **Tentative**. A
+later version generated after approval is **Actual** and retains both requested
+and tentative quantities for variance. Mill Approved and mill-capacity values
+remain unavailable until the deferred mill execution configuration/workflow is
+actually implemented. Plan codes use `PLAN-<FarmCode>-<ISO YYYYWW>-Rnn`, and
+old versions remain queryable rather than being overwritten.
+## 2026-10-09 — Approved feed requisitions create an Actual Feed Plan revision
+
+When a run-linked feed requisition is approved, the approval transaction remains
+authoritative for the requisition. After that transaction commits, NAVFarm
+regenerates and stores the farm/week Actual Feed Plan revision using the
+approved requisition quantities. A failed refresh is logged and does not undo
+the approval; the revision can be regenerated from Feed Plan. Rejected
+requisitions do not create an Actual revision. Mill Consolidation, Loading and
+the dedicated TO Receipt remain deferred.
+
+## 2026-10-09 — Feed Mill Consolidation is the next feed-requisition gate
+
+Approved feed requisitions without a consolidation sheet are eligible for a
+mill consolidation. The Feed Forecast → Requisition list exposes an all-farms
+view for users with company scope and shows Consolidate only when eligible
+rows exist. The dialog supports requisition-number selection (including
+multiple farms/silos) or a required date range. Creating the sheet assigns one
+weekly consolidation number, records the requisition lines and moves the
+selected requisitions to `IN_CONSOLIDATION`; adjustment reasons are mandatory
+when the mill approved quantity differs from the farm request.
+
+The workbook's Diet No. is read from Item Master. Mill loading bin and
+available mill output remain explicitly `Not configured` until the mill
+capacity/bin setup is supplied; no illustrative workbook value is seeded.
+Business Central transfer-order push and a dedicated TO Receipt remain out of
+scope for this increment. A feed silo/item may be requisitioned again only
+after its prior requisition is fully received (`RECEIVED`); partial or open
+fulfilment continues to block creation with the existing cycle-conflict
+message.
+
+## 2026-10-09 — Consolidation is required before feed Release
+
+The feed workflow now requires an approved requisition to be linked to a Mill
+Consolidation Sheet before Release. The sheet preserves the destination silo,
+requested delivery date and production date as line snapshots, so later draft
+or master-data changes cannot rewrite consolidation history. Consolidation
+sheets can be listed, opened and finalized; only valid draft/review states may
+be finalized. Migration 0155 and the additive line-snapshot migration 0156
+were applied through the tenant runner to the registered local tenant
+databases and verified directly in `nf_devco`.
+
+## 2026-10-09 — Transfer Order and Receipt are shared; Mill Consolidation is feed-only
+
+The shared Stock Transfer service remains the single authority for Transfer
+Shipment, Transfer Receipt, partial quantities, inventory-ledger posting and
+requisition fulfilment updates. Common Store requisitions use it directly;
+feed requisitions call the same service through their feed-scoped endpoints.
+Purchase requisitions continue through their purchase/GRN path. Only Feed
+Requisitions require a finalized Mill Consolidation before the feed release
+step; no generic requisition or shared transfer service may require a feed
+consolidation reference. Business Central remains an unimplemented external
+integration, so local in-house transfer records are not represented as BC
+successes.
+
+## 2026-10-09 — Feed loading instructions are generated from consolidation
+
+For the current implementation, a feed Loading Instruction Sheet is created
+once a Mill Consolidation Sheet exists, one row per consolidated requisition
+line. It preserves the farm, destination silo, item/diet, original request,
+mill-approved allocation, delivery/production dates and loading BIN snapshot.
+Mill users may record compartment and KG loaded; both are mandatory before the
+sheet can be marked dispatched. A posted shared Stock Transfer shipment must be
+linked before dispatch, so a loading draft cannot imply that stock has moved.
+Loading remains feed-only and does not create or simulate a Business Central
+document.
+
+## 2026-10-09 — Base Currency is sufficient for stock-count valuation
+
+Base Currency is NAVFarm's authoritative valuation currency. Local Currency is
+optional future configuration. When it is absent, physical stock-count
+snapshots use an auditable identity rate of 1 in Base Currency instead of
+returning `MISSING_LOCAL_CURRENCY` or blocking a valid monetary snapshot.
+
+## 2026-10-09 — Consolidation-approved quantity is authoritative at release
+
+A finalized feed consolidation is the mill's allocation decision. Loading
+instructions and the shared Stock Transfer created by Release therefore use
+the consolidation line's `mill_approved_qty_kg`, not the original farm request.
+Every feed requisition line must be represented by a finalized consolidation
+line before Release; a partial consolidation is rejected rather than silently
+transferring an unapproved quantity. Shipment, dispatch and split receipts
+continue through the shared transfer service so the inventory ledger and
+fulfilment balances cannot double-count the original request.

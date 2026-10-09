@@ -131,4 +131,26 @@ describe('FeedSiloDashboard', () => {
     expect(within(table).getByRole('link', { name: 'GRS/SILO-001' }).getAttribute('href')).toContain('recordId=silo-a');
     expect(within(table).getByRole('link', { name: 'DRAFT' }).getAttribute('href')).toContain('/requisitions?id=req-1');
   });
+
+  it('uses explanatory text for unavailable dashboard values', async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      const routed = response(
+        new URL(url, 'http://navfarm.local').searchParams.get('shedId'),
+        new URL(url, 'http://navfarm.local').searchParams.get('siloId'),
+      );
+      if (routed.data.silo) {
+        routed.data.silo.currentDietDaysRemaining = Number.NaN;
+        routed.data.silo.nextDietItemName = null;
+        routed.data.silo.siloAvailableForNextDiet = null;
+      }
+      return Promise.resolve(routed);
+    });
+
+    render(<FeedSiloDashboard />);
+
+    expect((await screen.findAllByText('fsdNotAvailable')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('NaN')).toBeNull();
+    const table = await screen.findByRole('table', { name: 'fsdLabel' });
+    expect(within(table).queryByText('—')).toBeNull();
+  });
 });

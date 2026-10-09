@@ -109,7 +109,17 @@ export function stockAsOf(args: {
     } else if (!isStoreFeed(f)) {
       continue;
     }
-    incoming.push({ locationId: f.warehouse_id, itemId: f.item_id, date: f.posting_date, kg: f.qty, kind: f.kind });
+    incoming.push({
+      locationId: f.warehouse_id,
+      itemId: f.item_id,
+      date: f.expected_date ?? f.posting_date,
+      kg: f.qty,
+      kind: f.kind,
+      ...(f.reference_id ? { referenceId: f.reference_id } : {}),
+      ...(f.reference_no ? { referenceNo: f.reference_no } : {}),
+      ...(f.related_reference_no ? { relatedReferenceNo: f.related_reference_no } : {}),
+      ...(f.expected_date ? { expectedDate: f.expected_date } : {}),
+    });
   }
   return { silos, store, incoming };
 }

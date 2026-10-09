@@ -602,19 +602,12 @@ describe('ApprovalService farm documents (D25)', () => {
 });
 
 /**
- * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the Approvals inbox
- * stops listing requisitions — the hub (Approvals → Requisitions) is the one
- * requisition list. Three properties, tested at the SQL level:
- *
- * 1. EQUIVALENCE (written before the removal, per Rishi's sequencing rule):
- *    the predicate the hub's waiting-for-approval filter uses is the INBOX's
- *    own farmConditions(userType) plus the requisition doc kinds — one copy,
- *    not a second implementation.
- * 2. The inbox's list and counts EXCLUDE the requisition kinds; findOne and
- *    decide do NOT (the hub's Approve/Reject call the same decide endpoints).
- * 3. The hub's pending-requisition count comes from the same predicate.
+ * Rishi, 7 Oct: common requisitions appear in Approvals as well as the
+ * Requisition hub. Feed requisitions remain on Feed Forecast. The hub's
+ * waiting filter still reuses the inbox visibility predicate so scope cannot
+ * drift between the two decision surfaces.
  */
-describe('WP1b — one Requisitions page: inbox exclusion and the shared waiting predicate', () => {
+describe('common requisitions in Approvals and the shared waiting predicate', () => {
   let service: ApprovalService;
   let cls: ReturnType<typeof transactionCls>;
   const dialect = new MySqlDialect();
@@ -670,19 +663,24 @@ describe('WP1b — one Requisitions page: inbox exclusion and the shared waiting
     },
   );
 
-  it('the inbox list excludes the requisition kinds', async () => {
+  it('the inbox list includes common requisitions and excludes only feed requisitions', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
     await service.findAll({} as any, 'tenant-1', 'COMPANY_ADMIN');
     const sql = renderedWhere();
     expect(sql).toContain('`approval_request`.`doc_type` not in');
-    expect(sql).toMatch(/not in \(\?, \?\)/);
-    expect(dialect.sqlToQuery(capturedWhere as any).params).toEqual(expect.arrayContaining(['REQUISITION', 'FEED_REQUISITION']));
+    expect(sql).toMatch(/not in \(\?\)/);
+    const params = dialect.sqlToQuery(capturedWhere as any).params;
+    expect(params).toContain('FEED_REQUISITION');
+    expect(params.at(-1)).toBe('FEED_REQUISITION');
   });
 
-  it('the inbox counts exclude the requisition kinds too — the badges count only what the inbox shows', async () => {
+  it('the inbox counts include common requisitions and exclude only feed requisitions', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
     await service.counts({} as any, 'tenant-1', 'COMPANY_ADMIN');
-    expect(renderedWhere()).toContain('`approval_request`.`doc_type` not in');
+    const q = dialect.sqlToQuery(capturedWhere as any);
+    expect(q.sql).toMatch(/`approval_request`.`doc_type` not in \(\?\)/);
+    expect(q.params).toContain('FEED_REQUISITION');
+    expect(q.params.at(-1)).toBe('FEED_REQUISITION');
   });
 
   // A per-table queue double (same shape as the D25 suite's setup) for the

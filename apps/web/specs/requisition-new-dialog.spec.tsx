@@ -5,6 +5,10 @@ import { api } from '../src/services/api-client';
 import { translations } from '../src/utils/translations';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
+jest.mock('../src/hooks/useAuth', () => ({
+  getActiveCompanyId: () => 'co-1',
+  getStoredUser: () => ({ userId: 'u-requester', email: 'requester@triplec.local', fullName: 'Requesting User' }),
+}));
 jest.mock('../src/utils/date-short', () => ({ formatDateShort: (v: string | null) => v ?? '' }));
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
@@ -22,12 +26,33 @@ jest.mock('../src/components/console/inventory/use-feed-farm', () => ({ useFeedF
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
 
+const destinationLabel: Record<string, string> = {
+  s1: 'VIL100/SILO-001 — Weaner silo',
+  st: 'VIL100/STORE-001 — Main store',
+  sb: 'VIL100/SILO-002',
+  sx: 'VIL100/STORE-002',
+};
+
+async function pickSearchable(label: string, optionName: string | RegExp) {
+  const trigger = await screen.findByRole('button', { name: label });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('option', { name: optionName }));
+}
+
+async function waitForSearchable(label: string) {
+  const trigger = await screen.findByRole('button', { name: label });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  return trigger;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockFarm = { farmId: null, setFarmId: jest.fn(), farms: [], loaded: true, failed: false, isFixed: false, fixedFarm: null };
   // F3: one feed-scoped read, not the two Master Data ones.
   get.mockImplementation(async (url: string) => {
     if (String(url).startsWith('/feed-settings')) return { data: { truckTargetKg: 30000, bulkMultipleKg: 3000, bagSizeKg: 50 } };
+    if (String(url).startsWith('/reason')) return { data: [{ reason_id: 'reason-1', reason_code: 'REQ-01', reason_name: 'Diet exception', category: 'REQUISITION', is_active: true }] };
     return {
     data: {
       farmId: 'farm-vil',
@@ -57,11 +82,12 @@ describe('RequisitionNewDialog (D26)', () => {
     // The Master Data routes are not reachable for a farm login, and answer
     // with templates in the tenant-wide workspace (F3, review I3).
     expect(get.mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/location') || u.startsWith('/item'))).toEqual([]);
-    const dest = await screen.findByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement;
-    await waitFor(() => expect(dest.options.length).toBe(3));
-    expect([...dest.options].map((o) => o.textContent)).toEqual(['rqNewChoose', 'VIL100/SILO-001 — Weaner silo', 'VIL100/STORE-001 — Main store']);
-    fireEvent.change(dest, { target: { value: 's1' } });
-    fireEvent.change(screen.getByLabelText('rqNewItem:{"line":1}'), { target: { value: 'i1' } });
+    const dest = await waitForSearchable('rqNewDestination:{"line":1}');
+    fireEvent.click(dest);
+    expect(screen.getByRole('option', { name: destinationLabel.s1 })).toBeTruthy();
+    expect(screen.getByRole('option', { name: destinationLabel.st })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: destinationLabel.s1 }));
+    await pickSearchable('rqNewItem:{"line":1}', 'FEED-R1 — Weaner Diet R1');
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
@@ -77,9 +103,8 @@ describe('RequisitionNewDialog (D26)', () => {
     // Task 19: already on the feed form, no picker step to click through.
     const create = await screen.findByRole('button', { name: 'rqNewCreate' }) as HTMLButtonElement;
     expect(create.disabled).toBe(true);
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
-    fireEvent.change(screen.getByLabelText('rqNewDestination:{"line":1}'), { target: { value: 's1' } });
-    fireEvent.change(screen.getByLabelText('rqNewItem:{"line":1}'), { target: { value: 'i1' } });
+    await pickSearchable('rqNewDestination:{"line":1}', destinationLabel.s1);
+    await pickSearchable('rqNewItem:{"line":1}', 'FEED-R1 — Weaner Diet R1');
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
     expect(create.disabled).toBe(false);
@@ -102,9 +127,38 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
     expect(onCommon).toHaveBeenLastCalledWith({ docType: 'ITEM', purpose: 'STORE' });
   });
 
+  it('lets the user return from the Item purpose step to the requisition type choices', () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" types={['FEED', 'ITEM', 'FA', 'SERVICE']} onClose={jest.fn()} onCreated={jest.fn()} onCommon={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeItem' }));
+    const dialog = screen.getByRole('dialog');
+    const header = dialog.querySelector('header') as HTMLElement;
+    fireEvent.click(within(header).getByRole('button', { name: 'crqBack' }));
+    expect(screen.getByRole('button', { name: 'rqNewPurposeFeed' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'rqNewPurposeItem' })).toBeTruthy();
+  });
+
+  it('lets the user return from Feed creation when it was opened from the common requisition picker', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" types={['FEED', 'ITEM', 'FA', 'SERVICE']} onClose={jest.fn()} onCreated={jest.fn()} onCommon={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewPurposeFeed' }));
+    const dialog = screen.getByRole('dialog');
+    const header = dialog.querySelector('header') as HTMLElement;
+    fireEvent.click(within(header).getByRole('button', { name: 'crqBack' }));
+    expect(screen.getByRole('button', { name: 'rqNewPurposeFeed' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'rqNewPurposeItem' })).toBeTruthy();
+  });
+
+  it('vertically centres the feed line controls and calculated values', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitForSearchable('rqNewDestination:{"line":1}');
+    const cells = Array.from(screen.getByRole('dialog').querySelectorAll('tbody td'));
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.every((cell) => cell.className.includes('align-middle'))).toBe(true);
+  });
+
   it('offers only Feed on the Feed Forecast tab (default types)', () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
     expect(screen.queryByRole('button', { name: 'rqNewPurposeItem' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'crqBack' })).toBeNull();
   });
 
   // Task 19: the Feed Forecast tab's New only ever creates Feed (decisions
@@ -116,7 +170,7 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
     expect(screen.queryByText('rqNewPurposePrompt')).toBeNull();
     expect(screen.queryByRole('button', { name: 'rqNewPurposeFeed' })).toBeNull();
     // Straight to the feed mini-form: its destination field is already on screen.
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await waitForSearchable('rqNewDestination:{"line":1}');
   });
 
   // Approvals -> Requisitions passes every kind (Task 13); the picker must
@@ -133,27 +187,41 @@ describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
   // hardcoded in place of setLine(i, ...) for the reason field specifically —
   // the same class of gap Task 9 was sent back to fix. Two lines, reason on
   // the second only, and the first line's body is checked to have NO
-  // exception_reason key at all (not merely a falsy one).
-  it('sends a line exception reason (Req. row 13), scoped to the line it was set on', async () => {
+  // reason_id key at all (not merely a falsy one).
+  it('sends a Reason Master id scoped to the line it was set on', async () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
     // Task 19: already on the feed form.
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
-    fireEvent.change(screen.getByLabelText('rqNewDestination:{"line":1}'), { target: { value: 's1' } });
-    fireEvent.change(screen.getByLabelText('rqNewItem:{"line":1}'), { target: { value: 'i1' } });
+    await pickSearchable('rqNewDestination:{"line":1}', destinationLabel.s1);
+    await pickSearchable('rqNewItem:{"line":1}', 'FEED-R1 — Weaner Diet R1');
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
-    fireEvent.change(screen.getByLabelText('rqNewDestination:{"line":2}'), { target: { value: 'st' } });
-    fireEvent.change(screen.getByLabelText('rqNewItem:{"line":2}'), { target: { value: 'i1' } });
+    await pickSearchable('rqNewDestination:{"line":2}', destinationLabel.st);
+    await pickSearchable('rqNewItem:{"line":2}', 'FEED-R1 — Weaner Diet R1');
     fireEvent.change(screen.getByLabelText('rqNewKg:{"line":2}'), { target: { value: '500' } });
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":2}'), { target: { value: '2099-10-02' } });
-    fireEvent.change(screen.getByLabelText('rqNewException:{"line":2}'), { target: { value: 'Vet instruction' } });
+    await pickSearchable('rqNewException:{"line":2}', 'REQ-01 — Diet exception');
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
     await waitFor(() => expect(post).toHaveBeenCalled());
     const body = post.mock.calls[0][1];
     expect(body.lines).toHaveLength(2);
-    expect(body.lines[0]).not.toHaveProperty('exception_reason');
-    expect(body.lines[1].exception_reason).toBe('Vet instruction');
+    expect(body.lines[0]).not.toHaveProperty('reason_id');
+    expect(body.lines[1].reason_id).toBe('reason-1');
+  });
+
+  it('selects a feed-line reason from Reason Master and sends its stable id', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    const reasonTrigger = screen.getByRole('button', { name: 'rqNewException:{"line":1}' });
+    fireEvent.click(reasonTrigger);
+    fireEvent.click(await screen.findByRole('option', { name: 'REQ-01 — Diet exception' }));
+    await pickSearchable('rqNewDestination:{"line":1}', destinationLabel.s1);
+    await pickSearchable('rqNewItem:{"line":1}', 'FEED-R1 — Weaner Diet R1');
+    fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '3000' } });
+    fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls.at(-1)[1].lines[0]).toMatchObject({ reason_id: 'reason-1' });
+    expect(post.mock.calls.at(-1)[1].lines[0]).not.toHaveProperty('exception_reason');
   });
 
   // Fix round 1 (Important, inherited from the design's own §5 code): no
@@ -247,8 +315,9 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
   });
 
   const fillLine = async (n: number, dest: string, kg: string, date: string) => {
-    fireEvent.change(await screen.findByLabelText(`rqNewDestination:{"line":${n}}`), { target: { value: dest } });
-    fireEvent.change(screen.getByLabelText(`rqNewItem:{"line":${n}}`), { target: { value: 'i1' } });
+    const destinationCode = { s1: 'VIL100/SILO-001', st: 'VIL100/STORE-001', sb: 'VIL100/SILO-002', sx: 'VIL100/STORE-002' }[dest];
+    await pickSearchable(`rqNewDestination:{"line":${n}}`, new RegExp(`^${destinationCode}(?: —|$)`));
+    await pickSearchable(`rqNewItem:{"line":${n}}`, 'FEED-R1 — Weaner Diet R1');
     fireEvent.change(screen.getByLabelText(`rqNewKg:{"line":${n}}`), { target: { value: kg } });
     fireEvent.change(screen.getByLabelText(`rqNewDate:{"line":${n}}`), { target: { value: date } });
   };
@@ -256,12 +325,13 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
   it('shows the workbook header values for a manual requisition, before the lines', async () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
     const dialog = screen.getByRole('dialog');
-    const header = within(dialog).getByText('rqdHeaderTitle');
+    const header = within(dialog).getByText('rqdReqNo');
     const lines = within(dialog).getByText('rqdLinesTitle');
     expect(header.compareDocumentPosition(lines) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(dialog).queryByText('rqdHeaderTitle')).toBeNull();
     const valueOf = (label: string) => within(dialog).getByText(label).parentElement!.textContent;
     expect(valueOf('rqdReqNo')).toContain('rqnAssignedOnSave');
-    expect(valueOf('rqdReqType')).toContain('reqTypeManual');
+    expect(valueOf('rqdReqType')).toContain('reqDocItem');
     expect(valueOf('rqdSource')).toContain('reqSourceManual');
     expect(valueOf('rqdFarmCode')).toContain('VIL100');
     expect(valueOf('rqdFarmName')).toContain('Villa Franca');
@@ -272,7 +342,9 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     expect(valueOf('rqdDeadline')).toContain('rqnSetOnSave');
     // Required Delivery Date is derived from the lines (Rishi 4 Oct): read-only, nothing to type.
     expect(valueOf('rqdRequiredDate')).toContain('rqnFromLines');
-    expect(within(dialog).queryByLabelText('rqdRequiredDate')).toBeNull();
+    const requiredDate = within(dialog).getByRole('textbox', { name: 'rqdRequiredDate' });
+    expect(requiredDate.getAttribute('aria-readonly')).toBe('true');
+    expect(requiredDate.tagName).not.toBe('INPUT');
     // Remarks stay editable and sit in the header.
     expect(within(dialog).getByLabelText('rqRemarks')).toBeTruthy();
     await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-vil'));
@@ -283,12 +355,16 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
     const table = screen.getByRole('table');
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual(['rqdColLineNo', 'rqdColSilo', 'rqdColItemNo', 'rqdColItemDesc', 'rqdColFeedType', 'rqdColRequested', 'rqdColDelivery', 'rqnColException', '']);
+    expect(headers).toEqual([
+      'rqdColLineNo', 'rqdColSilo', 'rqdColItemNo', 'rqdColItemDesc', 'rqdColFeedType', 'rqdColNextDiet',
+      'rqdColDaysBefore', 'rqdColLifecycle', 'rqdColSystemBalance', 'rqdColDaily', 'rqdColDaysRemaining',
+      'rqdColRecommended', 'rqdColRequested', 'rqdColBags', 'rqdColDelivery', 'rqnColException', '',
+    ]);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText('10000')).toBeTruthy();
     expect(within(rows[1]).getByText('20000')).toBeTruthy();
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await waitForSearchable('rqNewDestination:{"line":1}');
     // Choosing a feed item fills its description and a silo makes the line Bulk.
     await fillLine(1, 's1', '3000', '2099-10-05');
     expect(within(rows[0]).getByText('Weaner Diet R1')).toBeTruthy();
@@ -301,7 +377,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-settings?companyId=co-1&farmId=farm-vil'));
     fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await waitForSearchable('rqNewDestination:{"line":1}');
     await fillLine(1, 's1', '3000', '2099-10-05');
     await fillLine(2, 'st', '500', '2099-10-02');
     const dialog = screen.getByRole('dialog');
@@ -321,8 +397,8 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
   it('without a fixed farm (hub), the farm is chosen in the header and its code and name follow', async () => {
     render(<RequisitionNewDialog open onClose={jest.fn()} onCreated={jest.fn()} />);
     const dialog = screen.getByRole('dialog');
-    const header = within(dialog).getByText('rqdHeaderTitle');
-    expect(header.compareDocumentPosition(within(dialog).getByLabelText('rqFarm')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(dialog).getByLabelText('rqFarm')).toBeTruthy();
+    expect(within(dialog).queryByText('rqdHeaderTitle')).toBeNull();
     expect(within(dialog).getByText('rqdFarmCode').parentElement!.textContent).not.toContain('VIL100');
   });
 
@@ -330,7 +406,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     const onCreated = jest.fn();
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={onCreated} />);
     fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await waitForSearchable('rqNewDestination:{"line":1}');
     await fillLine(1, 's1', '3000', '2099-10-05');
     await fillLine(2, 'st', '500', '2099-10-02');
     fireEvent.change(screen.getByLabelText('rqRemarks'), { target: { value: 'Urgent' } });
@@ -358,7 +434,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
         ] } };
     });
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(5));
+    await waitForSearchable('rqNewDestination:{"line":1}');
     for (const n of [2, 3, 4]) fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
     await fillLine(1, 's1', '3000', '2099-10-05'); // silo, null -> Bulk
     await fillLine(2, 'sb', '120', '2099-10-05'); // silo, feed_in_bags -> Bagged
@@ -380,7 +456,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
 
   it('shows no Bagged total while no line is bagged', async () => {
     render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
-    await waitFor(() => expect((screen.getByLabelText('rqNewDestination:{"line":1}') as HTMLSelectElement).options.length).toBe(3));
+    await waitForSearchable('rqNewDestination:{"line":1}');
     await fillLine(1, 's1', '3000', '2099-10-05');
     expect(within(screen.getByRole('dialog')).queryByText('rqdBaggedTotal')).toBeNull();
   });

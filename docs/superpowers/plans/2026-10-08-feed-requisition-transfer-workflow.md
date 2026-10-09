@@ -188,3 +188,27 @@ the feed-requisition transfer table, foreign/unique indexes and saved-run
 archive/uniqueness indexes were verified directly in MySQL. The new Feed Plan
 reads the same canonical requisition line, linked transfer, shipment and receipt
 tables, so it does not introduce a second fulfilment state or posting path.
+
+The completion audit added the missing operational setup surface through the
+shared Location master tabs (Production Slots and BIN Diet Assignments), with
+no seeded example data. The live approved feed document now renders all three
+header actions and disables Release with its exact item/date assignment
+blocker instead of allowing a predictably failing click. Final gates were API
+**199 suites / 2,553 tests**, Web **98 suites / 729 tests**, all typechecks and
+the 76-route production build. A live posting chain remains data-dependent:
+the local tenant has no real BIN/slot/assignment, and verification did not
+invent one.
+
+## Verification carry-forward — 2026-10-09
+
+Feed Mill Consolidation is now implemented as the next feed-only workflow
+step: approved, unlinked requisitions are queried across permitted farms; the
+UI offers requisition-number multi-select or a required date range; and
+creation writes a weekly consolidation header/lines and marks the requisitions
+`IN_CONSOLIDATION`. Diet No. comes from Item Master. Loading-bin and available
+mill-output values remain `Not configured` until those masters are configured.
+The cycle guard permits a new silo/item request after `RECEIVED` and keeps
+blocking partial/open fulfilment. BC push, Loading and TO Receipt remain
+deferred. API/web typechecks, focused API suites (86 tests), focused web suites
+(62 tests), migration checks (4 tests), and `git diff --check` passed; tenant
+migration application could not connect to the configured master database.

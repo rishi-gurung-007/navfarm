@@ -37,14 +37,16 @@ describe('FeedRequisitionApprovalDetail (D25)', () => {
 
   it('shows the full requisition document read-only, with a link to the requisition', async () => {
     render(<FeedRequisitionApprovalDetail documentId="req-4" pending remarks="" onRemarksChange={jest.fn()} />);
-    expect(await screen.findByText('rqdHeaderTitle')).toBeTruthy();
+    expect(await screen.findByText('REQ-VIL100-2026-00004')).toBeTruthy();
     expect(get).toHaveBeenCalledWith('/feed-requisition/req-4');
     expect(screen.getByText('10000')).toBeTruthy();
     expect(screen.getByText('20000')).toBeTruthy();
     // The approver reads the document; the only input is the approver's own remarks.
     expect(screen.queryAllByRole('combobox')).toHaveLength(0);
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    const textboxes = screen.getAllByRole('textbox');
+    expect(textboxes.filter((field) => field.tagName === 'TEXTAREA')).toHaveLength(1);
+    expect(textboxes.filter((field) => field.getAttribute('aria-readonly') === 'true').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('apReqApproverRemarks')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'apReqOpen' }).getAttribute('href')).toBe('/inventory/feed-forecast?tab=feed-requisition&id=req-4');
   });

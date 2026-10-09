@@ -85,6 +85,8 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     expect(screen.getByText('10,000')).toBeTruthy();
     expect(within(silos).getAllByRole('spinbutton')).toHaveLength(4);
     expect(screen.queryByLabelText('fpSiloReorder:{"silo":"VIL100/SILO-001"}')).toBeNull();
+    expect(within(silos).getAllByText('fsdNotAvailable').length).toBeGreaterThan(0);
+    expect(within(silos).queryByText('—')).toBeNull();
     const low = screen.getByLabelText('fpSiloLow:{"silo":"VIL100/SILO-001"}') as HTMLInputElement;
     expect(low.value).toBe('2000');
     expect((screen.getByLabelText('fpSiloHigh:{"silo":"VIL100/SILO-001"}') as HTMLInputElement).value).toBe('9000');
@@ -109,16 +111,15 @@ describe('Silo Feed Setup — silos grouped by farm', () => {
     }));
   });
 
-  it('shows Silo Feed Setup as the visible tab and opens the matching panel', async () => {
+  it('keeps Inventory Setup limited to numbering and general controls', async () => {
     get.mockImplementation((url: string) => url.startsWith('/feed-settings') ? routed(url) : Promise.resolve({ data: url.startsWith('/inventory-setup') ? {
       company_id: 'co-1', setup_id: 'setup-1', numbering_config: {}, general_config: {},
       series_by_master: {}, available_masters: [], updated_at: null,
     } : FARMS }));
     render(<InventorySetupPage />);
-    const tab = await screen.findByRole('button', { name: 'Silo Feed Setup' });
+    await screen.findByRole('button', { name: /Number Series Setup/ });
     expect(screen.queryByRole('button', { name: 'Feed Planning' })).toBeNull();
-    fireEvent.click(tab);
-    expect(await screen.findByRole('table', { name: 'Silo Feed Setup by farm and silo' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Silo Feed Setup' })).toBeNull();
   });
 
   it('shows a no-silo child state and retries a failed load', async () => {

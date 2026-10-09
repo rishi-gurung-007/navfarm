@@ -1,7 +1,6 @@
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
-import * as schema from '../../../core/database/schema';
 import { FeedForecastService } from './feed-forecast.service';
 
 const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
@@ -57,6 +56,19 @@ describe('FeedForecastService.listFarmSettings (D32)', () => {
     const loose = transactionCls(db);
     useFarmScope(loose, { farmId: null, restricted: true, companyId: null, lobId: null });
     expect(await new FeedForecastService(loose, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB).listFarmSettings('tenant-1', 'STANDARD_USER')).toEqual([]);
+  });
+
+  it('limits the Company Settings list to the company being edited', async () => {
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: null, lobId: null });
+    answers.push(rows, [], overrideRows);
+
+    await new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB)
+      .listFarmSettings('tenant-1', 'TENANT_ADMIN', 'co-1');
+
+    const q = dialect.sqlToQuery(wheres[0] as any);
+    expect(q.sql).toContain('`location_master`.`company_id` = ?');
+    expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'co-1', 'FARM']));
   });
 });
 

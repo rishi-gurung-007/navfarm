@@ -86,6 +86,18 @@ beforeEach(() => {
   put.mockResolvedValue({ data: view });
 });
 
+it('uses human unavailable text instead of an em dash or NaN in the requisition list', async () => {
+  get.mockImplementation(async (url: string) => {
+    if (url.startsWith('/feed-forecast/runs/current')) return { data: null };
+    return { data: [{ ...listRow, priority: null, requested_kg: 'not-a-number' }] };
+  });
+  render(<RequisitionsPanel />);
+  await screen.findByText('REQ-VIL100-2026-00004');
+  expect(screen.getAllByText('rqNotYetAvailable').length).toBeGreaterThan(0);
+  expect(screen.queryByText('—')).toBeNull();
+  expect(screen.queryByText('NaN')).toBeNull();
+});
+
 /**
  * 9d F2 (Part A verification pass 2): the red error above Submit read "Add
  * remarks: a quantity is more than 20% off the recommendation, or the deadline
@@ -148,9 +160,9 @@ describe('RequisitionsPanel (D26)', () => {
   it("lists the farm's requisitions with labels, not codes, and DD/MM/YY dates (A8, A9)", async () => {
     render(<RequisitionsPanel />);
     const table = await screen.findByRole('table', { name: 'rqListLabel' });
-    expect(get).toHaveBeenCalledWith('/feed-requisition?farmId=farm-vil');
+    expect(get).toHaveBeenCalledWith('/feed-requisition?');
     const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells).toEqual(['REQ-VIL100-2026-00004', 'reqTypeForecast', 'reqStatusAutoDraft', 'prioCritical', '23/09/99', '26/09/99', '2', '15,000']);
+    expect(cells).toEqual(['REQ-VIL100-2026-00004', 'rqNotYetAvailable', 'reqTypeForecast', 'reqStatusAutoDraft', 'prioCritical', '23/09/99', '26/09/99', '2', '15,000']);
     expect(screen.queryByText('FEED_FORECAST')).toBeNull();
     expect(screen.getByLabelText('rqType')).toBeTruthy();
   });
@@ -159,7 +171,7 @@ describe('RequisitionsPanel (D26)', () => {
     render(<RequisitionsPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('rqShow'), { target: { value: 'PENDING_APPROVAL' } });
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition?farmId=farm-vil&status=PENDING_APPROVAL'));
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition?status=PENDING_APPROVAL'));
   });
 
   it('creates from the saved calculation and opens it with Save and Submit for approval, and no approve or reject (D25)', async () => {
@@ -174,7 +186,7 @@ describe('RequisitionsPanel (D26)', () => {
     expect(screen.getByText('rqdReqNo')).toBeTruthy();
     const lines = screen.getByRole('table', { name: 'rqLinesLabel' });
     expect(within(lines).getAllByTestId('rqd-line-no').map((c) => c.textContent)).toEqual(['10000', '20000']);
-    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(16);
+    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(19);
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' })).toBeTruthy();
   });

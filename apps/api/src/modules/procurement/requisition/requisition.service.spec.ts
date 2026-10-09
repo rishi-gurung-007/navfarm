@@ -49,7 +49,13 @@ function makeDb() {
   return { db, selectResults, setCalls, insertValues, select, insert, update, whereCalls };
 }
 
-const approvalsMock = () => ({ create: jest.fn(), approve: jest.fn(), reject: jest.fn(), submitFarmDocument: jest.fn() });
+const approvalsMock = () => ({
+  create: jest.fn(),
+  approve: jest.fn(),
+  reject: jest.fn(),
+  submitFarmDocument: jest.fn(),
+  requisitionRequestConditions: jest.fn(),
+});
 
 // Part E: RequisitionService's constructor now requires a StockTransferService
 // (not @Optional() — see requisition.service.ts). None of the cases in this
@@ -257,6 +263,7 @@ describe('RequisitionService read compatibility — existing FEED rows and old s
       [headerRow({
         requisition_id: 'req-feed', req_no: 'FDR-2026-0007', doc_type: 'FEED',
         status: 'AUTO_DRAFT', purpose: 'INTERNAL_TRANSFER',
+        source: 'AUTO_FORECAST',
         approval_status: null, document_status: null, fulfilment_status: null, integration_status: null,
         direct_transfer: null, requisition_date: null, main_location_id: null,
         requester_user_id: null, requester_name: null, from_location_id: null, to_location_id: null,
@@ -267,7 +274,9 @@ describe('RequisitionService read compatibility — existing FEED rows and old s
     const result = await service.findOne('req-feed', TENANT);
 
     expect(result.status).toBe('AUTO_DRAFT');
-    expect(result.doc_type).toBe('FEED');
+    expect(result.doc_type).toBe('ITEM');
+    expect(result.requisition_kind).toBe('FEED');
+    expect(result.source).toBe('AUTO_FORECAST');
     expect(result.approval_status).toBe('OPEN');
     expect(result.document_status).toBe('OPEN');
     expect(result.fulfilment_status).toBe('NOT_APPLICABLE');
@@ -410,8 +419,8 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     expect(approvals.approve).not.toHaveBeenCalled();
   });
 
-  it.each(['FARM_MANAGER', 'OPERATIONAL_ADMIN'] as const)(
-    'refuses the creator on POST /requisition/:id/approve for %s — the 4 Oct exemption names only Tenant/Company admins',
+  it.each(['FARM_MANAGER'] as const)(
+    'refuses the creator on POST /requisition/:id/approve for %s',
     async (userType) => {
       const { db, selectResults } = makeDb();
       // Neither type is in ADMIN_USER_TYPES, so userHasPermission queries the grant table.
@@ -439,11 +448,12 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
     expect(approvals.approve).not.toHaveBeenCalled();
   });
 
-  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
-    'decisions.md 2026-10-04: lets a %s approve a requisition they created themselves, and still records them as the approver',
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN'] as const)(
+    'decisions.md 2026-10-07: lets a %s approve a requisition they created themselves, and still records them as the approver',
     async (userType) => {
       const { db, selectResults, setCalls } = makeDb();
       selectResults.push(
+        ...(userType === 'OPERATIONAL_ADMIN' ? [[GRANT_APPROVE]] : []),
         [headerRow({ status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: null, created_by: 'u1', requester_user_id: 'u1' })], // locked row
         [headerRow({ status: 'APPROVED', approval_status: 'APPROVED', document_status: 'APPROVED', approved_by: 'u1' })], // findOne header
         [lineRow()],
@@ -548,7 +558,7 @@ describe('Part E Task 1 — list filter, manual source, approver stamp', () => {
   it('refuses an unknown doc_type filter before any query', async () => {
     const { db } = makeDb();
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await expect(service.findAll({ doc_type: 'PIGS' }, TENANT)).rejects.toThrow('doc_type must be one of FEED, ITEM, FA, SERVICE.');
+    await expect(service.findAll({ doc_type: 'PIGS' }, TENANT)).rejects.toThrow('doc_type must be one of ITEM, FA, SERVICE.');
     expect(db.select).not.toHaveBeenCalled();
   });
 });
@@ -571,14 +581,17 @@ describe('Part E Task 1 follow-up — the Approvals-inbox path refuses self-appr
     expect(setCalls).toHaveLength(0);
   });
 
-  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN'] as const)(
-    'decisions.md 2026-10-04: decideFromApproval lets a %s decide (from the Approvals inbox) a manual requisition they created themselves',
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN'] as const)(
+    'decisions.md 2026-10-07: decideFromApproval lets a %s decide (from the Approvals inbox) a manual requisition they created themselves',
     async (userType) => {
       const { db, selectResults, setCalls } = makeDb();
-      selectResults.push([headerRow({
-        status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
-        created_by: 'u1', requester_user_id: 'u1',
-      })]);
+      selectResults.push(
+        [headerRow({
+          status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', approval_request_id: 'ar-1', source: 'MANUAL_ENTRY',
+          created_by: 'u1', requester_user_id: 'u1',
+        })],
+        ...(userType === 'OPERATIONAL_ADMIN' ? [[APPROVE_GRANT]] : []),
+      );
       const approvals: any = { ...approvalsMock(), registerDocumentHandler: jest.fn() };
       const service = new RequisitionService(transactionCls(db), approvals, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
       service.onModuleInit();
@@ -807,6 +820,23 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
 });
 
 describe('Part E Task 3 — options and display names', () => {
+  it('returns the signed-in requester snapshot from User Setup', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push(
+      [],
+      [],
+      [{ cost_center_id: 'cc-farm', cost_center_code: 'FARM', cost_center_name: 'Farm Operations' }],
+      [{ email: 'rudo@triplec.local', full_name: 'Rudo Moyo', department_id: 'cc-farm', direct_transfer_allowed: 1 }],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    const out = await service.options({ company_id: 'co-1' }, TENANT, { userId: 'u1' });
+    expect(out.requester).toEqual({
+      user_id: 'u1', login: 'rudo@triplec.local', name: 'Rudo Moyo',
+      department_id: 'cc-farm', department_name: 'Farm Operations',
+    });
+    expect(out.may_direct_transfer).toBe(true);
+  });
+
   // Rishi, 5 Oct: no line names a Resource any more (Service lines are
   // Description + Qty only), so the form is no longer offered any.
   it('offers the company items, FARM/STORE/SHED/SILO locations and DEPARTMENT cost centres, and no resources', async () => {
@@ -1172,23 +1202,17 @@ describe('WP1b — the hub waiting-for-my-approval filter', () => {
   });
 });
 
-/**
- * WP1g (decisions.md 2026-10-05, "Requisition is its own menu item"): the
- * Requisition page lists the common kinds only. FEED rows are excluded by the
- * query itself (`kind=common`), not merely hidden by the page, and asking for
- * the FEED type under that kind is refused rather than answered with nothing.
- */
-describe('WP1g — kind=common excludes FEED server-side', () => {
-  it('adds an explicit doc_type <> FEED condition to the list query', async () => {
+/** Rishi 7 Oct: the common Requisition page is the one list for every request. */
+describe('Unified requisition list includes feed Item requests', () => {
+  it('does not exclude stored FEED rows from kind=common', async () => {
     const { db, whereCalls } = makeDb();
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await service.findAll({ kind: 'common' }, TENANT);
     const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
-    expect(q.sql).toContain('`requisition`.`doc_type` <> ?');
-    expect(q.params).toContain('FEED');
+    expect(q.sql).not.toContain('`requisition`.`doc_type` <> ?');
   });
 
-  it('keeps the waiting-for-me EXISTS and the FEED exclusion together', async () => {
+  it('keeps the waiting-for-me EXISTS without excluding feed requests', async () => {
     const { db, whereCalls } = makeDb();
     const approvals = approvalsMock();
     approvals.requisitionRequestConditions = jest.fn(() => {
@@ -1199,14 +1223,20 @@ describe('WP1g — kind=common excludes FEED server-side', () => {
     await service.findAll({ kind: 'common' }, TENANT, { waitingForMe: true, userType: 'COMPANY_ADMIN' });
     const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
     expect(q.sql).toContain('EXISTS');
-    expect(q.sql).toContain('`requisition`.`doc_type` <> ?');
+    expect(q.sql).not.toContain('`requisition`.`doc_type` <> ?');
   });
 
-  it('refuses doc_type=FEED under kind=common before any query', async () => {
-    const { db } = makeDb();
+  it('maps a stored FEED row to public type ITEM and keeps its source', async () => {
+    const { db, selectResults } = makeDb();
+    selectResults.push([{
+      requisition_id: 'req-feed', req_no: 'REQ-GRS-2026-00001', doc_type: 'FEED', source: 'MANUAL_ENTRY',
+      purpose: 'INTERNAL_TRANSFER', status: 'DRAFT', farm_id: 'farm-1', farm_code: 'GRS', required_date: '2026-10-09',
+      approval_request_id: null, linked_po_no: null, requisition_date: '2026-10-07', approval_status: null,
+      document_status: null, fulfilment_status: null, integration_status: null, created_at: '2026-10-07 10:00:00', line_count: 1,
+    }]);
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await expect(service.findAll({ kind: 'common', doc_type: 'FEED' }, TENANT)).rejects.toThrow('The common requisition list does not include FEED');
-    expect(db.select).not.toHaveBeenCalled();
+    const [row] = await service.findAll({ kind: 'common' }, TENANT);
+    expect(row).toMatchObject({ doc_type: 'ITEM', requisition_kind: 'FEED', source: 'MANUAL_ENTRY' });
   });
 
   it('refuses an unknown kind', async () => {

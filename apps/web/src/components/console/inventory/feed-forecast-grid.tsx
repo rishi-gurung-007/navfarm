@@ -1,8 +1,10 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { Inbox, Loader2 } from "lucide-react";
 import { ScrollTable } from "@/components/ui/scroll-table";
+import { Dialog } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "./feed-format";
 
@@ -34,7 +36,7 @@ export interface ReportRow {
   confirmedReceiptsKg: number;
   openTransferMovementKg?: number;
   plannedIncomingKg?: number;
-  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; overdue?: boolean }>;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   heads: number;
   feedRateKg: number;
   perDayIntakeKg: number;
@@ -66,7 +68,7 @@ export interface SourceBalancePoint {
   confirmedReceiptKg: number;
   openTransferMovementKg?: number;
   plannedIncomingKg?: number;
-  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; overdue?: boolean }>;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   dailyUseKg: number;
   projectedClosingBalanceKg: number;
   recommendedQtyKg: number;
@@ -92,6 +94,17 @@ export interface ColumnSlot {
 
 export interface PivotedFeedRow extends ReportRow {
   closingBySlot: Record<string, number>;
+  balanceBySlot: Record<string, BalanceCell>;
+}
+
+export interface BalanceCell {
+  openingKg: number;
+  confirmedReceiptKg: number;
+  openTransferKg: number;
+  plannedIncomingKg: number;
+  dailyUseKg: number;
+  closingKg: number;
+  incomingReferences: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
 }
 
 export function diffDaysIso(a: string, b: string): number {
@@ -248,6 +261,7 @@ export function pivotForecastRows(
     collapseForecastLines(rows).map((row) => {
       const closingBySlot:
         Record<string, number> = {};
+      const balanceBySlot: Record<string, BalanceCell> = {};
 
       const points =
         pointsBySource.get(
@@ -276,6 +290,26 @@ export function pivotForecastRows(
           // the final day in the week becomes the
           // displayed weekly closing balance.
           closingBySlot[slot.key] = point.projectedClosingBalanceKg;
+          const previous = balanceBySlot[slot.key];
+          balanceBySlot[slot.key] = previous
+            ? {
+                ...previous,
+                confirmedReceiptKg: previous.confirmedReceiptKg + point.confirmedReceiptKg,
+                openTransferKg: previous.openTransferKg + (point.openTransferMovementKg ?? 0),
+                plannedIncomingKg: previous.plannedIncomingKg + (point.plannedIncomingKg ?? 0),
+                dailyUseKg: previous.dailyUseKg + point.dailyUseKg,
+                closingKg: point.projectedClosingBalanceKg,
+                incomingReferences: [...previous.incomingReferences, ...(point.incomingReferences ?? [])],
+              }
+            : {
+                openingKg: point.openingSystemBalanceKg,
+                confirmedReceiptKg: point.confirmedReceiptKg,
+                openTransferKg: point.openTransferMovementKg ?? 0,
+                plannedIncomingKg: point.plannedIncomingKg ?? 0,
+                dailyUseKg: point.dailyUseKg,
+                closingKg: point.projectedClosingBalanceKg,
+                incomingReferences: [...(point.incomingReferences ?? [])],
+              };
         }
       } else {
         const slot = slotFor(
@@ -288,6 +322,15 @@ export function pivotForecastRows(
 
         closingBySlot[slot.key] =
           row.projectedClosingBalanceKg;
+        balanceBySlot[slot.key] = {
+          openingKg: row.openingSystemBalanceKg,
+          confirmedReceiptKg: row.confirmedReceiptsKg,
+          openTransferKg: row.openTransferMovementKg ?? 0,
+          plannedIncomingKg: row.plannedIncomingKg ?? 0,
+          dailyUseKg: row.dailyUseKg,
+          closingKg: row.projectedClosingBalanceKg,
+          incomingReferences: [...(row.incomingReferences ?? [])],
+        };
       }
 
       const inWindow = (date: string | null) =>
@@ -296,6 +339,7 @@ export function pivotForecastRows(
       return {
         ...row,
         closingBySlot,
+        balanceBySlot,
         firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
         deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
       };
@@ -346,7 +390,16 @@ export function FeedForecastGrid({
 }) {
   const { pivoted, columns } = pivotForecastRows(rows, sourceBalances, view, from);
   const totalCols = GRID_COLUMNS.length + columns.length;
+  const [selectedBalance, setSelectedBalance] = useState<{
+    row: PivotedFeedRow;
+    column: ColumnSlot;
+    balance: BalanceCell;
+  } | null>(null);
+  // One silo/item/date is one physical movement. Shared batch rows still show
+  // the same balance, but the planned-incoming badge is shown only once.
+  const shownIncoming = new Set<string>();
   return (
+    <>
     <ScrollTable label={t("ffGridLabel")} className="w-full">
       <thead>
         <tr>
@@ -393,7 +446,25 @@ export function FeedForecastGrid({
             <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
             {columns.map((column) => {
               const value = row.closingBySlot[column.key];
-              return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>{fmtKg(value)}</td>;
+              const balance = row.balanceBySlot[column.key];
+              const sourceKey = `${row.sourceLocationId ?? row.sourceCode ?? "NONE"}|${row.itemId}|${column.key}`;
+              const hasExpectedIncoming = !!balance && (balance.plannedIncomingKg > 0 || balance.openTransferKg > 0);
+              const showIncoming = hasExpectedIncoming && !shownIncoming.has(sourceKey);
+              if (showIncoming) shownIncoming.add(sourceKey);
+              return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>
+                <button
+                  type="button"
+                  className="group w-full text-right hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                  aria-label={t("ffBalanceExplainAria", { date: column.label })}
+                  onClick={() => balance && setSelectedBalance({ row, column, balance })}
+                >
+                  <span className="block">{fmtKg(value)}</span>
+                  {showIncoming && <>
+                    {balance.plannedIncomingKg > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10px] font-semibold text-[var(--accent)]">+{fmtKg(balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</span>}
+                    {balance.openTransferKg > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10px] font-semibold text-[var(--accent)]">+{fmtKg(balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</span>}
+                  </>}
+                </button>
+              </td>;
             })}
             <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : t("ffNoShortageProjected")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.recommendedQtyKg)}</td>
@@ -402,5 +473,33 @@ export function FeedForecastGrid({
         ))}
       </tbody>
     </ScrollTable>
+    <Dialog
+      open={!!selectedBalance}
+      onClose={() => setSelectedBalance(null)}
+      title={selectedBalance ? t("ffBalanceExplainTitle", { date: selectedBalance.column.label }) : ""}
+      description={selectedBalance ? `${selectedBalance.row.sourceCode ?? t("ffNoSource")} · ${selectedBalance.row.itemName}` : undefined}
+      maxWidth="sm"
+      footer={<Button type="button" onClick={() => setSelectedBalance(null)}>{t("close")}</Button>}
+    >
+      {selectedBalance && <div className="space-y-4 text-sm">
+        <p className="text-[var(--text-secondary)]">{t("ffBalanceExplainBody")}</p>
+        <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-secondary)] p-4 font-mono text-sm">
+          <div>{t("ffBalanceOpening", { kg: fmtKg(selectedBalance.balance.openingKg) })}</div>
+          {selectedBalance.balance.plannedIncomingKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</div>}
+          {selectedBalance.balance.openTransferKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</div>}
+          {selectedBalance.balance.confirmedReceiptKg > 0 && <div>+ {fmtKg(selectedBalance.balance.confirmedReceiptKg)} KG {t("ffConfirmedReceiptShort")}</div>}
+          {selectedBalance.balance.openTransferKg > 0 && <div>+ {fmtKg(selectedBalance.balance.openTransferKg)} KG {t("ffOpenTransferShort")}</div>}
+          <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t("ffDailyUseShort")}</div>
+          <div className="mt-2 border-t border-[var(--border)] pt-2 font-semibold">= {fmtKg(selectedBalance.balance.closingKg)} KG {t("ffClosingBalanceShort")}</div>
+        </div>
+        {selectedBalance.balance.incomingReferences.some((reference) => reference.referenceNo || reference.relatedReferenceNo) && <div className="space-y-1 text-xs text-[var(--text-secondary)]">
+          {selectedBalance.balance.incomingReferences.filter((reference) => reference.referenceNo || reference.relatedReferenceNo).map((reference, index) => <div key={`${reference.kind}-${reference.referenceNo ?? reference.relatedReferenceNo}-${index}`}>
+            {reference.kind === "PLANNED_REQUISITION" ? t("ffPlannedIncomingReference", { references: reference.referenceNo }) : t("ffExpectedTransferReference", { transfer: reference.referenceNo, requisition: reference.relatedReferenceNo ?? t("ffNoSource") })}
+            {reference.expectedDate && <> · {t("ffExpectedDate", { date: formatDateShort(reference.expectedDate) })}</>}
+          </div>)}
+        </div>}
+      </div>}
+    </Dialog>
+    </>
   );
 }

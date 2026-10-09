@@ -15,6 +15,7 @@ export interface SearchableSelectProps {
   valueKey?: string;
   labelKey?: string;
   getLabel?: (row: Row) => string;
+  getSelectedLabel?: (row: Row) => string;
   getLabelParts?: (row: Row) => string[];
   columnHeaders?: string[] | false;
   columns?: Array<{ key: string; label: string }>;
@@ -44,6 +45,7 @@ export function SearchableSelect({
   valueKey = "value",
   labelKey = "label",
   getLabel,
+  getSelectedLabel,
   getLabelParts,
   columnHeaders,
   columns,
@@ -175,6 +177,7 @@ export function SearchableSelect({
       options={normalizedOptions}
       valueKey={valueKey}
       getLabel={defaultGetLabel}
+      getSelectedLabel={getSelectedLabel}
       getLabelParts={effectiveGetLabelParts}
       columnHeaders={effectiveColumnHeaders}
       placeholder={placeholder}

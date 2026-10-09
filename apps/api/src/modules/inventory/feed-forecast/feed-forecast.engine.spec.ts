@@ -20,7 +20,7 @@ const workedExample: ForecastInput = {
   items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
   batches: [
     {
-      batchId: 'b',
+      batchId: 'b', realBatchId: 'b' as any,
       batchNo: 'WG-2026-38',
       breedId: 'l',
       shedId: 'h3',
@@ -105,7 +105,7 @@ describe('buildFeedForecast — D1 days-left sample', () => {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -151,7 +151,7 @@ describe('buildFeedForecast — shared silo across two sheds', () => {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b1',
+        batchId: 'b1', realBatchId: 'b1' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -159,7 +159,7 @@ describe('buildFeedForecast — shared silo across two sheds', () => {
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
       },
       {
-        batchId: 'b2',
+        batchId: 'b2', realBatchId: 'b2' as any,
         batchNo: 'GR-2026-02',
         breedId: 'l',
         shedId: 'h2',
@@ -204,7 +204,7 @@ describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', 
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -263,7 +263,7 @@ describe('buildFeedForecast — missing feed row inside a multi-day range', () =
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -287,6 +287,30 @@ describe('buildFeedForecast — missing feed row inside a multi-day range', () =
     // Only 09-24 and 09-25 contribute (100 kg/day each) — the gap day (09-23) adds nothing.
     expect(r.rangeDemandKg).toBe(200);
     expect(r.perDayIntakeKg).toBe(100);
+  });
+
+  it('flags a future lifecycle stage with no feed row inside the displayed horizon', () => {
+    const futureGap: ForecastInput = {
+      ...input,
+      to: '2026-09-23',
+      horizonTo: '2026-09-30',
+      batches: [{
+        ...input.batches[0],
+        segments: [
+          { stageId: 'grower', stageCode: 'GROWER', start: '2026-08-24', end: '2026-09-25', projected: false },
+          { stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-26', end: '2026-09-30', projected: true },
+        ],
+      }],
+    };
+
+    const { flags } = buildFeedForecast(futureGap);
+    expect(flags).toContainEqual({
+      kind: 'NO_FEED_ROW',
+      batchNo: 'GR-2026-01',
+      stageCode: 'FINISHER',
+      day: 1,
+      date: '2026-09-26',
+    });
   });
 });
 
@@ -314,7 +338,7 @@ describe('buildFeedForecast — no silo holds the item', () => {
     items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'WG-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -362,7 +386,7 @@ describe('buildFeedForecast — supply lasts the whole range', () => {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -404,7 +428,7 @@ describe('buildFeedForecast — projected stage change', () => {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -459,7 +483,7 @@ function singleBatchInput(opts: {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -593,7 +617,7 @@ describe('buildFeedForecast — D6: shed with no silo falls back to STORE with n
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -637,7 +661,7 @@ describe('buildFeedForecast — NONE source: no silo holds it and there is no st
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -694,7 +718,7 @@ describe('buildFeedForecast — OVERLAPPING_FEED_ROWS', () => {
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -746,7 +770,7 @@ describe('buildFeedForecast — two sheds falling back to one STORE, combined de
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b1',
+        batchId: 'b1', realBatchId: 'b1' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -754,7 +778,7 @@ describe('buildFeedForecast — two sheds falling back to one STORE, combined de
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
       },
       {
-        batchId: 'b2',
+        batchId: 'b2', realBatchId: 'b2' as any,
         batchNo: 'GR-2026-02',
         breedId: 'l',
         shedId: 'h2',
@@ -812,7 +836,7 @@ describe('buildFeedForecast — demand changing across a stage boundary inside t
     items: { r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',
@@ -875,7 +899,7 @@ describe('buildFeedForecast — a diet row that starts later in the horizon', ()
     items: { r0: 'Starter Diet', r1: 'Grower Diet' },
     batches: [
       {
-        batchId: 'b',
+        batchId: 'b', realBatchId: 'b' as any,
         batchNo: 'GR-2026-01',
         breedId: 'l',
         shedId: 'h1',

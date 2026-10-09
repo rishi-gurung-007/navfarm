@@ -1,4 +1,4 @@
-import { diffDays, type ForecastResult, type ForecastSource } from './feed-forecast.engine';
+import { type ForecastResult, type ForecastSource } from './feed-forecast.engine';
 import { DEFAULT_FEED_SETTINGS, roundOrderKg } from '../../procurement/feed-requisition/feed-requisition.rules';
 import type { FarmFeedSettings } from '../../procurement/feed-requisition/feed-requisition.rules';
 
@@ -90,10 +90,27 @@ export function buildSelectedSiloDashboard(args: {
   balanceSeries: SiloBalancePoint[];
   demandSeries: SiloDemandPoint[];
 } {
-  const { status, result, planningDate, nextBinAssignment } = args;
+  const { status, result, nextBinAssignment } = args;
   const sources = result.sources.filter((source) => source.sourceType === 'SILO' && source.locationId === status.siloId);
   const currentSources = sources.filter((source) => source.itemId === status.currentDietItemId);
   const nextSources = sources.filter((source) => source.itemId === status.nextDietItemId);
+  const currentDietRemainingValues =
+    currentSources
+      .map(
+        (source) =>
+          source.currentDietDaysRemaining,
+      )
+      .filter(
+        (value): value is number =>
+          value !== null && Number.isFinite(value),
+      );
+
+  const currentDietDaysRemaining =
+    currentDietRemainingValues.length > 0
+      ? Math.min(
+        ...currentDietRemainingValues,
+      )
+      : null;
   const currentDietItemName = currentSources[0]?.itemName
     ?? sources.find((source) => source.itemId === status.feedInSiloItemId)?.itemName
     ?? status.feedInSiloItemName;
@@ -134,7 +151,7 @@ export function buildSelectedSiloDashboard(args: {
       currentDietItemName,
       currentProjectedNeedKg: sum3(currentSources.map((source) => source.walkDemandKg + source.safetyStockKg)),
       nextProjectedNeedKg: sum3(nextSources.map((source) => source.walkDemandKg + source.safetyStockKg)),
-      currentDietDaysRemaining: status.nextDietDate ? Math.max(0, diffDays(planningDate, status.nextDietDate)) : null,
+      currentDietDaysRemaining: currentDietDaysRemaining,
       nextDietItemName,
       millLoadingBin: nextBinAssignment,
     },

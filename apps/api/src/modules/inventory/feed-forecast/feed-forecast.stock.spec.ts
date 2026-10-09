@@ -35,6 +35,24 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
     expect(out.incoming).toEqual([{ locationId: 's2', itemId: 'r2', date: '2026-09-28', kg: 6000, kind: 'OPEN_TRANSFER' }]);
   });
 
+  it('uses a linked requisition delivery date and preserves transfer provenance', () => {
+    const out = stockAsOf({
+      ...base,
+      drafts: [{
+        warehouse_id: 's2', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG',
+        posting_date: '2026-10-11', qty: 3000,
+        reference_id: 'transfer-1', reference_no: 'TR-000044',
+        related_reference_no: 'REQ-VIL100-2026-00005',
+        expected_date: '2026-10-24',
+      }],
+    });
+    expect(out.incoming).toEqual([{
+      locationId: 's2', itemId: 'r2', date: '2026-10-24', kg: 3000,
+      kind: 'OPEN_TRANSFER', referenceId: 'transfer-1', referenceNo: 'TR-000044',
+      relatedReferenceNo: 'REQ-VIL100-2026-00005', expectedDate: '2026-10-24',
+    }]);
+  });
+
   it('keeps posted movements and drafts, signed, and drops a silo movement of another item', () => {
     const out = stockAsOf({
       ...base,

@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { Field } from '../src/components/ui/field';
+import { Field, ReadField } from '../src/components/ui/field';
 import { Input } from '../src/components/ui/input';
 
 describe('Field + Input', () => {
@@ -136,5 +136,25 @@ describe('Field + Input', () => {
     );
     const input = screen.getByLabelText('Search');
     expect(input.className).toContain('focus-visible:ring-2');
+  });
+});
+
+describe('ReadField', () => {
+  it('can present a copyable value with the same control shape without becoming a disabled input', () => {
+    render(<ReadField label="Requisition Type" value="Item" appearance="control" />);
+
+    const value = screen.getByRole('textbox', { name: 'Requisition Type' });
+    expect(value.getAttribute('aria-readonly')).toBe('true');
+    expect(value.textContent).toBe('Item');
+    expect(value.tagName).not.toBe('INPUT');
+    expect(value.className).toContain('min-h-11');
+    expect(value.className).toContain('border');
+  });
+
+  it('uses the caller\'s human empty-state text instead of a dash', () => {
+    render(<ReadField label="Requisition No." value={null} appearance="control" emptyText="Assigned when saved" />);
+
+    expect(screen.getByRole('textbox', { name: 'Requisition No.' }).textContent).toBe('Assigned when saved');
+    expect(screen.queryByText('—')).toBeNull();
   });
 });

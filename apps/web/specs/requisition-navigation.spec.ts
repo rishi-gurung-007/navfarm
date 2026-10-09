@@ -38,11 +38,13 @@ describe('Requisition navigation (WP1g)', () => {
     expect(page).toContain('t("rhDesc")');
   });
 
-  it('Inventory no longer lists Requisitions; the inbox sends people to /requisitions', () => {
+  it('Inventory no longer lists Requisitions; Approvals shows real requests without a requisition shortcut', () => {
     expect(read('src/components/console/inventory/inventory-page-shell.tsx')).not.toContain('href: "/inventory/requisitions"');
     expect(read('src/app/(app)/layout.tsx')).not.toContain('href: "/inventory/requisitions"');
     const inbox = read('src/components/console/approvals/approvals-page-shell.tsx');
-    expect(inbox).toContain('router.push("/requisitions")');
+    expect(inbox).not.toContain('router.push("/requisitions")');
+    expect(inbox).not.toContain('apNewRequest');
+    expect(inbox).not.toContain('apRequisitionsCard');
     expect(inbox).not.toContain('"/approvals/requisitions"');
   });
 

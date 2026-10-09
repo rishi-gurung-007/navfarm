@@ -63,7 +63,7 @@ describe('feed forecast run snapshot rules', () => {
 
   it('hashes the material run-line multiset with a stable version and no volatile row identity', () => {
     const lines = buildRunLineSnapshots({ daily: [{
-      date: '2026-10-01', batchId: 'batch-1', realBatchId: 'batch-1', destinationLocationId: 'silo-1', itemId: 'item-1',
+      date: '2026-10-01', batchId: 'batch-1', realBatchId: 'batch-1' as any, destinationLocationId: 'silo-1', itemId: 'item-1',
       heads: 40, feedRateKg: 2.5, openingStockKg: 500, confirmedReceiptKg: 0, demandKg: 100,
       projectedClosingKg: 400, shortageDate: null, recommendedQtyKg: 700,
     }] });

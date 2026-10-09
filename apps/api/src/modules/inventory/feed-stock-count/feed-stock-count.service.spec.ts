@@ -5,7 +5,7 @@ import * as schema from '../../../core/database/schema';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FeedStockCountService } from './feed-stock-count.service';
 
-type Log = { op: string; table: unknown; values?: any; set?: any; lock?: string };
+type Log = { op: string; table: unknown; values?: any; set?: any; lock?: string; joins?: unknown[] };
 
 function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
   farmId: 'farm-1', companyId: 'company-1', lobId: 'lob-piggery', restricted: true,
@@ -17,7 +17,8 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = {
       log.push(entry);
       const chain: any = {
         from: (table: unknown) => { entry.table = table; return chain; },
-        innerJoin: () => chain,
+        innerJoin: (table: unknown) => { entry.joins = [...(entry.joins ?? []), table]; return chain; },
+        leftJoin: (table: unknown) => { entry.joins = [...(entry.joins ?? []), table]; return chain; },
         where: () => chain,
         orderBy: () => chain,
         limit: () => chain,
@@ -104,6 +105,33 @@ describe('FeedStockCountService', () => {
     expect(line.columns.find((column) => column.name === 'rate_snapshot')).toBeDefined();
     expect(line.columns.find((column) => column.name === 'monetary_status')?.notNull).toBe(true);
     expect(line.columns.find((column) => column.name === 'local_currency_id')?.notNull).toBe(false);
+  });
+
+  it('returns semantic silo, item and reason values with a saved count line instead of only UUIDs', async () => {
+    const count = {
+      count_id: 'count-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1',
+      count_no: 'FSC-00001', counted_at: '2026-10-08 18:00:00', schedule_source: 'ON_DEMAND', status: 'DRAFT',
+    };
+    const semanticLine = {
+      count_line_id: 'line-1', count_id: 'count-1', silo_id: 'silo-1', silo_code: 'GRA100/SILO-001',
+      item_id: 'item-1', item_code: 'FEED-001', item_name: 'Grower Feed', reason_id: 'reason-1', reason_name: 'Spillage',
+      system_qty_kg: '1000', counted_qty_kg: '950', variance_qty_kg: '-50', variance_pct_absolute: '5',
+    };
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.feedStockCount, [[count]]],
+      [schema.locationMaster, [[farm]]],
+      [schema.feedStockCountLine, [[semanticLine]]],
+    ]);
+    const { service, log } = setup(queues);
+
+    await expect(service.findOne('count-1', 'tenant-1')).resolves.toMatchObject({
+      count_no: 'FSC-00001',
+      lines: [expect.objectContaining({
+        silo_code: 'GRA100/SILO-001', item_code: 'FEED-001', item_name: 'Grower Feed', reason_name: 'Spillage',
+      })],
+    });
+    const lineRead = log.find((entry) => entry.op === 'select' && entry.table === schema.feedStockCountLine);
+    expect(lineRead?.joins).toEqual([schema.locationMaster, schema.itemMaster, schema.reasonMaster]);
   });
 
   it('captures only exact active-farm SILO ledger evidence at counted_at, inside one transaction', async () => {
@@ -251,15 +279,15 @@ describe('FeedStockCountService', () => {
     expect(line).toMatchObject({ variance_qty_kg: '0', reason_id: null });
   });
 
-  it('persists typed unavailable monetary evidence when local currency is not configured', async () => {
+  it('uses base currency identity valuation when optional local currency is not configured', async () => {
     const { service, currency, log } = setup(createQueues({ local: [] }));
     await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1' })).resolves.toMatchObject({ status: 'DRAFT' });
     expect(currency.currentRate).not.toHaveBeenCalled();
     const line = log.find((entry) => entry.table === schema.feedStockCountLine)?.values[0];
     expect(line).toMatchObject({
       base_currency_id: 'base', local_currency_id: null, rate_id: null,
-      monetary_status: 'MISSING_LOCAL_CURRENCY', variance_value_base: '-20', variance_value_local: null,
-      rate_snapshot: { status: 'MISSING_LOCAL_CURRENCY', companyId: 'company-1', baseCurrencyId: 'base' },
+      monetary_status: 'RESOLVED', variance_value_base: '-20', variance_value_local: '-20',
+      rate_snapshot: { status: 'RESOLVED', rateId: null, rate: 1, rateDate: null, createdAt: null, scope: 'IDENTITY' },
     });
   });
 

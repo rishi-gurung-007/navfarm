@@ -61,6 +61,12 @@ export class QueryFeedPeriodsDto {
 
 export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
 
+export class GenerateFeedPlanDto extends QueryFeedPeriodsDto {
+  @ApiProperty({ description: 'Production date whose ISO week identifies the retained plan version' })
+  @IsDateString()
+  productionDate!: string;
+}
+
 /**
  * D41, narrowed by Task 4 (3 Oct ruling): a silo's own feed levels, edited
  * from Settings → Inventory Setup → Feed Planning. Only these two now — the

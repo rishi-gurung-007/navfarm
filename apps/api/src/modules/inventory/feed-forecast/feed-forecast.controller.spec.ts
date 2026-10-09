@@ -73,6 +73,24 @@ describe('FeedForecastController run persistence boundary', () => {
     });
   });
 
+  it('lists, reads and generates retained feed plan versions through explicit scoped routes', async () => {
+    const service = {
+      listFeedPlanVersions: jest.fn(async () => [{ plan_id: 'plan-1' }]),
+      findFeedPlanVersion: jest.fn(async () => ({ plan_id: 'plan-1', lines: [] })),
+      generateFeedPlanVersion: jest.fn(async () => ({ planId: 'plan-1', planCode: 'PLAN-GRA100-202642-R01' })),
+    } as any;
+    const controller = new FeedForecastController(service);
+
+    await expect(controller.feedPlanVersions('farm-1', req)).resolves.toMatchObject({ data: [{ plan_id: 'plan-1' }] });
+    await expect(controller.feedPlanVersion('f4cf8276-17ed-4b46-95df-5234dfb2b48a', req)).resolves.toMatchObject({ data: { plan_id: 'plan-1' } });
+    await expect(controller.generateFeedPlanVersion({ farmId: 'farm-1', productionDate: '2026-10-16' }, req)).resolves.toMatchObject({ data: { planId: 'plan-1' } });
+    expect(service.listFeedPlanVersions).toHaveBeenCalledWith('farm-1', 'tenant-1', 'FARM_MANAGER');
+    expect(service.findFeedPlanVersion).toHaveBeenCalledWith('f4cf8276-17ed-4b46-95df-5234dfb2b48a', 'tenant-1');
+    expect(service.generateFeedPlanVersion).toHaveBeenCalledWith('farm-1', '2026-10-16', 'tenant-1', req.user);
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.feedPlanVersions)).toMatchObject({ action: 'view' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.generateFeedPlanVersion)).toMatchObject({ action: 'create' });
+  });
+
   it('serves silo status under the forecast grant, through the scoped service', async () => {
     const query = { farmId: 'farm-1', shedId: 'shed-1', siloId: 'silo-1', planningDate: '2026-09-23', view: 'CUSTOM' as const, from: '2026-09-23', to: '2026-09-29' };
     const data = { planningDate: '2026-09-23', selection: { shedId: 'shed-1', siloId: 'silo-1' }, silo: {} };
@@ -83,5 +101,14 @@ describe('FeedForecastController run persistence boundary', () => {
     expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.siloStatus)).toEqual({
       moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view',
     });
+  });
+
+  it('passes the selected Company Settings company to the scoped farm settings query', async () => {
+    const service = { listFarmSettings: jest.fn(async () => []) } as any;
+    const controller = new FeedForecastController(service);
+
+    await controller.farmSettings('co-1', req);
+
+    expect(service.listFarmSettings).toHaveBeenCalledWith('tenant-1', 'FARM_MANAGER', 'co-1');
   });
 });

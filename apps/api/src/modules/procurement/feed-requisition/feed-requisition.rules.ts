@@ -169,14 +169,16 @@ export function recommendLines(args: {
    * (pure callers, tests) the forecast's start-of-day balance stands in.
    */
   currentBalanceKg?: Map<string, number>;
+  /** Manual lines retain forecast evidence even when no system order is needed. */
+  includeZeroNeed?: boolean;
 }): DraftLine[] {
-  const { planningDate, to, sources, destinations, settings, currentBalanceKg } = args;
+  const { planningDate, to, sources, destinations, settings, currentBalanceKg, includeZeroNeed = false } = args;
   const lines: DraftLine[] = [];
   for (const s of sources) {
     // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
     // "Never offset next diet with stock of current diet" still holds because each source is one container and one item.
     const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
-    if (unroundedNeedKg <= 0) continue; // Engine Step 8: no shortage, no order (supersedes the "lands on its level" minimum)
+    if (unroundedNeedKg <= 0 && !includeZeroNeed) continue; // Engine Step 8: automatic drafts contain shortage lines only.
     const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null, capacityKg: null };
     const feedType = feedTypeOf(dest);
     const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);

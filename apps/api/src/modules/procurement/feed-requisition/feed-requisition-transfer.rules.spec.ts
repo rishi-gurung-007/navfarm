@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { groupFeedTransferLines } from './feed-requisition-transfer.rules';
+import { feedReleaseBlockReason, groupFeedTransferLines } from './feed-requisition-transfer.rules';
 
 const lines = [
   { lineId: 'line-1', itemId: 'feed-a', itemLabel: 'FEED-A', destinationLocationId: 'silo-1', quantityKg: 5000 },
@@ -41,5 +41,11 @@ describe('groupFeedTransferLines', () => {
   it('refuses ambiguous exact-date assignments and names the item', () => {
     expect(() => groupFeedTransferLines(lines, [assignment, { ...assignment, assignmentId: 'assignment-2', binLocationId: 'bin-2' }], '2026-10-10'))
       .toThrow(new BadRequestException('FEED-A has multiple active mill BIN assignments on 2026-10-10; select an unambiguous production slot.'));
+  });
+
+  it('returns the truthful disabled reason used by the header action', () => {
+    expect(feedReleaseBlockReason(lines, [], '2026-10-10')).toBe('FEED-A has no active mill BIN assignment on 2026-10-10.');
+    expect(feedReleaseBlockReason(lines, [assignment], '2026-10-10')).toBeNull();
+    expect(feedReleaseBlockReason(lines, [assignment], null)).toBe('A production date is required before Release.');
   });
 });

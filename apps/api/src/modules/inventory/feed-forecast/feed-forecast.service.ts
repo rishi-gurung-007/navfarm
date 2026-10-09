@@ -24,7 +24,8 @@ import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
 import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact } from './feed-silo-status';
-import { buildFeedPlanRows, FeedPlanFact } from './feed-plan.rules';
+import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
+import { FeedPlanService } from './feed-plan.service';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -128,7 +129,13 @@ export function plannedIncomingFromRequisitions(
   horizonTo: string,
 ): import('./feed-forecast.engine').IncomingFeed[] {
   return rows.flatMap((row) => {
-    const approvalStatus = row.approval_status ?? row.status;
+    // `status` is the legacy document status and older approved rows may
+    // still carry approval_status=OPEN.  A terminal approval decision is
+    // authoritative for incoming-stock eligibility; do not silently drop a
+    // genuinely approved requisition because of that historical mismatch.
+    const approvalStatus = row.status === 'APPROVED' && (!row.approval_status || row.approval_status === 'OPEN')
+      ? 'APPROVED'
+      : row.approval_status ?? row.status;
     const documentStatus = row.document_status ?? 'OPEN';
     if (approvalStatus !== 'APPROVED' || documentStatus !== 'OPEN' || row.transfer_link_id) return [];
     if (!row.item_id || !row.destination_location_id) return [];
@@ -142,6 +149,7 @@ export function plannedIncomingFromRequisitions(
       kind: 'PLANNED_REQUISITION' as const,
       referenceId: row.requisition_id,
       referenceNo: row.req_no,
+      expectedDate: requestedDate,
       overdue: requestedDate < stockDate,
     }];
   });
@@ -698,6 +706,7 @@ export class FeedForecastService {
     // service directly now passes a stub too.
     private readonly feedSettings: FeedSettingsService,
     @Optional() private readonly runService?: FeedForecastRunService,
+    @Optional() private readonly planService?: FeedPlanService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -900,10 +909,8 @@ export class FeedForecastService {
       item_code: schema.itemMaster.item_code,
       item_name: schema.itemMaster.item_name,
       recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
-      capacity_kg: schema.locationMaster.silo_capacity_kg,
     }).from(schema.feedForecastRunLine)
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.feedForecastRunLine.required_item_id))
-      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.feedForecastRunLine.destination_location_id))
       .where(and(eq(schema.feedForecastRunLine.run_id, run.run_id), ...range));
 
     // The saved run may contain one dated line per batch. The requisition rule
@@ -922,7 +929,10 @@ export class FeedForecastService {
     const facts: FeedPlanFact[] = [...tentative.values()].map((line) => ({
       farmId, farmCode: farm?.code ?? '', farmName: farm?.name ?? '', period: line.shortage_date ?? line.forecast_date,
       itemId: line.item_id, itemCode: line.item_code, itemName: line.item_name,
-      tentativeKg: Number(line.recommended_qty_kg), capacityKg: line.capacity_kg === null ? null : Number(line.capacity_kg),
+      // Workbook Engine rows 31–44 mean mill production capacity here, not the
+      // destination silo's storage capacity. Mill capacity is not configured
+      // in the current approved scope, so report it as unavailable.
+      tentativeKg: Number(line.recommended_qty_kg), capacityKg: null,
     }));
 
     const [requisition] = await this.db.select({
@@ -977,6 +987,168 @@ export class FeedForecastService {
       }
     }
     return { run: { runId: run.run_id, runCode: run.run_code, from: run.from_date, to: run.to_date }, rows: buildFeedPlanRows(facts) };
+  }
+
+  async listFeedPlanVersions(queryFarmId: string | undefined, tenantId: string, userType?: string) {
+    if (!this.planService) throw new Error('Feed plan service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+    return this.planService.list(farmId, companyId, tenantId);
+  }
+
+  async findFeedPlanVersion(planId: string, tenantId: string) {
+    if (!this.planService) throw new Error('Feed plan service is not configured.');
+    return this.planService.findOne(planId, tenantId);
+  }
+
+  async generateFeedPlanVersion(
+    queryFarmId: string | undefined,
+    productionDate: string,
+    tenantId: string,
+    actor?: { userId?: string; userType?: string },
+  ) {
+    if (!this.runService || !this.planService) throw new Error('Feed plan services are not configured.');
+    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, actor?.userType);
+    const run = await this.runService.findCurrent(farmId, companyId, tenantId);
+    if (!run) throw new ConflictException('Save a feed forecast calculation before generating a feed plan.');
+    const [farm] = await this.db.select({ code: schema.locationMaster.location_code })
+      .from(schema.locationMaster)
+      .where(and(eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId)))
+      .limit(1);
+    if (!farm) throw new NotFoundException('Farm not found.');
+
+    const targetWeek = productionFeedWeek(productionDate);
+    const historyWeeks = completedFeedWeeks(productionDate);
+    const sourceFrom = historyWeeks[0].from;
+    const sourceTo = historyWeeks.at(-1)!.to;
+    const targetRows = await this.db.select({
+      itemId: schema.feedForecastRunLine.required_item_id,
+      demandKg: schema.feedForecastRunLine.daily_demand_kg,
+    }).from(schema.feedForecastRunLine).where(and(
+      eq(schema.feedForecastRunLine.run_id, run.run_id),
+      sql`${schema.feedForecastRunLine.forecast_date} >= ${targetWeek.from}`,
+      sql`${schema.feedForecastRunLine.forecast_date} <= ${targetWeek.to}`,
+    ));
+    const projectedByItem = new Map<string, number>();
+    for (const row of targetRows) projectedByItem.set(row.itemId, (projectedByItem.get(row.itemId) ?? 0) + Number(row.demandKg));
+
+    const historyRows = await this.db.select({
+      entryDate: schema.batchDailyData.entry_date,
+      actualKg: schema.batchDailyData.entered_value,
+      itemId: schema.schedulerLine.item_id,
+      standardQty: schema.schedulerLine.standard_qty,
+      qtyBasis: schema.schedulerLine.qty_basis,
+      batchId: schema.batchHeader.batch_id,
+      openingQty: schema.batchHeader.opening_quantity,
+    }).from(schema.batchDailyData)
+      .innerJoin(schema.schedulerLine, eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id))
+      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchDailyData.batch_id))
+      .where(and(
+        eq(schema.batchDailyData.tenant_id, tenantId),
+        eq(schema.batchDailyData.company_id, companyId),
+        eq(schema.batchHeader.farm_id, farmId),
+        eq(schema.batchDailyData.posted, true),
+        eq(schema.schedulerLine.line_type, 'CONSUMPTION'),
+        sql`${schema.batchDailyData.entry_date} >= ${sourceFrom}`,
+        sql`${schema.batchDailyData.entry_date} <= ${sourceTo}`,
+      ));
+    const mortalityRows = await this.db.select({
+      batchId: schema.batchTransaction.batch_id,
+      date: schema.batchTransaction.transaction_date,
+      quantity: schema.batchTransaction.quantity,
+    }).from(schema.batchTransaction)
+      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchTransaction.batch_id))
+      .where(and(
+        eq(schema.batchHeader.tenant_id, tenantId),
+        eq(schema.batchHeader.company_id, companyId),
+        eq(schema.batchHeader.farm_id, farmId),
+        eq(schema.batchTransaction.transaction_type, 'MORTALITY'),
+        sql`${schema.batchTransaction.transaction_date} <= ${sourceTo}`,
+      ));
+    const mortalities = new Map<string, Array<{ date: string; quantity: number }>>();
+    for (const row of mortalityRows) mortalities.set(row.batchId, [...(mortalities.get(row.batchId) ?? []), { date: row.date, quantity: Number(row.quantity) || 0 }]);
+
+    const historyByItem = new Map<string, Array<{ from: string; to: string; actualKg: number; expectedKg: number }>>();
+    const ensureHistory = (itemId: string) => {
+      const existing = historyByItem.get(itemId);
+      if (existing) return existing;
+      const created = historyWeeks.map((week) => ({ ...week, actualKg: 0, expectedKg: 0 }));
+      historyByItem.set(itemId, created);
+      return created;
+    };
+    for (const row of historyRows) {
+      if (!row.itemId || row.actualKg === null) continue;
+      const weekIndex = historyWeeks.findIndex((week) => row.entryDate >= week.from && row.entryDate <= week.to);
+      if (weekIndex < 0) continue;
+      const deaths = (mortalities.get(row.batchId) ?? []).filter((entry) => entry.date <= row.entryDate)
+        .reduce((total, entry) => total + entry.quantity, 0);
+      const heads = Math.max(0, Number(row.openingQty) - deaths);
+      const standard = Math.max(0, Number(row.standardQty) || 0);
+      const expected = row.qtyBasis === 'PER_HEAD' ? standard * heads : standard;
+      const history = ensureHistory(row.itemId);
+      history[weekIndex].actualKg += Math.max(0, Number(row.actualKg) || 0);
+      history[weekIndex].expectedKg += expected;
+    }
+
+    const approvedRequisitions = await this.db.select({ id: schema.requisition.requisition_id })
+      .from(schema.requisition).where(and(
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, companyId),
+        eq(schema.requisition.farm_id, farmId),
+        eq(schema.requisition.feed_forecast_run_id, run.run_id),
+        or(eq(schema.requisition.approval_status, 'APPROVED'), eq(schema.requisition.status, 'APPROVED')),
+        isNull(schema.requisition.deleted_at),
+      ));
+    const requestedByItem = new Map<string, number>();
+    const approvedByItem = new Map<string, number>();
+    const approvedLineItems = new Set<string>();
+    if (approvedRequisitions.length) {
+      const requisitionLines = await this.db.select({
+        lineId: schema.requisitionLine.line_id,
+        itemId: schema.requisitionLine.item_id,
+        quantity: schema.requisitionLine.quantity,
+      }).from(schema.requisitionLine).where(inArray(schema.requisitionLine.requisition_id, approvedRequisitions.map((row) => row.id)));
+      for (const row of requisitionLines) {
+        if (row.itemId) requestedByItem.set(row.itemId, (requestedByItem.get(row.itemId) ?? 0) + Number(row.quantity));
+      }
+      const consolidationLines = await this.db.select({
+        lineId: schema.feedConsolidationLine.requisition_line_id,
+        itemId: schema.feedConsolidationLine.item_id,
+        approved: schema.feedConsolidationLine.mill_approved_qty_kg,
+      }).from(schema.feedConsolidationLine).where(inArray(schema.feedConsolidationLine.requisition_id, approvedRequisitions.map((row) => row.id)));
+      for (const row of consolidationLines) {
+        if (!row.itemId) continue;
+        approvedLineItems.add(row.itemId);
+        approvedByItem.set(row.itemId, (approvedByItem.get(row.itemId) ?? 0) + Number(row.approved));
+      }
+    }
+
+    const itemIds = new Set([...projectedByItem.keys(), ...requestedByItem.keys()]);
+    const lines = [...itemIds].map((itemId) => {
+      const history = ensureHistory(itemId);
+      const projectedTargetKg = projectedByItem.get(itemId) ?? 0;
+      const normalized = deriveTentativeFeedQuantity({ projectedTargetKg, history });
+      return {
+        itemId,
+        projectedTargetKg,
+        adjustmentFactor: normalized.adjustmentFactor,
+        tentativeKg: normalized.tentativeKg,
+        requestedKg: approvedRequisitions.length ? requestedByItem.get(itemId) ?? 0 : null,
+        millApprovedKg: approvedLineItems.has(itemId) ? approvedByItem.get(itemId) ?? 0 : null,
+        history,
+      };
+    }).filter((line) => line.projectedTargetKg > 0 || (line.requestedKg ?? 0) > 0);
+    return this.planService.createVersion({
+      tenantId,
+      companyId,
+      farmId,
+      farmCode: farm.code,
+      sourceRunId: run.run_id,
+      productionDate,
+      planType: approvedRequisitions.length ? 'ACTUAL' : 'TENTATIVE',
+      sourceFrom,
+      sourceTo,
+      lines,
+    }, actor);
   }
 
   async archiveRun(runId: string, tenantId: string, actor?: { userId?: string; userType?: string }) {
@@ -1034,10 +1206,11 @@ export class FeedForecastService {
    * before answered [] there. Sorted by code, the order the farms are known by.
    */
   /** The same farms GET /feed-forecast/farms offers, each with its farm override row's values (null = inherits the company). */
-  async listFarmSettings(tenantId: string, userType: string | undefined): Promise<FeedFarmSettingsRow[]> {
+  async listFarmSettings(tenantId: string, userType: string | undefined, companyId?: string): Promise<FeedFarmSettingsRow[]> {
     const L = schema.locationMaster;
     const conditions = this.farmListConditions(tenantId, userType);
     if (!conditions) return [];
+    if (companyId) conditions.push(eq(L.company_id, companyId));
     const rows = await this.db
       .select({
         farm_id: L.location_id,
@@ -2003,17 +2176,16 @@ export class FeedForecastService {
    * LOB-less), a transfer has no LOB of its own, so the caller's LOB is held
    * against the item's — the same column a ledger row's lob_id is copied from.
    *
-   * No lower bound on posting_date (fix round 1, Important 2): a transfer
+   * No lower bound on the expected date (fix round 1, Important 2): a transfer
    * dated before the stock date is still open and still outstanding, so it
    * must still count. The old gte(posting_date, stockDate) dropped it
    * entirely, and the engine's own walk only visits stockDate..horizonTo
    * anyway (feed-forecast.engine.ts), so even an undropped row would have
    * been invisible at its own date. The outstanding quantity is therefore
-   * dated at max(posting_date, stockDate) below, landing it on the stock date
-   * instead of a date the walk never reaches. This undercounts confirmed
-   * incoming for a transfer that is, in truth, already later than planned —
-   * which feeds the shortfall, so the forecast errs toward ordering stock it
-   * already has coming rather than silently dropping it.
+   * dated at max(expected delivery date, stockDate) below (with posting date
+   * as the fallback for hand-made transfers), landing it on a date the walk
+   * actually reaches. This prevents the forecast from treating a later
+   * requisition delivery as if it arrived on the transfer creation date.
    */
   private async loadDraftTransfers(
     locationIds: string[],
@@ -2032,7 +2204,17 @@ export class FeedForecastService {
       lte(T.posting_date, horizonTo),
       ...restrictedScopeConditions(farmScope(this.cls), { companyId: T.company_id, lobId: schema.itemMaster.lob_id }),
     ];
-    const lineColumns = { line_id: TL.line_id, item_id: TL.item_id, item_code: schema.itemMaster.item_code, uom: TL.uom, posting_date: T.posting_date, qty: TL.quantity };
+    const lineColumns = {
+      line_id: TL.line_id,
+      transfer_id: T.transfer_id,
+      transfer_no: T.transfer_no,
+      requisition_line_id: TL.requisition_line_id,
+      item_id: TL.item_id,
+      item_code: schema.itemMaster.item_code,
+      uom: TL.uom,
+      posting_date: T.posting_date,
+      qty: TL.quantity,
+    };
     const into = await this.db
       .select({ ...lineColumns, warehouse_id: T.to_warehouse_id })
       .from(T)
@@ -2047,6 +2229,20 @@ export class FeedForecastService {
       .where(and(...common, inArray(T.from_warehouse_id, locationIds)));
 
     const lineIds = [...new Set([...into, ...out].map((r) => r.line_id))];
+    const requisitionLineIds = [...new Set([...into, ...out].map((r) => r.requisition_line_id).filter((id): id is string => !!id))];
+    const expectedByLine = new Map<string, { reqNo: string; expectedDate: string | null }>();
+    if (requisitionLineIds.length) {
+      const requisitionRows = await this.db
+        .select({
+          lineId: schema.requisitionLine.line_id,
+          reqNo: schema.requisition.req_no,
+          expectedDate: sql<string | null>`COALESCE(${schema.requisitionLine.proposed_delivery_date}, ${schema.requisitionLine.recommended_delivery_date}, ${schema.requisition.required_date})`,
+        })
+        .from(schema.requisitionLine)
+        .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+        .where(and(eq(schema.requisition.tenant_id, tenantId), inArray(schema.requisitionLine.line_id, requisitionLineIds)));
+      for (const row of requisitionRows) expectedByLine.set(row.lineId, { reqNo: row.reqNo, expectedDate: row.expectedDate });
+    }
     const shipped = new Map<string, number>();
     const received = new Map<string, number>();
     if (lineIds.length) {
@@ -2070,17 +2266,40 @@ export class FeedForecastService {
       for (const r of receivedRows) received.set(r.line_id, Number(r.qty));
     }
 
-    // Sum the outstanding quantity per warehouse + item + uom + date, as the
-    // old grouped read did; a line with nothing outstanding adds nothing.
+    // Sum each transfer's outstanding quantity per warehouse + item + uom +
+    // expected date; a line with nothing outstanding adds nothing. Keeping the
+    // transfer identity in the key preserves explainable source references.
     const totals = new Map<string, FeedStockMovement>();
     const add = (r: (typeof into)[number], qty: number) => {
       if (!(Math.abs(qty) > 0)) return;
       // Clamped at the stock date (fix round 1, Important 2): a transfer
-      // dated earlier is still outstanding today, and the walk never visits
-      // a date before stockDate, so its date here is max(posting_date, stockDate).
-      const date = r.posting_date < stockDate ? stockDate : r.posting_date;
-      const key = [r.warehouse_id, r.item_id, r.uom, date].join('|');
-      const row = totals.get(key) ?? { warehouse_id: r.warehouse_id, item_id: r.item_id, item_code: r.item_code, uom: r.uom, posting_date: date, qty: 0 };
+      // expected earlier is still outstanding today, and the walk never visits
+      // a date before stockDate, so its date here is max(expectedDate, stockDate).
+      // A released requisition transfer inherits its expected delivery date
+      // from the requisition line. A hand-made transfer has no such field, so
+      // its posting date remains the only valid expectation. Never move a
+      // posted ledger event here: this collection contains open quantities
+      // only, and the ledger remains the source of truth for posted stock.
+      const expected = expectedByLine.get(r.requisition_line_id ?? '');
+      const expectedDate = expected?.expectedDate ?? r.posting_date;
+      const date = expectedDate < stockDate ? stockDate : expectedDate;
+      // Keep each transfer as its own movement so source references remain
+      // explainable when several transfers arrive on the same silo/date.
+      // The forecast engine still sums these movements at the silo/item grain;
+      // the UI deduplicates the badge across batch rows.
+      const key = [r.warehouse_id, r.item_id, r.uom, date, r.transfer_id].join('|');
+      const row = totals.get(key) ?? {
+        warehouse_id: r.warehouse_id,
+        item_id: r.item_id,
+        item_code: r.item_code,
+        uom: r.uom,
+        posting_date: date,
+        qty: 0,
+        ...(r.transfer_id ? { reference_id: r.transfer_id } : {}),
+        ...(r.transfer_no ? { reference_no: r.transfer_no } : {}),
+        ...(expected?.reqNo ? { related_reference_no: expected.reqNo } : {}),
+        ...(expected?.expectedDate ? { expected_date: date } : {}),
+      };
       row.qty += qty;
       totals.set(key, row);
     };

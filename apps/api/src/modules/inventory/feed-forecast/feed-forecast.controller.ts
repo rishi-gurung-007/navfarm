@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -69,6 +69,33 @@ export class FeedForecastController {
     return { success: true, message: 'Feed plan retrieved successfully.', data };
   }
 
+  @Get('feed-plan/versions')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Retained Tentative and Actual Feed Plan versions for one farm' })
+  async feedPlanVersions(@Query('farmId') farmId: string | undefined, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listFeedPlanVersions(farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Feed plan versions retrieved successfully.', data };
+  }
+
+  @Get('feed-plan/versions/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'One retained Feed Plan version with its five-week evidence' })
+  async feedPlanVersion(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.findFeedPlanVersion(id, tenantId);
+    return { success: true, message: 'Feed plan version retrieved successfully.', data };
+  }
+
+  @Post('feed-plan/versions')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Generate and retain the next Tentative or Actual Feed Plan version' })
+  async generateFeedPlanVersion(@Body() dto: GenerateFeedPlanDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.generateFeedPlanVersion(dto.farmId, dto.productionDate, tenantId, req.user);
+    return { success: true, message: 'Feed plan version generated.', data };
+  }
+
   @Get('runs/:id')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: 'One immutable feed forecast run and its dated lines' })
@@ -88,17 +115,17 @@ export class FeedForecastController {
   }
 
   /**
-   * Farms with their feed-planning override values and silos, for Settings →
-   * Inventory Setup → Feed Planning. Read under the report's grant, like 'farms'
+   * Farms with their feed-planning override values and silos, for Company
+   * Settings → Feed Planning. Read under the report's grant, like 'farms'
    * above. The override values are written through PUT /feed-settings/farm
    * (Task 8: they moved off location_master onto feed_planning_setting).
    */
   @Get('farm-settings')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: "Each farm this caller may open, with its feed planning override values and silos" })
-  async farmSettings(@Req() req: any) {
+  async farmSettings(@Query('companyId') companyId: string | undefined, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType);
+    const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType, companyId);
     return { success: true, message: 'Feed planning settings retrieved successfully.', data };
   }
 

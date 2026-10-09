@@ -52,9 +52,9 @@ not already represented by an existing field.
 5. **Physical Stock Count** — physical count entry and reconciliation.
 
 The tabs share selected Farm, planning date and date/range context where those
-values are applicable. Optional Shed, Silo, Batch, Feed Item and Feed Type
-filters narrow the displayed result; they do not silently recalculate a
-different farm forecast.
+values are applicable. Calculation displays the complete authoritative Farm
+result; it does not provide separate Shed, Silo, Batch, Feed Item or Feed Type
+result filters.
 
 ### 2.2 Main Requisition page
 
@@ -159,9 +159,12 @@ Calculation opens without calculated rows. The user first selects the required
 Farm and date/range controls. The screen explains which required control is
 missing instead of showing `NaN`, `-`, an em dash or a misleading zero.
 
+Farm, Planning Date, View and the applicable Date/Range/Reporting Period
+controls occupy one row. The action for the current calculation state is
+aligned at the right end of that row.
+
 Pressing **Calculate** runs the authoritative server engine once for the whole
-selected Farm and range. Optional display filters operate on the returned
-result without changing its quantities.
+selected Farm and range. The returned Farm result is displayed in full.
 
 ### 5.2 Saving and reopening
 

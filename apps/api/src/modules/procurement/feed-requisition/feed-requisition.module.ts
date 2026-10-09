@@ -8,6 +8,8 @@ import { FeedSettingsModule } from '../../inventory/feed-settings/feed-settings.
 import { StockTransferModule } from '../../inventory/stock-transfer/stock-transfer.module';
 import { FeedRequisitionController } from './feed-requisition.controller';
 import { FeedRequisitionService } from './feed-requisition.service';
+import { FeedConsolidationService } from './feed-consolidation.service';
+import { FeedLoadingService } from './feed-loading.service';
 
 // Feed requisitions live on /feed-requisition, with their own rules. Ruling C2
 // (generic /requisition unmounted) was lifted by Part E Task 13: RequisitionModule
@@ -16,6 +18,6 @@ import { FeedRequisitionService } from './feed-requisition.service';
 @Module({
   imports: [ApprovalModule, FeedForecastModule, FeedAlertModule, SiloFeedModule, InventoryLedgerModule, FeedSettingsModule, StockTransferModule],
   controllers: [FeedRequisitionController],
-  providers: [FeedRequisitionService],
+  providers: [FeedRequisitionService, FeedConsolidationService, FeedLoadingService],
 })
 export class FeedRequisitionModule {}

@@ -6,7 +6,7 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     const config = getConfig('production-slot')!;
     expect(config).toEqual(expect.objectContaining({
       label: 'Production Slots', singular: 'Production Slot', apiBase: '/production-slot',
-      idKey: 'slot_id', group: 'Settings', businessAdminOnly: true,
+      idKey: 'slot_id', group: 'Inventory', businessAdminOnly: true,
     }));
     expect(config.columns).toEqual([
       { key: 'slot_code', label: 'Code' },
@@ -22,6 +22,21 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     expect(config.fields.find((field) => field.key === 'end_time')?.type).toBe('time');
     expect(MASTER_DATA_CONFIGS.filter((candidate) => candidate.key === 'production-slot')).toHaveLength(1);
     expect(MASTER_DATA_NAV_ORDER).not.toContain('production-slot');
+  });
+
+  it('exposes exact-date BIN Diet Assignments beside Location without inventing a standalone page', () => {
+    const config = getConfig('bin-diet-assignment')!;
+    expect(config).toEqual(expect.objectContaining({
+      apiBase: '/bin-diet-assignment', idKey: 'assignment_id', tabOf: 'location',
+      group: 'Inventory', businessAdminOnly: true,
+    }));
+    expect(config.fields.map((field) => field.key)).toEqual([
+      'company_id', 'bin_location_id', 'feed_item_id', 'production_date', 'production_slot_id', 'diet_priority',
+    ]);
+    expect(config.columns?.map((column) => column.key)).toEqual([
+      'bin_code', 'bin_name', 'feed_item_no', 'feed_item_description', 'production_date', 'slot_code', 'diet_priority', 'status',
+    ]);
+    expect(MASTER_DATA_NAV_ORDER).not.toContain('bin-diet-assignment');
   });
 
   it('keeps Alert Rules in Farm Masters', () => {
@@ -85,7 +100,7 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
   // that asks for none is left to the table's usual display.
   it('asks for no new formatting on any other master, so their lists are unchanged', () => {
     const touched = MASTER_DATA_CONFIGS.filter((c) => (c.columns ?? []).some((col) => col.format || col.labels)).map((c) => c.key);
-    expect(touched.sort()).toEqual(['alert-rule', 'reporting-period']);
+    expect(touched.sort()).toEqual(['alert-rule', 'bin-diet-assignment', 'reporting-period']);
     for (const key of ['location', 'item', 'breed', 'stage', 'number-series']) {
       const cols = getConfig(key)?.columns ?? [];
       expect(cols.every((col) => !col.format && !col.labels)).toBe(true);

@@ -30,6 +30,7 @@ const options = {
   resources: [],
   departments: [{ cost_center_id: "d1", cost_center_code: "D1", cost_center_name: "Dept" }],
   locations: [
+    { location_id: "f1", location_code: "F1", location_name: "Farm One", location_type: "FARM", farm_id: null },
     { location_id: "st", location_code: "F1/STORE", location_name: "Store", location_type: "STORE", farm_id: "f1" },
     { location_id: "sh", location_code: "F1/SHED-1", location_name: "Shed", location_type: "SHED", farm_id: "f1" },
   ],
@@ -71,12 +72,16 @@ describe("CommonRequisitionDetail", () => {
     const draft = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04") };
     render(<CommonRequisitionDetail initial={draft} onView={onView} onBack={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/requisition/options?company_id=co-1"));
-    await waitFor(() => expect(screen.getAllByRole("option", { name: "F1/STORE" }).length).toBeGreaterThan(0));
-    fireEvent.change(screen.getByLabelText("crqFrom"), { target: { value: "st" } });
-    fireEvent.change(screen.getByLabelText("crqTo"), { target: { value: "sh" } });
-    fireEvent.change(screen.getByLabelText('crqItemFor:{"line":1}'), { target: { value: "i1" } });
+    fireEvent.click(screen.getByRole("button", { name: "crqMainLocation" }));
+    fireEvent.click(await screen.findByRole("option", { name: "F1" }));
+    fireEvent.click(screen.getByRole("button", { name: "crqFrom" }));
+    fireEvent.click(await screen.findByRole("option", { name: "F1/STORE" }));
+    fireEvent.click(screen.getByRole("button", { name: "crqTo" }));
+    fireEvent.click(await screen.findByRole("option", { name: "F1/SHED-1" }));
+    fireEvent.click(screen.getByRole("button", { name: 'crqItemFor:{"line":1}' }));
+    fireEvent.click(await screen.findByRole("option", { name: "IT-1 — Fixture item" }));
     fireEvent.change(screen.getByLabelText('crqQtyFor:{"line":1}'), { target: { value: "5" } });
-    fireEvent.click(screen.getByText("crqSave"));
+    fireEvent.click(screen.getByText("crqCreate"));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(post).toHaveBeenCalledWith("/requisition", expect.objectContaining({
       doc_type: "ITEM", purpose: "STORE", from_location_id: "st", to_location_id: "sh",
@@ -93,7 +98,7 @@ describe("CommonRequisitionDetail", () => {
   // buttons, after the lines, and is scrolled into view.
   // Review p1f, concern 5: a refusal was at the top of the document, out of
   // sight while the user is at the buttons — the same defect as the notice.
-  it("shows a refusal next to the action buttons, after the lines, and scrolls it into view", async () => {
+  it("shows a refusal after the lines beside the footer action, and scrolls it into view", async () => {
     const scrolled = jest.fn();
     const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scrolled;
@@ -105,14 +110,14 @@ describe("CommonRequisitionDetail", () => {
       const table = screen.getAllByRole("table")[0];
       expect(table.compareDocumentPosition(refusal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
-      expect(refusal.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(table.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       await waitFor(() => expect(scrolled).toHaveBeenCalled());
     } finally {
       Element.prototype.scrollIntoView = original;
     }
   });
 
-  it("shows the success notice next to the action buttons, after the lines, and scrolls it into view", async () => {
+  it("shows the success notice after the lines beside the footer action, and scrolls it into view", async () => {
     const scrolled = jest.fn();
     const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scrolled;
@@ -124,7 +129,7 @@ describe("CommonRequisitionDetail", () => {
       const table = screen.getAllByRole("table")[0];
       expect(table.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
-      expect(notice.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(table.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       await waitFor(() => expect(scrolled).toHaveBeenCalled());
     } finally {
       Element.prototype.scrollIntoView = original;
@@ -295,9 +300,9 @@ describe("CommonRequisitionDetail", () => {
 
   // Rishi, 5 Oct: "The one requesting is the one who would be receiving." The
   // server decides it (may_receive, review p1f I3); the web only follows.
-  it("offers no Transfer Receipt when the server says the caller may not receive", () => {
+  it("keeps Transfer Receipt disabled when the server says the caller may not receive", () => {
     render(<CommonRequisitionDetail initial={withShipments(false)} onView={jest.fn()} onBack={jest.fn()} />);
-    expect(screen.queryByText("crqReceive")).toBeNull();
+    expect((screen.getByRole("button", { name: "crqReceive" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the second shipment's own line and caps the receipt at its remainder", async () => {
@@ -326,6 +331,17 @@ describe("CommonRequisitionDetail", () => {
     fireEvent.click(button);
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/link-po", { linked_po_no: "PO-TEST-1" }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqPoLinked"));
+  });
+
+  it("keeps the Purchase Link PO control visible but disabled before release", () => {
+    render(<CommonRequisitionDetail
+      initial={base({ purpose: "PURCHASE", approval_status: "OPEN", document_status: "OPEN" })}
+      onView={jest.fn()}
+      onBack={jest.fn()}
+    />);
+
+    expect((screen.getByLabelText("crqPoNo") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "crqLinkPo" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the API's refusal on release as it comes", async () => {

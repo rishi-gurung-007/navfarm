@@ -504,8 +504,11 @@ export class QueryLocationDto extends MasterListQueryDto {
 
   @ApiProperty({ description: 'Filter by active status', required: false })
   @IsOptional()
+  @Transform(({ value }) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return raw === 'true' || raw === true ? true : raw === 'false' || raw === false ? false : raw;
+  })
   @IsBoolean()
-  @Type(() => Boolean)
   isActive?: boolean;
 
   @ApiProperty({ description: 'Search location code or name', required: false })

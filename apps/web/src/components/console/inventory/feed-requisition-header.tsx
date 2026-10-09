@@ -5,24 +5,27 @@
  * place (Task 18b fix round 1). FeedRequisitionDocument (a saved requisition)
  * and RequisitionNewDialog (one not yet saved) both render this, so the order
  * of the header cannot drift between them. Presentational: every value is
- * handed in already formatted; a null value shows "—" (ReadField).
+ * handed in already formatted; a null value uses a human empty-state message.
  *
  * Req r26-r35 order: Farm Total -> Bulk Truck Target -> (Bagged Total, only
  * when given) -> Bulk Order Multiple -> Required Delivery Date -> Supplier ->
  * Purpose -> Status -> Priority -> Deadline; the approval/transfer/forecast
  * fields follow only on a saved requisition (`saved`).
  */
-import type { ReactNode } from "react";
-import { ReadField } from "@/components/ui/field";
+import type { ComponentProps, ReactNode } from "react";
+import { ReadField as BaseReadField } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 
-const HALF = "sm:col-span-6";
+const HALF = "sm:col-span-6 lg:col-span-4";
 
 export interface FeedRequisitionHeaderValues {
   reqNo: ReactNode;
   reqDate: ReactNode;
   reqType: ReactNode;
   source: ReactNode;
+  requesterLogin?: ReactNode;
+  requesterName?: ReactNode;
+  requesterDepartment?: ReactNode;
   farmCode: ReactNode;
   farmName: ReactNode;
   nextDiet: ReactNode;
@@ -43,12 +46,18 @@ export interface FeedRequisitionHeaderValues {
 
 export function FeedRequisitionHeaderFields({ values: v }: { values: FeedRequisitionHeaderValues }) {
   const { t } = useLanguage();
+  const ReadField = (props: ComponentProps<typeof BaseReadField>) => (
+    <BaseReadField {...props} appearance="control" emptyText={props.emptyText ?? t("rqNotYetAvailable")} />
+  );
   return (
     <>
       <ReadField className={HALF} label={t("rqdReqNo")} value={v.reqNo} mono />
       <ReadField className={HALF} label={t("rqdReqDate")} value={v.reqDate} />
       <ReadField className={HALF} label={t("rqdReqType")} value={v.reqType} />
       <ReadField className={HALF} label={t("rqdSource")} value={v.source} />
+      <ReadField className={HALF} label={t("crqRequesterUserId")} value={v.requesterLogin} mono />
+      <ReadField className={HALF} label={t("crqRequester")} value={v.requesterName} />
+      <ReadField className={HALF} label={t("crqRequesterDept")} value={v.requesterDepartment} />
       <ReadField className={HALF} label={t("rqdFarmCode")} value={v.farmCode} mono />
       <ReadField className={HALF} label={t("rqdFarmName")} value={v.farmName} />
       <ReadField className={HALF} label={t("rqdNextDiet")} value={v.nextDiet} />

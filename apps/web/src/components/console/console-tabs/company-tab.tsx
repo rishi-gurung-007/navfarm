@@ -21,6 +21,7 @@ import { Dialog } from "../../ui/dialog";
 import { useLanguage } from "@/hooks/useLanguage";
 import { API_ORIGIN } from "@/lib/api-client";
 import { FeedFarmOverrides } from "@/components/console/company/feed-farm-overrides";
+import { FeedPlanningPanel } from "@/components/console/inventory/feed-planning-panel";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -899,6 +900,7 @@ export default function CompanyTab({
                         </div>
                       </div>
                     ) : (
+                      <div className="flex flex-col gap-8">
                       <form onSubmit={handleSaveTab} className="flex flex-col gap-8">
                         <FieldGroup title={t("ctGrpIdentity")}>
                           <Field className="sm:col-span-3" label={t("ctCompanyCode")} htmlFor="profile-company-code" tooltip={t("ctHintCodeFixed")}>
@@ -1064,6 +1066,7 @@ export default function CompanyTab({
                           </Button>
                         </div>
                       </form>
+                      </div>
                     )
                   )}
 
@@ -1376,6 +1379,7 @@ export default function CompanyTab({
                         <ReadField label={t("ctFeedFinanceVariancePct")} value={feedForm.financeVariancePct} />
                       </div>
                     ) : (
+                      <div className="flex flex-col gap-8">
                       <form onSubmit={handleSaveTab} className="flex flex-col gap-8">
                         <FieldGroup title={t("ctFeedForecastGroup")}>
                           <Field className="sm:col-span-3" label={t("ctFeedDefaultForecastDays")} htmlFor="feed-default-days" required>
@@ -1425,6 +1429,8 @@ export default function CompanyTab({
                           <Button type="submit" disabled={saving} className="text-xs"><Save className="w-4 h-4" /> {saving ? t("saving") : t("saveChanges")}</Button>
                         </div>
                       </form>
+                      <FeedPlanningPanel companyId={targetCompany.company_id} />
+                      </div>
                     )
                   )}
 

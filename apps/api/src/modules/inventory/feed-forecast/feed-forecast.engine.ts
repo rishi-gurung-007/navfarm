@@ -71,6 +71,8 @@ export interface IncomingFeed {
   kind?: 'CONFIRMED_LEDGER' | 'OPEN_TRANSFER' | 'PLANNED_REQUISITION';
   referenceId?: string;
   referenceNo?: string;
+  relatedReferenceNo?: string;
+  expectedDate?: string;
   overdue?: boolean;
 }
 
@@ -274,6 +276,8 @@ export interface SourceBalancePoint {
     kind: NonNullable<IncomingFeed['kind']>;
     referenceId?: string;
     referenceNo?: string;
+    relatedReferenceNo?: string;
+    expectedDate?: string;
     overdue?: boolean;
   }>;
   dailyUseKg: number;
@@ -996,6 +1000,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
           kind: entry.kind ?? 'CONFIRMED_LEDGER',
           referenceId: entry.referenceId,
           referenceNo: entry.referenceNo,
+          relatedReferenceNo: entry.relatedReferenceNo,
+          expectedDate: entry.expectedDate,
           overdue: entry.overdue,
         })),
         dailyUseKg: toKg(demand),
@@ -1084,6 +1090,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         kind: entry.kind ?? 'CONFIRMED_LEDGER',
         referenceId: entry.referenceId,
         referenceNo: entry.referenceNo,
+        relatedReferenceNo: entry.relatedReferenceNo,
+        expectedDate: entry.expectedDate,
         overdue: entry.overdue,
       })),
       currentInventoryKg: toKg(opening),

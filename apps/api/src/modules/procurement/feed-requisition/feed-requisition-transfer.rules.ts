@@ -57,3 +57,19 @@ export function groupFeedTransferLines(
   }
   return [...plans.values()];
 }
+
+/** The same exact-date assignment validation used by Release, expressed for the read model. */
+export function feedReleaseBlockReason(
+  lines: FeedTransferLineInput[],
+  assignments: FeedBinAssignmentInput[],
+  productionDate: string | null | undefined,
+): string | null {
+  if (!productionDate) return 'A production date is required before Release.';
+  if (!lines.length) return 'At least one feed line is required before Release.';
+  try {
+    groupFeedTransferLines(lines, assignments, productionDate);
+    return null;
+  } catch (error) {
+    return error instanceof BadRequestException ? error.message : 'The mill BIN assignment is not ready for Release.';
+  }
+}

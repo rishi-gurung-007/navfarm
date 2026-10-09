@@ -10,7 +10,7 @@
  * answer (A11) but only sent once the user changes them — the farm's own
  * today is the API's to decide (D16).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -83,16 +83,6 @@ type SavedForecastDisplay = Partial<ForecastData> & {
   };
 };
 
-interface ResultFilters {
-  shedId: string;
-  siloId: string;
-  batchId: string;
-  itemId: string;
-  feedType: string;
-}
-
-const EMPTY_FILTERS: ResultFilters = { shedId: "", siloId: "", batchId: "", itemId: "", feedType: "" };
-
 const VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const labelCls = "nf-text-label block text-(--text-secondary)";
@@ -127,17 +117,16 @@ function FeedForecastPanelContent() {
   const [data, setData] = useState<ForecastData | null>(null);
   const [calculationState, setCalculationState] = useState<CalculationState>("EMPTY");
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
+  const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState<ResultFilters>(EMPTY_FILTERS);
   const [savingRun, setSavingRun] = useState(false);
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
+  const [createAfterSave, setCreateAfterSave] = useState(false);
   const [createdRequisition, setCreatedRequisition] = useState<RequisitionView | null>(null);
-
-  useEffect(() => setFilters(EMPTY_FILTERS), [farmId]);
 
   useEffect(() => {
     if (view !== "PERIOD" || !farmId) {
@@ -296,6 +285,10 @@ function FeedForecastPanelContent() {
       }
       setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
       setCalculationState("SAVED");
+      if (createAfterSave && canCreateRequisition && !existingRequisitionId) {
+        setFromRunOpen(true);
+      }
+      setCreateAfterSave(false);
       setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
@@ -346,42 +339,25 @@ function FeedForecastPanelContent() {
     }
   }
 
+  async function viewHistoricalRun(runId: string) {
+    setRunError("");
+    try {
+      const run = unwrap<any>(await api.get(`/feed-forecast/runs/${runId}`));
+      const display = run?.output_snapshot?.display;
+      if (!display?.rows || !display?.filters) throw new Error("This saved run has no restorable calculation snapshot.");
+      setData({ ...display, planningDate: display.filters.planningDate, view: display.filters.view, from: display.filters.from, to: display.filters.to, period: display.period ?? null, farm: display.farm } as ForecastData);
+      hydrateWindow(display.filters);
+      setCurrentRun({ run_id: run.run_id, run_code: run.run_code, version: run.version, existingRequisitionId: null, canCreateRequisition: false });
+      setHistoricalRun(true);
+      setCalculationState("SAVED");
+    } catch (err: any) {
+      setRunError(err?.message || "Unable to restore saved calculation.");
+    }
+  }
+
   const rows = Array.isArray(data?.rows) ? data!.rows : [];
   const sourceBalances = Array.isArray(data?.sourceBalances) ? data!.sourceBalances : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
-  const resultOptions = useMemo(() => {
-    const selected = (row: ReportRow, through: keyof ResultFilters) => {
-      if (through !== "shedId" && filters.shedId && row.shedId !== filters.shedId) return false;
-      if (!(["shedId", "siloId"] as Array<keyof ResultFilters>).includes(through) && filters.siloId && row.sourceLocationId !== filters.siloId) return false;
-      if (!(["shedId", "siloId", "batchId"] as Array<keyof ResultFilters>).includes(through) && filters.batchId && row.batchId !== filters.batchId) return false;
-      if (through === "feedType" && filters.itemId && row.itemId !== filters.itemId) return false;
-      return true;
-    };
-    const unique = (candidates: ReportRow[], id: (row: ReportRow) => string | null, label: (row: ReportRow) => string) => {
-      const values = new Map<string, string>();
-      for (const row of candidates) {
-        const key = id(row);
-        if (key && !values.has(key)) values.set(key, label(row));
-      }
-      return [...values].map(([value, text]) => ({ value, text })).sort((left, right) => left.text.localeCompare(right.text));
-    };
-    return {
-      sheds: unique(rows, (row) => row.shedId, (row) => row.shedCode),
-      silos: unique(rows.filter((row) => selected(row, "siloId")), (row) => row.sourceLocationId, (row) => [row.sourceCode, row.sourceName].filter(Boolean).join(" — ")),
-      batches: unique(rows.filter((row) => selected(row, "batchId")), (row) => row.batchId, (row) => row.batchNo),
-      items: unique(rows.filter((row) => selected(row, "itemId")), (row) => row.itemId, (row) => [row.itemNo, row.itemName].filter(Boolean).join(" — ")),
-      feedTypes: unique(rows.filter((row) => selected(row, "feedType")), (row) => row.feedType, (row) => row.feedType),
-    };
-  }, [filters, rows]);
-  const filteredRows = rows.filter((row) =>
-    (!filters.shedId || row.shedId === filters.shedId)
-    && (!filters.siloId || row.sourceLocationId === filters.siloId)
-    && (!filters.batchId || row.batchId === filters.batchId)
-    && (!filters.itemId || row.itemId === filters.itemId)
-    && (!filters.feedType || row.feedType === filters.feedType),
-  );
-  const visibleSources = new Set(filteredRows.map((row) => `${row.sourceLocationId ?? row.sourceCode ?? "NONE"}|${row.itemId}`));
-  const filteredSourceBalances = sourceBalances.filter((point) => visibleSources.has(`${point.locationId}|${point.itemId}`));
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
   const rangeStartsAtPlanning = !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
@@ -444,23 +420,44 @@ function FeedForecastPanelContent() {
           </div>
         )}
         </div>
+        {farm.loaded && !farm.failed && !noFarms && (farmId || farm.isFixed) && (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
+            {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
+            {calculationState === "EMPTY" && (
+              <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
+                {loading ? t("ffCalculating") : t("ffCalculate")}
+              </Button>
+            )}
+            {canSaveRun && calculationState === "CALCULATED" && (
+              <>
+                <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
+                  {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
+                </Button>
+                {data?.rows?.some((row) => Number(row.recommendedQtyKg ?? 0) > 0) && (
+                  <Button size="sm" variant="outline" onClick={() => { setCreateAfterSave(true); void saveRun(); }} disabled={!data || loading || savingRun}>
+                    {t("rqCreateFromSaved")}
+                  </Button>
+                )}
+              </>
+            )}
+            {calculationState === "SAVED" && !historicalRun && (
+              <>
+                {currentRun?.existingRequisitionId && (
+                  <Button size="sm" onClick={() => setFromRunOpen(true)}>
+                    {t("rqViewRequisition")}
+                  </Button>
+                )}
+                {canSaveRun && !currentRun?.existingRequisitionId && currentRun?.canCreateRequisition && (
+                  <Button size="sm" onClick={() => setFromRunOpen(true)}>{t("rqCreateFromSaved")}</Button>
+                )}
+                {canSaveRun && <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>}
+              </>
+            )}
+            {historicalRun && <Button size="sm" variant="outline" onClick={() => { setHistoricalRun(false); setCurrentRun(null); setData(null); setCalculationState("EMPTY"); }}>{"Return to current calculation"}</Button>}
+          </div>
+        )}
       </div>
-
-      {!!data && (
-        <div className="mt-3 flex shrink-0 flex-wrap items-end gap-3" aria-label={t("ffResultFilters")}>
-          <ResultFilter id="ff-filter-shed" label={t("ffFilterShed")} value={filters.shedId} options={resultOptions.sheds} allLabel={t("ffFilterAll")}
-            onChange={(shedId) => setFilters({ ...EMPTY_FILTERS, shedId })} />
-          <ResultFilter id="ff-filter-silo" label={t("ffFilterSilo")} value={filters.siloId} options={resultOptions.silos} allLabel={t("ffFilterAll")}
-            onChange={(siloId) => setFilters((current) => ({ ...EMPTY_FILTERS, shedId: current.shedId, siloId }))} />
-          <ResultFilter id="ff-filter-batch" label={t("ffFilterBatch")} value={filters.batchId} options={resultOptions.batches} allLabel={t("ffFilterAll")}
-            onChange={(batchId) => setFilters((current) => ({ ...EMPTY_FILTERS, shedId: current.shedId, siloId: current.siloId, batchId }))} />
-          <ResultFilter id="ff-filter-item" label={t("ffFilterFeedItem")} value={filters.itemId} options={resultOptions.items} allLabel={t("ffFilterAll")}
-            onChange={(itemId) => setFilters((current) => ({ ...current, itemId, feedType: "" }))} />
-          <ResultFilter id="ff-filter-type" label={t("ffFilterFeedType")} value={filters.feedType}
-            options={resultOptions.feedTypes.map((option) => ({ ...option, text: option.value === "BAGGED" ? t("ffFeedTypeBagged") : t("ffFeedTypeBulk") }))}
-            allLabel={t("ffFilterAll")} onChange={(feedType) => setFilters((current) => ({ ...current, feedType }))} />
-        </div>
-      )}
 
       {view === "PERIOD" && !!farmId && periodsFailed && <InlineAlert>{t("ffPeriodsLoadFailed")}</InlineAlert>}
       {view === "PERIOD" && !!farmId && !periodsFailed && periods !== null && periodList.length === 0 && (
@@ -490,39 +487,13 @@ function FeedForecastPanelContent() {
         <EmptyState title={t("ffNoFarms")} />
       ) : error ? null : (
         <>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center gap-2">
-              {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
-              {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
-              {calculationState === "EMPTY" && (
-                <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
-                  {loading ? t("ffCalculating") : t("ffCalculate")}
-                </Button>
-              )}
-              {canSaveRun && calculationState === "CALCULATED" && (
-                <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
-                  {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
-                </Button>
-              )}
-              {canSaveRun && calculationState === "SAVED" && (
-                <>
-                  {(currentRun?.existingRequisitionId || currentRun?.canCreateRequisition) && (
-                    <Button size="sm" onClick={() => setFromRunOpen(true)}>
-                      {t(currentRun?.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>
-                </>
-              )}
-            </div>
-          </div>
           {data ? (
             <>
-              <FeedForecastGrid rows={filteredRows} sourceBalances={filteredSourceBalances} view={data.view} from={data.from} loading={loading} t={t} />
-              <FeedForecastNotes flags={flags} t={t} />
+              <FeedForecastGrid rows={rows} sourceBalances={sourceBalances} view={data.view} from={data.from} loading={loading} t={t} />
+              <FeedForecastNotes flags={flags} t={t} compact />
             </>
           ) : loading ? <LoadingState label={t("ffLoading")} /> : <EmptyState title={t("ffCalculatePrompt")} />}
-          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} />}
+          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} compact onViewRun={viewHistoricalRun} />}
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}
             runId={currentRun?.run_id ?? currentRun?.runId ?? null}
@@ -540,25 +511,6 @@ function FeedForecastPanelContent() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function ResultFilter({ id, label, value, options, allLabel, onChange }: {
-  id: string;
-  label: string;
-  value: string;
-  options: Array<{ value: string; text: string }>;
-  allLabel: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label className={labelCls} htmlFor={id}>{label}</label>
-      <select id={id} className="nf-input-sm nf-select mt-1.5 min-w-[10rem]" style={inputStyle} value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{allLabel}</option>
-        {options.map((option) => <option key={option.value} value={option.value}>{option.text}</option>)}
-      </select>
     </div>
   );
 }

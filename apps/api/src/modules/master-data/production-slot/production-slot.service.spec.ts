@@ -7,10 +7,9 @@ describe('ProductionSlotService', () => {
   const selectQueue: unknown[][] = [];
   const conditions: unknown[] = [];
   const chain = (rows: unknown[]) => {
-    let condition: unknown;
     const self: any = {
       from: () => self,
-      where: (next: unknown) => { condition = next; conditions.push(next); return self; },
+      where: (next: unknown) => { conditions.push(next); return self; },
       orderBy: () => self,
       offset: () => self,
       limit: () => self,

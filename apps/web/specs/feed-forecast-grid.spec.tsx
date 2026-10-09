@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import {
   FeedForecastGrid,
   fmtKg,
@@ -180,6 +180,29 @@ describe('FeedForecastGrid — Engine row 70', () => {
     })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     expect(screen.getByText('3,000.00')).toBeTruthy();
     expect(screen.getByText('REQ-GRA100-2026-00001')).toBeTruthy();
+  });
+
+  it('shows planned incoming on the dated closing cell and explains the stock movement when clicked', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({
+        openingSystemBalanceKg: 1500,
+        plannedIncomingKg: 3000,
+        dailyUseKg: 2000,
+        projectedClosingBalanceKg: 2500,
+        incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceNo: 'REQ-VIL100-2026-00005' }],
+      })]}
+      view="DAILY"
+      from="2026-09-23"
+      loading={false}
+      t={t}
+    />);
+
+    expect(screen.getByText('+3,000.00 KG ffPlannedShort')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(await screen.findByText('ffBalanceOpening:{"kg":"1,500.00"}')).toBeTruthy();
+    expect(await screen.findByText('ffPlannedIncomingReference:{"references":"REQ-VIL100-2026-00005"}')).toBeTruthy();
   });
 
   it('uses human text for a non-finite quantity instead of NaN', () => {

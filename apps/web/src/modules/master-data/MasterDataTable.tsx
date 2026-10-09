@@ -668,7 +668,9 @@ export function MasterDataTable({
 
   const visibleFields = (
     editing
-      ? formFields.filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+      ? formFields
+          .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+          .filter((f) => config.key === "stage" || isFieldVisible(f, form))
       : formFields
           .filter((f) => !f.editOnly)
           .filter((f) => config.key === "stage" || isFieldVisible(f, form))
@@ -1129,21 +1131,19 @@ export function MasterDataTable({
     );
     endpoints.forEach(async (ep) => {
       try {
-        const params = new URLSearchParams();
-        if (companyId) params.set("companyId", companyId);
-        params.set("limit", "500");
+        const [basePath, search] = ep.split("?");
+        const params = new URLSearchParams(search || "");
+        if (companyId && !params.has("companyId")) params.set("companyId", companyId);
+        if (!params.has("limit")) params.set("limit", "500");
         // A picker must only offer rows the API will actually accept — unlike
         // the list page, which deliberately shows Active/Inactive rows so a
         // blocked one can be found and restored. isActive=true is a no-op on
         // endpoints that already always filter to active (e.g. NOB/LOB,
         // costing-method) and is honored by every findAll that carries the
         // isActive query param.
-        params.set("isActive", "true");
-        // ep may already carry a query string (e.g. "/item?itemType=LIVING_ASSET"),
-        // so append rather than assume — the same rule the dependent-field effect
-        // below uses. Hardcoding "?" produced "/item?itemType=X?companyId=..." and
-        // the filter value silently swallowed the rest of the query.
-        const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}${params.toString()}`);
+        if (!params.has("isActive")) params.set("isActive", "true");
+        const activeOnlyEp = `${basePath}?${params.toString()}`;
+        const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));
       } catch {
@@ -1283,11 +1283,13 @@ export function MasterDataTable({
       try {
         // Same active-only rule as the non-dependent effect above — a picker
         // must not offer a row the API will reject. ep may already carry a
-        // query string (dependsOnMode "query"), so append rather than assume.
-        // limit=500 as the effect above sends. Without it the list API's default
-        // page of 50 was the whole option list, so a dependent picker silently
-        // offered whichever 50 rows sorted first.
-        const activeOnlyEp = `${ep}${ep.includes("?") ? "&" : "?"}isActive=true&limit=500`;
+        // query string (dependsOnMode "query"), so preserve any existing params
+        // and do not duplicate isActive or limit.
+        const [basePath, search] = ep.split("?");
+        const params = new URLSearchParams(search || "");
+        if (!params.has("isActive")) params.set("isActive", "true");
+        if (!params.has("limit")) params.set("limit", "500");
+        const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));

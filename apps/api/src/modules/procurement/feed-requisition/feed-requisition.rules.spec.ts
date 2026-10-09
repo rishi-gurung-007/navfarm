@@ -18,7 +18,7 @@ const workedExampleWithLevels: ForecastInput = {
   store: null,
   items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
   batches: [{
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
   }],
   feedRows: [
@@ -30,13 +30,13 @@ const workedExampleWithLevels: ForecastInput = {
 // Task 2's sources for the Worked Example (23–29 Sep, SILO1 R1 1,500 kg, SILO2 R2 1,000 kg).
 const r1: ForecastSource = {
   sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId: 'r1', itemName: 'Weaner Diet R1',
-  balanceKg: 1500, planningDayDemandKg: 2000, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000, walkDemandKg: 6000,
+  balanceKg: 1500, planningDayDemandKg: 2000, currentDietDaysRemaining: 3, firstDemandDate: '2026-09-23', firstDayDemandKg: 2000, walkDemandKg: 6000,
   daysLeft: 0, runDownDate: '2026-09-23', shortageDate: '2026-09-23', isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['row-r1'],
   thresholdKg: 0, incomingKg: 0, shortfallKg: 4500, safetyStockKg: 0, deliveryDayOpeningKg: 1500,
 };
 const r2: ForecastSource = {
   sourceType: 'SILO', sourceCode: 'GRS/SILO-002', locationId: 's2', itemId: 'r2', itemName: 'Weaner Diet R2',
-  balanceKg: 1000, planningDayDemandKg: 0, firstDemandDate: '2026-09-26', firstDayDemandKg: 2500, walkDemandKg: 10000,
+  balanceKg: 1000, planningDayDemandKg: 0, currentDietDaysRemaining: null, firstDemandDate: '2026-09-26', firstDayDemandKg: 2500, walkDemandKg: 10000,
   daysLeft: null, runDownDate: '2026-09-26', shortageDate: '2026-09-26', isNextDiet: true, noSiloHoldsItem: false, lifecycleIds: ['row-r2'],
   thresholdKg: 0, incomingKg: 0, shortfallKg: 9000, safetyStockKg: 0, deliveryDayOpeningKg: 1000,
 };
@@ -122,6 +122,17 @@ describe('recommendLines — Worked Example', () => {
   it('drafts nothing for a source whose stock covers the window', () => {
     const covered = { ...r1, balanceKg: 6000, shortfallKg: 0, runDownDate: null };
     expect(recommendLines({ planningDate: '2026-09-23', to: '2026-09-29', sources: [covered], destinations: new Map([silo('s1')]), settings: S })).toEqual([]);
+  });
+
+  it('can retain a zero-shortage source as read-only evidence for a manual line', () => {
+    const covered = { ...r1, balanceKg: 6000, shortfallKg: 0, runDownDate: null };
+    expect(recommendLines({
+      planningDate: '2026-09-23', to: '2026-09-29', sources: [covered],
+      destinations: new Map([silo('s1')]), settings: S, includeZeroNeed: true,
+    })).toEqual([expect.objectContaining({
+      key: 's1|r1', systemBalanceKg: 6000, dailyRequirementKg: 2000,
+      unroundedNeedKg: 0, recommendedQtyKg: 0, bagCount: null,
+    })]);
   });
 
   it('marks a silo at or below its low level (priority input) and a store fallback as needing a changeover', () => {

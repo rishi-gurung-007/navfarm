@@ -111,13 +111,15 @@ export class StockTransferService {
       || context.mill.tenant_id !== tenantId || context.mill.company_id !== dto.company_id) {
       throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must have an active MILL parent.`);
     }
-    if (!context.destination || context.destination.location_type !== 'SILO' || !active(context.destination)) {
-      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must be an active SILO.`);
+    if (!context.destination || !['SILO', 'STORE'].includes(context.destination.location_type) || !active(context.destination)) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must be an active SILO or STORE.`);
     }
     if (context.destination.tenant_id !== tenantId || context.destination.company_id !== dto.company_id) {
       throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to company ${dto.company_id}.`);
     }
-    const requisitionFarmId = context.requisition.main_location_id;
+    // Feed requisitions use farm_id as the canonical farm location. Older
+    // drafts may not populate the optional common-requisition field.
+    const requisitionFarmId = context.requisition.main_location_id ?? context.requisition.farm_id;
     if (!requisitionFarmId
       || (context.destination.parent_location_id !== requisitionFarmId && context.destination.farm_id !== requisitionFarmId)) {
       throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to requisition farm ${requisitionFarmId ?? '(missing)'}.`);
@@ -135,6 +137,7 @@ export class StockTransferService {
         tenant_id: schema.requisition.tenant_id,
         company_id: schema.requisition.company_id,
         main_location_id: schema.requisition.main_location_id,
+        farm_id: schema.requisition.farm_id,
       })
       .from(schema.requisitionLine)
       .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
@@ -1125,19 +1128,20 @@ export class StockTransferService {
     }
   }
 
-  /** SH-2026-0001 / RC-2026-0001 per company — ours (no document names the event series). */
+  /** SH-2026-0001 / RC-2026-0001 per tenant — keep the series monotonic even
+   * when older rows were inserted out of order. The old lexical `ORDER BY`
+   * lookup could reuse an existing number inside a posting transaction. */
   private async nextEventNo(companyId: string, tenantId: string, kind: 'SH' | 'RC'): Promise<string> {
     const table = kind === 'SH' ? schema.transferShipment : schema.transferReceipt;
     const noColumn = kind === 'SH' ? schema.transferShipment.shipment_no : schema.transferReceipt.receipt_no;
     const year = new Date().getFullYear();
     const prefix = `${kind === 'SH' ? 'SH' : 'RC'}-${year}-`;
     const [last] = await this.db
-      .select({ no: noColumn })
+      .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${noColumn}, ${prefix.length + 1}) AS UNSIGNED)), 0)` })
       .from(table)
       .where(and(eq(table.tenant_id, tenantId), like(noColumn, `${prefix}%`)))
-      .orderBy(desc(noColumn))
-      .limit(1);
-    const lastSeq = last?.no ? Number(last.no.slice(prefix.length)) : 0;
+      .for('update');
+    const lastSeq = Number(last?.maxSeq ?? 0);
     return `${prefix}${String((Number.isFinite(lastSeq) ? lastSeq : 0) + 1).padStart(4, '0')}`;
   }
 }

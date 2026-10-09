@@ -16,6 +16,7 @@ import { useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DialogFooterActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -94,10 +95,10 @@ export function RequisitionDecision({
           <textarea id="rh-reject-reason" rows={2} className="nf-input w-full" style={inputStyle} value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)} />
         </Field>
-        <div className="flex justify-end gap-2">
+        <DialogFooterActions>
           <Button variant="outline" size="sm" disabled={deciding} onClick={() => setRejecting(false)}>{t("rhRejectCancel")}</Button>
           <Button variant="destructive" size="sm" disabled={deciding} onClick={reject}>{t("rhRejectConfirm")}</Button>
-        </div>
+        </DialogFooterActions>
       </div>
     );
   }
@@ -108,12 +109,12 @@ export function RequisitionDecision({
         <textarea id="rh-remarks" rows={2} className="nf-input w-full" style={inputStyle} value={remarks}
           onChange={(e) => setRemarks(e.target.value)} />
       </Field>
-      <div className="flex justify-end gap-2">
+      <DialogFooterActions>
         <Button variant="destructive" size="sm" disabled={deciding} onClick={() => { setRejecting(true); setRejectReason(""); }}>
           {t("rhReject")}
         </Button>
         <Button size="sm" className="nf-btn-primary" disabled={deciding} onClick={approve}>{t("rhApprove")}</Button>
-      </div>
+      </DialogFooterActions>
     </div>
   );
 }

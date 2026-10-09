@@ -78,6 +78,7 @@ const EXEMPT: Record<string, string> = {
 
   // master-data — not farm-scoped by decision (records are shared across a company's farms)
   'master-data/activity/activity.controller.ts': 'Master data, not farm-specific.',
+  'master-data/bin-diet-assignment/bin-diet-assignment.controller.ts': 'Company mill-production master; a BIN supplies requisitions across farm destinations and is company-scoped.',
   'master-data/customer/customer.controller.ts': 'Master data, not farm-specific.',
   'master-data/disease/disease.controller.ts': 'Master data, not farm-specific.',
   'master-data/farm/farm.controller.ts': 'Master data defining the farms themselves, not farm-specific operational records.',

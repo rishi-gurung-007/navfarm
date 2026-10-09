@@ -21,12 +21,13 @@
  * submits, links to the request, and posts once the decision is in.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Inbox, Loader2 } from "lucide-react";
+import { Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
+import { Dialog } from "@/components/ui/dialog";
+import { Field, ReadField } from "@/components/ui/field";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -56,6 +57,10 @@ interface CountLine {
   variance_qty_kg: string;
   variance_pct_absolute: string;
   reason_id: string | null;
+  silo_code: string;
+  item_code: string;
+  item_name: string;
+  reason_name: string | null;
 }
 
 interface CountView extends CountRow {
@@ -79,7 +84,7 @@ interface EvidenceResponse {
 
 const STATUS_FILTER = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "POSTED", "REJECTED"];
 const LIST_COLUMNS = ["fscColCountNo", "fscColCountedAt", "fscColSource", "fscColStatus"] as const;
-const LINE_COLUMNS = ["fscColSilo", "fscColItem", "fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColReason"] as const;
+const LINE_COLUMNS = ["fscColSilo", "fscColItem", "fscColItemName", "fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColReason"] as const;
 const RIGHT = new Set<string>(["fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct"]);
 
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
@@ -88,10 +93,10 @@ const NUM = "text-right tabular-nums";
 const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
-const kg = (value: string | number | null | undefined): string => {
-  if (value === null || value === undefined || value === "") return "—";
+const kg = (value: string | number | null | undefined, unavailable: string): string => {
+  if (value === null || value === undefined || value === "") return unavailable;
   const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "—";
+  return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : unavailable;
 };
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -113,8 +118,8 @@ function inputToInstant(local: string): string {
 }
 
 /** MySQL holds UTC; read the stored string as UTC and show it locally. */
-function shortTimestamp(value: string | null | undefined): string {
-  if (!value) return "—";
+function shortTimestamp(value: string | null | undefined, unavailable: string): string {
+  if (!value) return unavailable;
   const parsed = new Date(/[zZ]$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value.replace(" ", "T")}Z`);
   if (Number.isNaN(parsed.getTime())) return formatDateShort(value);
   return `${formatDateShort(parsed.toISOString().slice(0, 10))} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
@@ -125,6 +130,7 @@ const sourceLabel = (source: string, t: (key: any) => string): string =>
 
 export default function FeedStockCountPanel() {
   const { t } = useLanguage();
+  const unavailable = t("fsdNotAvailable");
   const farm = useFeedFarm();
   const farmId = farm.farmId;
   const companyId = farm.farms.find((entry) => entry.farmId === farmId)?.companyId ?? null;
@@ -257,7 +263,15 @@ export default function FeedStockCountPanel() {
   const canSubmit = selected?.status === "DRAFT" || selected?.status === "REJECTED";
   const canPost = selected?.status === "APPROVED";
   const href = selected ? approvalHref(selected) : null;
-  const showingList = !selected && !entry;
+  const dialogOpen = Boolean(selected || entry);
+  const selectedFarm = farm.farms.find((candidate) => candidate.farmId === farmId);
+  const dialogFarmLabel = fixedLabel ?? (selectedFarm ? feedFarmLabel({ code: selectedFarm.code, name: selectedFarm.name }) : "");
+
+  const closeDialog = () => {
+    setEntry(null);
+    setSelected(null);
+    setError("");
+  };
 
   const farmPicker = (
     <FeedFarmSelect
@@ -279,78 +293,32 @@ export default function FeedStockCountPanel() {
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           {farmPicker}
-          {showingList && (
-            <Field label={t("fscShow")} htmlFor="sc-status">
-              <select
-                id="sc-status"
-                className="nf-input-sm nf-select"
-                style={inputStyle}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                <option value="">{t("rqShowAll")}</option>
-                {STATUS_FILTER.map((value) => (
-                  <option key={value} value={value}>
-                    {labelOf(REQ_STATUS_LABEL, value, t)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-          {entry && (
-            <>
-              <Field label={t("fscCountedAt")} htmlFor="sc-counted-at">
-                <input
-                  id="sc-counted-at"
-                  type="datetime-local"
-                  className="nf-input-sm"
-                  style={inputStyle}
-                  value={entryAt}
-                  onChange={(e) => setEntryAt(e.target.value || localNowInput())}
-                />
-              </Field>
-              <Field label={t("fscSource")} htmlFor="sc-source">
-                <select
-                  id="sc-source"
-                  className="nf-input-sm nf-select"
-                  style={inputStyle}
-                  value={entryScheduled ? "SCHEDULED" : "ON_DEMAND"}
-                  onChange={(e) => setEntryScheduled(e.target.value === "SCHEDULED")}
-                >
-                  <option value="ON_DEMAND">{t("fscSourceOnDemand")}</option>
-                  <option value="SCHEDULED">{t("fscSourceScheduled")}</option>
-                </select>
-              </Field>
-            </>
-          )}
+          <Field label={t("fscShow")} htmlFor="sc-status">
+            <select
+              id="sc-status"
+              className="nf-input-sm nf-select"
+              style={inputStyle}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="">{t("rqShowAll")}</option>
+              {STATUS_FILTER.map((value) => (
+                <option key={value} value={value}>
+                  {labelOf(REQ_STATUS_LABEL, value, t)}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
         <div className="flex flex-wrap gap-2">
-          {showingList && (
-            <Button size="sm" onClick={() => void loadEvidence()} disabled={!farmId || busy}>
-              {t("fscNew")}
-            </Button>
-          )}
-          {entry && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => void loadEvidence()} disabled={busy}>
-                {t("ffRetry")}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setEntry(null)} disabled={busy}>
-                {t("fscBack")}
-              </Button>
-            </>
-          )}
-          {selected && (
-            <Button size="sm" variant="outline" onClick={() => setSelected(null)} disabled={busy}>
-              <ArrowLeft className="h-3.5 w-3.5" /> {t("fscBack")}
-            </Button>
-          )}
+          <Button size="sm" onClick={() => void loadEvidence()} disabled={!farmId || busy}>
+            {t("fscNew")}
+          </Button>
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
-      {entry && <p className="shrink-0 text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscCountedAtHelp")}</p>}
+      {!dialogOpen && error && <InlineAlert>{error}</InlineAlert>}
+      {!dialogOpen && notice && <InlineAlert variant="success">{notice}</InlineAlert>}
 
       {farm.failed ? (
         <InlineAlert>
@@ -365,123 +333,6 @@ export default function FeedStockCountPanel() {
         </div>
       ) : noFarms || !farmId || !companyId ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffNoFarms")}</div>
-      ) : entry ? (
-        entry.pairs.length === 0 ? (
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscEntryEmpty")}</p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <ScrollTable label={t("fscEntryLabel")}>
-              <thead>
-                <tr>
-                  <th scope="col" className={TH}>{t("fscColSilo")}</th>
-                  <th scope="col" className={TH}>{t("fscColItem")}</th>
-                  <th scope="col" className={cn(TH, NUM)}>{t("fscColSystem")}</th>
-                  <th scope="col" className={cn(TH, NUM)}>{t("fscColCounted")}</th>
-                  <th scope="col" className={TH}>{t("fscColReason")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entry.pairs.map((pair) => {
-                  const key = `${pair.siloId}:${pair.itemId}`;
-                  const value = counted[key] ?? "";
-                  const differs = value !== "" && Number.isFinite(Number(value)) && Number(value) !== pair.systemQtyKg;
-                  return (
-                    <tr key={key}>
-                      <td className={TD}>{pair.siloCode ?? pair.siloId}</td>
-                      <td className={TD}>{pair.itemCode}</td>
-                      <td className={cn(TD, NUM)}>{kg(pair.systemQtyKg)}</td>
-                      <td className={cn(TD, NUM)}>
-                        <input
-                          type="number"
-                          min={0}
-                          step="any"
-                          className="nf-input-sm w-28 px-2 text-right"
-                          style={inputStyle}
-                          aria-label={t("fscCountedLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
-                          value={value}
-                          onChange={(e) => setCounted((current) => ({ ...current, [key]: e.target.value }))}
-                        />
-                      </td>
-                      <td className={TD}>
-                        {differs ? (
-                          <ReasonSelect
-                            id={`sc-reason-${key}`}
-                            ariaLabel={t("fscReasonLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
-                            valueFormat="id"
-                            value={reasonIds[key] ?? null}
-                            onChange={(next) => setReasonIds((current) => ({ ...current, [key]: next }))}
-                          />
-                        ) : (
-                          <span style={{ color: "var(--text-secondary)" }}>{t("fscNoReason")}</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </ScrollTable>
-            <div className="flex shrink-0 gap-2">
-              <Button size="sm" onClick={() => void createCount()} disabled={busy}>
-                {t("fscSave")}
-              </Button>
-            </div>
-          </div>
-        )
-      ) : selected ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{selected.count_no}</h2>
-            <Badge variant={variantOf(REQ_STATUS_LABEL, selected.status)}>{labelOf(REQ_STATUS_LABEL, selected.status, t)}</Badge>
-            <Badge variant="neutral">{sourceLabel(selected.schedule_source, t)}</Badge>
-            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              {t("fscColCountedAt")}: {shortTimestamp(selected.counted_at)}
-            </span>
-            {selected.status === "PENDING_APPROVAL" && (
-              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscWaiting")}</span>
-            )}
-            {href && (
-              <a href={href} className="text-xs font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>
-                {t("fscOpenApproval")}
-              </a>
-            )}
-          </div>
-          <ScrollTable label={t("fscLinesLabel")}>
-            <thead>
-              <tr>
-                {LINE_COLUMNS.map((column) => (
-                  <th key={column} scope="col" className={cn(TH, RIGHT.has(column) && "text-right")}>
-                    {t(column)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => (
-                <tr key={line.count_line_id}>
-                  <td className={TD}>{line.silo_id}</td>
-                  <td className={TD}>{line.item_id}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.system_qty_kg)}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.counted_qty_kg)}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.variance_qty_kg)}</td>
-                  <td className={cn(TD, NUM)}>{kg(line.variance_pct_absolute)}</td>
-                  <td className={TD}>{line.reason_id ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </ScrollTable>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {canSubmit && (
-              <Button size="sm" onClick={() => void submit(selected.count_id)} disabled={busy}>
-                {t("fscSubmit")}
-              </Button>
-            )}
-            {canPost && (
-              <Button size="sm" onClick={() => void post(selected.count_id)} disabled={busy}>
-                {t("fscPost")}
-              </Button>
-            )}
-          </div>
-        </div>
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
           <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("fscLoading")}
@@ -505,7 +356,7 @@ export default function FeedStockCountPanel() {
             {rows.map((row) => (
               <tr key={row.count_id} className="cursor-pointer" onClick={() => void openCount(row.count_id)}>
                 <td className={cn(TD, "font-medium")}>{row.count_no}</td>
-                <td className={TD}>{shortTimestamp(row.counted_at)}</td>
+                <td className={TD}>{shortTimestamp(row.counted_at, unavailable)}</td>
                 <td className={TD}>{sourceLabel(row.schedule_source, t)}</td>
                 <td className={TD}>
                   <Badge variant={variantOf(REQ_STATUS_LABEL, row.status)} className={SMALL_BADGE}>
@@ -517,6 +368,123 @@ export default function FeedStockCountPanel() {
           </tbody>
         </ScrollTable>
       )}
+
+      <Dialog
+        open={dialogOpen}
+        onClose={closeDialog}
+        title={entry ? t("fscNew") : selected?.count_no ?? t("fftTabPhysicalCount")}
+        presentation="page"
+        footer={entry ? (
+          <>
+            <Button size="sm" variant="outline" onClick={closeDialog} disabled={busy}>{t("cancel")}</Button>
+            <Button size="sm" onClick={() => void createCount()} disabled={busy || entry.pairs.length === 0}>{t("fscSave")}</Button>
+          </>
+        ) : selected ? (
+          <>
+            <Button size="sm" variant="outline" onClick={closeDialog} disabled={busy}>{t("close")}</Button>
+            {canSubmit && <Button size="sm" onClick={() => void submit(selected.count_id)} disabled={busy}>{t("fscSubmit")}</Button>}
+            {canPost && <Button size="sm" onClick={() => void post(selected.count_id)} disabled={busy}>{t("fscPost")}</Button>}
+          </>
+        ) : null}
+      >
+        <div className="flex flex-col gap-4">
+          {error && <InlineAlert>{error}</InlineAlert>}
+          {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
+          {entry ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <ReadField label={t("ffFarm")} value={dialogFarmLabel} appearance="control" />
+                <Field label={t("fscCountedAt")} htmlFor="sc-counted-at">
+                  <input
+                    id="sc-counted-at"
+                    type="datetime-local"
+                    className="nf-input-sm"
+                    style={inputStyle}
+                    value={entryAt}
+                    onChange={(e) => setEntryAt(e.target.value || localNowInput())}
+                  />
+                </Field>
+                <Field label={t("fscSource")} htmlFor="sc-source">
+                  <select
+                    id="sc-source"
+                    className="nf-input-sm nf-select"
+                    style={inputStyle}
+                    value={entryScheduled ? "SCHEDULED" : "ON_DEMAND"}
+                    onChange={(e) => setEntryScheduled(e.target.value === "SCHEDULED")}
+                  >
+                    <option value="ON_DEMAND">{t("fscSourceOnDemand")}</option>
+                    <option value="SCHEDULED">{t("fscSourceScheduled")}</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscCountedAtHelp")}</p>
+                <Button size="sm" variant="outline" onClick={() => void loadEvidence()} disabled={busy}>
+                  {t("ffRetry")}
+                </Button>
+              </div>
+              {entry.pairs.length === 0 ? (
+                <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscEntryEmpty")}</p>
+              ) : (
+                <ScrollTable label={t("fscEntryLabel")}>
+                  <thead><tr>
+                    <th scope="col" className={TH}>{t("fscColSilo")}</th>
+                    <th scope="col" className={TH}>{t("fscColItem")}</th>
+                    <th scope="col" className={cn(TH, NUM)}>{t("fscColSystem")}</th>
+                    <th scope="col" className={cn(TH, NUM)}>{t("fscColCounted")}</th>
+                    <th scope="col" className={TH}>{t("fscColReason")}</th>
+                  </tr></thead>
+                  <tbody>
+                    {entry.pairs.map((pair) => {
+                      const key = `${pair.siloId}:${pair.itemId}`;
+                      const value = counted[key] ?? "";
+                      const differs = value !== "" && Number.isFinite(Number(value)) && Number(value) !== pair.systemQtyKg;
+                      return <tr key={key}>
+                        <td className={TD}>{pair.siloCode ?? pair.siloId}</td>
+                        <td className={TD}>{pair.itemCode}</td>
+                        <td className={cn(TD, NUM)}>{kg(pair.systemQtyKg, unavailable)}</td>
+                        <td className={cn(TD, NUM)}>
+                          <input type="number" min={0} step="any" className="nf-input-sm w-28 px-2 text-right" style={inputStyle}
+                            aria-label={t("fscCountedLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
+                            value={value} onChange={(e) => setCounted((current) => ({ ...current, [key]: e.target.value }))} />
+                        </td>
+                        <td className={TD}>{differs ? (
+                          <ReasonSelect id={`sc-reason-${key}`} ariaLabel={t("fscReasonLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
+                            valueFormat="id" value={reasonIds[key] ?? null}
+                            onChange={(next) => setReasonIds((current) => ({ ...current, [key]: next }))} />
+                        ) : <span style={{ color: "var(--text-secondary)" }}>{t("fscNoReason")}</span>}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </ScrollTable>
+              )}
+            </>
+          ) : selected ? (
+            <>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Badge variant={variantOf(REQ_STATUS_LABEL, selected.status)}>{labelOf(REQ_STATUS_LABEL, selected.status, t)}</Badge>
+                <Badge variant="neutral">{sourceLabel(selected.schedule_source, t)}</Badge>
+                <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscColCountedAt")}: {shortTimestamp(selected.counted_at, unavailable)}</span>
+                {selected.status === "PENDING_APPROVAL" && <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscWaiting")}</span>}
+                {href && <a href={href} className="text-xs font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("fscOpenApproval")}</a>}
+              </div>
+              <ScrollTable label={t("fscLinesLabel")}>
+                <thead><tr>{LINE_COLUMNS.map((column) => (
+                  <th key={column} scope="col" className={cn(TH, RIGHT.has(column) && "text-right")}>{t(column)}</th>
+                ))}</tr></thead>
+                <tbody>{lines.map((line) => (
+                  <tr key={line.count_line_id}>
+                    <td className={TD}>{line.silo_code}</td><td className={TD}>{line.item_code}</td><td className={TD}>{line.item_name}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.system_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.counted_qty_kg, unavailable)}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.variance_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.variance_pct_absolute, unavailable)}</td>
+                    <td className={TD}>{line.reason_name ?? t("fscNoReason")}</td>
+                  </tr>
+                ))}</tbody>
+              </ScrollTable>
+            </>
+          ) : null}
+        </div>
+      </Dialog>
     </div>
   );
 }

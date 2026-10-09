@@ -92,8 +92,9 @@ const TH = "px-1.5 py-1.5 align-bottom text-[10px] font-semibold uppercase track
 const TD = "px-1.5 py-1.5 text-xs text-[var(--text-primary)]";
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
-export function FeedPlanningPanel() {
+export function FeedPlanningPanel({ companyId }: { companyId?: string } = {}) {
   const { t } = useLanguage();
+  const unavailable = t("fsdNotAvailable");
   const [farms, setFarms] = useState<FeedPlanningFarm[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -109,8 +110,11 @@ export function FeedPlanningPanel() {
     let alive = true;
     setLoading(true);
     setFailed(false);
+    const path = companyId
+      ? `/feed-forecast/farm-settings?${new URLSearchParams({ companyId }).toString()}`
+      : "/feed-forecast/farm-settings";
     api
-      .get("/feed-forecast/farm-settings")
+      .get(path)
       .then((res: any) => {
         if (!alive) return;
         const raw = res?.data ?? res;
@@ -127,7 +131,7 @@ export function FeedPlanningPanel() {
     return () => {
       alive = false;
     };
-  }, [attempt]);
+  }, [attempt, companyId]);
 
   const allSilos = useMemo(() => farms.flatMap((farm) => (farm.silos ?? []).map((silo) => ({ farm, silo }))), [farms]);
   const siloPristine = useMemo(
@@ -257,7 +261,7 @@ export function FeedPlanningPanel() {
                                       <td className={TD} style={{ width: SHEDS_PX + CELL_PADDING_PX }}>
                                         {(silo.linkedSheds ?? []).length
                                           ? silo.linkedSheds.map((shed) => `${shed.code} — ${shed.name}`).join(", ")
-                                          : "—"}
+                                          : unavailable}
                                       </td>
                                       <td className={TD} style={{ width: FEED_TYPE_PX + CELL_PADDING_PX }}>
                                         <select aria-label={t("fpSiloFeedType", { silo: silo.code })} className="nf-input-sm" style={{ ...inputStyle, width: FEED_TYPE_PX }} value={siloDraft.feedType} onChange={(e) => setSiloFeedType(silo.locationId, e.target.value as "BULK" | "BAGGED")}>
@@ -265,9 +269,9 @@ export function FeedPlanningPanel() {
                                           <option value="BAGGED">BAGGED</option>
                                         </select>
                                       </td>
-                                      <td className={TD} style={{ width: ITEM_CODE_PX + CELL_PADDING_PX }}>{silo.feedItemCode ?? "—"}</td>
-                                      <td className={TD} style={{ width: ITEM_NAME_PX + CELL_PADDING_PX }}>{silo.feedItemName ?? "—"}</td>
-                                      <td className={`${TD} text-right tabular-nums`} style={{ width: CAPACITY_PX + CELL_PADDING_PX }}>{silo.capacityKg == null ? "—" : silo.capacityKg.toLocaleString("en-US")}</td>
+                                      <td className={TD} style={{ width: ITEM_CODE_PX + CELL_PADDING_PX }}>{silo.feedItemCode ?? unavailable}</td>
+                                      <td className={TD} style={{ width: ITEM_NAME_PX + CELL_PADDING_PX }}>{silo.feedItemName ?? unavailable}</td>
+                                      <td className={`${TD} text-right tabular-nums`} style={{ width: CAPACITY_PX + CELL_PADDING_PX }}>{silo.capacityKg == null ? unavailable : silo.capacityKg.toLocaleString("en-US")}</td>
                                       {SILO_COLUMNS.map((column) => (
                                         <td key={column.key} className={`${TD} text-right`}>
                                           <input type="number" aria-label={t(column.labelKey as any, { silo: silo.code })} className="nf-input-sm text-right tabular-nums" style={{ ...inputStyle, width: column.widthPx }} min={0} step="1" value={siloDraft[column.key]} onChange={(e) => setSiloCell(silo.locationId, column.key, e.target.value)} />

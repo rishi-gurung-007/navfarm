@@ -1,10 +1,32 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsDateString, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class QueryFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() status?: string;
+}
+
+export class FeedConsolidationQueryDto {
+  @ApiPropertyOptional({ enum: ['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED'] }) @IsOptional()
+  @IsIn(['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED'])
+  status?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) requisitionIds?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsDateString() fromDate?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() toDate?: string;
+}
+
+export class FeedConsolidationLineDto {
+  @ApiProperty() @IsUUID() requisitionLineId!: string;
+  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) millApprovedQtyKg?: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) adjustmentReason?: string;
+}
+
+export class CreateFeedConsolidationDto extends FeedConsolidationQueryDto {
+  @ApiProperty({ type: [FeedConsolidationLineDto] })
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedConsolidationLineDto)
+  lines!: FeedConsolidationLineDto[];
 }
 
 export class AutoDraftFeedRequisitionDto {

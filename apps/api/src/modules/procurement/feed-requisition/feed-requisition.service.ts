@@ -11,7 +11,7 @@
  * RequisitionModule is mounted since Part E Task 13 (C2 lifted) but refuses
  * every mutation on a FEED row; nothing here imports it.
  */
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -19,6 +19,7 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { farmScope, requisitionFarmLobCondition } from '../../../common/farm-scope';
+import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 import { userHasPermission } from '../../../common/permissions';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
@@ -41,13 +42,14 @@ import { maySelfApprove } from '../requisition/requisition.rules';
 import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
-  productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, runKeyFor, serverToday, wasEdited,
+  productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday, wasEdited,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateFeedRequisitionFromRunDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
-import { groupFeedTransferLines } from './feed-requisition-transfer.rules';
+import { feedReleaseBlockReason, groupFeedTransferLines } from './feed-requisition-transfer.rules';
+import { FeedLoadingService } from './feed-loading.service';
 
 /** The caller as the JWT carries it. userType is required by resolveFarm, which fails closed without it. */
 export type UserCtx = { userId?: string; userType?: string; email?: string };
@@ -120,6 +122,8 @@ export function requisitionListFields() {
 
 @Injectable()
 export class FeedRequisitionService implements OnModuleInit {
+  private readonly logger = new Logger(FeedRequisitionService.name);
+
   constructor(
     private readonly cls: ClsService,
     private readonly forecast: FeedForecastService,
@@ -133,6 +137,7 @@ export class FeedRequisitionService implements OnModuleInit {
     // safety stock) come from Feed Planning Settings now, not location_master's own feed_* columns.
     private readonly feedSettings: FeedSettingsService,
     @Optional() private readonly stockTransfers?: StockTransferService,
+    @Optional() private readonly loading?: FeedLoadingService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -146,8 +151,33 @@ export class FeedRequisitionService implements OnModuleInit {
     this.approvals.registerDocumentHandler(FEED_APPROVAL_DOC_TYPE, {
       decide: (request, decision, remarks, tenantId, user) => this.decideFromApproval(request, decision, remarks, tenantId, user),
       withdraw: (request, tenantId, user) => this.withdrawFromApproval(request, tenantId, user),
-      afterDecide: (request, tenantId) => this.feedAlerts.evaluateFarmSafely(request.farm_id, request.company_id, tenantId),
+      afterDecide: async (request, tenantId, user, decision) => {
+        await this.feedAlerts.evaluateFarmSafely(request.farm_id, request.company_id, tenantId);
+        if (decision === 'APPROVED') await this.refreshActualPlanAfterApproval(request, tenantId, user);
+      },
     });
+  }
+
+  /** Refresh the retained Actual Feed Plan after approval commits. */
+  private async refreshActualPlanAfterApproval(request: ApprovalRequestRow, tenantId: string, user?: UserCtx): Promise<void> {
+    try {
+      const [requisition] = await this.db.select({
+        productionDate: schema.requisition.production_date,
+        feedForecastRunId: schema.requisition.feed_forecast_run_id,
+      }).from(schema.requisition).where(and(
+        eq(schema.requisition.requisition_id, request.document_id!),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, request.company_id),
+        isNull(schema.requisition.deleted_at),
+      )).limit(1);
+      if (!requisition?.productionDate || !requisition.feedForecastRunId || !request.farm_id) return;
+      await this.forecast.generateFeedPlanVersion(request.farm_id, requisition.productionDate, tenantId, {
+        userId: user?.userId,
+        userType: user?.userType,
+      });
+    } catch (error) {
+      this.logger.warn(`Actual Feed Plan refresh skipped after approval ${request.doc_no}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** The same farm/LOB bound requisition.service.ts applies. */
@@ -291,6 +321,11 @@ export class FeedRequisitionService implements OnModuleInit {
         eq(schema.requisition.doc_type, FEED_DOC_TYPE),
         eq(schema.requisition.submission_deadline, submissionDeadline),
         notInArray(schema.requisition.status, DEAD_FEED_STATUSES),
+        // A fully received requisition no longer covers its silo/item for the
+        // cycle.  Partial or unposted fulfilment must continue to block a new
+        // requisition, so the same guard applies to both manual and forecast
+        // creation paths.
+        sql`(${schema.requisition.fulfilment_status} IS NULL OR ${schema.requisition.fulfilment_status} <> 'RECEIVED')`,
         isNull(schema.requisition.deleted_at),
       ))
       .for('update');
@@ -540,19 +575,22 @@ export class FeedRequisitionService implements OnModuleInit {
         grouped.set(key, [...(grouped.get(key) ?? []), line]);
       }
       const config = run.config_snapshot as { values?: { requisitionDraftSettings?: Partial<FarmFeedSettings> } } | null;
+      const effectiveSettings = { ...DEFAULT_FEED_SETTINGS, ...(config?.values?.requisitionDraftSettings ?? {}) };
       return {
         runId: run.run_id,
         runCode: run.run_code,
         planningDate: run.planning_date,
         farmId,
         existingRequisitionId: existing[0]?.requisition_id ?? null,
-        settings: config?.values?.requisitionDraftSettings ?? null,
+        settings: effectiveSettings,
         lines: [...grouped.values()].map((lines) => {
           const first = lines[0];
           const item = itemOf.get(first.item_id);
           const destination = destinationOf.get(first.destination_location_id!);
           const shortage = lines.map((line) => line.shortage_date).filter((date): date is string => !!date).sort()[0] ?? run.to_date;
-          const quantity = Math.max(...lines.map((line) => Number(line.recommended_qty_kg)));
+          const unroundedQuantity = Math.max(...lines.map((line) => Number(line.recommended_qty_kg)));
+          const feedType: FeedType = destination?.location_type === 'STORE' || destination?.feed_in_bags ? 'BAGGED' : 'BULK';
+          const quantity = roundOrderKg(unroundedQuantity, feedType, effectiveSettings);
           return {
             destination_location_id: first.destination_location_id!,
             destination_code: destination?.location_code ?? '',
@@ -563,7 +601,7 @@ export class FeedRequisitionService implements OnModuleInit {
             recommended_qty_kg: quantity,
             quantity_kg: quantity,
             proposed_delivery_date: addDays(shortage, -2),
-            feed_type: destination?.location_type === 'STORE' || destination?.feed_in_bags ? 'BAGGED' : 'BULK',
+            feed_type: feedType,
             source_type: destination?.location_type === 'STORE' ? 'STORE' : 'SILO',
             run_line_ids: lines.map((line) => line.run_line_id),
           };
@@ -581,10 +619,16 @@ export class FeedRequisitionService implements OnModuleInit {
     if (preview.existingRequisitionId) throw new ConflictException('This saved calculation already has a feed requisition.');
     const expected = new Map(preview.lines.map((line) => [lineKey(line.destination_location_id, line.item_id), line]));
     if (dto.lines.length !== expected.size) throw new BadRequestException('The requisition lines must match the saved calculation.');
+    const received = new Set<string>();
     for (const line of dto.lines) {
-      if (!expected.has(lineKey(line.destination_location_id, line.item_id))) {
+      const key = lineKey(line.destination_location_id, line.item_id);
+      if (!expected.has(key)) {
         throw new BadRequestException('A requisition destination or feed item does not belong to the saved calculation.');
       }
+      if (received.has(key)) {
+        throw new BadRequestException('Each saved calculation line must appear exactly once.');
+      }
+      received.add(key);
     }
     const { companyId } = await this.forecast.resolveFarm(preview.farmId, tenantId, user?.userType);
     const farm = await this.loadFarm(preview.farmId, companyId, tenantId);
@@ -1112,24 +1156,29 @@ export class FeedRequisitionService implements OnModuleInit {
   }
 
   async findAll(query: QueryFeedRequisitionDto, tenantId: string, user: UserCtx) {
-    const { farmId, companyId } = await this.forecast.resolveFarm(query.farmId, tenantId, user?.userType);
-    return this.forecast.withFarmScope(farmId, companyId, () => {
-      const conditions = [
-        eq(schema.requisition.tenant_id, tenantId),
-        eq(schema.requisition.farm_id, farmId),
-        eq(schema.requisition.company_id, companyId),
-        eq(schema.requisition.doc_type, FEED_DOC_TYPE),
-        isNull(schema.requisition.deleted_at),
-        ...this.scopeConditions(),
-      ];
-      if (query.status) conditions.push(eq(schema.requisition.status, query.status));
-      return this.db
-        .select(requisitionListFields())
-        .from(schema.requisition)
-        .where(and(...conditions))
-        .orderBy(desc(schema.requisition.created_at))
-        .limit(200);
-    });
+    const scope = farmScope(this.cls);
+    const allFarms = !query.farmId && !isFarmBoundUserType(user?.userType);
+    const selected = allFarms && typeof (this.forecast as any).listFarms === 'function'
+      ? await this.forecast.listFarms(tenantId, user?.userType)
+      : [await this.forecast.resolveFarm(query.farmId, tenantId, user?.userType)].map((farm) => ({ farmId: farm.farmId, companyId: farm.companyId }));
+    const farmIds = selected.map((farm) => farm.farmId);
+    const companyIds = [...new Set(selected.map((farm) => farm.companyId))];
+    const conditions = [
+      eq(schema.requisition.tenant_id, tenantId),
+      inArray(schema.requisition.farm_id, farmIds),
+      eq(schema.requisition.doc_type, FEED_DOC_TYPE),
+      isNull(schema.requisition.deleted_at),
+    ];
+    if (companyIds.length === 1) conditions.push(eq(schema.requisition.company_id, companyIds[0]));
+    if (!allFarms) conditions.push(...this.scopeConditions());
+    if (query.status) conditions.push(eq(schema.requisition.status, query.status));
+    return this.db
+      .select({ ...requisitionListFields(), farm_code: schema.locationMaster.location_code, farm_name: schema.locationMaster.location_name })
+      .from(schema.requisition)
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.requisition.farm_id))
+      .where(and(...conditions))
+      .orderBy(desc(schema.requisition.created_at))
+      .limit(200);
   }
 
   /**
@@ -1175,6 +1224,36 @@ export class FeedRequisitionService implements OnModuleInit {
         if ((row.approval_status ?? row.status) !== 'APPROVED' || (row.document_status ?? 'OPEN') !== 'OPEN') {
           throw new BadRequestException(`Feed requisition ${row.req_no} must be Approved and Open before Release.`);
         }
+        // Older finalized sheets may have the immutable line snapshot but a
+        // missing header back-link. Resolve that relation from the snapshot so
+        // a valid consolidated requisition is not incorrectly blocked.
+        let consolidationId = row.feed_consolidation_id;
+        if (!consolidationId) {
+          const [linked] = await this.db.select({ consolidationId: schema.feedConsolidationLine.consolidation_id })
+            .from(schema.feedConsolidationLine)
+            .innerJoin(schema.feedConsolidation, eq(schema.feedConsolidation.consolidation_id, schema.feedConsolidationLine.consolidation_id))
+            .where(and(
+              eq(schema.feedConsolidationLine.requisition_id, requisitionId),
+              eq(schema.feedConsolidation.tenant_id, tenantId),
+            ))
+            .orderBy(desc(schema.feedConsolidation.created_at))
+            .limit(1);
+          consolidationId = linked?.consolidationId ?? null;
+        }
+        if (!consolidationId) {
+          throw new BadRequestException(`Feed requisition ${row.req_no} must be included in a Mill Consolidation Sheet before Release.`);
+        }
+        const [consolidation] = await this.db
+          .select({ status: schema.feedConsolidation.status, consolidation_no: schema.feedConsolidation.consolidation_no })
+          .from(schema.feedConsolidation)
+          .where(and(
+            eq(schema.feedConsolidation.consolidation_id, consolidationId),
+            eq(schema.feedConsolidation.tenant_id, tenantId),
+          ))
+          .limit(1);
+        if (!consolidation || consolidation.status !== 'CONSOLIDATED') {
+          throw new BadRequestException(`Feed requisition ${row.req_no} can be released only after Mill Consolidation ${consolidation?.consolidation_no ?? 'the linked sheet'} is finalized.`);
+        }
         if (!row.production_date) {
           throw new BadRequestException(`Feed requisition ${row.req_no} has no production date and cannot be released.`);
         }
@@ -1198,14 +1277,22 @@ export class FeedRequisitionService implements OnModuleInit {
             item_code: schema.itemMaster.item_code,
             destination_location_id: schema.requisitionLine.destination_location_id,
             quantity: schema.requisitionLine.quantity,
+            mill_approved_qty_kg: schema.feedConsolidationLine.mill_approved_qty_kg,
           })
           .from(schema.requisitionLine)
           .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
+          .leftJoin(schema.feedConsolidationLine, and(
+            eq(schema.feedConsolidationLine.requisition_line_id, schema.requisitionLine.line_id),
+            eq(schema.feedConsolidationLine.consolidation_id, consolidationId),
+          ))
           .where(eq(schema.requisitionLine.requisition_id, requisitionId));
         if (!lines.length) throw new BadRequestException(`Feed requisition ${row.req_no} has no lines to release.`);
         for (const line of lines) {
           if (!line.item_id || !line.destination_location_id) {
             throw new BadRequestException(`Feed requisition line ${line.line_id} needs both a feed item and destination SILO.`);
+          }
+          if (line.mill_approved_qty_kg == null) {
+            throw new BadRequestException(`Feed requisition ${row.req_no} has a line not included in the finalized Mill Consolidation Sheet.`);
           }
         }
 
@@ -1247,7 +1334,7 @@ export class FeedRequisitionService implements OnModuleInit {
             inArray(schema.locationMaster.location_id, destinationIds),
           ));
         const validDestinations = new Set(destinations.filter((destination) =>
-          destination.location_type === 'SILO'
+          ['SILO', 'STORE'].includes(destination.location_type)
           && destination.is_active === true
           && destination.status === 'ACTIVE'
           && !destination.deleted_at
@@ -1255,7 +1342,7 @@ export class FeedRequisitionService implements OnModuleInit {
         ).map((destination) => destination.location_id));
         const invalidDestination = destinationIds.find((id) => !validDestinations.has(id));
         if (invalidDestination) {
-          throw new BadRequestException(`Feed requisition destination ${invalidDestination} must be an active SILO on farm ${farmId}.`);
+          throw new BadRequestException(`Feed requisition destination ${invalidDestination} must be an active SILO or STORE on farm ${farmId}.`);
         }
 
         const plans = groupFeedTransferLines(
@@ -1264,7 +1351,7 @@ export class FeedRequisitionService implements OnModuleInit {
             itemId: line.item_id!,
             itemLabel: line.item_code ?? line.item_id!,
             destinationLocationId: line.destination_location_id!,
-            quantityKg: Number(line.quantity),
+            quantityKg: Number(line.mill_approved_qty_kg),
           })),
           assignments.map((assignment) => ({
             assignmentId: assignment.assignment_id,
@@ -1307,7 +1394,8 @@ export class FeedRequisitionService implements OnModuleInit {
           updated_by: user.userId ?? null,
         }).where(eq(schema.requisition.requisition_id, requisitionId));
       });
-      return this.readView(requisitionId, tenantId, user);
+      const view = await this.readView(requisitionId, tenantId, user);
+      return view;
     });
   }
 
@@ -1380,10 +1468,11 @@ export class FeedRequisitionService implements OnModuleInit {
     return this.forecast.withFarmScope(farmId, companyId, async () => {
       if (!this.stockTransfers) throw new InternalServerErrorException('Stock transfer service is unavailable.');
       const linked = await this.linkedTransferForExecution(requisitionId, dto.transfer_id, tenantId);
-      await this.stockTransfers.postShipment(dto.transfer_id, {
+      const shipment = await this.stockTransfers.postShipment(dto.transfer_id, {
         posting_date: dto.posting_date,
         lines: this.mapEventLines(dto.transfer_id, linked.lines, dto.lines),
       }, tenantId, user, true);
+      if (this.loading && shipment?.shipment_id && shipment.shipment_no) await this.loading.linkShipment(requisitionId, shipment.shipment_id, shipment.shipment_no, tenantId);
       return this.readView(requisitionId, tenantId, user);
     });
   }
@@ -1401,7 +1490,11 @@ export class FeedRequisitionService implements OnModuleInit {
         posting_date: dto.posting_date,
         lines: this.mapEventLines(dto.transfer_id, linked.lines, dto.lines),
       }, tenantId, user, true);
-      return this.readView(requisitionId, tenantId, user);
+      const view = await this.readView(requisitionId, tenantId, user);
+      if (this.loading && view.fulfilment_status === 'RECEIVED') {
+        await this.loading.markReceivedForRequisition(requisitionId, tenantId);
+      }
+      return view;
     });
   }
 
@@ -1793,6 +1886,7 @@ export class FeedRequisitionService implements OnModuleInit {
       if (!remarks) throw new BadRequestException('A rejection reason is required.');
       await this.db.update(schema.requisition).set({
         status: 'REJECTED',
+        approval_status: 'REJECTED',
         remarks: row.remarks ? `${row.remarks}\nRejected: ${remarks}` : `Rejected: ${remarks}`,
         updated_by: user?.userId ?? null,
       }).where(eq(schema.requisition.requisition_id, row.requisition_id));
@@ -1809,6 +1903,7 @@ export class FeedRequisitionService implements OnModuleInit {
       : row.remarks ?? null;
     await this.db.update(schema.requisition).set({
       status: 'APPROVED',
+      approval_status: 'APPROVED',
       remarks: storedRemarks,
       approved_by: user?.userId ?? null,
       approved_at: nowTs(),
@@ -1963,6 +2058,43 @@ export class FeedRequisitionService implements OnModuleInit {
       ))
       .limit(1);
     if (!row) throw new NotFoundException(`Requisition '${requisitionId}' not found.`);
+    let consolidationId = row.req.feed_consolidation_id;
+    if (!consolidationId) {
+      const [linked] = await this.db.select({ consolidationId: schema.feedConsolidationLine.consolidation_id })
+        .from(schema.feedConsolidationLine)
+        .innerJoin(schema.feedConsolidation, eq(schema.feedConsolidation.consolidation_id, schema.feedConsolidationLine.consolidation_id))
+        .where(and(
+          eq(schema.feedConsolidationLine.requisition_id, requisitionId),
+          eq(schema.feedConsolidation.tenant_id, tenantId),
+        ))
+        .orderBy(desc(schema.feedConsolidation.created_at))
+        .limit(1);
+      consolidationId = linked?.consolidationId ?? null;
+    }
+    const consolidation = consolidationId
+      ? (await this.db.select({
+          status: schema.feedConsolidation.status,
+          consolidation_no: schema.feedConsolidation.consolidation_no,
+        }).from(schema.feedConsolidation).where(and(
+          eq(schema.feedConsolidation.consolidation_id, consolidationId),
+          eq(schema.feedConsolidation.tenant_id, tenantId),
+        )).limit(1))[0] ?? null
+      : null;
+    // Keep the farm requisition detail explicit about what the mill changed.
+    // The document status alone is ambiguous after a sheet is finalized, so
+    // return the immutable consolidation-line snapshot alongside each line.
+    const consolidationLines = consolidationId
+      ? await this.db.select({
+          requisition_line_id: schema.feedConsolidationLine.requisition_line_id,
+          requested_qty_kg: schema.feedConsolidationLine.requested_qty_kg,
+          mill_approved_qty_kg: schema.feedConsolidationLine.mill_approved_qty_kg,
+          adjustment_reason: schema.feedConsolidationLine.adjustment_reason,
+        }).from(schema.feedConsolidationLine).where(and(
+          eq(schema.feedConsolidationLine.consolidation_id, consolidationId),
+          eq(schema.feedConsolidationLine.requisition_id, requisitionId),
+        ))
+      : [];
+    const consolidationLineByReqLine = new Map(consolidationLines.map((line) => [line.requisition_line_id, line]));
     const destination = schema.locationMaster;
     const lifecycle = schema.breedLifecycleStages;
     const lifecycleFields = {
@@ -2051,16 +2183,56 @@ export class FeedRequisitionService implements OnModuleInit {
       : [];
     const hasShipBalance = transfers.some((transfer) => transfer.lines.some((line) => line.balance_to_ship > 0));
     const hasReceiptBalance = transfers.some((transfer) => transfer.open_shipments.length > 0);
-    const releaseEnabled = approvalStatus === 'APPROVED' && documentStatus === 'OPEN';
+    let releaseReason: string | null = null;
+    if (approvalStatus !== 'APPROVED') releaseReason = 'Approval is required before Release.';
+    else if (!row.req.feed_consolidation_id) releaseReason = 'Include this requisition in a Mill Consolidation Sheet before Release.';
+    else if (!consolidation || consolidation.status !== 'CONSOLIDATED') releaseReason = `Mill Consolidation ${consolidation?.consolidation_no ?? 'sheet'} must be finalized before Release.`;
+    else if (documentStatus !== 'OPEN') releaseReason = 'This requisition is already released.';
+    else {
+      const releasableLines = lines.flatMap(({ line, item_code }) => line.item_id && line.destination_location_id
+        ? [{
+            lineId: line.line_id,
+            itemId: line.item_id,
+            itemLabel: `Line ${line.line_seq}: ${item_code ?? line.item_id}`,
+            destinationLocationId: line.destination_location_id,
+            quantityKg: Number(line.quantity),
+          }]
+        : []);
+      if (releasableLines.length !== lines.length) {
+        releaseReason = 'Every feed line needs a Feed Item and destination SILO or STORE before Release.';
+      } else if (row.req.production_date) {
+        const itemIds = [...new Set(releasableLines.map((line) => line.itemId))];
+        const assignments = itemIds.length ? await this.db.select({
+          assignmentId: schema.binDietAssignment.assignment_id,
+          itemId: schema.binDietAssignment.feed_item_id,
+          productionDate: schema.binDietAssignment.production_date,
+          binLocationId: schema.binDietAssignment.bin_location_id,
+          productionSlotId: schema.binDietAssignment.production_slot_id,
+        }).from(schema.binDietAssignment).where(and(
+          eq(schema.binDietAssignment.tenant_id, tenantId),
+          eq(schema.binDietAssignment.company_id, row.req.company_id),
+          eq(schema.binDietAssignment.production_date, row.req.production_date),
+          inArray(schema.binDietAssignment.feed_item_id, itemIds),
+          eq(schema.binDietAssignment.is_active, true),
+          eq(schema.binDietAssignment.status, 'ACTIVE'),
+          isNull(schema.binDietAssignment.deleted_at),
+        )) : [];
+        releaseReason = feedReleaseBlockReason(releasableLines, assignments, row.req.production_date);
+      } else {
+        releaseReason = feedReleaseBlockReason(releasableLines, [], row.req.production_date);
+      }
+    }
+    const releaseEnabled = releaseReason === null;
     const shipmentEnabled = documentStatus === 'RELEASED' && hasShipBalance;
     const receiptEnabled = documentStatus === 'RELEASED' && hasReceiptBalance;
     return {
       ...row.req,
+      feed_consolidation_id: consolidationId,
       approval_status: approvalStatus,
       document_status: documentStatus,
       fulfilment_status: fulfilmentStatus,
       actions: {
-        release: { enabled: releaseEnabled, reason: releaseEnabled ? null : approvalStatus !== 'APPROVED' ? 'Approval is required before Release.' : 'This requisition is already released.' },
+        release: { enabled: releaseEnabled, reason: releaseReason },
         shipment: { enabled: shipmentEnabled, reason: shipmentEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Shipment.' : 'There is no quantity left to ship.' },
         receipt: { enabled: receiptEnabled, reason: receiptEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Receipt.' : 'There is no shipped quantity waiting for receipt.' },
       },
@@ -2069,6 +2241,11 @@ export class FeedRequisitionService implements OnModuleInit {
       header: {
         farm_code: row.farm_code ?? null,
         farm_name: row.farm_name ?? null,
+        consolidation_no: consolidation?.consolidation_no ?? null,
+        consolidation_status: consolidation?.status ?? null,
+        consolidation_next_action: consolidation?.status === 'CONSOLIDATED'
+          ? (documentStatus === 'RELEASED' ? 'TRANSFER_SHIPMENT' : 'RELEASE')
+          : consolidation ? 'FINALIZE_CONSOLIDATION' : null,
         // Req. §1 row 6: written since Task 9; a requisition from before carries its creation day.
         requisition_date: row.req.requisition_date ?? (row.req.created_at ? String(row.req.created_at).slice(0, 10) : null),
         is_next_diet_requisition: lines.some((l) => !!l.line.is_next_diet), // row 16
@@ -2090,6 +2267,11 @@ export class FeedRequisitionService implements OnModuleInit {
         destination_code: l.destination_code,
         destination_name: l.destination_name,
         required_item_id: l.required_item_id ?? null,
+        requested_qty_kg: consolidationLineByReqLine.get(l.line.line_id)?.requested_qty_kg == null
+          ? null : Number(consolidationLineByReqLine.get(l.line.line_id)!.requested_qty_kg),
+        mill_approved_qty_kg: consolidationLineByReqLine.get(l.line.line_id)?.mill_approved_qty_kg == null
+          ? null : Number(consolidationLineByReqLine.get(l.line.line_id)!.mill_approved_qty_kg),
+        adjustment_reason: consolidationLineByReqLine.get(l.line.line_id)?.adjustment_reason ?? null,
         lifecycle_ref_label: lifecycleRefLabel(l),
         reason_id: l.line.reason_id ?? null,
         reason_code: l.reason_code ?? null,

@@ -20,7 +20,8 @@ describe('planned incoming feed requisitions', () => {
   it('maps approved, open, unlinked feed demand to its destination, item and delivery date', () => {
     expect(plannedIncomingFromRequisitions([approved()], '2026-10-08', '2026-10-20')).toEqual([{
       locationId: 'silo-1', itemId: 'feed-1', date: '2026-10-10', kg: 3000,
-      kind: 'PLANNED_REQUISITION', referenceId: 'req-1', referenceNo: 'REQ-GRA100-2026-00001', overdue: false,
+      kind: 'PLANNED_REQUISITION', referenceId: 'req-1', referenceNo: 'REQ-GRA100-2026-00001',
+      expectedDate: '2026-10-10', overdue: false,
     }]);
   });
 
@@ -30,6 +31,12 @@ describe('planned incoming feed requisitions', () => {
     ], '2026-10-08', '2026-10-20')[0]).toMatchObject({
       date: '2026-10-08', overdue: true, referenceNo: 'REQ-GRA100-2026-00001',
     });
+  });
+
+  it('accepts legacy approved rows whose approval_status was left OPEN', () => {
+    expect(plannedIncomingFromRequisitions([
+      approved({ approval_status: 'OPEN' }),
+    ], '2026-10-08', '2026-10-20')).toHaveLength(1);
   });
 
   it('excludes pending, rejected, cancelled, out-of-horizon and already-linked requisitions', () => {

@@ -1337,7 +1337,7 @@ describe('FeedRequisitionService view — the document header and line display f
     expect(view.header).toEqual({
       farm_code: 'GRS', farm_name: 'Green Ridge', requisition_date: '2026-09-23', is_next_diet_requisition: true,
       farm_total_requested_kg: 15000, truck_target_kg: 30000, bulk_multiple_kg: 3000, bag_size_kg: 50, trips: 1, required_delivery_date: '2026-09-23',
-      approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001',
+      approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001', consolidation_no: null, consolidation_status: null, consolidation_next_action: null,
     });
     expect(view.lines[0]).toMatchObject({
       item_code: 'R1', item_description: 'Weaner Diet R1', destination_code: 'GRS/SILO-001', destination_name: 'Weaner silo', lifecycle_ref_label: 'L-LINE WEANER days 21–24',

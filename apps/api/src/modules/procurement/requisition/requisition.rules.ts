@@ -427,8 +427,8 @@ export function reopenTransition(): { status: string; approval_status: ApprovalS
   return { status: 'DRAFT', approval_status: 'OPEN', document_status: 'OPEN', approval_request_id: null };
 }
 
-/** Every doc_type the common list may be filtered by — FEED included, it is one document (spec §6a). */
-export const COMMON_LIST_DOC_TYPES = ['FEED', 'ITEM', 'FA', 'SERVICE'] as const;
+/** Public requisition types. Feed is an Item request; its origin is `source`. */
+export const COMMON_LIST_DOC_TYPES = ['ITEM', 'FA', 'SERVICE'] as const;
 
 /**
  * Task 13 (lifts Ruling C2): the generic /requisition routes may LIST and READ
@@ -481,24 +481,24 @@ export function selfApprovalSql(
 }
 
 /**
- * decisions.md 2026-10-04: "Tenant and Company admins may approve their own
+ * decisions.md 2026-10-07: Tenant, Company and Operational admins may approve their own
  * requisitions" — supersedes the 2026-10-01 self-approval rule above for
- * exactly these two user types, common and feed requisitions alike. Every
+ * exactly these three user types, common and feed requisitions alike. Every
  * other type, including SYSTEM_ADMIN (not named by Rishi; it follows the old
  * rule until he confirms otherwise — decisions.md, 2026-10-04), still cannot.
  *
- * Deliberately an exact two-item allow-list rather than an "is this an admin"
- * test: SYSTEM_ADMIN ranks above both named types on the user-type ladder
+ * Deliberately an exact three-item allow-list rather than an "is this an admin"
+ * test: SYSTEM_ADMIN ranks above the named types on the user-type ladder
  * (common/user-type-hierarchy.ts) and a hierarchy-based check would silently
  * widen the exemption to it.
  *
  * Exported so the feed requisition service's own self-approval check
  * (feed-requisition.service.ts — a different row shape: it also keys on the
  * approval request's requested_by, which the common row does not carry) can
- * gate on the same two-type allow-list without sharing the row-shape-specific
+ * gate on the same allow-list without sharing the row-shape-specific
  * match in isSelfApproval above.
  */
-export const SELF_APPROVAL_EXEMPT_USER_TYPES = ['TENANT_ADMIN', 'COMPANY_ADMIN'] as const;
+export const SELF_APPROVAL_EXEMPT_USER_TYPES = ['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN'] as const;
 
 export function maySelfApprove(userType: string | null | undefined): boolean {
   return typeof userType === 'string' && (SELF_APPROVAL_EXEMPT_USER_TYPES as readonly string[]).includes(userType);
@@ -506,17 +506,14 @@ export function maySelfApprove(userType: string | null | undefined): boolean {
 
 /**
  * decisions.md 2026-10-04 (second entry, "Tenant and Company admins approve
- * every requisition; one Requisitions page"): the same two types may decide
+ * every requisition; one Requisitions page"): these two types may decide
  * ANY requisition in their scope — not only their own — bypassing whatever
- * farm-active narrowing or step/tier the ordinary rule would apply. Same
- * allow-list as maySelfApprove (one source of truth,
- * SELF_APPROVAL_EXEMPT_USER_TYPES); exported under its own name because the
- * call sites ask different questions ("is this my own document" vs "am I
- * restricted to one farm's / one step's documents"), even though today both
- * resolve against the same two types.
+ * farm-active narrowing or step/tier the ordinary rule would apply.
+ * Operational Admin was added only to self-approval on 7 Oct and stays within
+ * their normal farm/operational scope. This therefore has its own exact list.
  */
 export function mayDecideAnyRequisition(userType: string | null | undefined): boolean {
-  return maySelfApprove(userType);
+  return userType === 'TENANT_ADMIN' || userType === 'COMPANY_ADMIN';
 }
 
 /**

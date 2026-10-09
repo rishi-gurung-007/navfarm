@@ -68,7 +68,7 @@ export interface ApprovalDocumentHandler {
   /** Inside the withdrawal's transaction. */
   withdraw(request: ApprovalRequestRow, tenantId: string, user: any): Promise<void>;
   /** After the decision commits (e.g. re-evaluating alerts). Must not throw. */
-  afterDecide?(request: ApprovalRequestRow, tenantId: string): Promise<void>;
+  afterDecide?(request: ApprovalRequestRow, tenantId: string, user?: any, decision?: 'APPROVED' | 'REJECTED'): Promise<void>;
 }
 
 @Injectable()
@@ -295,11 +295,9 @@ export class ApprovalService {
       eq(schema.approvalRequest.tenant_id, tenantId),
       isNull(schema.approvalRequest.deleted_at),
       ...this.farmConditions(userType),
-      // WP1b (decisions.md 2026-10-04, "one Requisitions page"): the inbox no
-      // longer lists requisitions — Approvals → Requisitions is the one
-      // requisition list. findOne and decide still reach them, so the hub's
-      // Approve/Reject call the same endpoints.
-      notInArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]),
+      // Rishi, 7 Oct: common requisitions are visible and actionable here as
+      // well as on Requisition. Feed requisitions remain on Feed Forecast.
+      notInArray(schema.approvalRequest.doc_type, ['FEED_REQUISITION']),
     ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
@@ -351,9 +349,8 @@ export class ApprovalService {
       eq(schema.approvalRequest.tenant_id, tenantId),
       isNull(schema.approvalRequest.deleted_at),
       ...this.farmConditions(userType),
-      // WP1b: the badges count only what the inbox shows — requisitions moved
-      // to the hub, whose pending count is countsRequisitions() below.
-      notInArray(schema.approvalRequest.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]),
+      // Keep badges identical to the visible inbox: include common, exclude feed.
+      notInArray(schema.approvalRequest.doc_type, ['FEED_REQUISITION']),
     ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
@@ -458,7 +455,7 @@ export class ApprovalService {
     // it, and may refuse it (e.g. a feed requisition that needs remarks).
     const handler = this.handlerFor(current);
     await handler?.decide(current, status, reason?.trim() || null, tenantId, userPayload);
-    if (handler?.afterDecide) after.run = () => handler.afterDecide!(current, tenantId);
+    if (handler?.afterDecide) after.run = () => handler.afterDecide!(current, tenantId, userPayload, status);
 
     if (status === 'APPROVED' && current.doc_type === 'UNSCHEDULED_HEALTH') {
       if (!current.batch_id) throw new BadRequestException('This health request has no batch.');

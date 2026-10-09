@@ -10,8 +10,8 @@ const en = translations.en as Record<string, string>;
 
 describe("common requisition labels are Rishi's (4 Oct list)", () => {
   it.each([
-    ["crqReqNo", "Purchase Requisition No."],
-    ["crqReqDate", "Purchase Requisition Date"],
+    ["crqReqNo", "Requisition No."],
+    ["crqReqDate", "Requisition Date"],
     ["crqMainLocation", "Main / Farm Location"],
     ["crqRequesterUserId", "Requester User ID"],
     ["crqRequester", "Requester Name"],

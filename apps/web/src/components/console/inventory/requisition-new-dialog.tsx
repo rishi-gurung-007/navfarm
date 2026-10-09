@@ -22,13 +22,16 @@
  * outright, on a screen that lists the farm quite happily.
  */
 import { useEffect, useRef, useState } from "react";
-import { Building2, Package, Plus, Trash2, Wheat, Wrench } from "lucide-react";
+import { ArrowLeft, Building2, Package, Plus, Trash2, Wheat, Wrench } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { ReasonSelect } from "@/components/ui/reason-select";
+import { getStoredUser } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -36,23 +39,29 @@ import { locationLabel, todayIso, unwrap } from "./feed-format";
 import { FeedRequisitionHeaderFields, bulkTotalAndTrips, feedTypeOfDestination, type FeedType } from "./feed-requisition-header";
 import { useFeedFarm } from "./use-feed-farm";
 import { FeedFarmSelect } from "./feed-farm-select";
-import { FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
+import { DOC_TYPE_LABEL, FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
 import type { RequisitionView } from "./requisitions-panel";
 
 interface Destination { location_id: string; location_code: string; location_name?: string | null; location_type: string; feed_in_bags?: boolean | null }
 interface FeedItem { item_id: string; item_code: string; item_name: string }
 interface Options { destinations: Destination[]; items: FeedItem[] }
-interface Draft { dest: string; item: string; kg: string; date: string; reason: string }
+interface Draft { dest: string; item: string; kg: string; date: string; reasonId: string; reasonLabel: string }
 
-const EMPTY: Draft = { dest: "", item: "", kg: "", date: "", reason: "" };
+const EMPTY: Draft = { dest: "", item: "", kg: "", date: "", reasonId: "", reasonLabel: "" };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 align-top text-xs text-[var(--text-primary)]";
+const TD = "whitespace-nowrap px-3 py-1.5 align-middle text-xs text-[var(--text-primary)]";
 /** Requisition §2 line numbers step by 10000; the number shown is a preview, the API assigns the real one. */
 const LINE_STEP = 10000;
-// §2 columns that apply to a manual line (the forecast columns have no value until the engine runs); "" is the remove button.
-const COLUMNS = ["rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColRequested", "rqdColDelivery", "rqnColException", ""] as const;
+// The complete feed line contract. Only destination, item, requested quantity
+// and proposed date are required inputs; forecast evidence is populated on
+// save and is deliberately shown read-only here.
+const COLUMNS = [
+  "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColFeedType", "rqdColNextDiet",
+  "rqdColDaysBefore", "rqdColLifecycle", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining",
+  "rqdColRecommended", "rqdColRequested", "rqdColBags", "rqdColDelivery", "rqnColException", "",
+] as const;
 
 /** The settings the header needs (GET /feed-settings, resolved for the farm). */
 interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number; bagSizeKg: number }
@@ -121,6 +130,7 @@ export function RequisitionNewDialog({
   const [error, setError] = useState("");
   const [settings, setSettings] = useState<HeaderSettings | null>(null);
   const [step, setStep] = useState<"choose" | "item" | "FEED">("choose");
+  const requester = getStoredUser();
 
   useEffect(() => {
     if (!open || step !== "FEED" || !effectiveFarmId) return;
@@ -219,7 +229,7 @@ export function RequisitionNewDialog({
           item_id: l.item,
           quantity_kg: Number(l.kg),
           proposed_delivery_date: l.date,
-          ...(l.reason.trim() ? { exception_reason: l.reason.trim() } : {}),
+          ...(l.reasonId ? { reason_id: l.reasonId } : {}),
         })),
       };
       onCreated(unwrap<RequisitionView>(await api.post("/feed-requisition", body)));
@@ -242,6 +252,11 @@ export function RequisitionNewDialog({
       onClose={onClose}
       title={t(step === "choose" || step === "item" ? "rqNew" : "rqNewTitle")}
       maxWidth="lg"
+      headerLeading={(step === "item" || (step === "FEED" && types.length > 1)) ? (
+        <Button size="sm" variant="ghost" onClick={() => setStep("choose")}>
+          <ArrowLeft className="h-3.5 w-3.5" /> {t("crqBack")}
+        </Button>
+      ) : undefined}
       footer={step === "FEED"
         ? <Button size="sm" onClick={create} disabled={busy || !complete}>{t("rqNewCreate")}</Button>
         : undefined}
@@ -271,7 +286,7 @@ export function RequisitionNewDialog({
           * (hub only), the lines and the remarks. Required Delivery Date is
           * derived from the lines, read-only (Rishi 4 Oct).
           */}
-        <FieldGroup title={t("rqdHeaderTitle")}>
+        <FieldGroup>
           {farmId === undefined && (
             <div className="sm:col-span-12">
               <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={farm.farmId} onChange={farm.setFarmId} />
@@ -280,8 +295,11 @@ export function RequisitionNewDialog({
           <FeedRequisitionHeaderFields values={{
             reqNo: t("rqnAssignedOnSave"),
             reqDate: formatDateShort(todayIso()),
-            reqType: labelOf(REQ_TYPE_LABEL, "MANUAL", t),
+            reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
             source: labelOf(SOURCE_LABEL, "MANUAL_ENTRY", t),
+            requesterLogin: requester?.email,
+            requesterName: requester?.fullName,
+            requesterDepartment: null,
             farmCode: chosenFarm?.code,
             farmName: chosenFarm?.name,
             nextDiet: t("rqNo"),
@@ -304,7 +322,7 @@ export function RequisitionNewDialog({
           </Field>
         </FieldGroup>
 
-        <FieldGroup title={t("rqdLinesTitle")}>
+        <FieldGroup title={t("rqdLinesTitle")} action={<Button variant="outline" size="sm" onClick={() => setLines((cur) => [...cur, { ...EMPTY }])}><Plus className="h-3.5 w-3.5" /> {t("rqNewAddLine")}</Button>}>
           <div className="flex flex-col gap-2 sm:col-span-12">
             <ScrollTable label={t("rqLinesLabel")}>
               <thead>
@@ -320,27 +338,44 @@ export function RequisitionNewDialog({
                     <tr key={i}>
                       <td className={cn(TD, "text-right tabular-nums")}>{(i + 1) * LINE_STEP}</td>
                       <td className={TD}>
-                        <select aria-label={t("rqNewDestination", { line: i + 1 })} className="nf-input-sm nf-select w-72" style={inputStyle} value={line.dest} onChange={(e) => setLine(i, { dest: e.target.value })}>
-                          <option value="">{t("rqNewChoose")}</option>
-                          {destinations.map((d) => <option key={d.location_id} value={d.location_id}>{locationLabel(d.location_code, d.location_name)}</option>)}
-                        </select>
+                        <SearchableSelect ariaLabel={t("rqNewDestination", { line: i + 1 })} value={line.dest}
+                          options={destinations.map((d) => ({ value: d.location_id, code: d.location_code, name: d.location_name ?? "" }))}
+                          valueKey="value" getLabel={(row) => locationLabel(String(row.code), String(row.name || ""))}
+                          getLabelParts={(row) => [String(row.code), String(row.name || "")]} columnHeaders={[t("rqdColSilo"), t("rqdFarmName")]}
+                          placeholder={t("rqNewChoose")} searchPlaceholder={t("crqSearch")} noMatchesLabel={t("crqNoMatches")}
+                          triggerClassName="w-72" onChange={(dest) => setLine(i, { dest })} />
                       </td>
                       <td className={TD}>
-                        <select aria-label={t("rqNewItem", { line: i + 1 })} className="nf-input-sm nf-select w-28" style={inputStyle} value={line.item} onChange={(e) => setLine(i, { item: e.target.value })}>
-                          <option value="">{t("rqNewChoose")}</option>
-                          {items.map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
-                        </select>
+                        <SearchableSelect ariaLabel={t("rqNewItem", { line: i + 1 })} value={line.item}
+                          options={items.map((it) => ({ value: it.item_id, code: it.item_code, name: it.item_name }))}
+                          valueKey="value" getLabel={(row) => `${row.code} — ${row.name}`} getLabelParts={(row) => [String(row.code), String(row.name)]}
+                          columnHeaders={[t("rqdColItemNo"), t("rqdColItemDesc")]} placeholder={t("rqNewChoose")}
+                          searchPlaceholder={t("crqSearch")} noMatchesLabel={t("crqNoMatches")} triggerClassName="w-52"
+                          onChange={(item) => setLine(i, { item })} />
                       </td>
-                      <td className={TD}>{item?.item_name ?? "—"}</td>
-                      <td className={TD}>{type ? labelOf(FEED_TYPE_LABEL, type, t) : "—"}</td>
+                      <td className={TD}>{item?.item_name ?? t("rqnFromSelection")}</td>
+                      <td className={TD}>{type ? labelOf(FEED_TYPE_LABEL, type, t) : t("rqnFromSelection")}</td>
+                      <td className={TD}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={cn(TD, "text-right")}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={TD}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={cn(TD, "text-right")}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={cn(TD, "text-right")}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={cn(TD, "text-right")}>{t("rqnCalculatedOnSave")}</td>
+                      <td className={cn(TD, "text-right")}>{t("rqnCalculatedOnSave")}</td>
                       <td className={cn(TD, "text-right")}>
                         <input aria-label={t("rqNewKg", { line: i + 1 })} type="number" min={0} step="any" className="nf-input-sm w-28 text-right" style={inputStyle} value={line.kg} onChange={(e) => setLine(i, { kg: e.target.value })} />
+                      </td>
+                      <td className={cn(TD, "text-right")}>
+                        {type === "BAGGED" && settings?.bagSizeKg ? Math.ceil(Number(line.kg || 0) / settings.bagSizeKg) || t("rqnCalculatedOnSave") : t("rqNotApplicable")}
                       </td>
                       <td className={TD}>
                         <input aria-label={t("rqNewDate", { line: i + 1 })} type="date" className="nf-input-sm" style={inputStyle} value={line.date} onChange={(e) => setLine(i, { date: e.target.value })} />
                       </td>
                       <td className={TD}>
-                        <input aria-label={t("rqNewException", { line: i + 1 })} title={t("rqNewExceptionHint")} className="nf-input-sm w-48" style={inputStyle} maxLength={180} value={line.reason} onChange={(e) => setLine(i, { reason: e.target.value })} />
+                        <ReasonSelect ariaLabel={t("rqNewException", { line: i + 1 })} value={line.reasonId} valueFormat="id"
+                          placeholder={t("rqNewChooseReason")} searchPlaceholder={t("rqNewSearchReason")}
+                          onChange={(reasonId, reason) => setLine(i, { reasonId, reasonLabel: reason ? `${reason.reason_code} — ${reason.reason_name}` : "" })}
+                          onClear={() => setLine(i, { reasonId: "", reasonLabel: "" })} triggerClassName="w-60" />
                       </td>
                       <td className={TD}>
                         <Button variant="ghost" size="sm" aria-label={t("rqNewRemoveLine", { line: i + 1 })} disabled={lines.length === 1}
@@ -353,9 +388,6 @@ export function RequisitionNewDialog({
                 })}
               </tbody>
             </ScrollTable>
-            <div>
-              <Button variant="outline" size="sm" onClick={() => setLines((cur) => [...cur, { ...EMPTY }])}><Plus className="h-3.5 w-3.5" /> {t("rqNewAddLine")}</Button>
-            </div>
           </div>
         </FieldGroup>
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}

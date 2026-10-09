@@ -12,7 +12,7 @@ const workedExample: ForecastInput = {
   store: null,
   items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
   batches: [{
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
   }],
   feedRows: [
@@ -103,7 +103,7 @@ describe('buildSiloStatus', () => {
     const twoSheds = {
       sources: [],
       dietChanges: [{
-        batchId: 'b', batchNo: 'B1', shedCode: 'SHED-A', fromItemId: 'r1', fromItemName: 'R1', toItemId: 'r2', toItemName: 'R2',
+        batchId: 'b', realBatchId: 'b' as any, batchNo: 'B1', shedCode: 'SHED-A', fromItemId: 'r1', fromItemName: 'R1', toItemId: 'r2', toItemName: 'R2',
         changeDate: '2026-09-26', nextSourceType: 'SILO' as const, nextSourceCode: 'SILO-X',
       }],
     };
@@ -137,7 +137,8 @@ describe('buildSelectedSiloDashboard', () => {
     };
     const source = (itemId: string, itemName: string, walkDemandKg: number) => ({
       sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId, itemName,
-      balanceKg: 1500, planningDayDemandKg: itemId === 'r1' ? 500 : 0, firstDemandDate: '2026-09-23',
+      balanceKg: 1500, planningDayDemandKg: itemId === 'r1' ? 500 : 0,
+      currentDietDaysRemaining: itemId === 'r1' ? 3 : null, firstDemandDate: '2026-09-23',
       firstDayDemandKg: 500, walkDemandKg, daysLeft: 3, runDownDate: '2026-09-26', shortageDate: '2026-09-26',
       isNextDiet: itemId === 'r2', noSiloHoldsItem: false, lifecycleIds: [], thresholdKg: 0, safetyStockKg: 100,
       deliveryDayOpeningKg: 0, incomingKg: 0, shortfallKg: 200,

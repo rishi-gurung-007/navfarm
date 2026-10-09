@@ -35,6 +35,7 @@ import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisiti
 import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
+import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 import type { RequisitionView } from "./feed-requisition-document";
@@ -62,16 +63,18 @@ interface ListRow {
   line_count: number;
   requested_kg: string | number;
   approval_request_id: string | null;
+  farm_code?: string | null;
+  farm_name?: string | null;
 }
 
 const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
-const LIST_COLUMNS = ["rqColReqNo", "rqColType", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
+const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
 const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
-const kg = (v: string | number | null | undefined) => {
+const kg = (v: string | number | null | undefined, unavailable: string) => {
   const n = num(v);
-  return n === null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return n === null || !Number.isFinite(n) ? unavailable : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
@@ -81,11 +84,15 @@ const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
 export function FeedRequisitionPanel() {
   const { t } = useLanguage();
+  const unavailable = t("rqNotYetAvailable");
   const tRef = useRef(t);
   tRef.current = t;
 
   const farm = useFeedFarm();
   const farmId = farm.farmId;
+  // Listing defaults to all authorized farms; the selected farm from the
+  // shared hook remains the creation/document context for farm-bound actions.
+  const [listFarmId, setListFarmId] = useState("");
   const [type, setType] = useState("FEED");
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<ListRow[]>([]);
@@ -97,6 +104,8 @@ export function FeedRequisitionPanel() {
   const [creating, setCreating] = useState(false);
   const [fromRunOpen, setFromRunOpen] = useState(false);
   const [savedRun, setSavedRun] = useState<{ id: string; existingRequisitionId: string | null } | null>(null);
+  const [consolidateOpen, setConsolidateOpen] = useState(false);
+  const [eligibleCount, setEligibleCount] = useState(0);
 
   // The API's response always carries farm_id (readView spreads ...row.req); the
   // farm selector's current farm is only a fallback for a response that somehow
@@ -105,14 +114,15 @@ export function FeedRequisitionPanel() {
   const show = (view: RequisitionView | null) => setSelected(view ? { ...view, farm_id: view.farm_id ?? farmId } : null);
 
   const loadList = useCallback(async () => {
-    if (!farmId) {
+    if (!farm.loaded || (farm.isFixed && !farmId)) {
       setRows([]);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ farmId });
+      const params = new URLSearchParams();
+      if (listFarmId) params.set("farmId", listFarmId);
       if (status) params.set("status", status);
       const list = unwrap<ListRow[]>(await api.get(`/feed-requisition?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
@@ -121,11 +131,20 @@ export function FeedRequisitionPanel() {
     } finally {
       setLoading(false);
     }
-  }, [farmId, status]);
+  }, [farm.loaded, farm.isFixed, farmId, listFarmId, status]);
 
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    const params = listFarmId ? `?farmId=${encodeURIComponent(listFarmId)}` : "";
+    api.get(`/feed-requisition/consolidations/eligible${params}`).then((response) => setEligibleCount(unwrap<ListRow[]>(response).length)).catch(() => setEligibleCount(0));
+  }, [listFarmId, rows]);
+
+  useEffect(() => {
+    if (farm.isFixed && farmId) setListFarmId(farmId);
+  }, [farm.isFixed, farmId]);
 
   useEffect(() => {
     if (!farmId) {
@@ -188,8 +207,8 @@ export function FeedRequisitionPanel() {
     <div data-fill-body>
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
-          <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel}
-            onChange={(id) => { farm.setFarmId(id); show(null); }} />
+          <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={listFarmId} fixedLabel={fixedLabel} allLabel={t("rhAllFarms")}
+            onChange={(id) => { setListFarmId(id); if (id) farm.setFarmId(id); show(null); }} />
           <Field label={t("rqType")} htmlFor="rq-type">
             <select id="rq-type" className="nf-input-sm nf-select" style={inputStyle} value={type} onChange={(e) => setType(e.target.value)}>
               <option value="FEED">{t("rqTypeFeed")}</option>
@@ -204,6 +223,7 @@ export function FeedRequisitionPanel() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!farmId || busy}>{t("rqNew")}</Button>
+          {eligibleCount > 0 && <Button size="sm" onClick={() => setConsolidateOpen(true)} disabled={busy}>Consolidate ({eligibleCount})</Button>}
           {savedRun && (
             <Button size="sm" onClick={() => setFromRunOpen(true)} disabled={!farmId || busy}>
               {t(savedRun.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
@@ -260,13 +280,14 @@ export function FeedRequisitionPanel() {
             {rows.map((r) => (
               <tr key={r.requisition_id} className="cursor-pointer" onClick={() => openRequisition(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
+                <td className={TD}>{r.farm_code ?? unavailable}</td>
                 <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
                 <td className={TD}><Badge variant={variantOf(REQ_STATUS_LABEL, r.status)} className={SMALL_BADGE}>{labelOf(REQ_STATUS_LABEL, r.status, t)}</Badge></td>
-                <td className={TD}>{r.priority ? <Badge variant={variantOf(PRIORITY_LABEL, r.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, r.priority, t)}</Badge> : "—"}</td>
+                <td className={TD}>{r.priority ? <Badge variant={variantOf(PRIORITY_LABEL, r.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, r.priority, t)}</Badge> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>
                 <td className={TD}>{formatDateShort(r.submission_deadline)}</td>
                 <td className={cn(TD, NUM)}>{r.line_count}</td>
-                <td className={cn(TD, NUM)}>{kg(r.requested_kg)}</td>
+                <td className={cn(TD, NUM)}>{kg(r.requested_kg, unavailable)}</td>
               </tr>
             ))}
           </tbody>
@@ -297,6 +318,7 @@ export function FeedRequisitionPanel() {
           loadList();
         }}
       />
+      <FeedConsolidationDialog open={consolidateOpen} onClose={() => setConsolidateOpen(false)} onCreated={(message) => { setConsolidateOpen(false); setNotice(message); loadList(); }} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { CommonRequisitionDocument } from "../src/components/console/requisitions/common-requisition-document";
 import { emptyCommonRequisition, emptyLine } from "../src/components/console/requisitions/common-requisition-model";
 
@@ -21,26 +21,97 @@ const options = {
           { item_id: "i-lot", item_code: "IT-LOT", item_name: "Lot item", uom_primary: "EA", is_lot_tracked: true, is_serial_tracked: false },
           { item_id: "i-ser", item_code: "IT-SER", item_name: "Serial item", uom_primary: "EA", is_lot_tracked: false, is_serial_tracked: true }],
   resources: [], departments: [],
-  locations: [{ location_id: "st", location_code: "F1/STORE", location_name: "Store", location_type: "STORE", farm_id: "f1" },
+  locations: [{ location_id: "f1", location_code: "F1", location_name: "Farm One", location_type: "FARM", farm_id: null },
+              { location_id: "st", location_code: "F1/STORE", location_name: "Store", location_type: "STORE", farm_id: "f1" },
               { location_id: "sh", location_code: "F1/SHED-1", location_name: "Shed", location_type: "SHED", farm_id: "f1" }],
 };
 
+const ALL_LINE_HEADERS = [
+  "crqColLine", "crqColItem", "crqColItemDescription", "crqColFaServiceDescription", "crqColQty",
+  "crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColToReceive", "crqColReceived",
+  "crqColRemaining", "crqColBalance",
+];
+
+async function pickSearchable(label: string, optionName: string) {
+  const trigger = screen.getByRole("button", { name: label });
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
 describe("CommonRequisitionDocument", () => {
-  it("edits the header and a line while Open, filling the item's UOM", () => {
+  it("vertically centres every line value and control in its row", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-07")} editable options={options} onChange={jest.fn()} />);
+    const cells = Array.from(container.querySelectorAll("tbody td"));
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.every((cell) => cell.className.includes("align-middle"))).toBe(true);
+  });
+
+  it("keeps Source out of the common header field contract", () => {
+    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "PURCHASE", "2026-10-07")} editable options={options} onChange={jest.fn()} />);
+    expect(screen.queryByRole("textbox", { name: "rqdSource" })).toBeNull();
+  });
+
+  it("shows a human save-time message for the unassigned number", () => {
+    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "PURCHASE", "2026-10-07")} editable options={options} onChange={jest.fn()} />);
+    expect(screen.getByRole("textbox", { name: "crqReqNo" }).textContent).toBe("rqnAssignedOnSave");
+    expect(screen.queryByText("—")).toBeNull();
+  });
+
+  it("lists only FARM locations in Main / Farm Location", async () => {
+    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-07")} editable options={options} onChange={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "crqMainLocation" }));
+    expect(await screen.findByRole("option", { name: "F1" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "F1/STORE" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "F1/SHED-1" })).toBeNull();
+  });
+
+  it("edits the header and a line while Open, filling the item's UOM", async () => {
     const onChange = jest.fn();
     const view = emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04");
     render(<CommonRequisitionDocument view={view} editable options={options} onChange={onChange} />);
-    fireEvent.change(screen.getByLabelText("crqFrom"), { target: { value: "st" } });
+    await pickSearchable("crqFrom", "F1/STORE");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ from_location_id: "st" }));
-    fireEvent.change(screen.getByLabelText('crqItemFor:{"line":1}'), { target: { value: "i1" } });
+    await pickSearchable('crqItemFor:{"line":1}', "IT-1 — Fixture item");
     expect(onChange.mock.lastCall[0].lines[0]).toMatchObject({ item_id: "i1", uom: "EA" });
   });
 
-  it("hides locations and transfer quantities on a Purchase document", () => {
-    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-04")} editable options={options} onChange={jest.fn()} />);
-    expect(screen.queryByLabelText("crqFrom")).toBeNull();
-    expect(screen.queryByText("crqColToShip")).toBeNull();
+  it("labels inherited From and To line locations with their matching header", () => {
+    const view = {
+      ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"),
+      from_location_id: "st",
+      to_location_id: "sh",
+      lines: [{ ...emptyLine(), item_id: "i1", quantity: "1", from_location_id: null, to_location_id: null }],
+    };
+    const { container } = render(<CommonRequisitionDocument view={view} editable options={options} onChange={jest.fn()} />);
+    const cells = Array.from(container.querySelectorAll("tbody tr:first-child > td"));
+    expect(cells[5].textContent).toBe("F1/STORE");
+    expect(cells[6].textContent).toBe("F1/SHED-1");
+
+    const withoutResolvedCodes = { ...view, from_location_id: "missing-from", to_location_id: "missing-to" };
+    const second = render(<CommonRequisitionDocument view={withoutResolvedCodes} editable options={{ ...options, locations: [] }} onChange={jest.fn()} />);
+    const fallbackCells = Array.from(second.container.querySelectorAll("tbody tr:first-child > td"));
+    expect(fallbackCells[5].textContent).toBe("crqFromHeader");
+    expect(fallbackCells[6].textContent).toBe("crqToHeader");
+  });
+
+  it("keeps locations and transfer quantities visible but not applicable on a Purchase document", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-04")} editable options={options} onChange={jest.fn()} />);
+    expect(screen.getByRole("textbox", { name: "crqFrom" }).textContent).toBe("rqNotApplicable");
+    expect(screen.getByRole("textbox", { name: "crqTo" }).textContent).toBe("rqNotApplicable");
+    expect(screen.getByRole("textbox", { name: "crqDirectTransfer" }).textContent).toBe("rqNotApplicable");
+    expect(Array.from(container.querySelectorAll("thead th")).map((n) => n.textContent?.trim()).filter(Boolean)).toEqual(ALL_LINE_HEADERS);
     expect(screen.getByLabelText('crqDescriptionFor:{"line":1}')).toBeTruthy();
+    const cells = Array.from(container.querySelectorAll("tbody tr:first-child > td"));
+    expect(cells[1].textContent).toBe("rqNotApplicable");
+    expect(cells[2].textContent).toBe("rqNotApplicable");
+    expect(cells.slice(5, 13).every((cell) => cell.textContent === "rqNotApplicable")).toBe(true);
+  });
+
+  it("keeps the FA/Service description and transfer cells visible but not applicable on an Item Purchase line", () => {
+    const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "PURCHASE", "2026-10-04")} editable options={options} onChange={jest.fn()} />);
+    const cells = Array.from(container.querySelectorAll("tbody tr:first-child > td"));
+    expect(cells[3].textContent).toBe("rqNotApplicable");
+    expect(cells.slice(5, 13).every((cell) => cell.textContent === "rqNotApplicable")).toBe(true);
   });
 
   it("is read-only after submission and shows shipped/received with derived balances", () => {
@@ -51,7 +122,10 @@ describe("CommonRequisitionDocument", () => {
         qty_to_receive: "10", qty_received: 4, balance_to_ship: 4, remaining_to_receive: 6 }] };
     render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
     expect(screen.queryAllByRole("combobox")).toHaveLength(0);
-    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    const displayedValues = screen.getAllByRole("textbox");
+    expect(displayedValues.length).toBeGreaterThan(0);
+    expect(displayedValues.every((field) => field.getAttribute("aria-readonly") === "true")).toBe(true);
+    expect(displayedValues.every((field) => field.tagName !== "INPUT" && field.tagName !== "TEXTAREA")).toBe(true);
     expect(screen.getByText("REQ-2026-0001")).toBeTruthy();
     // header From and the line's From cell both show the code
     expect(screen.getAllByText("F1/STORE").length).toBeGreaterThanOrEqual(2);
@@ -64,13 +138,13 @@ describe("CommonRequisitionDocument", () => {
   // ever collapsed to "always line[0]", both aria-labels would collide
   // (getByLabelText throws on a duplicate) and the edit would land on the
   // wrong line.
-  it("renders two lines with distinct aria-labels and edits only the targeted line, not the first", () => {
+  it("renders two lines with distinct aria-labels and edits only the targeted line, not the first", async () => {
     const onChange = jest.fn();
     const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), lines: [emptyLine(), emptyLine()] };
     render(<CommonRequisitionDocument view={view} editable options={options} onChange={onChange} />);
-    expect(screen.getByLabelText('crqItemFor:{"line":1}')).toBeTruthy();
-    expect(screen.getByLabelText('crqItemFor:{"line":2}')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('crqItemFor:{"line":2}'), { target: { value: "i1" } });
+    expect(screen.getByRole("button", { name: 'crqItemFor:{"line":1}' })).toBeTruthy();
+    expect(screen.getByRole("button", { name: 'crqItemFor:{"line":2}' })).toBeTruthy();
+    await pickSearchable('crqItemFor:{"line":2}', "IT-1 — Fixture item");
     const next = onChange.mock.lastCall[0];
     expect(next.lines[0]).toMatchObject({ item_id: null });
     expect(next.lines[1]).toMatchObject({ item_id: "i1", uom: "EA" });
@@ -134,6 +208,7 @@ describe("CommonRequisitionDocument — Item Tracking on the line", () => {
     const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st", lines: [storeLine({ item_id: "i1" })] };
     render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={jest.fn()} />);
     expect(screen.queryByLabelText('crqTrackingFor:{"line":1}')).toBeNull();
+    expect(screen.queryByText("crqNoTrackingRequired")).toBeNull();
   });
 
   it("shows no tracking column at all on a Purchase document", () => {
@@ -167,6 +242,17 @@ describe("CommonRequisitionDocument — Rishi's header field list", () => {
     req_no: "REQ-2026-0001", requester_user_id: "u-7", requester_name: "Ada Farm", ...over,
   });
 
+  it("uses three header columns on wide screens, two on medium screens, and keeps long text full-width", () => {
+    render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
+
+    const typeField = screen.getByText("crqType").parentElement as HTMLElement;
+    const remarksField = screen.getByText("crqRemarks").parentElement as HTMLElement;
+    expect(typeField.className).toContain("sm:col-span-6");
+    expect(typeField.className).toContain("lg:col-span-4");
+    expect(remarksField.className).toContain("sm:col-span-12");
+    expect(remarksField.className).not.toContain("lg:col-span-4");
+  });
+
   it("lays the header out in the order of Rishi's list", () => {
     const { container } = render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
     const labels = labelsInOrder(container);
@@ -178,13 +264,45 @@ describe("CommonRequisitionDocument — Rishi's header field list", () => {
     expect(labels.filter((l) => expected.includes(l))).toEqual(expected);
   });
 
+  it.each([
+    ["ITEM", "STORE"],
+    ["ITEM", "PURCHASE"],
+    ["FA", "PURCHASE"],
+    ["SERVICE", "PURCHASE"],
+  ] as const)("keeps a saved %s %s document to the exact common header field contract", (docType, purpose) => {
+    const view = {
+      ...emptyCommonRequisition("co-1", docType, purpose, "2026-10-07"),
+      requisition_id: `saved-${docType}-${purpose}`,
+      req_no: `RQ-${docType}-${purpose}`,
+      approval_status: "APPROVED",
+      document_status: "RELEASED",
+      fulfilment_status: "RECEIVED",
+      integration_status: "NOT_APPLICABLE",
+      approved_by_name: "Approver",
+      approved_at: "2026-10-07T09:00:00.000Z",
+      released_by_name: "Releaser",
+      released_at: "2026-10-07T10:00:00.000Z",
+      linked_po_no: "PO-1",
+      linked_transfer_no: "TO-1",
+    };
+    const { container } = render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
+
+    expect(labelsInOrder(container)).toEqual([
+      "crqReqNo", "crqReqDate", "crqMainLocation", "crqRequesterUserId", "crqRequester",
+      "crqRequesterDept", "crqSenderDept", "crqType", "crqStatus", "crqPurpose",
+      "crqFrom", "crqTo", "crqDirectTransfer", "crqRemarks",
+    ]);
+  });
+
   it("shows the Requester User ID and keeps Requester Department read-only (auto from User Setup)", () => {
     render(<CommonRequisitionDocument view={storeView({ requester_login: "ada@triplec.local" }) as any} editable options={options} onChange={jest.fn()} />);
     // Rishi, 5 Oct: the User ID is the login (email), never the internal id.
     expect(screen.getByText("ada@triplec.local")).toBeTruthy();
     expect(screen.queryByText("u-7")).toBeNull();
-    // Editable document, but this field is never a control.
-    expect(screen.queryByLabelText("crqRequesterDept")).toBeNull();
+    // Editable document, but this field remains a read-only display control.
+    const requesterDepartment = screen.getByRole("textbox", { name: "crqRequesterDept" });
+    expect(requesterDepartment.getAttribute("aria-readonly")).toBe("true");
+    expect(screen.queryByRole("combobox", { name: "crqRequesterDept" })).toBeNull();
   });
 
   it("a new, unsaved requisition shows the signed-in user's login as its Requester User ID", () => {
@@ -212,15 +330,18 @@ describe("CommonRequisitionDocument — Rishi's line column list", () => {
   const headers = (container: HTMLElement) =>
     Array.from(container.querySelectorAll("thead th")).map((n) => (n.textContent ?? "").trim()).filter(Boolean);
 
-  it("orders the Store Item sub-form by Rishi's list, ours after his", () => {
+  it("orders the Store Item sub-form by the supplied list without extra data columns", () => {
     const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"), from_location_id: "st" };
     const { container } = render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={jest.fn()} />);
     expect(headers(container)).toEqual([
-      "crqColLine", "crqColItem", "crqColItemDescription", "crqColQty",
-      "crqColFrom", "crqColTo", "crqColToShip", "crqColShipped",
-      "crqColToReceive", "crqColReceived", "crqColRemaining", "crqColBalance",
-      "crqColUom", "crqColRate", "crqColDescription", "crqColTracking",
+      ...ALL_LINE_HEADERS,
     ]);
+  });
+
+  it("places Add line in the Lines title row", () => {
+    render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
+    const title = screen.getByText("crqLinesTitle");
+    expect(within(title.parentElement?.parentElement as HTMLElement).getByRole("button", { name: /crqAddLine/ })).toBeTruthy();
   });
 
   it("shows the item's description in its own column, read-only from the Item Master", () => {
@@ -232,14 +353,18 @@ describe("CommonRequisitionDocument — Rishi's line column list", () => {
     expect(cells[2]).toBe("Fixture item");
   });
 
-  it("gives a Fixed Asset document only its description and quantity of Rishi's columns", () => {
+  it("shows only the item code in the editable Item No. selector after selection", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05"),
+      lines: [{ ...emptyLine(), item_id: "i1", item_code: "IT-1", item_name: "Fixture item", quantity: "10", uom: "EA" }] };
+    render(<CommonRequisitionDocument view={view as any} editable options={options} onChange={jest.fn()} />);
+    expect(screen.getByRole("button", { name: 'crqItemFor:{"line":1}' }).textContent).toBe("IT-1");
+  });
+
+  it("gives a Fixed Asset document the stable common columns while only its description and quantity are editable", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
     const h = headers(container);
-    // Rishi's own column name for it, not the Item line's free "Description" (P1 e2e).
-    expect(h.slice(0, 3)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(h).toEqual(ALL_LINE_HEADERS);
     expect(h).not.toContain("crqColDescription");
-    expect(h).not.toContain("crqColItem");
-    expect(h).not.toContain("crqColItemDescription");
     expect(h).not.toContain("crqColTracking");
   });
 });
@@ -258,9 +383,9 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
 
   // Rishi, 5 Oct: "Service lines follow his list: Description + Qty only.
   // The optional Resource picker is removed from Service lines."
-  it("gives a Service document exactly Line No., its description and Qty — no Resource picker or column", () => {
+  it("gives a Service document the stable common columns — with no Resource picker or column", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "SERVICE", "PURCHASE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
-    expect(headers(container)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(headers(container)).toEqual(ALL_LINE_HEADERS);
     expect(screen.queryByLabelText('crqResourceFor:{"line":1}')).toBeNull();
   });
 
@@ -269,13 +394,13 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
       approval_status: "APPROVED", document_status: "RELEASED",
       lines: [{ ...emptyLine(), line_id: "l1", line_seq: 1, description: "Electrician call-out", quantity: "2", resource_id: "r1", resource_code: "RES-1", resource_name: "Electrician" }] };
     const { container } = render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
-    expect(headers(container)).toEqual(["crqColLine", "crqColFaServiceDescription", "crqColQty"]);
+    expect(headers(container)).toEqual(ALL_LINE_HEADERS);
     expect(screen.queryByText(/RES-1/)).toBeNull();
   });
 
-  it("keeps the unit on an Item document, where the API still requires one", () => {
+  it("keeps the API-required unit internal instead of exposing an extra column", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-05")} editable options={options} onChange={jest.fn()} />);
-    expect(headers(container)).toContain("crqColUom");
+    expect(headers(container)).not.toContain("crqColUom");
   });
 
   // WP4a fix round 1 (Rishi's 4 Oct list: "ITEM TRACKING BUTTON (on Sub-Form

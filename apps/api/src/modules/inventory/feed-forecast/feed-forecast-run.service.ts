@@ -210,7 +210,7 @@ export class FeedForecastRunService {
       eq(schema.feedForecastRun.company_id, companyId),
       eq(schema.feedForecastRun.farm_id, farmId),
       isNull(schema.feedForecastRun.archived_at),
-    )).orderBy(desc(schema.feedForecastRun.version)).limit(1);
+    )).limit(1);
     return run ?? null;
   }
 

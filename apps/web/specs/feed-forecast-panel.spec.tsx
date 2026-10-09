@@ -79,11 +79,20 @@ const currentRunResponse = {
   },
 };
 
-function routedGet(over?: { feedForecast?: () => Promise<any>; current?: () => Promise<any>; periods?: () => Promise<any>; runs?: () => Promise<any> }) {
+function routedGet(over?: {
+  feedForecast?: () => Promise<any>;
+  current?: () => Promise<any>;
+  periods?: () => Promise<any>;
+  runs?: () => Promise<any>;
+  preview?: () => Promise<any>;
+}) {
   return (url: string) => {
     if (url.startsWith('/feed-forecast/periods')) return over?.periods ? over.periods() : Promise.resolve({ success: true, data: [] });
     if (url.startsWith('/feed-forecast/runs/current')) return over?.current ? over.current() : Promise.resolve(currentRunResponse);
     if (url.startsWith('/feed-forecast/runs')) return over?.runs ? over.runs() : Promise.resolve({ success: true, data: [] });
+    if (url.startsWith('/feed-requisition/from-run/')) return over?.preview ? over.preview() : Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: null, lines: [],
+    } });
     return over?.feedForecast ? over.feedForecast() : Promise.resolve(forecastResponse);
   };
 }
@@ -128,39 +137,16 @@ describe('FeedForecastPanel — admin', () => {
     expect(table).toBeTruthy();
   });
 
-  it('offers All plus cascading Shed, Silo, Batch, Feed Item and Bulk/Bagged result filters without refetching', async () => {
+  it('shows the complete farm calculation without Shed, Silo, Batch, Feed Item or Bulk/Bagged result filters', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table', { name: 'ffGridLabel' });
-    const shed = screen.getByLabelText('ffFilterShed') as HTMLSelectElement;
-    const silo = screen.getByLabelText('ffFilterSilo') as HTMLSelectElement;
-    const batch = screen.getByLabelText('ffFilterBatch') as HTMLSelectElement;
-    const item = screen.getByLabelText('ffFilterFeedItem') as HTMLSelectElement;
-    const feedType = screen.getByLabelText('ffFilterFeedType') as HTMLSelectElement;
-
-    for (const select of [shed, silo, batch, item, feedType]) expect(within(select).getByText('ffFilterAll')).toBeTruthy();
-    expect(within(shed).getByText('SHED-1')).toBeTruthy();
-    expect(within(silo).getByText('VIL100/SILO-002 — Dry sow silo')).toBeTruthy();
-    expect(within(batch).getByText('BATCH-000020')).toBeTruthy();
-    expect(within(item).getByText('FEED-DS — Dry Sow Gestation Mash (14% CP)')).toBeTruthy();
-    expect(within(feedType).getByText('ffFeedTypeBulk')).toBeTruthy();
-    expect(within(feedType).getByText('ffFeedTypeBagged')).toBeTruthy();
-
-    fireEvent.change(shed, { target: { value: 'shed-1' } });
-    const filteredTable = screen.getByRole('table', { name: 'ffGridLabel' });
-    expect(within(filteredTable).queryByText('BATCH-000010')).toBeNull();
-    expect(within(filteredTable).getByText('BATCH-000020')).toBeTruthy();
-    expect(forecastCalls()).toHaveLength(0);
-  });
-
-  it('resets a child filter to All when an upstream selection makes it invalid', async () => {
-    render(<FeedForecastPanel />);
-    await screen.findByRole('table', { name: 'ffGridLabel' });
-    const silo = screen.getByLabelText('ffFilterSilo') as HTMLSelectElement;
-    fireEvent.change(silo, { target: { value: 'store-1' } });
-    expect(silo.value).toBe('store-1');
-
-    fireEvent.change(screen.getByLabelText('ffFilterShed'), { target: { value: 'shed-1' } });
-    expect((screen.getByLabelText('ffFilterSilo') as HTMLSelectElement).value).toBe('');
+    expect(screen.queryByLabelText('ffFilterShed')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterSilo')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterBatch')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterFeedItem')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterFeedType')).toBeNull();
+    expect(within(screen.getByRole('table', { name: 'ffGridLabel' })).getByText('BATCH-000010')).toBeTruthy();
+    expect(within(screen.getByRole('table', { name: 'ffGridLabel' })).getByText('BATCH-000020')).toBeTruthy();
   });
 
   it('shows the farm chosen in the shared hook and hands a new choice back to it (A4)', async () => {
@@ -208,9 +194,53 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByText('ffCalculatePrompt');
     expect(forecastCalls()).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    const calculateButton = within(controlRow).getByRole('button', { name: 'ffCalculate' });
+    fireEvent.click(calculateButton);
     await screen.findByRole('table');
     expect(forecastCalls()[0][0]).toBe('/feed-forecast?farmId=farm-vil100&view=CUSTOM');
+    expect(within(controlRow).getByRole('button', { name: 'ffSaveRun' })).toBeTruthy();
+  });
+
+  it('shows Create Feed Requisition for a saved shortage with no linked requisition', async () => {
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: null,
+      lines: [{ destination_location_id: 'silo-2', item_id: 'item-2', quantity_kg: 3000 }],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    expect(within(controlRow).getByRole('button', { name: 'rqCreateFromSaved' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
+  });
+
+  it('replaces creation with View Requisition when the saved calculation already has one', async () => {
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: 'req-existing', lines: [],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    expect(within(controlRow).getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+  });
+
+  it('keeps View Requisition available without calculation-create authority', async () => {
+    mockCanSaveRun = false;
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: 'req-existing', lines: [],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+  });
+
+  it('shows no requisition action when the saved calculation has no shortage or linked requisition', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
   });
 
   it('sends a picked planning date as the as-of date', async () => {
@@ -294,11 +324,11 @@ describe('FeedForecastPanel — admin', () => {
     expect(forecastCalls()).toHaveLength(0);
   });
 
-  it('collects the notes in one collapsed panel', async () => {
+  it('collects the notes behind a compact dialog action', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     expect(screen.getByText('ffNotesTitle:{"count":2}')).toBeTruthy();
-    expect(document.querySelector('details')!.open).toBe(false);
+    expect(screen.getByRole('button', { name: 'ffNotesTitle:{"count":2}' })).toBeTruthy();
   });
 
   it('says nothing is forecast before the planning date when the range ends before it (Q7)', async () => {

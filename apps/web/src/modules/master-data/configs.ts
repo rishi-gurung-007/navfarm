@@ -67,9 +67,9 @@ const location: MasterDataConfig = {
     { key: "location_name", label: "Name", labelWhen: { key: "location_type", labels: { MILL: "Mill Name", BIN: "Bin Name" } }, type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
     {
       key: "location_address", label: "Location Address", type: "text", maxLength: 255,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
-      helpText: "Stored on the Farm only. Child locations inherit their physical context from the Farm hierarchy.",
+      helpText: "Physical address. Required on Farm; optional on Mill. Child locations inherit context from their parent hierarchy.",
       section: "Identification",
     },
     {
@@ -78,14 +78,16 @@ const location: MasterDataConfig = {
       // code, which on the nine-farm data is 48 pens and 12 sheds, so choosing
       // SHED filtered 50 rows that held no Farm and offered nothing. parentForType
       // asks for exactly the allowed parent types, whatever the table's size.
-      key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true, searchable: true,
+      key: "parent_location_id", label: "Parent Location",
+      labelWhen: { key: "location_type", labels: { BIN: "Parent Mill" } },
+      type: "select-entity", required: true, searchable: true,
       entityEndpoint: "/location?parentForType={value}&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
         selectorKey: "location_type", selectorEntityEndpoint: "/location-type", selectorCodeKey: "type_code",
         allowListKey: "allowed_parent_types", optionCodeKey: "location_type", hideWhenEmpty: true,
       },
-      helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm, have no Parent Location field.",
+      helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm and Mill, have no Parent Location field. A Bin must select an active Mill.",
       section: "Identification",
     },
     { key: "location_level", label: "Hierarchy Level", type: "number", min: 0, hideInForm: true, helpText: "Computed from the parent location." },
@@ -1585,7 +1587,8 @@ const reportingPeriod: MasterDataConfig = {
 const productionSlot: MasterDataConfig = {
   key: "production-slot", label: "Production Slots", singular: "Production Slot",
   description: "Company production windows used to schedule feed diets into loading bins.",
-  apiBase: "/production-slot", idKey: "slot_id", group: "Settings",
+  apiBase: "/production-slot", idKey: "slot_id", group: "Inventory",
+  tabOf: "location", tabLabel: "Production Slots",
   isPrimary: false, businessAdminOnly: true,
   columns: [
     { key: "slot_code", label: "Code" },
@@ -1600,6 +1603,36 @@ const productionSlot: MasterDataConfig = {
     { key: "slot_name", label: "Name", type: "text", required: true, maxLength: 100 },
     { key: "start_time", label: "Start Time", type: "time", required: true, helpText: "Production Date is the date this time starts." },
     { key: "end_time", label: "End Time", type: "time", required: true, helpText: "An End Time at or before Start Time ends on the following date." },
+  ],
+};
+
+const binDietAssignment: MasterDataConfig = {
+  key: "bin-diet-assignment", label: "BIN Diet Assignments", singular: "BIN Diet Assignment",
+  description: "Assign the feed diet produced in a mill BIN for an exact production date and slot. Release uses this assignment without guessing a later date.",
+  apiBase: "/bin-diet-assignment", idKey: "assignment_id", group: "Inventory",
+  tabOf: "location", tabLabel: "BIN Diet Assignments",
+  isPrimary: false, businessAdminOnly: true,
+  columns: [
+    { key: "bin_code", label: "BIN Code" },
+    { key: "bin_name", label: "BIN Name" },
+    { key: "feed_item_no", label: "Feed Item No." },
+    { key: "feed_item_description", label: "Feed Item Description" },
+    { key: "production_date", label: "Production Date", format: "date" },
+    { key: "slot_code", label: "Production Slot Code" },
+    { key: "diet_priority", label: "Diet Priority" },
+    { key: "status", label: "Status" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "bin_location_id", label: "BIN", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/location?locationType=BIN&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"] },
+    { key: "feed_item_id", label: "Feed Item", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/item?isActive=true", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "production_date", label: "Production Date", type: "date", required: true,
+      helpText: "Release requires an active assignment on this exact date." },
+    { key: "production_slot_id", label: "Production Slot", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/production-slot?isActive=true", entityValueKey: "slot_id", entityLabelKeys: ["slot_code", "slot_name"] },
+    { key: "diet_priority", label: "Diet Priority", type: "number", required: true, min: 1, step: "1" },
   ],
 };
 
@@ -2112,7 +2145,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, productionSlot, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, productionSlot, binDietAssignment, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];

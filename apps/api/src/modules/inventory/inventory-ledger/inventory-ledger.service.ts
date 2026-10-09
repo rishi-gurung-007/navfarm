@@ -72,6 +72,11 @@ export interface FeedStockRow {
 /** The same, for one posting date. */
 export interface FeedStockMovement extends FeedStockRow {
   posting_date: string;
+  /** Optional document evidence used by the forecast's expected-incoming view. */
+  reference_id?: string;
+  reference_no?: string;
+  expected_date?: string;
+  related_reference_no?: string;
 }
 
 /** Immutable item/quantity/cost evidence captured for a physical silo count. */

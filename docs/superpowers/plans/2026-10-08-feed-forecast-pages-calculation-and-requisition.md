@@ -280,3 +280,74 @@
 - Final fresh gates: API **198 suites / 2,549 tests passed**; Web **98 suites /
   727 tests passed**; API, Web and Web-E2E typechecks passed; the Web production
   build completed all 76 routes; `git diff --check` produced no errors.
+- Completion audit added saved-run duplicate-line rejection, snapped order-
+  multiple rounding and a service-boundary Feed Plan empty-state/scope test.
+  It also completed the existing-master setup needed by feed Release: Location
+  now exposes Production Slot and BIN Diet Assignment tabs, backed by a
+  company-scoped CRUD API. No setup rows or workbook examples were seeded.
+- Running-app proof opened `REQ-GRA100-2026-00007` from the shared Requisition
+  page. Release, Transfer Shipment and Transfer Receipt were all visible in
+  the header. Release was disabled with the exact missing-assignment reason for
+  line 10000/date 2026-10-11; Shipment and Receipt showed their preceding-state
+  blockers. The new master tab loaded through the live API and showed the
+  truthful empty state.
+- Final re-run after the audit: API **199 suites / 2,553 tests passed**; Web
+  **98 suites / 729 tests passed**; API, Web and Web-E2E typechecks passed; the
+  Web production build completed all 76 routes; `git diff --check` passed.
+  A posted live Release/Shipment/Receipt was intentionally not fabricated:
+  `nf_devco` has no real BIN, Production Slot or exact-date assignment yet.
+
+### Continuation audit correction — 2026-10-08
+
+- The earlier statement that Tasks 1–8 were complete was too broad. The
+  operational Feed Plan tab exists, but its Tentative quantity currently comes
+  from the saved forecast recommendation. Workbook Engine rows 31–44 require
+  retained farm/week/item TENTATIVE and ACTUAL versions, with Tentative based
+  on five completed Wednesday–Tuesday weeks of posted consumption and adjusted
+  for known population/diet changes. Task 8 remains partial until that model is
+  implemented and verified.
+- Feed Plan now distinguishes a saved calculation with no positive order from
+  the absence of a saved calculation. Saved Physical Stock Count documents now
+  return and display silo code, feed item number/name and reason name instead
+  of internal IDs.
+- The existing Silo Feed Setup was moved from Inventory Setup into Company
+  Settings → Feed Planning without removing any Location/master field. Its API
+  list now accepts a company filter in addition to the caller's scope.
+- Feed screens changed missing/invalid display values from `NaN` or an em dash
+  to explanatory unavailable text. Focused verification passed: API 24/24
+  company-scope/controller tests and 225/225 forecast/run/plan/requisition
+  tests; Web 10/10 settings tests, 15/15 semantic-fallback tests, 26/26
+  requisition-panel tests, and 135/135 focused workflow tests.
+- Feed Plan no longer mislabels destination-silo storage capacity as mill
+  production capacity. Until the deferred mill-capacity setup exists, the
+  workbook capacity field is returned as unavailable; the focused Feed Plan
+  suite passes 10/10 tests.
+- The retained workbook Feed Plan gap is now implemented. Migration 0154 adds
+  additive `feed_plan` and `feed_plan_line` documents; no master table or field
+  was removed. Plan codes use the ISO production week and retain Tentative and
+  Actual revisions. Each line snapshots five completed Wednesday–Tuesday
+  weeks of posted consumption and lifecycle/scheduler expectation, the
+  normalization factor, saved target-week demand, requested quantity and
+  variance. Mill Approved and mill capacity remain explicitly unavailable.
+- Running API proof generated `PLAN-VIL100-202641-R01` from VIL100's current
+  saved calculation. MySQL read-back found three item lines, 2,919 KG projected
+  and tentative demand, and exactly five history periods per line. Both
+  registered tenant journals reached migration 154. The live check also found
+  and removed an unnecessary current-run filesort that exhausted MySQL's sort
+  buffer when selecting JSON snapshots.
+- Final retained-plan verification: API **201 suites / 2,568 tests passed**;
+  Web **99 suites / 740 tests passed**; API and Web typechecks passed; API and
+  Web production builds passed, with all 76 Web routes generated. The running
+  services were rebuilt on ports 2877 and 3002.
+
+### Approval refresh continuation — 2026-10-09
+
+- Approved run-linked feed requisitions now trigger an Actual Feed Plan revision
+  after the approval transaction commits. Rejections do not trigger a plan
+  revision, and a refresh failure is logged without rolling back approval.
+- Focused approval/feed requisition verification passes **2 suites / 68 tests**.
+- Automatic Wednesday scheduling is not added because this API has no existing
+  durable job scheduler; the existing configurable production weekday remains
+  the Feed Plan generation rule and the UI/API generation action remains the
+  safe trigger. Mill Consolidation, Loading and dedicated TO Receipt remain
+  deferred by scope.

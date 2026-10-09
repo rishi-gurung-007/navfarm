@@ -1,7 +1,7 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -150,10 +150,14 @@ export class FeedStockCountService implements OnModuleInit {
         eq(schema.companyCurrencyConfig.company_id, companyId),
         eq(schema.companyCurrencyConfig.is_local, true),
       )).limit(1);
+    // Base Currency is the authoritative NAVFarm currency. Local Currency is
+    // optional future configuration; its absence must not block a valid base
+    // currency valuation. Use an identity rate and retain the explicit null
+    // local currency in the snapshot for auditability.
     if (!local?.currency_id) return {
       baseCurrencyId: company.base_currency_id,
       localCurrencyId: null,
-      rate: { status: 'MISSING_LOCAL_CURRENCY' as const, companyId, baseCurrencyId: company.base_currency_id },
+      rate: { status: 'RESOLVED' as const, rateId: null, rate: 1, rateDate: null, createdAt: null, scope: 'IDENTITY' as const },
     };
     const rate = await this.currency.currentRate(companyId, company.base_currency_id, local.currency_id);
     return { baseCurrencyId: company.base_currency_id, localCurrencyId: local.currency_id, rate };
@@ -339,7 +343,16 @@ export class FeedStockCountService implements OnModuleInit {
     )).limit(1);
     if (!count) throw new NotFoundException('Feed stock count not found.');
     await this.loadFarm(count.farm_id, count.company_id, tenantId);
-    const lines = await this.db.select().from(schema.feedStockCountLine)
+    const lines = await this.db.select({
+      ...getTableColumns(schema.feedStockCountLine),
+      silo_code: schema.locationMaster.location_code,
+      item_code: schema.itemMaster.item_code,
+      item_name: schema.itemMaster.item_name,
+      reason_name: schema.reasonMaster.reason_name,
+    }).from(schema.feedStockCountLine)
+      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.feedStockCountLine.silo_id))
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.feedStockCountLine.item_id))
+      .leftJoin(schema.reasonMaster, eq(schema.reasonMaster.reason_id, schema.feedStockCountLine.reason_id))
       .where(eq(schema.feedStockCountLine.count_id, countId))
       .orderBy(schema.feedStockCountLine.silo_id, schema.feedStockCountLine.item_id);
     return { ...count, lines };
@@ -491,8 +504,11 @@ export class FeedStockCountService implements OnModuleInit {
   ) {
     if (!request.document_id) throw new BadRequestException('This approval request does not name a physical count.');
     const count = await this.lockForDecision(request.document_id, tenantId);
-    // Every count is raised by hand, so there is no system-draft exception here.
-    if (request.requested_by && user?.userId === request.requested_by) {
+    // Rishi, 7 Oct: Tenant Admin may approve anything in their tenant,
+    // including a physical count they submitted. Other user types retain the
+    // maker/checker rule; the route-specific permission check below still
+    // applies to everyone and the approval engine still enforces scope.
+    if (request.requested_by && user?.userId === request.requested_by && user?.userType !== 'TENANT_ADMIN') {
       throw new ForbiddenException('You may not decide your own physical count. Withdraw it instead.');
     }
     const route = await this.routeFor(count, tenantId);

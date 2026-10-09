@@ -27,6 +27,7 @@ import { FarmModule } from './modules/master-data/farm/farm.module';
 import { WarehouseModule } from './modules/master-data/warehouse/warehouse.module';
 import { LocationModule } from './modules/master-data/location/location.module';
 import { ProductionSlotModule } from './modules/master-data/production-slot/production-slot.module';
+import { BinDietAssignmentModule } from './modules/master-data/bin-diet-assignment/bin-diet-assignment.module';
 import { LocationTypeModule } from './modules/master-data/location-type/location-type.module';
 import { ShedModule } from './modules/master-data/shed/shed.module';
 import { ItemCategoryModule } from './modules/master-data/item-category/item-category.module';
@@ -124,6 +125,7 @@ import { SystemController } from './system/system.controller';
     WarehouseModule,
     LocationModule,
     ProductionSlotModule,
+    BinDietAssignmentModule,
     LocationTypeModule,
     ShedModule,
     ItemCategoryModule,

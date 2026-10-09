@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -118,30 +118,42 @@ export function Field({ label, htmlFor, hint, tooltip, error, required, classNam
  *
  * `mono` is for machine-shaped values — codes, ids, timezones — where character
  * alignment aids comparison. Prose does not take it.
+ * `appearance="control"` keeps a displayed value aligned with editable fields
+ * without turning it into a disabled input; `emptyText` explains why a value
+ * is absent instead of relying on punctuation alone.
  */
 export function ReadField({
   label,
   value,
   mono,
   className,
+  appearance = 'plain',
+  emptyText = '—',
 }: {
   label: string;
   value: ReactNode;
   mono?: boolean;
   className?: string;
+  appearance?: 'plain' | 'control';
+  emptyText?: ReactNode;
 }) {
   const empty = value === null || value === undefined || value === '';
+  const labelId = useId();
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
-      <span className="nf-text-label text-(--text-secondary)">{label}</span>
+      <span id={labelId} className="nf-text-label text-(--text-secondary)">{label}</span>
       <span
+        role={appearance === 'control' ? 'textbox' : undefined}
+        aria-readonly={appearance === 'control' ? true : undefined}
+        aria-labelledby={appearance === 'control' ? labelId : undefined}
         className={cn(
           'min-w-0 break-words text-sm',
+          appearance === 'control' && 'flex min-h-11 cursor-text select-text items-center rounded-[var(--radius-sm)] border border-(--input-border) bg-(--surface-raised) px-3 py-2',
           mono && 'font-mono',
           empty ? 'text-(--text-muted)' : 'font-medium text-(--text-primary)'
         )}
       >
-        {empty ? '—' : value}
+        {empty ? emptyText : value}
       </span>
     </div>
   );
@@ -170,20 +182,25 @@ export function ReadField({
 export function FieldGroup({
   title,
   description,
+  action,
   children,
   className,
 }: {
-  title: ReactNode;
+  title?: ReactNode;
   description?: string;
+  action?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section className={cn('flex flex-col gap-3', className)}>
-      <div className="flex flex-col gap-0.5">
-        <h3 className="nf-text-label-strong text-(--text-primary)">{title}</h3>
-        {description && <p className="text-[12px] text-(--text-muted)">{description}</p>}
-      </div>
+      {(title || description || action) && <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          {title && <h3 className="nf-text-label-strong text-(--text-primary)">{title}</h3>}
+          {description && <p className="text-[12px] text-(--text-muted)">{description}</p>}
+        </div>
+        {action}
+      </div>}
       <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-12">
         {children}
       </div>

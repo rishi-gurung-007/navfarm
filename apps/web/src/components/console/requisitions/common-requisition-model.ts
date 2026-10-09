@@ -64,6 +64,8 @@ export interface CommonRequisitionView {
   company_id: string;
   farm_id?: string | null;
   doc_type: CommonDocType;
+  /** Read-only creation origin; all ordinary user-created requests are manual. */
+  source?: "MANUAL_ENTRY" | "AUTO_FORECAST" | "STOCK_TAKE_TRIGGERED" | "DIET_CHANGE_UPCOMING" | null;
   purpose: CommonPurpose;
   status?: string;
   requisition_date: string | null;
@@ -113,6 +115,13 @@ export interface CommonRequisitionOptions {
   departments: { cost_center_id: string; cost_center_code: string; cost_center_name: string }[];
   /** WP1c: the signed-in user's own Direct Transfer right (User Setup). */
   may_direct_transfer?: boolean;
+  requester?: {
+    user_id: string;
+    login: string | null;
+    name: string | null;
+    department_id: string | null;
+    department_name: string | null;
+  } | null;
 }
 
 export const emptyLine = (): CommonRequisitionLine => ({
@@ -128,7 +137,7 @@ export const emptyLine = (): CommonRequisitionLine => ({
  */
 export function emptyCommonRequisition(companyId: string, docType: CommonDocType, purpose: CommonPurpose, today: string, requesterLogin: string | null = null): CommonRequisitionView {
   return {
-    company_id: companyId, doc_type: docType, purpose, requisition_date: today, required_date: null, requester_login: requesterLogin,
+    company_id: companyId, doc_type: docType, source: "MANUAL_ENTRY", purpose, requisition_date: today, required_date: null, requester_login: requesterLogin,
     main_location_id: null, requester_department_id: null, sender_department_id: null,
     from_location_id: null, to_location_id: null, direct_transfer: false, justification: null, remarks: null,
     lines: [emptyLine()],

@@ -16,6 +16,8 @@ describe("feed forecasting terminology", () => {
       fpSiloHighCol: "Above Threshold",
       fpSiloColStatus: "Status",
       ffColBatchNo: "Batch No",
+      ffColBatch: "Batch No.",
+      ffColHouse: "House Code",
       ffColItemName: "Item Name",
       ffColItemNo: "Item No",
       ffColShedNo: "Shed No",

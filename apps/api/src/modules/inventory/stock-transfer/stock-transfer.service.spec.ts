@@ -188,7 +188,6 @@ describe('StockTransferService', () => {
       ['a BIN without a MILL parent', { mill: null }, 'must have an active MILL parent'],
       ['an inactive BIN', { source: { ...validContext.source, is_active: false } }, 'must be an active BIN'],
       ['a source in another company', { source: { ...validContext.source, company_id: 'co-2' } }, 'must belong to company co-1'],
-      ['a destination that is not a SILO', { destination: { ...validContext.destination, location_type: 'STORE' } }, 'must be an active SILO'],
       ['a destination on another farm', { destination: { ...validContext.destination, parent_location_id: 'farm-2', farm_id: 'farm-2' } }, 'must belong to requisition farm farm-1'],
     ])('refuses %s', async (_label, override, message) => {
       enterPostingTransaction();
@@ -197,6 +196,16 @@ describe('StockTransferService', () => {
 
       await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(message);
       expect(createRecord).not.toHaveBeenCalled();
+    });
+
+    it('allows a BAGGED feed line to release into an active farm STORE', async () => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue({
+        ...validContext,
+        destination: { ...validContext.destination, location_type: 'STORE' },
+      });
+      jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).resolves.toEqual({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
     });
   });
 

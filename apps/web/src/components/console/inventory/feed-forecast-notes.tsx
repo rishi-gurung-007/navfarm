@@ -8,6 +8,8 @@
  * batch). Its box scrolls on its own so the page stays fixed-height.
  */
 import { formatDateShort } from "./feed-format";
+import { useState, type ReactNode } from "react";
+import { Dialog } from "@/components/ui/dialog";
 
 export type ForecastFlag =
   | { kind: "NO_FEED_ROW"; batchNo: string; stageCode: string; day: number; date: string }
@@ -81,9 +83,13 @@ export function buildNoteGroups(flags: ForecastFlag[], t: Translate): NoteGroup[
   return groups;
 }
 
-export function FeedForecastNotes({ flags, t }: { flags: ForecastFlag[]; t: Translate }) {
+export function FeedForecastNotes({ flags, t, compact = false }: { flags: ForecastFlag[]; t: Translate; compact?: boolean }) {
   const groups = buildNoteGroups(flags, t);
   if (!groups.length) return null;
+  const content = <dl className="max-h-80 space-y-3 overflow-auto border-t border-[var(--border)] px-3 py-3 text-xs">
+    {groups.map((g) => <div key={g.kind}><dt className="font-semibold text-[var(--text-primary)]">{g.title} <span className="font-normal text-[var(--text-muted)]">({g.items.length})</span></dt><dd className="text-[var(--text-secondary)]">{g.items.join(g.kind === "BATCH_SHED_UNKNOWN" ? ", " : "; ")}</dd></div>)}
+  </dl>;
+  if (compact) return <CompactNotesDialog title={t("ffNotesTitle", { count: groups.length })} content={content} />;
   return (
     <details className="shrink-0 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
       <summary className="cursor-pointer select-none px-3 py-2 text-xs">
@@ -100,4 +106,9 @@ export function FeedForecastNotes({ flags, t }: { flags: ForecastFlag[]; t: Tran
       </dl>
     </details>
   );
+}
+
+function CompactNotesDialog({ title, content }: { title: string; content: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <><button type="button" className="nf-button nf-button-secondary text-xs" onClick={() => setOpen(true)}>{title}</button><Dialog open={open} onClose={() => setOpen(false)} title={title} maxWidth="lg">{content}</Dialog></>;
 }

@@ -87,11 +87,13 @@ const displayOf = (tab: string) => document.querySelector(`[data-feed-tab="${tab
 
 describe('Feed Forecast tab selection is carried by the URL', () => {
   it('reads each supported tab and falls back to the forecast for anything else', () => {
-    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-plan', 'feed-requisition', 'physical-count']);
+    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-plan', 'feed-requisition', 'mill-consolidation', 'loading-instructions', 'physical-count']);
     expect(readFeedForecastTab('dashboard')).toBe('dashboard');
     expect(readFeedForecastTab('forecast')).toBe('forecast');
     expect(readFeedForecastTab('feed-plan')).toBe('feed-plan');
     expect(readFeedForecastTab('feed-requisition')).toBe('feed-requisition');
+    expect(readFeedForecastTab('mill-consolidation')).toBe('mill-consolidation');
+    expect(readFeedForecastTab('loading-instructions')).toBe('loading-instructions');
     expect(readFeedForecastTab('physical-count')).toBe('physical-count');
     expect(readFeedForecastTab(null)).toBe('forecast');
     expect(readFeedForecastTab(undefined)).toBe('forecast');
@@ -112,11 +114,11 @@ describe('FeedForecastTabs', () => {
     mockCountMounts = 0;
   });
 
-  it('shows all five tabs and marks the selected one', () => {
+  it('shows all seven tabs and marks the selected one', () => {
     render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
     const list = screen.getByRole('tablist');
     expect(Array.from(list.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
-      .toEqual(['fftTabDashboard', 'fftTabForecast', 'fftTabFeedPlan', 'fftTabFeedRequisition', 'fftTabPhysicalCount']);
+      .toEqual(['fftTabDashboard', 'fftTabForecast', 'fftTabFeedPlan', 'fftTabFeedRequisition', 'invFeedConsolidations', 'invFeedLoading', 'fftTabPhysicalCount']);
     expect(screen.getByRole('tab', { name: 'fftTabForecast' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }).getAttribute('aria-selected')).toBe('false');
   });
@@ -188,15 +190,16 @@ describe('the feed screens read the shared farm selection', () => {
 /**
  * WP1d (Rishi 4 Oct, final; he asked again on 5 Oct why the old names were
  * still showing): the Feed Forecast tabs take the workbook's names —
- * Dashboard · Calculation · Requisition · Physical Stock Count, in that order.
+ * Dashboard · Calculation · Feed Plan · Requisition · Mill Consolidation ·
+ * Loading Instructions · Physical Stock Count, in that order.
  * The routes keep their existing `?tab=` keys, because they are bookmarks.
  */
 describe("WP1d — Feed Forecast tab names follow the workbook", () => {
-  it("names the four tabs as Rishi ruled, in order, without renaming any route key", () => {
-    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-plan", "feed-requisition", "physical-count"]);
+  it("names the seven tabs in order without renaming any route key", () => {
+    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-plan", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"]);
     const en = (require("../src/utils/translations") as any).translations.en;
     expect([
-      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabFeedRequisition, en.fftTabPhysicalCount,
-    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Requisition", "Physical Stock Count"]);
+      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabFeedRequisition, en.invFeedConsolidations, en.invFeedLoading, en.fftTabPhysicalCount,
+    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Requisition", "Feed Mill Consolidation", "Feed Loading Instructions", "Physical Stock Count"]);
   });
 });

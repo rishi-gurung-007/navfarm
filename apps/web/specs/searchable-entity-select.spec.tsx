@@ -204,3 +204,44 @@ describe("SearchableSelect automatic table layout", () => {
     expect(screen.queryByText("Name")).toBeNull();
   });
 });
+
+describe("Searchable select selected-value display", () => {
+  const ITEM_OPTIONS = [
+    { value: "item-1", code: "ITM-0001", name: "Coarse Wheat Bran" },
+  ];
+
+  it.each([
+    ["Item No.", "ITM-0001"],
+    ["Item Code", "ITM-0001"],
+    ["Item Description", "Coarse Wheat Bran"],
+    ["Item", "Coarse Wheat Bran"],
+  ])("shows only the value promised by the %s field after selection", (ariaLabel, expected) => {
+    render(
+      <SearchableSelect
+        ariaLabel={ariaLabel}
+        value="item-1"
+        onChange={jest.fn()}
+        options={ITEM_OPTIONS}
+        valueKey="value"
+        getLabel={(row) => `${row.code} — ${row.name}`}
+        getLabelParts={(row) => [String(row.code), String(row.name)]}
+        columnHeaders={["Item Code", "Item Description"]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: ariaLabel }).textContent).toBe(expected);
+  });
+
+  it("keeps a single-column selected value unchanged", () => {
+    render(
+      <SearchableSelect
+        ariaLabel="Status"
+        value="OPEN"
+        onChange={jest.fn()}
+        options={[{ value: "OPEN", label: "Open" }]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Status" }).textContent).toBe("Open");
+  });
+});

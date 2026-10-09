@@ -40,17 +40,18 @@ function harness(queues: unknown[][]) {
 const approved = {
   requisition_id: 'req-1', tenant_id: 'tenant-1', company_id: 'co-1', farm_id: 'farm-1', main_location_id: 'farm-1',
   req_no: 'REQ-GRA100-2026-00001', doc_type: 'FEED', status: 'APPROVED', approval_status: 'APPROVED',
-  document_status: 'OPEN', fulfilment_status: 'NOT_APPLICABLE', production_date: '2026-10-10', deleted_at: null,
+  document_status: 'OPEN', fulfilment_status: 'NOT_APPLICABLE', production_date: '2026-10-10', feed_consolidation_id: 'cons-1', deleted_at: null,
 };
 
 describe('FeedRequisitionService.release', () => {
   it('locks Approved/Open, resolves exact-date assignments, creates every group and links them atomically', async () => {
     const { service, stockTransfers, inserted, updated, locks } = harness([
       [approved],                                                                 // locked requisition
+      [{ status: 'CONSOLIDATED', consolidation_no: 'CONS-2026-W41-001' }],          // finalized mill consolidation
       [],                                                                         // no existing links
       [                                                                            // requisition lines
-        { line_id: 'line-1', item_id: 'feed-a', item_code: 'FEED-A', destination_location_id: 'silo-1', quantity: '5000' },
-        { line_id: 'line-2', item_id: 'feed-b', item_code: 'FEED-B', destination_location_id: 'silo-2', quantity: '3000' },
+        { line_id: 'line-1', item_id: 'feed-a', item_code: 'FEED-A', destination_location_id: 'silo-1', quantity: '5000', mill_approved_qty_kg: '5000' },
+        { line_id: 'line-2', item_id: 'feed-b', item_code: 'FEED-B', destination_location_id: 'silo-2', quantity: '3000', mill_approved_qty_kg: '3000' },
       ],
       [                                                                            // exact-date active assignments
         { assignment_id: 'as-1', feed_item_id: 'feed-a', production_date: '2026-10-10', bin_location_id: 'bin-1', production_slot_id: 'slot-1' },

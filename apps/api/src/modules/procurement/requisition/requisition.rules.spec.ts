@@ -356,17 +356,17 @@ describe('isSelfApproval — decisions 1 Oct: nobody approves a manual requisiti
   });
 });
 
-describe('maySelfApprove — decisions.md 2026-10-04: Tenant/Company admins may approve their own requisitions', () => {
-  it('exempts exactly TENANT_ADMIN and COMPANY_ADMIN', () => {
+describe('maySelfApprove — decisions.md 2026-10-07: Tenant/Company/Operational admins may approve their own requisitions', () => {
+  it('exempts TENANT_ADMIN, COMPANY_ADMIN and OPERATIONAL_ADMIN', () => {
     expect(maySelfApprove('TENANT_ADMIN')).toBe(true);
     expect(maySelfApprove('COMPANY_ADMIN')).toBe(true);
+    expect(maySelfApprove('OPERATIONAL_ADMIN')).toBe(true);
   });
   it('still refuses SYSTEM_ADMIN — the 4 Oct decision names only Tenant and Company admins, and until Rishi ' +
     'confirms System Admin it follows the pre-existing rule', () => {
     expect(maySelfApprove('SYSTEM_ADMIN')).toBe(false);
   });
   it('still refuses every other user type', () => {
-    expect(maySelfApprove('OPERATIONAL_ADMIN')).toBe(false);
     expect(maySelfApprove('FARM_MANAGER')).toBe(false);
     expect(maySelfApprove('STANDARD_USER')).toBe(false);
   });
@@ -376,11 +376,14 @@ describe('maySelfApprove — decisions.md 2026-10-04: Tenant/Company admins may 
   });
 });
 
-describe('mayDecideAnyRequisition — decisions.md 2026-10-04 (second entry): the same two types decide every requisition, not just their own', () => {
-  it('agrees with maySelfApprove on exactly the same allow-list', () => {
-    for (const t of ['TENANT_ADMIN', 'COMPANY_ADMIN', 'SYSTEM_ADMIN', 'OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER', null, undefined]) {
-      expect(mayDecideAnyRequisition(t)).toBe(maySelfApprove(t));
-    }
+describe('mayDecideAnyRequisition — Operational Admin self-approval does not widen farm scope', () => {
+  it('keeps cross-farm reach limited to Tenant and Company admins', () => {
+    expect(mayDecideAnyRequisition('TENANT_ADMIN')).toBe(true);
+    expect(mayDecideAnyRequisition('COMPANY_ADMIN')).toBe(true);
+    expect(mayDecideAnyRequisition('OPERATIONAL_ADMIN')).toBe(false);
+    expect(mayDecideAnyRequisition('FARM_MANAGER')).toBe(false);
+    expect(mayDecideAnyRequisition('STANDARD_USER')).toBe(false);
+    expect(mayDecideAnyRequisition('SYSTEM_ADMIN')).toBe(false);
   });
 });
 

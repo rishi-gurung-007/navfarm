@@ -146,6 +146,8 @@ export const SYSTEM_LOCATION_TYPE_SEED: Array<{
   // unrecordable. Which silos a shed draws from is silo_shed_link (migration
   // 0114), a many-to-many link and not a tree.
   { type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO', allowed_parent_types: ['FARM'] },
+  { type_code: 'MILL', type_name: 'Feed Mill', code_prefix: 'MILL', allowed_parent_types: [] },
+  { type_code: 'BIN', type_name: 'Bin', code_prefix: 'BIN', allowed_parent_types: ['MILL'] },
 ];
 
 export const SYSTEM_SPECIES_SEED: Array<{

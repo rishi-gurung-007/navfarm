@@ -78,6 +78,9 @@ export interface FeedRequisitionLine {
   reason_name?: string | null;
   reason_label?: string | null;
   exception_reason: string | null;
+  requested_qty_kg?: number | null;
+  mill_approved_qty_kg?: number | null;
+  adjustment_reason?: string | null;
   breakdown?: FeedRequisitionBreakdownRow[];
 }
 
@@ -96,6 +99,9 @@ export interface FeedRequisitionHeader {
   approved_by_name: string | null;
   linked_transfer_no: string | null;
   forecast_run_no: string | null;
+  consolidation_no?: string | null;
+  consolidation_status?: string | null;
+  consolidation_next_action?: string | null;
 }
 
 export interface FeedRequisitionDocumentView {
@@ -264,10 +270,10 @@ const MUTED = "text-[10px] text-[var(--text-muted)]";
 
 const LINE_COLUMNS = [
   "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColReason", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
-  "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColBags", "rqdColDelivery",
+  "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColAdjustment", "rqdColBags", "rqdColDelivery",
 ] as const;
 const RIGHT = new Set<string>([
-  "rqdColLineNo", "rqdColDaysBefore", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColBags",
+  "rqdColLineNo", "rqdColDaysBefore", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColBags",
 ]);
 const BREAKDOWN_COLUMNS = [
   "rqdBreakdownBatch", "rqdBreakdownHouse", "rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownLifecycle", "rqdBreakdownDemand",
@@ -370,6 +376,13 @@ export function FeedRequisitionDocument({
           deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,
           saved: { approvedBy: header?.approved_by_name, approvedAt: dateTime(view.approved_at), linkedTransfer: header?.linked_transfer_no, forecastRun: header?.forecast_run_no },
         }} />
+        {(header?.consolidation_no || header?.consolidation_status) && (
+          <FieldGroup title="Mill consolidation" className="sm:col-span-12">
+            <ReadField className="sm:col-span-6 lg:col-span-4" label="Consolidation sheet" value={header.consolidation_no} mono appearance="control" emptyText={notAvailable} />
+            <ReadField className="sm:col-span-6 lg:col-span-4" label="Consolidation status" value={header.consolidation_status} appearance="control" emptyText={notAvailable} />
+            <ReadField className="sm:col-span-6 lg:col-span-4" label="Next action" value={header.consolidation_next_action?.replaceAll("_", " ")} appearance="control" emptyText={notAvailable} />
+          </FieldGroup>
+        )}
         {editable && onRemarksChange ? (
           <Field className="sm:col-span-12" label={t("rqdRemarks")} htmlFor="rqd-remarks" hint={t("rqdRemarksHint")}
             error={remarksMissing ? (remarksError ?? t("rqRemarksRequiredGeneric")) : undefined}>
@@ -462,6 +475,9 @@ export function FeedRequisitionDocument({
                       <div>{kg(line.recommended_qty_kg, notAvailable)}</div>
                       {line.unrounded_need_kg !== null && <div className={MUTED}>{t("rqdUnrounded", { kg: kg(line.unrounded_need_kg, notAvailable) })}</div>}
                     </td>
+                    <td className={cn(TD, NUM)}>{kg(line.requested_qty_kg, notAvailable)}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.mill_approved_qty_kg, notAvailable)}</td>
+                    <td className={TD}>{line.adjustment_reason ?? t("rqNotApplicable")}</td>
                     <td className={cn(TD, NUM)}>
                       <div className="inline-flex items-center gap-1.5">
                         {siloDataStale ? (

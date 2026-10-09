@@ -1148,8 +1148,8 @@ export class LocationService {
       const scope = this.cls.get<{ kind?: string; companyId?: string | null }>('masterScope');
       const companyId = scope?.kind ? scope.companyId : query.companyId;
       const allowed = await this.resolveLocationType(query.parentForType, tenantId, companyId)
-        .then((type) => this.allowedParentTypes(type.allowed_parent_types))
-        .catch(() => [] as string[]);
+        .then((type) => (type.type_code === 'BIN' ? ['MILL'] : this.allowedParentTypes(type.allowed_parent_types)))
+        .catch(() => (query.parentForType === 'BIN' ? ['MILL'] : [] as string[]));
       const eligibleParents = allowed.filter((t) => !['PEN', 'CAGE'].includes(t.toUpperCase()));
       conditions.push(eligibleParents.length ? inArray(schema.locationMaster.location_type, eligibleParents) : sql`1 = 0`);
     }

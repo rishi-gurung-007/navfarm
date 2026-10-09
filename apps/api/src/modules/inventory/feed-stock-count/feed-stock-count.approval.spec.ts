@@ -238,6 +238,21 @@ describe('FeedStockCountService approval and posting', () => {
     )).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('lets a Tenant Admin approve their own physical count', async () => {
+    const { handlers, count } = setup({
+      count: pendingCount({ created_by: 'tenant-admin-1', submitted_by: 'tenant-admin-1' }),
+      lines: [varianceLine({ variance_pct_absolute: '4.5' })],
+    });
+    await handlers[FEED_STOCK_COUNT_APPROVAL_DOC_TYPE].decide(
+      { document_id: 'count-1', requested_by: 'tenant-admin-1' },
+      'APPROVED',
+      null,
+      'tenant-1',
+      { userId: 'tenant-admin-1', userType: 'TENANT_ADMIN' },
+    );
+    expect(count).toMatchObject({ status: 'APPROVED', approved_by: 'tenant-admin-1' });
+  });
+
   it('lets a Farm Manager approve a below-threshold count', async () => {
     const { handlers, count } = setup({ count: pendingCount(), lines: [varianceLine({ variance_pct_absolute: '4.5' })] });
     await handlers[FEED_STOCK_COUNT_APPROVAL_DOC_TYPE].decide(

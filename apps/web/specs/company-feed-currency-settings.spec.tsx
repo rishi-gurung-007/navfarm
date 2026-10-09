@@ -36,6 +36,11 @@ beforeEach(() => {
       capacityWarningPct: 90, bagTolerancePct: null,
       financeVariancePct: 5, financeVarianceAmount: null,
     } });
+    if (url === '/feed-forecast/farm-settings?companyId=co-1') return Promise.resolve({ data: [{
+      farmId: 'farm-1', code: 'GRA100', name: 'Grasmere', companyId: 'co-1', companyName: 'Company One',
+      settings: { safetyStockKg: null, bagSizeKg: null, bulkMultipleKg: null, truckTargetKg: null, productionWeekday: null },
+      silos: [],
+    }] });
     return Promise.resolve([]);
   });
   post.mockResolvedValue({ success: true });
@@ -57,6 +62,8 @@ it('loads and saves company feed settings without inserting a client schedule in
   expect((screen.getByLabelText('ctFeedSubmissionTime') as HTMLInputElement).value).toBe('');
   expect(screen.getByLabelText('ctFeedTruckTargetKg').getAttribute('min')).toBe('0.01');
   expect(screen.getByLabelText('ctFeedBulkMultipleKg').getAttribute('min')).toBe('0.01');
+  expect(await screen.findByRole('table', { name: 'fpTableLabel' })).toBeTruthy();
+  expect(get).toHaveBeenCalledWith('/feed-forecast/farm-settings?companyId=co-1');
   fireEvent.change(screen.getByLabelText('ctFeedSubmissionTime'), { target: { value: '12:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
   await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({

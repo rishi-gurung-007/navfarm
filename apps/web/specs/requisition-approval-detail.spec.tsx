@@ -43,17 +43,36 @@ const view = {
   ],
 };
 
-test("renders the requisition as its read-only document", async () => {
+const ALL_LINE_HEADERS = [
+  "crqColLine", "crqColItem", "crqColItemDescription", "crqColFaServiceDescription", "crqColQty",
+  "crqColFrom", "crqColTo", "crqColToShip", "crqColShipped", "crqColToReceive", "crqColReceived",
+  "crqColRemaining", "crqColBalance",
+];
+
+test.each([
+  ["ITEM", "STORE"],
+  ["ITEM", "PURCHASE"],
+  ["FA", "PURCHASE"],
+  ["SERVICE", "PURCHASE"],
+] as const)("renders every %s requisition with the shared read-only header and lines", async (docType, purpose) => {
   const second = { ...view.lines[0], line_id: "l2", line_seq: 2, item_code: "IT-2", item_name: "Nuts", quantity: "4.0000", qty_to_ship: "4.0000", qty_to_receive: "4.0000" };
-  api.get.mockResolvedValue({ data: { ...view, lines: [view.lines[0], second] } });
-  render(<RequisitionApprovalDetail documentId="req-1" />);
-  await waitFor(() => expect(api.get).toHaveBeenCalledWith("/requisition/req-1"));
-  expect(await screen.findByText("crqHeaderTitle")).toBeTruthy();
-  expect(screen.getByText("REQ-2026-0001")).toBeTruthy();
-  expect(screen.getByText(/IT-1/)).toBeTruthy();
-  expect(screen.getByText(/IT-2/)).toBeTruthy();
+  const lines = docType === "ITEM"
+    ? [view.lines[0], second]
+    : [{ ...view.lines[0], item_code: null, item_name: null, description: "Requested work", quantity: "2.0000" }];
+  api.get.mockResolvedValue({ data: { ...view, doc_type: docType, purpose, lines } });
+  const { container } = render(<RequisitionApprovalDetail documentId={`req-${docType}`} />);
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/requisition/req-${docType}`));
+  expect(await screen.findByText("REQ-2026-0001")).toBeTruthy();
+  for (const label of ["crqReqNo", "crqReqDate", "crqMainLocation", "crqRequesterUserId", "crqRequester", "crqRequesterDept", "crqSenderDept", "crqType", "crqStatus", "crqPurpose", "crqFrom", "crqTo", "crqDirectTransfer", "crqRemarks"]) {
+    expect(screen.getByText(label)).toBeTruthy();
+  }
+  const headers = Array.from(container.querySelectorAll("thead th")).map((node) => node.textContent?.trim()).filter(Boolean);
+  expect(headers).toEqual(ALL_LINE_HEADERS);
   expect(screen.queryAllByRole("combobox")).toHaveLength(0);
-  expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  const displayedValues = screen.getAllByRole("textbox");
+  expect(displayedValues.length).toBeGreaterThan(0);
+  expect(displayedValues.every((field) => field.getAttribute("aria-readonly") === "true")).toBe(true);
+  expect(displayedValues.every((field) => field.tagName !== "INPUT" && field.tagName !== "TEXTAREA")).toBe(true);
 });
 
 test("shows the unavailable note when the requisition cannot be read", async () => {
