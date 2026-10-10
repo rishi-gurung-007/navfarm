@@ -169,6 +169,7 @@ describe('FeedForecastPanel — admin', () => {
     expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).toBe('');
   });
 
+  // 27 Sep review: one row on wide screens. 10 Oct: from xl (1280px) up; below that the row wraps, because at 1024px the Calculate button overlapped Date To.
   it('keeps the filters on one row and the date pair together (review, 27 Sep)', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
@@ -177,7 +178,7 @@ describe('FeedForecastPanel — admin', () => {
     // Date From and Date To share a container, so a wrap can never leave "Date To" alone.
     expect(from.closest('div')!.parentElement).toBe(to.closest('div')!.parentElement);
     const row = screen.getByLabelText('ffPlanningDate').closest('[class*="flex-wrap"]')!;
-    expect(row.className).toContain('lg:flex-nowrap');
+    expect(row.className).toContain('xl:flex-nowrap');
   });
 
   it('loads the saved snapshot on mount and filter edits do not recalculate', async () => {
@@ -197,7 +198,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByText('ffCalculatePrompt');
     expect(forecastCalls()).toHaveLength(0);
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
     const calculateButton = within(controlRow).getByRole('button', { name: 'ffCalculate' });
     fireEvent.click(calculateButton);
     await screen.findByRole('table');
@@ -212,7 +213,7 @@ describe('FeedForecastPanel — admin', () => {
     } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
     expect(within(controlRow).getByRole('button', { name: 'rqCreateFromSaved' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
   });
@@ -223,7 +224,7 @@ describe('FeedForecastPanel — admin', () => {
     } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="lg:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
     expect(within(controlRow).getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
   });
