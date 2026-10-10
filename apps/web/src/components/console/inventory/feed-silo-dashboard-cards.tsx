@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollTable } from "@/components/ui/scroll-table";
 import { StatCard, StatRow } from "@/components/ui/stat-row";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort } from "./feed-format";
@@ -48,6 +47,20 @@ const number = (value: number | null | undefined, unavailable: string) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? unavailable
     : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+type Tone = "danger" | "warning" | "success";
+const DOT: Record<Tone, string> = { danger: "bg-(--danger)", warning: "bg-(--warning)", success: "bg-(--success)" };
+function StatusDot({ tone, label }: { tone: Tone; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-(--text-secondary)">
+      <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[tone]}`} />
+      {label}
+    </span>
+  );
+}
+
+const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TD = "border-b border-(--border) px-3 py-2 align-top";
+
 const date = (value: string | null | undefined, unavailable: string) => value ? formatDateShort(value) : unavailable;
 
 export function FeedSiloDashboardCards({
@@ -77,6 +90,12 @@ export function FeedSiloDashboardCards({
     ? <a className="text-(--accent) hover:underline" href={`/requisitions?id=${encodeURIComponent(silo.requisitionId)}`}>{silo.requisitionStatus}</a>
     : silo.requisitionStatus ?? unavailable;
 
+  const status: { tone: Tone; label: string } = silo.projectedShortfallKg > 0
+    ? { tone: "danger", label: t("fsdStatusShortfall") }
+    : silo.daysRemaining !== null && silo.currentDietDaysRemaining !== null && silo.daysRemaining < silo.currentDietDaysRemaining
+      ? { tone: "warning", label: t("fsdStatusLow") }
+      : { tone: "success", label: t("fsdStatusOk") };
+
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
     { label: "fsdCurrentDietFeedItem", value: silo.currentDietItemName ?? unavailable },
     { label: "fsdMillLoadingBin", value: binValue },
@@ -98,11 +117,16 @@ export function FeedSiloDashboardCards({
   return (
     <div className="flex min-h-0 flex-col gap-4">
       <StatRow columns={3}>
-        <StatCard label={t("fsdCurrentDietFeedItem")} value={silo.currentDietItemName ?? unavailable} />
+        <div className="min-w-0 rounded-md border border-(--border) bg-(--surface) p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{t("fsdCurrentDietFeedItem")}</p>
+          <p className="mt-1.5 break-words text-base font-semibold leading-snug text-(--text-primary)" title={silo.currentDietItemName ?? unavailable}>
+            {silo.currentDietItemName ?? unavailable}
+          </p>
+        </div>
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdDailyRequirementKg")} value={number(silo.dailyRequirementKg, unavailable)} unit="kg" />
-        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} />
+        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={<StatusDot tone={status.tone} label={status.label} />} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
 
@@ -114,7 +138,7 @@ export function FeedSiloDashboardCards({
             <Summary label={t("fsdCurrentDietDaysRemaining")} value={number(silo.currentDietDaysRemaining, unavailable)} />
             <Summary label={t("fsdNextDietFeedItem")} value={nextDiet} />
             <Summary label={t("fsdSiloAvailableNextDiet")} value={yesNo} />
-            <Summary label={t("fsdProjectedShortfallKg")} value={number(silo.projectedShortfallKg, unavailable)} />
+            <Summary label={t("fsdProjectedShortfallKg")} value={<span className="inline-flex flex-wrap items-center justify-end gap-2"><StatusDot tone={status.tone} label={status.label} /><span className="tabular-nums">{number(silo.projectedShortfallKg, unavailable)}</span></span>} />
           </CardContent>
         </Card>
         <Card>
@@ -128,20 +152,22 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdFarmTotalOrderKg")} value={number(farmTotalOrderKg, unavailable)} unit="kg" sub={t("fsdFarmWideTotal")} />
       </div>
 
-      <ScrollTable label={t("fsdLabel")}>
-        <thead><tr><th scope="col" className="px-3 py-2 text-left">{t("fsdField")}</th><th scope="col" className="px-3 py-2 text-left">{t("fsdValue")}</th></tr></thead>
-        <tbody>
-          <tr>
-            <td className="px-3 py-2 font-medium">{t("fsdSilo")}</td>
-            <td className="px-3 py-2"><a className="text-(--accent) hover:underline" href={`/master-data/location?recordId=${encodeURIComponent(silo.siloId)}`}>{silo.siloCode}</a>{silo.siloName ? ` — ${silo.siloName}` : ""}</td>
-          </tr>
-          {details.map((detail) => <tr key={detail.label}><td className="px-3 py-2 font-medium">{t(detail.label)}</td><td className="px-3 py-2">{detail.value}</td></tr>)}
-        </tbody>
-      </ScrollTable>
+      <div className="max-h-[60vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
+        <table aria-label={t("fsdLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left text-sm">
+          <thead><tr><th scope="col" className={TH}>{t("fsdField")}</th><th scope="col" className={`${TH} text-right`}>{t("fsdValue")}</th></tr></thead>
+          <tbody>
+            <tr>
+              <td className={`${TD} font-medium`}>{t("fsdSilo")}</td>
+              <td className={`${TD} break-words text-right`}><a className="text-(--accent) hover:underline" href={`/master-data/location?recordId=${encodeURIComponent(silo.siloId)}`}>{silo.siloCode}</a>{silo.siloName ? ` — ${silo.siloName}` : ""}</td>
+            </tr>
+            {details.map((detail) => <tr key={detail.label}><td className={`${TD} font-medium`}>{t(detail.label)}</td><td className={`${TD} min-w-48 break-words text-right tabular-nums`}>{detail.value}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
 function Summary({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="flex items-start justify-between gap-4"><span className="text-(--text-secondary)">{label}</span><span className="text-right font-medium text-(--text-primary)">{value}</span></div>;
+  return <div className="flex items-start justify-between gap-4"><span className="text-(--text-secondary)">{label}</span><span className="min-w-0 break-words text-right font-medium tabular-nums text-(--text-primary)">{value}</span></div>;
 }

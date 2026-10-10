@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { EmptyState, LoadingState } from "@/components/ui/states";
 import { Field } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
@@ -176,7 +176,11 @@ function FeedSiloDashboardContent() {
 
   return (
     <div data-fill-body className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pb-4">
-      <div className="flex shrink-0 flex-wrap items-end gap-3">
+      <div className="shrink-0">
+        <h2 className="text-sm font-semibold text-(--text-primary)">{t("fsdTitle")}</h2>
+        <p className="mt-0.5 text-xs text-(--text-secondary)">{t("fsdDescription")}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9">
         <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel} onChange={setFarmId} />
         <Field label={t("fsdShed")} htmlFor="sd-shed">
           <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!sheds.length}>
@@ -214,13 +218,13 @@ function FeedSiloDashboardContent() {
       {farm.failed ? (
         <InlineAlert><span className="mr-3">{t("ffFarmsLoadFailed")}</span><Button size="sm" variant="outline" onClick={farm.retry}>{t("ffRetry")}</Button></InlineAlert>
       ) : !farm.loaded ? (
-        <Loading label={t("fsdLoading")} />
+        <LoadingState label={t("fsdLoading")} />
       ) : noFarms || !farmId ? (
-        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("ffNoFarms")}</div>
+        <EmptyState title={t("ffNoFarms")} />
       ) : noSheds ? (
-        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("fsdNoSheds")}</div>
+        <EmptyState title={t("fsdNoSheds")} />
       ) : noSilos ? (
-        <div className="p-10 text-center text-xs text-(--text-secondary)">{t("fsdNoLinkedSilos")}</div>
+        <EmptyState title={t("fsdNoLinkedSilos")} />
       ) : data?.silo ? (
         <div data-dashboard-content className={cn("transition-opacity", loading && "opacity-50")}>
           <div className="flex min-h-0 flex-col gap-4">
@@ -235,14 +239,10 @@ function FeedSiloDashboardContent() {
           </div>
         </div>
       ) : loading ? (
-        <Loading label={t("fsdLoading")} />
+        <LoadingState label={t("fsdLoading")} />
       ) : null}
     </div>
   );
-}
-
-function Loading({ label }: { label: string }) {
-  return <div className="p-10 text-center text-xs text-(--text-secondary)"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />{label}</div>;
 }
 
 export default function FeedSiloDashboard() {
