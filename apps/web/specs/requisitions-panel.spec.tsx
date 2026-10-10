@@ -197,7 +197,7 @@ describe('RequisitionsPanel (D26)', () => {
     expect(screen.getByText('rqdReqNo')).toBeTruthy();
     const lines = screen.getByRole('table', { name: 'rqLinesLabel' });
     expect(within(lines).getAllByTestId('rqd-line-no').map((c) => c.textContent)).toEqual(['10000', '20000']);
-    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(19);
+    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(22); // W1 (10 Oct): + Shipped, Received, Outstanding
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' })).toBeTruthy();
   });
