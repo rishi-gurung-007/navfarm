@@ -21,6 +21,7 @@ interface ForecastRunSummary {
   source_cutoff_at?: string;
   config_snapshot?: { version?: string };
   created_by?: string;
+  created_by_name?: string | null;
   created_at: string;
 }
 
@@ -76,7 +77,7 @@ export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, o
           {timestampParts(run.source_cutoff_at) && <span className="text-[var(--text-secondary)]">{t("ffRunPostingCutoff", timestampParts(run.source_cutoff_at)!)}</span>}
           {run.planning_date && <span className="text-[var(--text-secondary)]">{t("ffRunSelectedFilters", { view: run.view, planning: formatDateShort(run.planning_date), from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>}
           {run.config_snapshot?.version && <span className="break-all text-[var(--text-secondary)]">{t("ffRunConfigVersion", { version: run.config_snapshot.version })}</span>}
-          {run.created_by && <span className="text-[var(--text-secondary)]">{t("ffRunAuthor", { author: run.created_by })}</span>}
+          {run.created_by && <span className="text-[var(--text-secondary)]">{t("ffRunAuthor", { author: run.created_by_name || t("ffUnknownUser") })}</span>}
           {onViewRun && <Button size="sm" variant="outline" className="justify-self-start" onClick={() => onViewRun(run.run_id)}>View calculation</Button>}
         </li>
       ))}

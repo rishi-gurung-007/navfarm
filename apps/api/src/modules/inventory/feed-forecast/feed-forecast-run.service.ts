@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { and, desc, eq, isNull, like, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -196,11 +196,25 @@ export class FeedForecastRunService {
 
   async findAll(farmId: string, companyId: string, tenantId: string) {
     await this.loadFarm(farmId, companyId, tenantId);
-    return this.db.select().from(schema.feedForecastRun).where(and(
+    const runs = await this.db.select().from(schema.feedForecastRun).where(and(
       eq(schema.feedForecastRun.tenant_id, tenantId),
       eq(schema.feedForecastRun.company_id, companyId),
       eq(schema.feedForecastRun.farm_id, farmId),
     )).orderBy(desc(schema.feedForecastRun.version));
+    return this.withAuthorNames(runs, tenantId);
+  }
+
+  /** Additive display field: stored created_by and the snapshot hash are untouched. */
+  private async withAuthorNames<T extends { created_by?: string | null }>(runs: T[], tenantId: string): Promise<Array<T & { created_by_name: string | null }>> {
+    const ids = [...new Set(runs.map((run) => run.created_by).filter((id): id is string => !!id))];
+    const names = new Map<string, string>();
+    if (ids.length) {
+      const users = await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name })
+        .from(schema.userMaster)
+        .where(and(eq(schema.userMaster.tenant_id, tenantId), inArray(schema.userMaster.user_id, ids)));
+      for (const user of users) names.set(user.user_id, user.full_name);
+    }
+    return runs.map((run) => ({ ...run, created_by_name: (run.created_by && names.get(run.created_by)) || null }));
   }
 
   async findCurrent(farmId: string, companyId: string, tenantId: string) {
@@ -254,6 +268,7 @@ export class FeedForecastRunService {
     const lines = await this.db.select().from(schema.feedForecastRunLine)
       .where(eq(schema.feedForecastRunLine.run_id, runId))
       .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
-    return { ...run, lines };
+    const [withName] = await this.withAuthorNames([run], tenantId);
+    return { ...withName, lines };
   }
 }

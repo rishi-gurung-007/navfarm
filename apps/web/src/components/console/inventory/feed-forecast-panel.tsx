@@ -331,6 +331,20 @@ function FeedForecastPanelContent() {
     }
   }
 
+  // A6: `?runId=` opens a saved run through the same endpoint "View calculation" uses.
+  // It waits for the current-run load so that load cannot overwrite the opened run.
+  const pendingRunId = useRef<string | null>(null);
+  if (pendingRunId.current === null && typeof window !== "undefined") {
+    pendingRunId.current = new URLSearchParams(window.location.search).get("runId") ?? "";
+  }
+  useEffect(() => {
+    const runId = pendingRunId.current;
+    if (!runId || !farmId || loading) return;
+    pendingRunId.current = "";
+    void viewHistoricalRun(runId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [farmId, loading]);
+
   async function viewHistoricalRun(runId: string) {
     try {
       const run = unwrap<any>(await api.get(`/feed-forecast/runs/${runId}`));

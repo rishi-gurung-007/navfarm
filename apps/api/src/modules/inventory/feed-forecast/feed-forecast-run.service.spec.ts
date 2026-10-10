@@ -443,4 +443,25 @@ describe('FeedForecastRunService', () => {
       lines: [],
     });
   });
+
+  it('adds the author display name to list and detail without touching stored columns', async () => {
+    const run = { run_id: 'run-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', created_by: 'user-9', source_snapshot: { hash: 'h' } };
+    const farm = [{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }];
+    const list = setup(new Map<unknown, unknown[][]>([
+      [schema.locationMaster, [farm]],
+      [schema.feedForecastRun, [[run, { ...run, run_id: 'run-0', created_by: 'gone' }]]],
+      [schema.userMaster, [[{ user_id: 'user-9', full_name: 'Asha Rai' }]]],
+    ]));
+    const rows: any[] = await list.service.findAll('farm-1', 'company-1', 'tenant-1');
+    expect(rows[0]).toMatchObject({ created_by: 'user-9', created_by_name: 'Asha Rai', source_snapshot: { hash: 'h' } });
+    expect(rows[1]).toMatchObject({ created_by: 'gone', created_by_name: null });
+
+    const detail = setup(new Map<unknown, unknown[][]>([
+      [schema.feedForecastRun, [[run]]],
+      [schema.locationMaster, [farm]],
+      [schema.feedForecastRunLine, [[]]],
+      [schema.userMaster, [[{ user_id: 'user-9', full_name: 'Asha Rai' }]]],
+    ]));
+    await expect(detail.service.findOne('run-1', 'tenant-1')).resolves.toMatchObject({ created_by: 'user-9', created_by_name: 'Asha Rai' });
+  });
 });

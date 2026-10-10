@@ -111,6 +111,21 @@ describe('FeedForecastPanel — admin', () => {
     mockFarm = adminFarm();
   });
 
+  it('opens a saved run named by ?runId= through the existing run-by-id endpoint (A6)', async () => {
+    window.history.pushState({}, '', '/inventory/feed-forecast?tab=forecast&runId=run-old');
+    const base = routedGet();
+    get.mockImplementation((url: string) => url === '/feed-forecast/runs/run-old'
+      ? Promise.resolve({ success: true, data: { ...currentRunResponse.data, run_id: 'run-old', run_code: 'RUN-OLD', farm_id: 'farm-vil100' } })
+      : base(url));
+    try {
+      render(<FeedForecastPanel />);
+      await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
+      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
   it("renders the fourteen static row-70 columns plus one dated projected-closing column", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
