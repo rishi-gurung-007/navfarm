@@ -49,6 +49,16 @@ export class CreateFeedStockCountDto {
   @IsEnum(FEED_STOCK_COUNT_SOURCES)
   scheduleSource!: FeedStockCountScheduleSource;
 
+  @ApiPropertyOptional({ enum: ['WEEKLY', 'MONTHLY'], description: 'MONTHLY = Monthly Stock Take for a Reporting Period' })
+  @IsOptional()
+  @IsEnum(['WEEKLY', 'MONTHLY'])
+  countType?: 'WEEKLY' | 'MONTHLY';
+
+  @ApiPropertyOptional({ description: 'Required for a MONTHLY stock take (workbook Checkpoints r40)' })
+  @IsOptional()
+  @IsUUID()
+  reportingPeriodId?: string;
+
   @ApiProperty({ type: [CreateFeedStockCountLineDto] })
   @IsArray()
   @ArrayMinSize(1)

@@ -1,7 +1,7 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq, getTableColumns, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -22,6 +22,7 @@ import {
   CreateFeedStockCountDto, QueryFeedStockCountDto, UpdateFeedStockCountDto,
 } from './dto/feed-stock-count.dto';
 import { approvalRoute, assertVarianceReason, RateEvidence, varianceFact, VarianceFact } from './feed-stock-count.rules';
+import { assertStockTakePeriod, stockTakeNo } from './monthly-stock-take.rules';
 
 /** The approval_request.doc_type the count module registers with the engine. */
 export const FEED_STOCK_COUNT_APPROVAL_DOC_TYPE = 'FEED_STOCK_VARIANCE';
@@ -90,6 +91,7 @@ export class FeedStockCountService implements OnModuleInit {
     const scope = farmScope(this.cls);
     const query = this.db.select({
       location_id: schema.locationMaster.location_id,
+      location_code: schema.locationMaster.location_code,
       company_id: schema.locationMaster.company_id,
       nob_id: schema.locationMaster.nob_id,
       lob_id: schema.locationMaster.lob_id,
@@ -275,6 +277,18 @@ export class FeedStockCountService implements OnModuleInit {
         )).limit(1).for('update');
       if (duplicate) throw new ConflictException('A physical count already exists for this farm occurrence.');
 
+      // Monthly Stock Take (Brief C): the same count, tied to an existing, open Reporting Period.
+      const monthly = dto.countType === 'MONTHLY';
+      let period: typeof schema.reportingPeriod.$inferSelect | undefined;
+      if (monthly) {
+        [period] = dto.reportingPeriodId ? await this.db.select().from(schema.reportingPeriod).where(and(
+          eq(schema.reportingPeriod.period_id, dto.reportingPeriodId),
+          eq(schema.reportingPeriod.tenant_id, tenantId),
+        )).limit(1) : [];
+        if (period?.company_id && period.company_id !== dto.companyId) period = undefined;
+        assertStockTakePeriod(period);
+      }
+
       const silos = await this.loadActiveSilos(dto.farmId, dto.companyId, tenantId);
       const evidence = await this.ledger.getSiloStockEvidenceAsOf({
         companyId: dto.companyId,
@@ -310,11 +324,22 @@ export class FeedStockCountService implements OnModuleInit {
         });
       }
 
-      const count_no = this.countNo(dto.farmId, instant.epochSeconds);
+      let count_no = this.countNo(dto.farmId, instant.epochSeconds);
+      if (monthly) {
+        const year = Number(String(period!.stock_take_date).slice(0, 4));
+        const [{ n }] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.feedStockCount).where(and(
+          eq(schema.feedStockCount.company_id, dto.companyId),
+          eq(schema.feedStockCount.farm_id, dto.farmId),
+          eq(schema.feedStockCount.count_type, 'MONTHLY'),
+          sql`YEAR(${schema.feedStockCount.counted_at}) = ${year}`,
+        ));
+        count_no = stockTakeNo('FARM', (farm as { location_code?: string }).location_code ?? dto.farmId, year, Number(n) + 1);
+      }
       try {
         await this.db.insert(schema.feedStockCount).values({
           count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
           counted_at: countedAt, schedule_source: dto.scheduleSource, status: 'DRAFT', created_by: creatorId,
+          ...(monthly ? { count_type: 'MONTHLY', stock_take_type: 'FARM', reporting_period_id: period!.period_id } : {}),
         });
         await this.db.insert(schema.feedStockCountLine).values(lineValues);
       } catch (error) {
