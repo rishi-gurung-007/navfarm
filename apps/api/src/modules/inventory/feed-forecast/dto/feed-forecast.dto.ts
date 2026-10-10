@@ -67,6 +67,23 @@ export class GenerateFeedPlanDto extends QueryFeedPeriodsDto {
   productionDate!: string;
 }
 
+/** Compare Report filters: one MILL (default: the first), a production date, and DAY or its ISO WEEK. */
+export class QueryMillCompareDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  millId?: string;
+
+  @ApiProperty({ description: 'Production date (YYYY-MM-DD); with period WEEK, any date in the ISO week' })
+  @IsDateString()
+  date!: string;
+
+  @ApiProperty({ required: false, enum: ['DAY', 'WEEK'] })
+  @IsOptional()
+  @IsIn(['DAY', 'WEEK'])
+  period?: 'DAY' | 'WEEK';
+}
+
 /**
  * D41, narrowed by Task 4 (3 Oct ruling): a silo's own feed levels, edited
  * from Settings → Inventory Setup → Feed Planning. Only these two now — the

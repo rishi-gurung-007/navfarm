@@ -26,6 +26,8 @@ import { productionCycle } from '../../procurement/feed-requisition/feed-requisi
 import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact } from './feed-silo-status';
 import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
 import { FeedPlanService } from './feed-plan.service';
+import { MillCapacityService } from './mill-capacity.service';
+import type { DietCapacity } from './mill-capacity.rules';
 
 /**
  * The LOB bound on the forecast's location read for a restricted
@@ -707,6 +709,7 @@ export class FeedForecastService {
     private readonly feedSettings: FeedSettingsService,
     @Optional() private readonly runService?: FeedForecastRunService,
     @Optional() private readonly planService?: FeedPlanService,
+    @Optional() private readonly millCapacity?: MillCapacityService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -890,7 +893,7 @@ export class FeedForecastService {
     return this.runService.findCurrent(farmId, companyId, tenantId);
   }
 
-  async feedPlan(queryFarmId: string | undefined, tenantId: string, userType?: string, from?: string, to?: string) {
+  async feedPlan(queryFarmId: string | undefined, tenantId: string, userType?: string, from?: string, to?: string, productionDate?: string) {
     if (!this.runService) throw new Error('Feed forecast run service is not configured.');
     const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
     const run = await this.runService.findCurrent(farmId, companyId, tenantId);
@@ -930,8 +933,8 @@ export class FeedForecastService {
       farmId, farmCode: farm?.code ?? '', farmName: farm?.name ?? '', period: line.shortage_date ?? line.forecast_date,
       itemId: line.item_id, itemCode: line.item_code, itemName: line.item_name,
       // Workbook Engine rows 31–44 mean mill production capacity here, not the
-      // destination silo's storage capacity. Mill capacity is not configured
-      // in the current approved scope, so report it as unavailable.
+      // destination silo's storage capacity; it is filled per diet below from
+      // the MILL and its BIN Diet Assignments for the production date.
       tentativeKg: Number(line.recommended_qty_kg), capacityKg: null,
     }));
 
@@ -986,7 +989,47 @@ export class FeedForecastService {
         });
       }
     }
-    return { run: { runId: run.run_id, runCode: run.run_code, from: run.from_date, to: run.to_date }, rows: buildFeedPlanRows(facts) };
+    const rows = buildFeedPlanRows(facts);
+    const capacity = await this.feedPlanCapacity(rows, farmId, companyId, tenantId, productionDate);
+    return {
+      run: { runId: run.run_id, runCode: run.run_code, from: run.from_date, to: run.to_date },
+      productionDate: productionDate ?? null,
+      rows: rows.map((row) => {
+        const diet = capacity?.get(row.item.id) ?? null;
+        return { ...row, capacityKg: diet?.availableKg ?? null, capacity: diet };
+      }),
+    };
+  }
+
+  /**
+   * Engine r42–r43 on the Feed Plan: Mill Capacity Available and Plan vs Mill
+   * Capacity for each diet on the selected production date. The mill's demand
+   * is every farm's approved requisition KG for that date (r40); a diet this
+   * farm has not had approved yet adds its tentative plan KG, so a Tentative
+   * plan is measured against the capacity it would actually compete for.
+   * Without a production date or a mill setup there is nothing to show, and
+   * the row stays "Not configured" rather than 0.
+   */
+  private async feedPlanCapacity(rows: Array<{ item: { id: string }; tentativeKg: number; approvedRequisitionKg: number }>, farmId: string, companyId: string, tenantId: string, productionDate?: string): Promise<Map<string, DietCapacity> | null> {
+    if (!this.millCapacity || !productionDate) return null;
+    if (!ISO_DAY.test(productionDate)) throw new BadRequestException('Production date must be in YYYY-MM-DD format.');
+    const { lines } = await this.millCapacity.approvedDemand(tenantId, { companyIds: [companyId] }, productionDate, productionDate);
+    const approvedHere = new Set(lines.filter((line) => line.farmId === farmId).map((line) => line.itemId));
+    const demands = lines.map((line) => ({ itemId: line.itemId, demandKg: line.requestedKg }));
+    for (const row of rows) {
+      if (row.approvedRequisitionKg > 0 || approvedHere.has(row.item.id)) continue;
+      demands.push({ itemId: row.item.id, demandKg: row.tentativeKg });
+    }
+    return this.millCapacity.allocateOn(tenantId, [companyId], productionDate, demands);
+  }
+
+  /** Compare Report (Feed Forecast r11): all farm demand vs mill capacity per diet, for the farms this caller may open. */
+  async millCompareReport(tenantId: string, userType: string | undefined, query: { millId?: string; date: string; period?: 'DAY' | 'WEEK' }) {
+    if (!this.millCapacity) throw new Error('Mill capacity service is not configured.');
+    const farms = await this.listFarms(tenantId, userType);
+    if (!farms.length) throw new NotFoundException('No farms are available in this scope.');
+    const companyIds = [...new Set(farms.map((farm) => farm.companyId).filter(Boolean))];
+    return this.millCapacity.compareReport(tenantId, farms.map((farm) => farm.farmId), companyIds, query);
   }
 
   async listFeedPlanVersions(queryFarmId: string | undefined, tenantId: string, userType?: string) {

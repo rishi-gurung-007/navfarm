@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryMillCompareDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -63,10 +63,19 @@ export class FeedForecastController {
   @Get('feed-plan')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
   @ApiOperation({ summary: 'Saved feed plan with requisition and transfer fulfilment for one farm' })
-  async feedPlan(@Query('farmId') farmId: string | undefined, @Query('from') from: string | undefined, @Query('to') to: string | undefined, @Req() req: any) {
+  async feedPlan(@Query('farmId') farmId: string | undefined, @Query('from') from: string | undefined, @Query('to') to: string | undefined, @Query('productionDate') productionDate: string | undefined, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.feedPlan(farmId, tenantId, req.user?.userType, from, to);
+    const data = await this.feedForecastService.feedPlan(farmId, tenantId, req.user?.userType, from, to, productionDate || undefined);
     return { success: true, message: 'Feed plan retrieved successfully.', data };
+  }
+
+  @Get('mill-compare')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Compare Report: all farms\' approved feed demand vs Mill Capacity Available per diet for a production date or ISO week' })
+  async millCompare(@Query() query: QueryMillCompareDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.millCompareReport(tenantId, req.user?.userType, { millId: query.millId, date: query.date, period: query.period });
+    return { success: true, message: 'Compare report retrieved successfully.', data };
   }
 
   @Get('feed-plan/versions')

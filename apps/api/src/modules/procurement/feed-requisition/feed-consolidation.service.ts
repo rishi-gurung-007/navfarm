@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -9,12 +9,19 @@ import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
 import { FeedLoadingService } from './feed-loading.service';
+import { MillCapacityService } from '../../inventory/feed-forecast/mill-capacity.service';
+import type { DietCapacity } from '../../inventory/feed-forecast/mill-capacity.rules';
 
 type User = { userId?: string; userType?: string };
 
 @Injectable()
 export class FeedConsolidationService {
-  constructor(private readonly cls: ClsService, private readonly forecast: FeedForecastService, private readonly loading: FeedLoadingService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly forecast: FeedForecastService,
+    private readonly loading: FeedLoadingService,
+    @Optional() private readonly millCapacity?: MillCapacityService,
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -57,6 +64,7 @@ export class FeedConsolidationService {
       req_no: R.req_no,
       requisition_date: R.requisition_date,
       production_date: R.production_date,
+      company_id: R.company_id,
       created_at: R.created_at,
       farm_id: R.farm_id,
       farm_code: schema.locationMaster.location_code,
@@ -84,19 +92,24 @@ export class FeedConsolidationService {
       : [];
     const siloById = new Map(silos.map((silo) => [silo.location_id, silo]));
     const bins = await this.db.select({
+      location_id: schema.locationMaster.location_id,
       location_code: schema.locationMaster.location_code,
       location_name: schema.locationMaster.location_name,
-      bin_feed_type: schema.locationMaster.bin_feed_type,
       bin_capacity_kg: schema.locationMaster.bin_capacity_kg,
     }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.location_type, 'BIN'),
       isNull(schema.locationMaster.deleted_at),
     ));
-    const binByFeedType = new Map(bins.map((bin) => [bin.bin_feed_type ?? 'BULK', bin]));
+    const binById = new Map(bins.map((bin) => [bin.location_id, bin]));
+    const capacity = await this.capacityByDate(tenantId, rows);
     return rows.map((row) => {
       const silo = row.destination_silo_id ? siloById.get(row.destination_silo_id) : undefined;
-      const bin = row.feed_type ? binByFeedType.get(row.feed_type) : undefined;
+      // Workbook Requisition and Loading Sheet r122/r125: the loading BIN and
+      // Mill Capacity Available come from the mill setup for this diet on the
+      // production date (the BIN Diet Assignment), never an arbitrary BIN.
+      const diet = (row.item_id ? capacity.get(this.productionDateOf(row))?.get(row.item_id) : undefined) ?? null;
+      const bin = diet?.binId ? binById.get(diet.binId) : undefined;
       return {
         ...row,
         destination_silo_code: silo?.location_code ?? null,
@@ -104,9 +117,29 @@ export class FeedConsolidationService {
         loading_bin: bin?.location_code ?? null,
         loading_bin_name: bin?.location_name ?? null,
         loading_bin_capacity_kg: bin?.bin_capacity_kg ?? null,
-        available_mill_output_kg: null,
+        available_mill_output_kg: diet?.availableKg ?? null,
+        mill_capacity_state: diet?.state ?? 'NOT_CONFIGURED',
+        mill_capacity_status: diet?.status ?? null,
+        mill_demand_kg: diet?.demandKg ?? null,
       };
     });
+  }
+
+  private productionDateOf(row: { production_date: string | null; proposed_delivery_date: string | null }) {
+    return String(row.production_date || row.proposed_delivery_date || '').slice(0, 10);
+  }
+
+  /** All farms' approved demand per diet and date, allocated against the mill (Engine r40–r42). */
+  private async capacityByDate(tenantId: string, rows: Array<{ company_id: string | null; production_date: string | null; proposed_delivery_date: string | null }>) {
+    const result = new Map<string, Map<string, DietCapacity>>();
+    if (!this.millCapacity) return result;
+    const companyIds = [...new Set(rows.map((row) => row.company_id).filter((id): id is string => Boolean(id)))];
+    const dates = [...new Set(rows.map((row) => this.productionDateOf(row)).filter(Boolean))];
+    for (const date of dates) {
+      const { lines } = await this.millCapacity.approvedDemand(tenantId, { companyIds }, date, date);
+      result.set(date, await this.millCapacity.allocateOn(tenantId, companyIds, date, lines.map((line) => ({ itemId: line.itemId, demandKg: line.requestedKg }))));
+    }
+    return result;
   }
 
   async create(dto: CreateFeedConsolidationDto, tenantId: string, user: User) {
@@ -130,6 +163,13 @@ export class FeedConsolidationService {
       if (approved !== requested.get(line.line_id) && !edit.adjustmentReason?.trim()) {
         throw new ConflictException(`Adjustment reason is required for ${line.req_no}.`);
       }
+    }
+    const selectedCompanies = [...new Set(selected.map((line) => line.company_id).filter(Boolean))];
+    if (selectedCompanies.length === 1) {
+      await this.millCapacity?.assertConsolidationWithinCapacity(tenantId, selectedCompanies[0]!, selected.map((line) => ({
+        productionDate: this.productionDateOf(line), itemId: line.item_id!, itemCode: line.item_code,
+        millApprovedKg: edits.get(line.line_id)!.millApprovedQtyKg ?? requested.get(line.line_id)!,
+      })));
     }
     const productionDate = selected.map((line) => line.production_date || line.proposed_delivery_date).find(Boolean) || new Date().toISOString().slice(0, 10);
     const productionWeek = isoProductionWeek(productionDate);
@@ -219,6 +259,22 @@ export class FeedConsolidationService {
     const [row] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId))).limit(1).for('update');
     if (!row) throw new NotFoundException('Consolidation sheet not found.');
     if (!['DRAFT', 'REVIEWED'].includes(row.status)) throw new ConflictException(`Consolidation ${row.consolidation_no} cannot be finalized from ${row.status}.`);
+    if (this.millCapacity) {
+      // Checkpoint 42: "Cannot push infeasible plan" — finalizing is the
+      // in-house push, so the sheet is checked again against the mill as it
+      // stands now (its setup may have changed since the sheet was created).
+      const lines = await this.db.select({
+        item_id: schema.feedConsolidationLine.item_id, item_code: schema.itemMaster.item_code,
+        production_date: schema.feedConsolidationLine.production_date, requested_delivery_date: schema.feedConsolidationLine.requested_delivery_date,
+        mill_approved_qty_kg: schema.feedConsolidationLine.mill_approved_qty_kg,
+      }).from(schema.feedConsolidationLine)
+        .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.feedConsolidationLine.item_id))
+        .where(eq(schema.feedConsolidationLine.consolidation_id, consolidationId));
+      await this.millCapacity.assertConsolidationWithinCapacity(tenantId, row.company_id, lines.map((line) => ({
+        productionDate: this.productionDateOf({ production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date }),
+        itemId: line.item_id, itemCode: line.item_code, millApprovedKg: Number(line.mill_approved_qty_kg) || 0,
+      })), consolidationId);
+    }
     await this.db.update(schema.feedConsolidation).set({ status: 'CONSOLIDATED' }).where(eq(schema.feedConsolidation.consolidation_id, consolidationId));
     return this.findOne(consolidationId, tenantId, user);
   }
