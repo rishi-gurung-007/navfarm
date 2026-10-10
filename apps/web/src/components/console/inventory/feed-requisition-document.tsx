@@ -13,7 +13,7 @@
  * false nothing here is an input. "Current Silo Feed Item No." is not shown —
  * the workbook removed it (rows 12, 44).
  */
-import { FeedRequisitionHeaderFields, bulkTotalAndTrips } from "./feed-requisition-header";
+import { FeedRequisitionHeaderFields, RecordLink, batchHref, bulkTotalAndTrips, itemHref, locationHref } from "./feed-requisition-header";
 import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
@@ -109,6 +109,8 @@ export interface FeedRequisitionHeader {
 
 export interface FeedRequisitionDocumentView {
   requisition_id: string;
+  /** requisition.farm_id, spread at the top level by readView; links the Farm Code (W1). */
+  farm_id?: string | null;
   req_no: string;
   requisition_type: string | null;
   source: string | null;
@@ -282,15 +284,39 @@ const MUTED = "text-[10px] text-[var(--text-muted)]";
 
 const LINE_COLUMNS = [
   "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColReason", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
-  "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColAdjustment", "rqdColBags", "rqdColDelivery",
+  "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColAdjustment",
+  "rqdColShipped", "rqdColReceived", "rqdColOutstanding", "rqdColBags", "rqdColDelivery",
 ] as const;
 const RIGHT = new Set<string>([
-  "rqdColLineNo", "rqdColDaysBefore", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColBags",
+  "rqdColLineNo", "rqdColDaysBefore", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved",
+  "rqdColShipped", "rqdColReceived", "rqdColOutstanding", "rqdColBags",
 ]);
 const BREAKDOWN_COLUMNS = [
   "rqdBreakdownBatch", "rqdBreakdownStage", "rqdBreakdownHouse", "rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownLifecycle", "rqdBreakdownDemand",
 ] as const;
 const BREAKDOWN_RIGHT = new Set<string>(["rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownDemand"]);
+
+/** W1 (d): the consolidation status and next action readView sends, in words (feed-requisition.service.ts readView). */
+const CONSOLIDATION_STATUS_LABEL: Parameters<typeof labelOf>[0] = {
+  DRAFT: "fcsStatusDraft", REVIEWED: "rqdConsolStatusReviewed", CONSOLIDATED: { key: "fcsStatusConsolidated", variant: "success" },
+};
+const CONSOLIDATION_NEXT_ACTION_LABEL: Parameters<typeof labelOf>[0] = {
+  FINALIZE_CONSOLIDATION: "rqdNextActionFinalize", RELEASE: "rqdNextActionRelease", TRANSFER_SHIPMENT: "rqdNextActionShipment",
+};
+
+/**
+ * W1 (b), §7 r154-155 / Req r89: shipped and received per requisition line, summed over every linked
+ * transfer's lines. Outstanding = shipped − received, display only. null when no transfer line carries it.
+ */
+export function shipmentOf(view: Pick<FeedRequisitionDocumentView, "transfers">, lineId: string) {
+  const tlines = (Array.isArray(view.transfers) ? view.transfers : [])
+    .flatMap((tr) => (Array.isArray(tr.lines) ? tr.lines : []))
+    .filter((tl) => tl.requisition_line_id === lineId);
+  if (!tlines.length) return null;
+  const shipped = tlines.reduce((sum, tl) => sum + Number(tl.qty_shipped ?? 0), 0);
+  const received = tlines.reduce((sum, tl) => sum + Number(tl.qty_received ?? 0), 0);
+  return { shipped, received, outstanding: shipped - received };
+}
 
 /** Requested Qty as the farm currently has it — its edit if any, else the stored quantity. */
 export function requestedKgOf(line: FeedRequisitionLine, edit: FeedLineEdit | undefined): number {
@@ -371,7 +397,7 @@ export function FeedRequisitionDocument({
           reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
           source: labelOf(SOURCE_LABEL, view.source, t),
           requesterName: view.requester_name ?? null,
-          farmCode: header?.farm_code,
+          farmCode: header?.farm_code ? <RecordLink code={header.farm_code} href={view.farm_id ? locationHref(view.farm_id) : null} /> : null,
           farmName: header?.farm_name,
           nextDiet: header?.is_next_diet_requisition ? t("rqYes") : t("rqNo"),
           farmTotal: t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") }),
@@ -390,10 +416,12 @@ export function FeedRequisitionDocument({
           saved: { approvedBy: header?.approved_by_name, approvedAt: dateTime(view.approved_at), linkedTransfer: header?.linked_transfer_no, forecastRun: header?.forecast_run_no },
         }} />
         {(header?.consolidation_no || header?.consolidation_status) && (
-          <FieldGroup title="Mill consolidation" className="sm:col-span-12">
-            <ReadField className="sm:col-span-6 lg:col-span-4" label="Consolidation sheet" value={header.consolidation_no} mono appearance="control" emptyText={notAvailable} />
-            <ReadField className="sm:col-span-6 lg:col-span-4" label="Consolidation status" value={header.consolidation_status} appearance="control" emptyText={notAvailable} />
-            <ReadField className="sm:col-span-6 lg:col-span-4" label="Next action" value={header.consolidation_next_action?.replaceAll("_", " ")} appearance="control" emptyText={notAvailable} />
+          <FieldGroup title={t("rqdConsolidationTitle")} className="sm:col-span-12">
+            <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationSheet")} value={header.consolidation_no} mono appearance="control" emptyText={notAvailable} />
+            <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationStatus")}
+              value={header.consolidation_status ? labelOf(CONSOLIDATION_STATUS_LABEL, header.consolidation_status, t) : null} appearance="control" emptyText={notAvailable} />
+            <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationNextAction")}
+              value={header.consolidation_next_action ? labelOf(CONSOLIDATION_NEXT_ACTION_LABEL, header.consolidation_next_action, t) : null} appearance="control" emptyText={notAvailable} />
           </FieldGroup>
         )}
         {editable && onRemarksChange ? (
@@ -432,6 +460,7 @@ export function FeedRequisitionDocument({
                 const siloDataStale = line.system_balance_kg === null;
                 const breakdown = Array.isArray(line.breakdown) ? line.breakdown : [];
                 const seq = line.line_seq;
+                const shipment = shipmentOf(view, line.line_id);
                 return [
                   <tr key={line.line_id}>
                     <td className={cn(TD, NUM)} data-testid="rqd-line-no">{seq}</td>
@@ -446,7 +475,9 @@ export function FeedRequisitionDocument({
                           columns={[{ key: "code", label: t("paramColCode") }, { key: "name", label: t("paramColName") }]}
                           onChange={(value) => onLineEdit?.(line.line_id, { destinationId: value })} />
                       ) : (
-                        line.destination_code ?? t("rqNotYetAvailable")
+                        line.destination_code
+                          ? <RecordLink code={line.destination_code} href={line.destination_location_id ? locationHref(line.destination_location_id) : null} />
+                          : t("rqNotYetAvailable")
                       )}
                       {line.needs_silo_changeover && <div className={MUTED}>{t("rqChangeover")}</div>}
                     </td>
@@ -460,7 +491,9 @@ export function FeedRequisitionDocument({
                           getSelectedLabel={(option) => String(option.code)}
                           columns={[{ key: "code", label: t("paramColCode") }, { key: "description", label: t("crqColDescription") }]}
                           onChange={(value) => onLineEdit?.(line.line_id, { itemId: value })} />
-                      ) : (itemCode ?? t("rqNotYetAvailable"))}
+                      ) : itemCode
+                        ? <RecordLink code={itemCode} href={itemId ? itemHref(itemId) : null} />
+                        : t("rqNotYetAvailable")}
                     </td>
                     <td className={TD}>{itemDescription ?? t("rqNotYetAvailable")}</td>
                     <td className={TD}>
@@ -488,9 +521,6 @@ export function FeedRequisitionDocument({
                       <div>{kg(line.recommended_qty_kg, notAvailable)}</div>
                       {line.unrounded_need_kg !== null && <div className={MUTED}>{t("rqdUnrounded", { kg: kg(line.unrounded_need_kg, notAvailable) })}</div>}
                     </td>
-                    <td className={cn(TD, NUM)}>{kg(line.requested_qty_kg, notAvailable)}</td>
-                    <td className={cn(TD, NUM)}>{kg(line.mill_approved_qty_kg, notAvailable)}</td>
-                    <td className={TD}>{line.adjustment_reason ?? t("rqNotApplicable")}</td>
                     <td className={cn(TD, NUM)}>
                       <div className="inline-flex items-center gap-1.5">
                         {siloDataStale ? (
@@ -509,6 +539,12 @@ export function FeedRequisitionDocument({
                         ) : kg(line.quantity, notAvailable)}
                       </div>
                     </td>
+                    <td className={cn(TD, NUM)}>{kg(line.requested_qty_kg, notAvailable)}</td>
+                    <td className={cn(TD, NUM)}>{kg(line.mill_approved_qty_kg, notAvailable)}</td>
+                    <td className={TD}>{line.adjustment_reason ?? t("rqNotApplicable")}</td>
+                    <td className={cn(TD, NUM)}>{shipment ? kg(shipment.shipped) : notAvailable}</td>
+                    <td className={cn(TD, NUM)}>{shipment ? kg(shipment.received) : notAvailable}</td>
+                    <td className={cn(TD, NUM)}>{shipment ? kg(shipment.outstanding) : notAvailable}</td>
                     <td className={cn(TD, NUM)}>{line.feed_type === "BAGGED" ? (line.bag_count ?? notAvailable) : t("rqNotApplicable")}</td>
                     <td className={TD}>
                       {canEdit ? (
@@ -536,7 +572,7 @@ export function FeedRequisitionDocument({
                           <tbody>
                             {breakdown.map((b) => (
                               <tr key={`${b.batch_id}|${b.stage_id ?? ""}|${b.shed_id ?? ""}`}>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ?? notAvailable}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ? <RecordLink code={b.batch_no} href={b.batch_id ? batchHref(b.batch_id) : null} /> : notAvailable}</td>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.stage_name || b.stage_code || notAvailable}</td>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.heads)}</td>

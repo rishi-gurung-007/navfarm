@@ -7,7 +7,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import { FeedRequisitionDocument, type FeedRequisitionDocumentView } from "../src/components/console/inventory/feed-requisition-document";
 import { RequisitionNewDialog } from "../src/components/console/inventory/requisition-new-dialog";
-import { bulkTotalAndTrips, feedTypeOfDestination } from "../src/components/console/inventory/feed-requisition-header";
+import { RecordLink, batchHref, bulkTotalAndTrips, feedTypeOfDestination, itemHref, locationHref } from "../src/components/console/inventory/feed-requisition-header";
 import { api } from "../src/services/api-client";
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn() } }));
@@ -63,5 +63,23 @@ describe("shared header helpers", () => {
   it("bulkTotalAndTrips counts bulk only for trips and totals bagged apart", () => {
     const r = bulkTotalAndTrips([{ feedType: "BULK", kg: 31000 }, { feedType: "BAGGED", kg: 120 }, { feedType: null, kg: 9 }], 30000, 50);
     expect(r).toEqual({ bulkTotal: 31000, trips: 2, baggedCount: 1, baggedKg: 120, baggedBags: 3 });
+  });
+});
+
+// W1 (10 Oct): record links used by the requisition document.
+describe("RecordLink", () => {
+  it("builds the master-data and batch routes", () => {
+    expect(locationHref("s 1")).toBe("/master-data/location?recordId=s%201");
+    expect(itemHref("r1")).toBe("/master-data/item?recordId=r1");
+    expect(batchHref("b1")).toBe("/batches/entry?batchId=b1");
+  });
+  it("links a code with an id, leaves one without as text, and renders nothing without a code", () => {
+    const { container, rerender } = render(<RecordLink code="GRS/SILO-001" href={locationHref("s1")} />);
+    expect(screen.getByRole("link", { name: "GRS/SILO-001" }).getAttribute("href")).toBe("/master-data/location?recordId=s1");
+    rerender(<RecordLink code="GRS/SILO-001" href={null} />);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(container.textContent).toBe("GRS/SILO-001");
+    rerender(<RecordLink code={null} href={null} />);
+    expect(container.textContent).toBe("");
   });
 });
