@@ -38,6 +38,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import ReceiveStockPanel from "./receive-stock-panel";
 import { transferStatusText } from "./stock-transfer-status";
+import { transferSourceLinks } from "./transfer-source-links";
 import { itemCodeOf, userDisplayNameOf, warehouseCodeOf } from "./stock-transfer-display";
 
 const PAGE_SIZE = 25;
@@ -1307,6 +1308,7 @@ export default function StockTransferPanel() {
                     <TableHead className="whitespace-nowrap">{t("stpFromWarehouse") || "Transfer-from Location"}</TableHead>
                     <TableHead className="whitespace-nowrap">{t("stpToWarehouse") || "Transfer-to Location"}</TableHead>
                     <TableHead className="whitespace-nowrap">{t("stpColPostingDate") || "Posting Date"}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t("w2tColSource")}</TableHead>
                     <TableHead className="text-right">{t("stpColStatus") || "Status"}</TableHead>
                     <TableHead className="text-right">{t("stpColActions") || "Actions"}</TableHead>
                   </tr>
@@ -1314,14 +1316,14 @@ export default function StockTransferPanel() {
                 <TableBody>
                   {loading ? (
                     <tr>
-                      <TableCell colSpan={6} className="py-10 text-center" style={S.sub}>
+                      <TableCell colSpan={7} className="py-10 text-center" style={S.sub}>
                         <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} />{" "}
                         {t("stpLoading") || "Loading transfer orders…"}
                       </TableCell>
                     </tr>
                   ) : rows.length === 0 ? (
                     <tr>
-                      <TableCell colSpan={6} className="py-10 text-center" style={S.sub}>
+                      <TableCell colSpan={7} className="py-10 text-center" style={S.sub}>
                         <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />{" "}
                         {t("stpNoTransfersYet") || "No transfer orders recorded yet."}
                       </TableCell>
@@ -1358,6 +1360,19 @@ export default function StockTransferPanel() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs font-mono" style={S.sub}>
                           {row.posting_date}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs" onClick={(e) => e.stopPropagation()}>
+                          {transferSourceLinks(row).length === 0 ? (
+                            <span style={S.muted}>{notAvailable}</span>
+                          ) : (
+                            <div className="flex flex-col">
+                              {transferSourceLinks(row).map((link) => (
+                                <a key={link.href} href={link.href} className="underline" style={S.accent} title={t(link.labelKey)}>
+                                  {link.text}
+                                </a>
+                              ))}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           <StatusBadge status={row.status} label={statusLabel(row.status)} />
@@ -1615,6 +1630,19 @@ export default function StockTransferPanel() {
           >
             <div className="flex flex-col gap-5">
               {formError && <InlineAlert>{formError}</InlineAlert>}
+              {editingTransfer && transferSourceLinks(editingTransfer).length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs" aria-label={t("w2tColSource")}>
+                  {transferSourceLinks(editingTransfer).map((link) => (
+                    <span key={link.href}>
+                      <span style={S.sub}>{t(link.labelKey)}: </span>
+                      <a href={link.href} className="font-semibold underline" style={S.accent}>{link.text}</a>
+                      {link.labelKey === "w2tSourceRequisition" && (
+                        <span style={S.sub}> ({t(editingTransfer.source_requisition_kind === "FEED" ? "w2tKindFeed" : "w2tKindCommon")})</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Section 1: Route & Planning */}
               <div className="rounded-[var(--radius-md)] border p-4 shadow-2xs" style={S.raised}>

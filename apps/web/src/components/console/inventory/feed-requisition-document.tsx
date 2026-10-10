@@ -131,6 +131,8 @@ export interface FeedRequisitionDocumentView {
   fulfilment_status?: string;
   actions?: FeedRequisitionWorkflowActions;
   transfers?: FeedRequisitionTransfer[];
+  /** W2T: set only on the response to a posted receipt (Requisition row 150). */
+  receipt?: FeedPostedReceipt | null;
 }
 
 export const requisitionWorkflowStatus = (view: Pick<FeedRequisitionDocumentView, "status" | "document_status" | "fulfilment_status">) =>
@@ -168,6 +170,10 @@ export interface FeedRequisitionTransferLine {
 export interface FeedRequisitionOpenShipmentLine {
   line_id: string;
   requisition_line_id: string | null;
+  /** W2T, Requisition row 148: from the line's loading sheet, preferring this shipment's. */
+  loading_sheet_id?: string | null;
+  loading_sheet_no?: string | null;
+  compartment_no?: string | null;
   quantity: number;
   qty_received: number;
   remaining_to_receive: number;
@@ -178,6 +184,20 @@ export interface FeedRequisitionOpenShipment {
   shipment_no: string;
   shipment_date: string;
   lines: FeedRequisitionOpenShipmentLine[];
+}
+
+export interface FeedPostedReceipt {
+  receipt_id: string;
+  receipt_no: string;
+  transfer_id: string;
+  shipment_id: string;
+  lines: Array<{
+    line_id: string;
+    requisition_line_id: string | null;
+    qty_received: number;
+    variance_qty?: number | null;
+    silo_balance_after?: number | null;
+  }>;
 }
 
 export interface FeedRequisitionTransfer {

@@ -210,12 +210,96 @@ describe("FeedRequisitionDetail workflow actions", () => {
     const qty = screen.getByLabelText('crqReceiveQtyFor:{"line":1}') as HTMLInputElement;
     expect(qty.max).toBe("500");
     fireEvent.change(qty, { target: { value: "500" } });
+    // W2T, Silo TO Receipt row 17: the delivery note no. is mandatory.
+    expect((screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "MILL-DN-0042" } });
     fireEvent.click(screen.getByRole("button", { name: "crqPostReceipt" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith("/feed-requisition/req-1/receipts", {
       transfer_id: "tr-1", shipment_id: "sh-1", posting_date: expect.any(String),
-      lines: [{ requisition_line_id: "rl-1", quantity: 500 }],
+      lines: [{ requisition_line_id: "rl-1", quantity: 500, delivery_note_no: "MILL-DN-0042" }],
     }));
+  });
+
+  describe("W2T — the feed receipt panel per line (Requisition rows 139-150)", () => {
+    const reqLine = (feedType: string) => ({
+      line_id: "rl-1", line_seq: 1, destination_location_id: "silo-1", destination_code: "GRS-H3-SILO1",
+      item_id: "feed-1", item_code: "FEED-R1", item_description: "Weaner Diet R1", required_item_id: "feed-1",
+      feed_type: feedType, is_next_diet: false, days_before_diet_change: null, lifecycle_ref_label: null,
+      system_balance_kg: null, daily_requirement_kg: null, days_remaining: null, first_shortage_date: null,
+      unrounded_need_kg: null, recommended_qty_kg: null, quantity: "6050.0000", bag_count: null,
+      proposed_delivery_date: null, exceeds_silo_capacity: false, exception_reason: null, breakdown: [],
+      requested_qty_kg: 6050, mill_approved_qty_kg: 6000,
+    });
+    const receivingView = (feedType: string) => base({
+      document_status: "RELEASED",
+      actions: { release: action(false), shipment: action(false), receipt: action(true) },
+      header: { ...base().header!, bag_size_kg: 50 },
+      lines: [reqLine(feedType)] as any,
+      transfers: [transfer({
+        status: "IN_TRANSIT",
+        lines: [{
+          transfer_line_id: "tl-1", requisition_line_id: "rl-1", item_id: "feed-1", item_code: "FEED-R1",
+          item_name: "Weaner Diet R1", quantity: 6000, uom: "KG", qty_shipped: 6000, qty_received: 0,
+          balance_to_ship: 0, remaining_to_receive: 6000,
+        }],
+        open_shipments: [{
+          shipment_id: "sh-1", shipment_no: "SH-00001", shipment_date: "2026-10-09",
+          lines: [{ line_id: "tl-1", requisition_line_id: "rl-1", quantity: 6000, qty_received: 0, remaining_to_receive: 6000,
+            loading_sheet_id: "ls-1", loading_sheet_no: "LOAD-REQ-1", compartment_no: "1 and 2" }],
+        }],
+      })] as any,
+    });
+    const open = (view: RequisitionView) => {
+      renderDetail(view);
+      fireEvent.click(screen.getByRole("button", { name: "crqReceive" }));
+      fireEvent.change(screen.getByLabelText("rqTransfer"), { target: { value: "tr-1" } });
+      fireEvent.change(screen.getByLabelText("crqShipment"), { target: { value: "sh-1" } });
+    };
+
+    it("shows item, feed type, requested, mill approved, shipped, previously received, outstanding and compartment", () => {
+      open(receivingView("BULK"));
+      const table = screen.getByRole("table", { name: "w2tReceiptLines" });
+      for (const text of ["FEED-R1", "Weaner Diet R1", "6,050", "6,000", "1 and 2"]) expect(within(table).getAllByText(new RegExp(text)).length).toBeGreaterThan(0);
+      expect(within(table).getByText(/LOAD-REQ-1/)).toBeTruthy();
+      expect(screen.queryByLabelText('w2tBagCountFor:{"line":1}')).toBeNull();
+      expect(screen.getByText('w2tOpenTransfer:{"no":"TR-00001"}').getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
+      expect(screen.getByText('w2tOpenShipment:{"no":"SH-00001"}').getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
+    });
+
+    it("checkpoint 26: a shortfall needs a variance reason before Post receipt is enabled", async () => {
+      open(receivingView("BULK"));
+      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "5900" } });
+      fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "DN-1" } });
+      const postButton = screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement;
+      expect(postButton.disabled).toBe(true);
+      expect(screen.getByText("w2tVarianceReasonRequired")).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('w2tVarianceReasonFor:{"line":1}'), { target: { value: "Spillage" } });
+      expect(postButton.disabled).toBe(false);
+      post.mockResolvedValue({ data: { ...receivingView("BULK"), receipt: {
+        receipt_id: "rc-1", receipt_no: "RC-2026-0007", transfer_id: "tr-1", shipment_id: "sh-1",
+        lines: [{ line_id: "tl-1", requisition_line_id: "rl-1", qty_received: 5900, variance_qty: 100, silo_balance_after: 7400 }],
+      } } });
+      fireEvent.click(postButton);
+      await waitFor(() => expect(post).toHaveBeenCalledWith("/feed-requisition/req-1/receipts", expect.objectContaining({
+        lines: [{ requisition_line_id: "rl-1", quantity: 5900, delivery_note_no: "DN-1", variance_reason: "Spillage" }],
+      })));
+      const status = await screen.findByRole("status", { name: "w2tLastReceipt" });
+      expect(within(status).getByText('w2tReceiptPosted:{"receipt":"RC-2026-0007"}')).toBeTruthy();
+      expect(within(status).getByText(/"balance":"7,400"/)).toBeTruthy();
+    });
+
+    it("checkpoint 27: a BAGGED line needs a bag count within 1 percent of the KG received", () => {
+      open(receivingView("BAGGED"));
+      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "6000" } });
+      fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "DN-1" } });
+      const postButton = screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement;
+      expect(postButton.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText('w2tBagCountFor:{"line":1}'), { target: { value: "100" } });
+      expect(postButton.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText('w2tBagCountFor:{"line":1}'), { target: { value: "120" } });
+      expect(postButton.disabled).toBe(false);
+    });
   });
 
   it("keeps entered shipment quantities after an API refusal", async () => {
