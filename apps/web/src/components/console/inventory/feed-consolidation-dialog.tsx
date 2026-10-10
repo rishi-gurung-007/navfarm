@@ -5,6 +5,7 @@ import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
+import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
 
@@ -18,6 +19,7 @@ type EligibleLine = {
 };
 
 export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (message: string) => void }) {
+  const { t } = useLanguage();
   const [mode, setMode] = useState<"requisition" | "date">("requisition");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -27,12 +29,15 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const [approved, setApproved] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [dateHint, setDateHint] = useState("");
+  const [selectHint, setSelectHint] = useState("");
 
   const load = async () => {
     setBusy(true);
+    setDateHint("");
     try {
       if (mode === "date" && (!fromDate || !toDate || fromDate > toDate)) {
-        showToast.error("Choose a valid From date and To date.");
+        setDateHint(t("fcdInvalidDates"));
         return;
       }
       const params = new URLSearchParams();
@@ -40,7 +45,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       const data = unwrap<EligibleLine[]>(await api.get(`/feed-requisition/consolidations/eligible?${params.toString()}`));
       setRows(Array.isArray(data) ? data : []);
       setSelected([]); setApproved({}); setReasons({});
-    } catch (err: any) { showToast.error(err?.message || "Unable to load eligible feed requisitions."); }
+    } catch (err: any) { showToast.error(err?.message || t("fcdLoadFailed")); }
     finally { setBusy(false); }
   };
 
@@ -54,8 +59,9 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
 
   const create = async () => {
-    if (!selectedRows.length) { showToast.error("Select at least one approved requisition."); return; }
+    if (!selectedRows.length) { setSelectHint(t("fcdSelectOne")); return; }
     setBusy(true);
+    setSelectHint("");
     try {
       const data = unwrap<{ consolidationNo: string }>(await api.post("/feed-requisition/consolidations", {
         requisitionIds: selected,
@@ -65,9 +71,9 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           adjustmentReason: reasons[row.line_id] || undefined,
         })),
       }));
-      onCreated(`Consolidation ${data.consolidationNo} created.`);
+      onCreated(t("fcdCreated", { no: data.consolidationNo }));
       onClose();
-    } catch (err: any) { showToast.error(err?.message || "Unable to create the consolidation sheet."); }
+    } catch (err: any) { showToast.error(err?.message || t("fcdCreateFailed")); }
     finally { setBusy(false); }
   };
 
@@ -79,7 +85,9 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
         {mode === "date" && <><Field label="From date" htmlFor="consolidation-from"><input id="consolidation-from" type="date" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label="To date" htmlFor="consolidation-to"><input id="consolidation-to" type="date" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
         <Button variant="outline" onClick={load} disabled={busy}>{busy ? "Loading…" : "Find approved requisitions"}</Button>
       </div>
+      {dateHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{dateHint}</p>}
       {rows.length > 0 && <div className="overflow-x-auto rounded border border-[var(--border)]"><table className="w-full text-xs"><thead><tr className="border-b border-[var(--border)] text-left"><th className="p-2">Select</th><th className="p-2">Requisition No.</th><th className="p-2">Farm</th><th className="p-2">Destination silo</th><th className="p-2">Feed item / Diet No.</th><th className="p-2">Mill loading bin</th><th className="p-2 text-right">Farm requested KG</th><th className="p-2">Mill approved KG</th><th className="p-2">Adjustment reason</th></tr></thead><tbody>{requisitions.map((req) => <tr key={req.requisition_id} className="border-b border-[var(--border-subtle)]"><td className="p-2"><input type="checkbox" checked={selected.includes(req.requisition_id)} onChange={() => toggle(req.requisition_id)} /></td><td className="p-2 font-medium">{req.req_no}</td><td className="p-2">{req.farm_code} — {req.farm_name}</td><td className="p-2">{req.destination_silo_code ? `${req.destination_silo_code}${req.destination_silo_name ? ` — ${req.destination_silo_name}` : ""}` : "Not available"}</td><td className="p-2">{req.item_code} — {req.item_name}{req.diet_no == null ? "" : ` · Diet ${req.diet_no}`}</td><td className="p-2">{req.loading_bin ? `${req.loading_bin}${req.loading_bin_name ? ` — ${req.loading_bin_name}` : ""}${req.loading_bin_capacity_kg == null ? "" : ` · ${Number(req.loading_bin_capacity_kg).toLocaleString()} KG`}` : "Not configured"}</td><td className="p-2 text-right">{rows.filter((row) => row.requisition_id === req.requisition_id).reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString()}</td><td className="p-2">—</td><td className="p-2">Select the requisition to edit its lines below.</td></tr>)}{selectedRows.map((row) => <tr key={`line-${row.line_id}`} className="bg-[var(--surface-raised)]"><td className="p-2" /><td className="p-2 text-[var(--text-secondary)]">Line</td><td className="p-2">{row.farm_code}</td><td className="p-2">{row.destination_silo_code ? `${row.destination_silo_code}${row.destination_silo_name ? ` — ${row.destination_silo_name}` : ""}` : "Not available"}</td><td className="p-2">{row.item_code} — {row.item_name}{row.diet_no == null ? "" : ` · Diet ${row.diet_no}`}</td><td className="p-2">{row.loading_bin ? `${row.loading_bin}${row.loading_bin_name ? ` — ${row.loading_bin_name}` : ""}${row.loading_bin_capacity_kg == null ? "" : ` · ${Number(row.loading_bin_capacity_kg).toLocaleString()} KG`}` : "Not configured"}</td><td className="p-2 text-right">{Number(row.quantity).toLocaleString()}</td><td className="p-2"><input aria-label={`Mill approved quantity ${row.req_no} ${row.item_code}`} className="nf-input-sm w-28" type="number" min="0" placeholder={String(Number(row.quantity))} value={approved[row.line_id] ?? ""} onChange={(event) => setApproved((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td><td className="p-2"><input aria-label={`Adjustment reason ${row.req_no} ${row.item_code}`} className="nf-input-sm w-52" placeholder="Required if adjusted" value={reasons[row.line_id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td></tr>)}</tbody></table></div>}
+      {selectHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{selectHint}</p>}
       {!rows.length && <p className="text-sm text-[var(--text-secondary)]">Choose a filter and load approved requisitions that have no consolidation sheet.</p>}
     </div>
   </Dialog>;

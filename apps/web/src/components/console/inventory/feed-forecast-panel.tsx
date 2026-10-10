@@ -113,6 +113,8 @@ function FeedForecastPanelContent() {
   const [periods, setPeriods] = useState<PeriodOption[] | null>(null);
   const [periodsFailed, setPeriodsFailed] = useState(false);
   const [reload, setReload] = useState(0);
+  const [savedRunFailed, setSavedRunFailed] = useState(false);
+  const [savedRunReload, setSavedRunReload] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [data, setData] = useState<ForecastData | null>(null);
   const [calculationState, setCalculationState] = useState<CalculationState>("EMPTY");
@@ -160,6 +162,7 @@ function FeedForecastPanelContent() {
     }
     let cancelled = false;
     setLoading(true);
+    setSavedRunFailed(false);
     api
       .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
       .then(async (response) => {
@@ -212,6 +215,7 @@ function FeedForecastPanelContent() {
       .catch((err: any) => {
         if (cancelled) return;
         showToast.error(err?.message || tRef.current("ffFailedToLoad"));
+        setSavedRunFailed(true);
         setData(null);
         setCurrentRun(null);
         setCalculationState("EMPTY");
@@ -222,7 +226,7 @@ function FeedForecastPanelContent() {
     return () => {
       cancelled = true;
     };
-  }, [farmId, hydrateWindow]);
+  }, [farmId, hydrateWindow, savedRunReload]);
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
@@ -338,7 +342,7 @@ function FeedForecastPanelContent() {
       setHistoricalRun(true);
       setCalculationState("SAVED");
     } catch (err: any) {
-      showToast.error(err?.message || "Unable to restore saved calculation.");
+      showToast.error(err?.message || tRef.current("ffRestoreFailed"));
     }
   }
 
@@ -409,7 +413,7 @@ function FeedForecastPanelContent() {
         </div>
         {farm.loaded && !farm.failed && !noFarms && (farmId || farm.isFixed) && (
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            {calculationState === "EMPTY" && (
+            {calculationState === "EMPTY" && !savedRunFailed && (
               <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
                 {loading ? t("ffCalculating") : t("ffCalculate")}
               </Button>
@@ -475,7 +479,12 @@ function FeedForecastPanelContent() {
               <FeedForecastGrid rows={rows} sourceBalances={sourceBalances} view={data.view} from={data.from} loading={loading} t={t} />
               <FeedForecastNotes flags={flags} t={t} compact />
             </>
-          ) : loading ? <LoadingState label={t("ffLoading")} /> : <EmptyState title={t("ffCalculatePrompt")} />}
+          ) : loading ? <LoadingState label={t("ffLoading")} /> : savedRunFailed ? (
+            <InlineAlert>
+              <span className="mr-3">{t("ffSavedRunLoadFailed")}</span>
+              <Button size="sm" variant="outline" onClick={() => setSavedRunReload((n) => n + 1)}>{t("ffRetry")}</Button>
+            </InlineAlert>
+          ) : <EmptyState title={t("ffCalculatePrompt")} />}
           {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} compact onViewRun={viewHistoricalRun} />}
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}

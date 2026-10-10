@@ -135,7 +135,7 @@ export function FeedRequisitionDetail({
       setEdits({});
       setRemarks(result.remarks ?? "");
       showToast.success(tRef.current("rqSaved"));
-    onView(result);
+      onView(result);
     });
 
   const submit = () =>
@@ -144,7 +144,7 @@ export function FeedRequisitionDetail({
       setEdits({});
       setRemarks(result.remarks ?? "");
       showToast.success(tRef.current("rqSubmitted"));
-    onView(result);
+      onView(result);
     });
 
   const actions = view.actions ?? {
