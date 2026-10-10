@@ -13,10 +13,16 @@ export interface ReportRow {
   farmId: string;
   batchId: string;
   batchGroupId: string;
+  /** Composite "BATCH · STAGE" label for a stage group; kept for older responses. */
   batchNo: string;
+  /** The batch number alone (Rishi, 10 Oct: the stage has its own column). Absent on responses saved before it. */
+  plainBatchNo?: string;
   shedId: string | null;
   shedCode: string;
   stageCode: string;
+  stageName?: string | null;
+  /** The line's stage is a projected change from the stage the group is in today. */
+  stageProjected?: boolean;
   itemId: string;
   itemNo: string;
   itemName: string;
@@ -80,7 +86,7 @@ export interface SourceBalancePoint {
 type Translate = (key: any, vars?: any) => string;
 
 export const GRID_COLUMNS = [
-  "ffColBatch", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
+  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
   "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
   "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
@@ -362,8 +368,22 @@ export function fmtKg(value: number | null | undefined): string {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Batch, Stage and House stay pinned; the offsets are the widths of the pinned columns before each.
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
-const HOUSE_COL = { "--sticky-left": "12.5rem" } as CSSProperties;
+const STAGE_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
+const HOUSE_COL = { "--sticky-left": "17rem" } as CSSProperties;
+
+/** The batch number alone — a stage group's composite label is cut back when an older response has no plainBatchNo. */
+function batchNoOnly(row: ReportRow): string {
+  if (row.plainBatchNo) return row.plainBatchNo;
+  const at = row.batchNo.lastIndexOf(" · ");
+  return at === -1 || row.batchGroupId === row.batchId ? row.batchNo : row.batchNo.slice(0, at);
+}
+
+function stageLabel(row: ReportRow, t: Translate): string {
+  const stage = row.stageName || row.stageCode;
+  return row.stageProjected ? t("ffStageProjected", { stage }) : stage;
+}
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
@@ -403,7 +423,8 @@ export function FeedForecastGrid({
     <ScrollTable label={t("ffGridLabel")} className="w-full">
       <thead>
         <tr>
-          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]")}>{t("ffColBatch")}</th>
+          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColBatch")}</th>
+          <th scope="col" data-sticky-col="true" style={STAGE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColStage")}</th>
           <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "min-w-[11rem]")}>{t("ffColHouse")}</th>
           <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
@@ -430,7 +451,8 @@ export function FeedForecastGrid({
           <StateRow colSpan={totalCols}><Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} />{t("ffNoRows")}</StateRow>
         ) : pivoted.map((row, index) => (
           <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
-            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[12.5rem] max-w-[12.5rem] truncate font-medium")}>{row.batchNo}</td>
+            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}>{batchNoOnly(row)}</td>
+            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
             <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}>{row.shedCode}</td>
             <td className={cn(TD, MUTED)}>{row.sourceCode ?? t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>

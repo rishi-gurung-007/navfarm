@@ -297,4 +297,26 @@ describe("FeedRequisitionDocument — breakdown row keys (9d D2)", () => {
       spy.mockRestore();
     }
   });
+
+  it("shows the stage in its own column beside the batch number, never inside it (Rishi, 10 Oct)", () => {
+    const named = {
+      ...twoStageGroups,
+      lines: [
+        twoStageGroups.lines[0],
+        {
+          ...twoStageGroups.lines[1],
+          breakdown: [
+            { ...twoStageGroups.lines[1].breakdown![0], stage_code: "FLUSHING", stage_name: "Flushing" },
+            { ...twoStageGroups.lines[1].breakdown![1], stage_code: "GESTATION", stage_name: null },
+          ],
+        },
+      ],
+    } as FeedRequisitionDocumentView;
+    render(<FeedRequisitionDocument view={named} editable={false} />);
+    const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });
+    const headers = within(breakdown).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(0, 3)).toEqual(["Batch No.", "Stage", "House"]);
+    const rows = within(breakdown).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
+    expect(rows.map((cells) => cells.slice(0, 2))).toEqual([["BATCH-000007", "Flushing"], ["BATCH-000007", "GESTATION"]]);
+  });
 });

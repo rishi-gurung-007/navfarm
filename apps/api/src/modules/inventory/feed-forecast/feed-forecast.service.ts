@@ -182,6 +182,8 @@ export interface FeedForecastResponse {
   sourceNames: Record<string, string>;
   /** location_code -> configured fulfilment form; only explicit feed_in_bags is BAGGED for a silo. */
   sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'>;
+  /** stage_id -> stage_name for the report's Stage column. Display only: not engine input, not part of any snapshot hash. */
+  stageNames?: Record<string, string>;
   /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
   sourceSnapshot: { version: string; hash: string; values: { engineInput: ForecastInput } };
 }
@@ -315,6 +317,8 @@ type PersistableFeedForecastReport = FeedForecastReport & {
 export interface StageInfo {
   stageId: string;
   stageCode: string;
+  /** stage_master.stage_name — display only (the report's Stage column); never an engine input. */
+  stageName?: string | null;
   durationDays: number | null;
   /** D36: min_days_before_move — the earliest day an event-based stage can be left. */
   minDays?: number | null;
@@ -803,6 +807,7 @@ export class FeedForecastService {
       result.sourceNames,
       result.farm.id,
       result.sourceFeedTypes ?? {},
+      result.stageNames ?? {},
     );
 
     const reportSourceBalances = displayDaily(
@@ -1690,7 +1695,7 @@ export class FeedForecastService {
       // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
       // directly — see FeedSettingsService.resolveForFeedPlanning for why.
       const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
-      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes, stageNames } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily, sourceBalances = [] } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
@@ -1704,7 +1709,7 @@ export class FeedForecastService {
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
         rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, sourceSnapshot,
+        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, stageNames: stageNames ?? {}, sourceSnapshot,
       };
     });
   }
@@ -2008,7 +2013,7 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'> }> {
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>; stageNames?: Record<string, string> }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -2124,9 +2129,14 @@ export class FeedForecastService {
     for (const l of siloRows) sourceFeedTypes[l.location_code] = l.feed_in_bags === true ? 'BAGGED' : 'BULK';
     if (storeRow) sourceFeedTypes[storeRow.location_code] = storeRow.feed_in_bags === false ? 'BULK' : 'BAGGED';
 
+    // stage_id -> name for the report's Stage column; display only, kept out of the engine input (and so its snapshot hash).
+    const stageNames: Record<string, string> = {};
+    for (const s of stages.values()) if (s.stageName) stageNames[s.stageId] = s.stageName;
+
     return {
       sourceNames,
       sourceFeedTypes,
+      stageNames,
       input: {
         planningDate,
         from,
@@ -2441,6 +2451,7 @@ export class FeedForecastService {
       .select({
         stage_id: schema.stageMaster.stage_id,
         stage_code: schema.stageMaster.stage_code,
+        stage_name: schema.stageMaster.stage_name,
         typical_duration_days: schema.stageMaster.typical_duration_days,
         min_days_before_move: schema.stageMaster.min_days_before_move,
         next_stage_id: schema.stageMaster.next_stage_id,
@@ -2461,6 +2472,7 @@ export class FeedForecastService {
         {
           stageId: s.stage_id,
           stageCode: s.stage_code,
+          stageName: s.stage_name ?? null,
           durationDays: s.typical_duration_days,
           minDays: s.min_days_before_move,
           nextStageId: s.next_stage_id,

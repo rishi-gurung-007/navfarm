@@ -38,6 +38,9 @@ export interface FeedRequisitionBreakdownRow {
    * only on rows written before migration 0145.
    */
   stage_id?: string | null;
+  /** stage_master code/name of stage_id, for the breakdown's own Stage column (Rishi, 10 Oct). */
+  stage_code?: string | null;
+  stage_name?: string | null;
   shed_id: string | null;
   shed_code: string | null;
   heads: number | null;
@@ -285,7 +288,7 @@ const RIGHT = new Set<string>([
   "rqdColLineNo", "rqdColDaysBefore", "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColBags",
 ]);
 const BREAKDOWN_COLUMNS = [
-  "rqdBreakdownBatch", "rqdBreakdownHouse", "rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownLifecycle", "rqdBreakdownDemand",
+  "rqdBreakdownBatch", "rqdBreakdownStage", "rqdBreakdownHouse", "rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownLifecycle", "rqdBreakdownDemand",
 ] as const;
 const BREAKDOWN_RIGHT = new Set<string>(["rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownDemand"]);
 
@@ -534,6 +537,7 @@ export function FeedRequisitionDocument({
                             {breakdown.map((b) => (
                               <tr key={`${b.batch_id}|${b.stage_id ?? ""}|${b.shed_id ?? ""}`}>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ?? notAvailable}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.stage_name || b.stage_code || notAvailable}</td>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.heads)}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>

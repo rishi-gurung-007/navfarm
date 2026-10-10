@@ -82,10 +82,17 @@ export interface ReportRow {
   batchId: string;
   /** Engine aggregation identity; composite for registered/animal-wise stage groups. */
   batchGroupId: string;
+  /** Display label — composite "BATCH · STAGE" for a stage group. Kept as before; the web shows plainBatchNo + stage columns instead. */
   batchNo: string;
+  /** The batch number alone, never carrying the stage (Rishi, 10 Oct: the stage goes in its own column). Display only. */
+  plainBatchNo: string;
   shedId: string | null;
   shedCode: string;
   stageCode: string;
+  /** stage_master.stage_name of `stageCode`; null when the name is not known. Display only. */
+  stageName: string | null;
+  /** The line's stage is a projected change from the stage the group is in today. Display only. */
+  stageProjected: boolean;
   itemId: string;
   itemNo: string;
   itemName: string;
@@ -169,6 +176,15 @@ function reportBatchLabel(d: DailyForecastRow): string {
     }`;
 }
 
+/** The batch number without the " · STAGE" suffix a stage group's composite label carries. */
+function plainBatchNoOf(d: DailyForecastRow): string {
+  const separator = ' · ';
+  const separatorIndex = d.batchNo.lastIndexOf(separator);
+  // Only a stage group (composite batchId) has the suffix; a batch-wise number is returned untouched.
+  if (separatorIndex === -1 || d.batchId === d.realBatchId) return d.batchNo;
+  return d.batchNo.slice(0, separatorIndex);
+}
+
 function calculateRunDownDate(
   asOfDate: string,
   openingSystemBalanceKg: number,
@@ -199,7 +215,7 @@ function calculateRunDownDate(
   return addDays(asOfDate, fullFeedDays);
 }
 
-export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = '', sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {}): ReportRow[] {
+export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = '', sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {}, stageNames: Record<string, string> = {}): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
   const groups = new Map<string, {
@@ -223,7 +239,10 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
         intake,
         row: {
           key, farmId, batchId: d.realBatchId ?? d.batchId, batchGroupId: d.batchId, batchNo: reportBatchLabel(d),
+          plainBatchNo: plainBatchNoOf(d),
           shedId: d.shedId ?? null, shedCode: d.shedCode, stageCode: d.stageCode,
+          stageName: stageNames[d.stageId] ?? null,
+          stageProjected: d.stageId !== d.groupStageId,
           itemId: d.itemId, itemNo: d.itemNo, itemName: d.itemName, sourceType: d.sourceType, sourceCode: d.sourceCode,
           feedType: d.sourceCode ? sourceFeedTypes[d.sourceCode] ?? (d.sourceType === 'STORE' ? 'BAGGED' : 'BULK') : 'BULK',
           sourceLocationId: d.destinationLocationId ?? null,

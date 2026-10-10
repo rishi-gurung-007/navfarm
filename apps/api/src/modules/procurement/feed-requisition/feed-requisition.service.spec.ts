@@ -1328,7 +1328,7 @@ describe('FeedRequisitionService view — the document header and line display f
           breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 25, period_to: 27, calc_unit: 'DAY' },
       ]]],
       [schema.requisitionLineBatch, [[
-        { line_id: 'L2', batch_id: 'b1', batch_no: 'B-001', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: '0.500000',
+        { line_id: 'L2', batch_id: 'b1', batch_no: 'B-001', stage_id: 'st-wean', group_stage_code: 'WEANER', group_stage_name: 'Weaner', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: '0.500000',
           lifecycle_ref_id: 'lc-r2', demand_kg: '995.0000', first_demand_date: '2026-09-26', breed_code: 'L-LINE', stage_code: 'WEANER', period_from: 25, period_to: 27, calc_unit: 'DAY' },
       ]]],
     ]);
@@ -1345,7 +1345,8 @@ describe('FeedRequisitionService view — the document header and line display f
     });
     expect(view.lines[1]).toMatchObject({
       item_description: 'Weaner Diet R2', lifecycle_ref_label: 'L-LINE WEANER days 25–27', exception_reason: 'Vet instruction',
-      breakdown: [{ batch_id: 'b1', batch_no: 'B-001', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: 0.5,
+      // Rishi, 10 Oct: the stage is its own column, resolved from stage_master like batch_no is from batch_header.
+      breakdown: [{ batch_id: 'b1', batch_no: 'B-001', stage_id: 'st-wean', stage_code: 'WEANER', stage_name: 'Weaner', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: 0.5,
         lifecycle_ref_label: 'L-LINE WEANER days 25–27', demand_kg: 995, first_demand_date: '2026-09-26' }],
     });
   });

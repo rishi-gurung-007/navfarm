@@ -15,6 +15,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { and, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
+import { alias } from 'drizzle-orm/mysql-core';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
@@ -2129,6 +2130,9 @@ export class FeedRequisitionService implements OnModuleInit {
       .orderBy(schema.requisitionLine.line_seq);
     const lineIds = lines.map((l) => l.line.line_id);
     const shed = schema.locationMaster;
+    // The group's own stage (requisition_line_batch.stage_id), resolved for display like batch_no is. stage_master is
+    // already joined once for the lifecycle row's label, so this second join needs its own alias.
+    const groupStage = alias(schema.stageMaster, 'group_stage');
     const breakdownRows = lineIds.length
       ? await this.db
         .select({
@@ -2140,6 +2144,8 @@ export class FeedRequisitionService implements OnModuleInit {
           // batch has several stage groups in one house — so the document needs
           // it to tell two of its breakdown rows apart.
           stage_id: schema.requisitionLineBatch.stage_id,
+          group_stage_code: groupStage.stage_code,
+          group_stage_name: groupStage.stage_name,
           shed_id: schema.requisitionLineBatch.shed_id,
           shed_code: shed.location_code,
           heads: schema.requisitionLineBatch.heads,
@@ -2155,6 +2161,7 @@ export class FeedRequisitionService implements OnModuleInit {
         .leftJoin(lifecycle, eq(lifecycle.lifecycle_id, schema.requisitionLineBatch.lifecycle_ref_id))
         .leftJoin(schema.breedMaster, eq(schema.breedMaster.breed_id, lifecycle.breed_id))
         .leftJoin(schema.stageMaster, eq(schema.stageMaster.stage_id, lifecycle.stage_id))
+        .leftJoin(groupStage, eq(groupStage.stage_id, schema.requisitionLineBatch.stage_id))
         .where(inArray(schema.requisitionLineBatch.line_id, lineIds))
         .orderBy(schema.batchHeader.batch_no, shed.location_code)
       : [];
@@ -2162,7 +2169,8 @@ export class FeedRequisitionService implements OnModuleInit {
     for (const b of breakdownRows) {
       const list = breakdownOf.get(b.line_id) ?? [];
       list.push({
-        batch_id: b.batch_id, batch_no: b.batch_no, stage_id: b.stage_id, shed_id: b.shed_id, shed_code: b.shed_code,
+        batch_id: b.batch_id, batch_no: b.batch_no, stage_id: b.stage_id,
+        stage_code: b.group_stage_code ?? null, stage_name: b.group_stage_name ?? null, shed_id: b.shed_id, shed_code: b.shed_code,
         heads: b.heads, feed_rate_kg: b.feed_rate_kg == null ? null : Number(b.feed_rate_kg),
         lifecycle_ref_id: b.lifecycle_ref_id, lifecycle_ref_label: lifecycleRefLabel(b),
         demand_kg: Number(b.demand_kg), first_demand_date: b.first_demand_date,

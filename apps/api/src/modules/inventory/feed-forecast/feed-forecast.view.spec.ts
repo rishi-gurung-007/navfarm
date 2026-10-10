@@ -253,3 +253,34 @@ describe('FF1 (Rishi 5 Oct) — Daily and Weekly run through the run-down date',
     expect(withDelivery[0].runDownDate! > '2026-10-21').toBe(true);
   });
 });
+
+describe('groupRows — the stage travels in its own field, not inside the batch number (Rishi, 10 Oct)', () => {
+  const stageGroups: ForecastInput = {
+    ...workedExample,
+    batches: [
+      {
+        batchId: 'b:wean', realBatchId: 'b' as any, batchNo: 'WG-2026-38 · WEANER', breedId: 'l', shedId: 'h3', heads: 1000,
+        segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
+      },
+    ],
+  };
+  const stageDaily = buildFeedForecast(stageGroups).daily;
+
+  it('a stage-group row carries the plain batch number and the stage code and name separately', () => {
+    const rows = groupRows(stageDaily, 'DAILY', '2026-09-23', {}, 'farm-grs', {}, { wean: 'Weaner' });
+    expect(rows[0]).toMatchObject({
+      plainBatchNo: 'WG-2026-38', stageCode: 'WEANER', stageName: 'Weaner', stageProjected: false,
+    });
+  });
+
+  it('keeps the composite group key and the composite batch label exactly as before', () => {
+    const rows = groupRows(stageDaily, 'DAILY', '2026-09-23', {}, 'farm-grs', {}, { wean: 'Weaner' });
+    expect(rows[0]).toMatchObject({ batchId: 'b', batchGroupId: 'b:wean', batchNo: 'WG-2026-38 · WEANER' });
+    expect(rows[0].key.startsWith('b:wean|WEANER|')).toBe(true);
+  });
+
+  it('a batch-wise row also gets the stage on its own; the name is null when unknown', () => {
+    const rows = groupRows(daily, 'DAILY', '2026-09-23');
+    expect(rows[0]).toMatchObject({ batchNo: 'WG-2026-38', plainBatchNo: 'WG-2026-38', stageCode: 'WEANER', stageName: null, stageProjected: false });
+  });
+});

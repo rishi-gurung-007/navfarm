@@ -179,7 +179,7 @@ describe('FeedForecastService', () => {
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
-      sourceNames: {}, sourceFeedTypes: {},
+      sourceNames: {}, sourceFeedTypes: {}, stageNames: {},
       stages: [],
       sourceSnapshot: expect.objectContaining({
         hash: expect.stringMatching(/^[a-f0-9]{64}$/),

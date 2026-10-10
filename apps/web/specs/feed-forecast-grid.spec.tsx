@@ -43,7 +43,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((header) => header.textContent);
 
     expect(headers).toEqual([
-      'ffColBatch', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
+      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
       'ffColHeadCount', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
       'ffColOpenTransfers', 'ffColPlannedFeedAdded', 'ffColPlannedFeedReference', 'ffColDailyUse',
       '23/09/26', 'ffColFirstShortage', 'ffColRecommendedQty', 'ffColDeliveryDate',
@@ -55,8 +55,9 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getByRole('table')).getAllByRole('cell').map((cell) => cell.textContent);
 
-    expect(cells.slice(0, 6)).toEqual([
+    expect(cells.slice(0, 7)).toEqual([
       'WG-2026-38',
+      'WEANER',
       'GRS/SHED-003',
       'GRS/SILO-001',
       'Weaner silo',
@@ -64,6 +65,22 @@ describe('FeedForecastGrid — Engine row 70', () => {
       'Weaner Diet R1',
     ]);
     expect(cells).not.toContain('FEED-R1 — Weaner Diet R1');
+  });
+
+  it('shows a stage group\'s batch number alone and its stage in the Stage column (Rishi, 10 Oct)', () => {
+    const grouped = row({
+      batchGroupId: 'batch-1:st-ges', batchNo: 'BATCH-000001 · GESTATION', plainBatchNo: 'BATCH-000001',
+      stageCode: 'GESTATION', stageName: 'Gestation', stageProjected: false,
+    });
+    const projected = row({
+      key: 'projected', batchGroupId: 'batch-1:st-flush', batchNo: 'BATCH-000001 · LACTATION (Projected)', plainBatchNo: 'BATCH-000001',
+      stageCode: 'LACTATION', stageName: null, stageProjected: true,
+    });
+    render(<FeedForecastGrid rows={[grouped, projected]} loading={false} t={t} />);
+    const bodyRows = within(screen.getByRole('table')).getAllByRole('row').slice(1);
+    const lead = bodyRows.map((r) => within(r).getAllByRole('cell').slice(0, 2).map((c) => c.textContent));
+    expect(lead).toEqual([['BATCH-000001', 'Gestation'], ['BATCH-000001', 'ffStageProjected:{"stage":"LACTATION"}']]);
+    expect(screen.queryByText(/ · /)).toBeNull();
   });
 
   it('uses human descriptions instead of blank or dash placeholders', () => {
@@ -168,7 +185,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
     expect(cells).toEqual([
-      'WG-2026-38', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', 'Weaner Diet R1', 'Weaner Diet R1',
+      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', 'Weaner Diet R1', 'Weaner Diet R1',
       '1,000', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
     ]);
   });
