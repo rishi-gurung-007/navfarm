@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class QueryFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
@@ -108,6 +108,25 @@ export class FeedRequisitionShipmentDto {
   lines: FeedRequisitionEventLineDto[];
 }
 
-export class FeedRequisitionReceiptDto extends FeedRequisitionShipmentDto {
+/**
+ * W2T: a feed receipt line carries its controls (Requisition rows 144-147, Silo
+ * TO Receipt rows 17, 24, 27). Which are required is decided by the posting rule
+ * (assertFeedReceiptLine), not here, because it depends on what shipped.
+ */
+export class FeedRequisitionReceiptLineDto extends FeedRequisitionEventLineDto {
+  @ApiPropertyOptional({ description: 'Mandatory when shipped minus received is above zero (checkpoint 26)' })
+  @IsOptional() @IsString() @MaxLength(500) variance_reason?: string;
+  @ApiPropertyOptional({ description: 'Bags physically received; required for BAGGED feed (checkpoint 27)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) bag_count?: number;
+  @ApiPropertyOptional({ description: 'Mill delivery note no. (Silo TO Receipt row 17)' })
+  @IsOptional() @IsString() @MaxLength(80) delivery_note_no?: string;
+}
+
+export class FeedRequisitionReceiptDto {
+  @ApiProperty() @IsUUID() transfer_id: string;
   @ApiProperty() @IsUUID() shipment_id: string;
+  @ApiProperty() @IsDateString() posting_date: string;
+  @ApiProperty({ type: [FeedRequisitionReceiptLineDto] })
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionReceiptLineDto)
+  lines: FeedRequisitionReceiptLineDto[];
 }

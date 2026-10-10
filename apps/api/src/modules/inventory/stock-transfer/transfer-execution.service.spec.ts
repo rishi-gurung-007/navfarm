@@ -312,6 +312,103 @@ describe('postReceipt — bound to its shipment', () => {
   });
 });
 
+describe('W2T — feed receipt controls on postReceipt (checkpoints 26, 27; Requisition row 150)', () => {
+  // Shipped 6 KG of a BAGGED feed on SH-1; nothing received yet.
+  function feedQueues(): Map<unknown, unknown[][]> {
+    const queues = baseQueues();
+    queues.set(schema.stockTransferLine, [[{ ...LINE, uom: 'KG', lot_no: null }]]);
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [
+      [{ line_id: 'line-1', qty: '6' }],
+      [{ ...SHIPMENT_LINE, uom: 'KG', lot_no: null }],
+    ]);
+    queues.set(schema.transferReceiptLine, [[]]);
+    return queues;
+  }
+  const controls = (feedType: string) => ({
+    bagSizeKg: 2,
+    lines: new Map([['line-1', { label: 'Line 1', feedType, loadingSheetId: 'ls-1', loadingSheetNo: 'LOAD-1' }]]),
+  });
+  function feedSetup() {
+    const ctx = setup(feedQueues());
+    (ctx.ledger as any).getStockBalance = jest.fn().mockResolvedValue([
+      { item_id: 'item-1', uom: 'KG', on_hand_qty: 1504 },
+      { item_id: 'item-1', uom: 'BAG', on_hand_qty: 3 },
+    ]);
+    return ctx;
+  }
+
+  it('refuses a shortfall with no variance reason, before any receipt line is written', async () => {
+    const { service, as, inserts } = feedSetup();
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, bag_count: 2, delivery_note_no: 'DN-1' }],
+    }, 'tenant-1', ADMIN, false, controls('BAGGED')))).rejects.toThrow(/variance reason/);
+    expect(inserts(schema.transferReceiptLine)).toHaveLength(0);
+  });
+
+  it('keeps over-receipt refused exactly as before (decisions.md 10 Oct), reason or not', async () => {
+    const { service, as } = feedSetup();
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 7, variance_reason: 'extra', bag_count: 4, delivery_note_no: 'DN-1' }],
+    }, 'tenant-1', ADMIN, false, controls('BAGGED')))).rejects.toThrow('Receipt quantity exceeds the remaining quantity to receive.');
+  });
+
+  it('refuses a BAGGED line whose bag count misses the quantity by more than 1 percent', async () => {
+    const { service, as } = feedSetup();
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 6, bag_count: 2, delivery_note_no: 'DN-1' }],
+    }, 'tenant-1', ADMIN, false, controls('BAGGED')))).rejects.toThrow(/checkpoint 27/);
+  });
+
+  it('stores variance, reason, bags, delivery note and loading sheet, and returns the silo balance after', async () => {
+    const { service, as, inserts } = feedSetup();
+    const result: any = await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1',
+      lines: [{ line_id: 'line-1', quantity: 4, variance_reason: ' Torn bag ', bag_count: 2, delivery_note_no: 'MILL-DN-0042' }],
+    }, 'tenant-1', ADMIN, false, controls('BAGGED')));
+    expect(inserts(schema.transferReceiptLine)[0]).toMatchObject({
+      quantity: '4', variance_qty: '2', variance_reason: 'Torn bag', bag_count: 2,
+      delivery_note_no: 'MILL-DN-0042', loading_sheet_id: 'ls-1', loading_sheet_no: 'LOAD-1',
+    });
+    expect(result.lines).toEqual([{
+      line_id: 'line-1', qty_received: 4, qty_shipped: 6, previously_received: 0, variance_qty: 2, silo_balance_after: 1504,
+    }]);
+  });
+
+  it('a common receipt (no controls) asks for nothing new and only records the variance', async () => {
+    const { service, as, inserts } = feedSetup();
+    const result = await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4 }],
+    }, 'tenant-1', ADMIN));
+    expect(inserts(schema.transferReceiptLine)[0]).toMatchObject({
+      variance_qty: '2', variance_reason: null, bag_count: null, delivery_note_no: null, loading_sheet_id: null,
+    });
+    expect(result.lines).toEqual([{ line_id: 'line-1', qty_received: 4 }]);
+  });
+});
+
+describe('W2T / W9 — the transfer list names its source requisition, consolidation and loading sheet', () => {
+  it('feed transfers carry FEED, the consolidation and every loading sheet; hand-made transfers carry nulls', async () => {
+    const queues = baseQueues();
+    queues.set(schema.stockTransfer, [[{ ...TRANSFER }, { ...TRANSFER, transfer_id: 'tr-2', transfer_no: 'TR-2026-0002' }, { ...TRANSFER, transfer_id: 'tr-3' }]]);
+    queues.set(schema.stockTransferLine, [[
+      { transfer_id: 'tr-1', requisition_line_id: 'rl-1', requisition_id: 'req-f', req_no: 'FREQ-1', doc_type: 'FEED', consolidation_id: 'con-1', consolidation_no: 'MCS-1', loading_sheet_id: 'ls-1', loading_sheet_no: 'LOAD-1' },
+      { transfer_id: 'tr-1', requisition_line_id: 'rl-2', requisition_id: 'req-f', req_no: 'FREQ-1', doc_type: 'FEED', consolidation_id: 'con-1', consolidation_no: 'MCS-1', loading_sheet_id: 'ls-2', loading_sheet_no: 'LOAD-2' },
+      { transfer_id: 'tr-2', requisition_line_id: 'rl-9', requisition_id: 'req-c', req_no: 'REQ-9', doc_type: 'ITEM', consolidation_id: null, consolidation_no: null, loading_sheet_id: null, loading_sheet_no: null },
+    ]]);
+    const { service, as } = setup(queues);
+    const rows: any[] = await as(() => service.findAll({} as any, 'tenant-1'));
+    expect(rows[0]).toMatchObject({
+      source_requisition_id: 'req-f', source_requisition_no: 'FREQ-1', source_requisition_kind: 'FEED',
+      source_consolidation_id: 'con-1', source_consolidation_no: 'MCS-1',
+      source_loading_sheet_id: 'ls-1', source_loading_sheet_no: 'LOAD-1',
+    });
+    expect(rows[0].source_loading_sheets.map((l: any) => l.loading_sheet_no)).toEqual(['LOAD-1', 'LOAD-2']);
+    expect(rows[1]).toMatchObject({ source_requisition_no: 'REQ-9', source_requisition_kind: 'COMMON', source_consolidation_id: null, source_loading_sheet_id: null });
+    expect(rows[2]).toMatchObject({ source_requisition_id: null, source_requisition_kind: null, source_loading_sheets: [] });
+  });
+});
+
 describe('postDirectTransfer — one shipment plus its matching receipt', () => {
   /**
    * Direct transfer runs shipment then receipt in ONE transaction, and every

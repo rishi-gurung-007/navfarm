@@ -48,13 +48,65 @@ describe('FeedRequisitionService transfer execution', () => {
 
   it('receives against the selected shipment and maps the same line identities', async () => {
     const { service, stockTransfers } = serviceHarness();
+    const controls = { bagSizeKg: 50, lines: new Map() };
+    jest.spyOn(service as any, 'feedReceiptControls').mockResolvedValue(controls);
     await service.receipt('req-1', {
       transfer_id: 'tr-1', shipment_id: 'shipment-1', posting_date: '2026-10-12',
       lines: [{ requisition_line_id: 'rl-1', quantity: 500 }],
     }, 'tenant-1', { userId: 'u-2' });
     expect(stockTransfers.postReceipt).toHaveBeenCalledWith('tr-1', {
       shipment_id: 'shipment-1', posting_date: '2026-10-12', lines: [{ line_id: 'tl-1', quantity: 500 }],
-    }, 'tenant-1', expect.objectContaining({ userId: 'u-2' }), true);
+    }, 'tenant-1', expect.objectContaining({ userId: 'u-2' }), true, controls);
+  });
+
+  it('W2T: passes the receipt controls through and returns the receipt no., variance and silo balance after', async () => {
+    const { service, stockTransfers } = serviceHarness();
+    jest.spyOn(service as any, 'feedReceiptControls').mockResolvedValue({ bagSizeKg: 50, lines: new Map() });
+    stockTransfers.postReceipt.mockResolvedValue({
+      receipt_id: 'receipt-1', receipt_no: 'RC-2026-0007', transfer_id: 'tr-1',
+      lines: [{ line_id: 'tl-1', qty_received: 5900, qty_shipped: 6000, previously_received: 0, variance_qty: 100, silo_balance_after: 7400 }],
+    });
+    const out: any = await service.receipt('req-1', {
+      transfer_id: 'tr-1', shipment_id: 'shipment-1', posting_date: '2026-10-12',
+      lines: [{ requisition_line_id: 'rl-1', quantity: 5900, variance_reason: 'Spillage', bag_count: undefined, delivery_note_no: 'MILL-DN-0042' }],
+    }, 'tenant-1', { userId: 'u-2' });
+    expect(stockTransfers.postReceipt.mock.calls[0][1].lines).toEqual([
+      { line_id: 'tl-1', quantity: 5900, variance_reason: 'Spillage', delivery_note_no: 'MILL-DN-0042' },
+    ]);
+    expect(out.receipt).toEqual({
+      receipt_id: 'receipt-1', receipt_no: 'RC-2026-0007', transfer_id: 'tr-1', shipment_id: 'shipment-1',
+      lines: [expect.objectContaining({ requisition_line_id: 'rl-1', variance_qty: 100, silo_balance_after: 7400 })],
+    });
+  });
+
+  it('W2T: builds controls from the line feed type, the farm bag size and the loading sheet of this shipment', async () => {
+    const queues: unknown[][] = [
+      [{ line_id: 'rl-1', line_seq: 1, feed_type: 'BULK' }, { line_id: 'rl-2', line_seq: 2, feed_type: 'BAGGED' }],
+      [
+        { requisition_line_id: 'rl-1', loading_sheet_id: 'ls-old', loading_sheet_no: 'LOAD-OLD', shipment_id: 'shipment-0' },
+        { requisition_line_id: 'rl-1', loading_sheet_id: 'ls-1', loading_sheet_no: 'LOAD-1', shipment_id: 'shipment-1' },
+      ],
+    ];
+    const db: any = { select: jest.fn(() => {
+      const result = queues.shift() ?? [];
+      const chain: any = {};
+      for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'groupBy']) chain[method] = () => chain;
+      chain.then = (ok: any, fail: any) => Promise.resolve(result).then(ok, fail);
+      return chain;
+    }) };
+    const feedSettings = { resolveForFeedPlanning: jest.fn().mockResolvedValue({ bulkMultipleKg: 3000, bagSizeKg: 25, truckTargetKg: 30000, productionWeekday: 0, safetyStockKg: 0 }) };
+    const service = new FeedRequisitionService(
+      transactionCls(db), {} as any, { registerDocumentHandler: jest.fn() } as any,
+      {} as any, {} as any, {} as any, feedSettings as any, {} as any,
+    );
+    const controls = await (service as any).feedReceiptControls(
+      [{ transfer_line_id: 'tl-1', requisition_line_id: 'rl-1' }, { transfer_line_id: 'tl-2', requisition_line_id: 'rl-2' }],
+      'shipment-1', 'co-1', 'farm-1',
+    );
+    expect(feedSettings.resolveForFeedPlanning).toHaveBeenCalledWith('co-1', 'farm-1');
+    expect(controls.bagSizeKg).toBe(25);
+    expect(controls.lines.get('tl-1')).toEqual({ label: 'Line 1', feedType: 'BULK', loadingSheetId: 'ls-1', loadingSheetNo: 'LOAD-1' });
+    expect(controls.lines.get('tl-2')).toEqual({ label: 'Line 2', feedType: 'BAGGED', loadingSheetId: null, loadingSheetNo: null });
   });
 
   it('refuses receipt when the selected transfer destination is outside the requisition farm', async () => {

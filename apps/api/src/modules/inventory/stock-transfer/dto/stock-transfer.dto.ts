@@ -12,6 +12,7 @@ import {
   IsArray,
   ValidateNested,
   ArrayMinSize,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -183,6 +184,27 @@ export class ReceiptLineInput {
   @IsPositive()
   @Type(() => Number)
   quantity: number;
+
+  // W2T (0165): stored on the receipt line. Required only on a feed receipt
+  // (FeedRequisitionService.receipt applies assertFeedReceiptLine).
+  @ApiProperty({ description: 'Why less arrived than shipped (feed: mandatory on a shortfall, checkpoint 26)', required: false })
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  variance_reason?: string;
+
+  @ApiProperty({ description: 'Bags physically received (feed: required for BAGGED, checkpoint 27)', required: false })
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  @IsOptional()
+  bag_count?: number;
+
+  @ApiProperty({ description: 'Delivery note no. (Silo TO Receipt row 17)', required: false })
+  @IsString()
+  @MaxLength(80)
+  @IsOptional()
+  delivery_note_no?: string;
 }
 
 export class PostReceiptDto {
