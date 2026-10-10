@@ -429,6 +429,22 @@ describe('ItemService', () => {
       await expect(guard({ item_name: 'Renamed', is_lot_tracked: false })).resolves.toBeUndefined();
       expect(spy).not.toHaveBeenCalled();
     });
+
+    const lotGuard = (dto: object) => (service as any).assertCostingAndTrackingUnlocked(
+      { ...itemRow, uom_primary: 'KG', item_code: 'ICAT-004-ITM-0005', is_lot_tracked: true, tracking_series_id: null }, dto);
+
+    it('lets a LOT item with no series gain its missing series while stock is on hand — LOT stays LOT', async () => {
+      const spy = blockers({ onHand: 3000, byLot: [{ lot: 'LOT00001', quantity: 3000 }], openDocuments: [] });
+      await expect(lotGuard({ is_lot_tracked: true, is_serial_tracked: false, tracking_series_id: 'series-lot' }))
+        .resolves.toBeUndefined();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('still refuses LOT to SERIAL while stock is on hand, even when the series is added in the same save', async () => {
+      blockers({ onHand: 3000, byLot: [{ lot: 'LOT00001', quantity: 3000 }], openDocuments: [] });
+      await expect(lotGuard({ is_lot_tracked: false, is_serial_tracked: true, tracking_series_id: 'series-serial' }))
+        .rejects.toThrow('Tracking cannot be changed for ICAT-004-ITM-0005 while 3000 KG is on hand');
+    });
   });
 
   it('initializes one company ITEM counter after the highest existing item code', async () => {

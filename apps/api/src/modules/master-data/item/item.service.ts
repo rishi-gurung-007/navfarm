@@ -716,7 +716,8 @@ export class ItemService {
     const trackingChanged =
       (dto.is_lot_tracked !== undefined && !!dto.is_lot_tracked !== !!item.is_lot_tracked) ||
       (dto.is_serial_tracked !== undefined && !!dto.is_serial_tracked !== !!item.is_serial_tracked) ||
-      (dto.tracking_series_id !== undefined && (dto.tracking_series_id || null) !== (item.tracking_series_id || null));
+      // Supplying a series the item never had is not a tracking change; replacing an existing one is.
+      (dto.tracking_series_id !== undefined && !!item.tracking_series_id && (dto.tracking_series_id || null) !== item.tracking_series_id);
     const valuationChanged = dto.valuation_method !== undefined && (dto.valuation_method || null) !== (item.valuation_method || null);
     if (!trackingChanged && !valuationChanged) return;
 
