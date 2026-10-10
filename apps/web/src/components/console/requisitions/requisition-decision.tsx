@@ -14,7 +14,7 @@
  */
 import { useRef, useState } from "react";
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { DialogFooterActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -52,19 +52,15 @@ export function RequisitionDecision({
   const [remarks, setRemarks] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  // Shown here, inside the dialog: the page's own alerts sit underneath it, so a
-  // refusal (remarks needed, deadline passed, not your request) would go unseen.
-  const [error, setError] = useState("");
 
   const run = async (call: () => Promise<unknown>, message: string) => {
     if (deciding) return;
     setDeciding(true);
-    setError("");
     try {
       await call();
       await onDecided(message);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
+      showToast.error(err?.message || tRef.current("rqActionFailed"));
     } finally {
       setDeciding(false);
     }
@@ -90,7 +86,6 @@ export function RequisitionDecision({
   if (rejecting) {
     return (
       <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-        {error && <InlineAlert>{error}</InlineAlert>}
         <Field label={t("rhRejectionReason")} htmlFor="rh-reject-reason">
           <textarea id="rh-reject-reason" rows={2} className="nf-input w-full" style={inputStyle} value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)} />
@@ -104,7 +99,6 @@ export function RequisitionDecision({
   }
   return (
     <div className="space-y-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-      {error && <InlineAlert>{error}</InlineAlert>}
       <Field label={t("rhApproverRemarks")} htmlFor="rh-remarks">
         <textarea id="rh-remarks" rows={2} className="nf-input w-full" style={inputStyle} value={remarks}
           onChange={(e) => setRemarks(e.target.value)} />

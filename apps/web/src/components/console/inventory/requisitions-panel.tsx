@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -108,8 +109,6 @@ export function FeedRequisitionPanel() {
   const [selected, setSelected] = useState<RequisitionView | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
   const [fromRunOpen, setFromRunOpen] = useState(false);
   const [savedRun, setSavedRun] = useState<{ id: string; existingRequisitionId: string | null } | null>(null);
@@ -128,7 +127,6 @@ export function FeedRequisitionPanel() {
       return;
     }
     setLoading(true);
-    setError("");
     try {
       const params = new URLSearchParams();
       if (listFarmId) params.set("farmId", listFarmId);
@@ -136,7 +134,7 @@ export function FeedRequisitionPanel() {
       const list = unwrap<ListRow[]>(await api.get(`/feed-requisition?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqLoadFailed"));
+      showToast.error(err?.message || tRef.current("rqLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -188,17 +186,15 @@ export function FeedRequisitionPanel() {
     api
       .get(`/feed-requisition/${id}`)
       .then((res) => show(unwrap<RequisitionView>(res)))
-      .catch((err: any) => setError(err?.message || tRef.current("rqLoadFailed")));
+      .catch((err: any) => showToast.error(err?.message || tRef.current("rqLoadFailed")));
   }, []);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       await work();
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
+      showToast.error(err?.message || tRef.current("rqActionFailed"));
     } finally {
       setBusy(false);
     }
@@ -241,9 +237,6 @@ export function FeedRequisitionPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
-
       {farm.failed ? (
         // The farm list itself failed to load; "No requisitions for this farm."
         // would blame the data for a request that never arrived.
@@ -260,7 +253,7 @@ export function FeedRequisitionPanel() {
           <FeedRequisitionDetail
             embedded
             view={selected}
-            onView={(v, n) => { setSelected(v); if (n) setNotice(n); loadList(); }}
+            onView={(v) => { setSelected(v); loadList(); }}
             onBack={() => setSelected(null)}
           />
           {/* WP1g: feed requisitions are decided here, through the same
@@ -271,7 +264,7 @@ export function FeedRequisitionPanel() {
               onDecided={async (message) => {
                 setSelected(null);
                 await loadList();
-                setNotice(message);
+                showToast.success(message);
               }}
             />
           )}
@@ -311,7 +304,6 @@ export function FeedRequisitionPanel() {
           onCreated={(view) => {
             setCreating(false);
             show(view);
-            setNotice(tRef.current("rqCreated"));
             loadList();
           }}
         />
@@ -323,11 +315,10 @@ export function FeedRequisitionPanel() {
         onView={(view) => {
           setFromRunOpen(false);
           show(view);
-          setNotice(tRef.current("rqCreated"));
           loadList();
         }}
       />
-      <FeedConsolidationDialog open={consolidateOpen} onClose={() => setConsolidateOpen(false)} onCreated={(message) => { setConsolidateOpen(false); setNotice(message); loadList(); }} />
+      <FeedConsolidationDialog open={consolidateOpen} onClose={() => setConsolidateOpen(false)} onCreated={(message) => { setConsolidateOpen(false); showToast.success(message); loadList(); }} />
     </div>
   );
 }

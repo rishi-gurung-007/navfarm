@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -42,7 +43,7 @@ export function FeedRequisitionDetail({
   embedded = false,
 }: {
   view: RequisitionView;
-  onView: (next: RequisitionView, notice?: string) => void;
+  onView: (next: RequisitionView) => void;
   onBack: () => void;
   /**
    * Task 18: true when a `<Dialog>` wraps this detail — the dialog already
@@ -62,7 +63,6 @@ export function FeedRequisitionDetail({
   const [options, setOptions] = useState<FeedRequisitionOptions | null>(null);
   const [remarks, setRemarks] = useState(view.remarks ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
   const [transferId, setTransferId] = useState("");
@@ -72,11 +72,10 @@ export function FeedRequisitionDetail({
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
-    setError("");
     try {
       await work();
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
+      showToast.error(err?.message || tRef.current("rqActionFailed"));
     } finally {
       setBusy(false);
     }
@@ -135,7 +134,8 @@ export function FeedRequisitionDetail({
       const result = unwrap<RequisitionView>(await api.put(`/feed-requisition/${view.requisition_id}`, { remarks, lines: lineEdits() }));
       setEdits({});
       setRemarks(result.remarks ?? "");
-      onView(result, tRef.current("rqSaved"));
+      showToast.success(tRef.current("rqSaved"));
+    onView(result);
     });
 
   const submit = () =>
@@ -143,7 +143,8 @@ export function FeedRequisitionDetail({
       const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/submit`, { remarks, lines: lineEdits() }));
       setEdits({});
       setRemarks(result.remarks ?? "");
-      onView(result, tRef.current("rqSubmitted"));
+      showToast.success(tRef.current("rqSubmitted"));
+    onView(result);
     });
 
   const actions = view.actions ?? {
@@ -197,21 +198,24 @@ export function FeedRequisitionDetail({
 
   const release = () => run(async () => {
     const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/release`, {}));
-    onView(result, tRef.current("rqReleased"));
+    showToast.success(tRef.current("rqReleased"));
+    onView(result);
   });
   const postShipment = () => run(async () => {
     const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/shipments`, {
       transfer_id: transferId, posting_date: postingDate, lines: shipBody,
     }));
     setShipQty({});
-    onView(result, tRef.current("crqShipped"));
+    showToast.success(tRef.current("crqShipped"));
+    onView(result);
   });
   const postReceipt = () => run(async () => {
     const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/receipts`, {
       transfer_id: transferId, shipment_id: shipmentId, posting_date: postingDate, lines: receiveBody,
     }));
     setReceiveQty({});
-    onView(result, tRef.current("crqReceived"));
+    showToast.success(tRef.current("crqReceived"));
+    onView(result);
   });
 
   const chooseTransfer = (value: string) => {
@@ -262,7 +266,6 @@ export function FeedRequisitionDetail({
         </div>
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
-      {error && <InlineAlert>{error}</InlineAlert>}
       {workflowBlocker && <InlineAlert>{workflowBlocker}{needsBinDietAssignment && <> <a className="font-medium underline" href="/master-data/bin-diet-assignment">Open BIN Diet Assignments</a></>}</InlineAlert>}
       <div className="min-h-0 flex-1 overflow-auto">
         <FeedRequisitionDocument

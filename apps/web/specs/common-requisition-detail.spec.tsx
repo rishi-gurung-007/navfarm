@@ -4,6 +4,9 @@ import { CommonRequisitionDetail } from "../src/components/console/requisitions/
 import { emptyCommonRequisition, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionView } from "../src/components/console/requisitions/common-requisition-model";
 import { todayIso } from "../src/components/console/inventory/feed-format";
 import { api } from "../src/services/api-client";
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => {
@@ -89,51 +92,24 @@ describe("CommonRequisitionDetail", () => {
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(saved, "crqSaved"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText("crqSaved")).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqSaved"));
   });
 
-  // P1 follow-up item 7, live check: the dialog scrolls as one, and the user
-  // is at the action buttons when they press one — a notice at the top of the
-  // document was inside the dialog but scrolled out of sight. It sits by the
-  // buttons, after the lines, and is scrolled into view.
-  // Review p1f, concern 5: a refusal was at the top of the document, out of
-  // sight while the user is at the buttons — the same defect as the notice.
-  it("shows a refusal after the lines beside the footer action, and scrolls it into view", async () => {
-    const scrolled = jest.fn();
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = scrolled;
-    try {
-      put.mockRejectedValue({ message: "Requisition line 1 needs a quantity greater than zero." });
-      render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
-      fireEvent.click(screen.getByText("crqSave"));
-      const refusal = await screen.findByText("Requisition line 1 needs a quantity greater than zero.");
-      const table = screen.getAllByRole("table")[0];
-      expect(table.compareDocumentPosition(refusal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
-      expect(table.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      await waitFor(() => expect(scrolled).toHaveBeenCalled());
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
+  // Rishi 2026-10-10: action messages use the common toast, not an inline alert.
+  it("toasts a refusal with the API's message and shows no inline alert", async () => {
+    put.mockRejectedValue({ message: "Requisition line 1 needs a quantity greater than zero." });
+    render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
+    fireEvent.click(screen.getByText("crqSave"));
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith("Requisition line 1 needs a quantity greater than zero."));
+    expect(screen.queryByText("Requisition line 1 needs a quantity greater than zero.")).toBeNull();
   });
 
-  it("shows the success notice after the lines beside the footer action, and scrolls it into view", async () => {
-    const scrolled = jest.fn();
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = scrolled;
-    try {
-      put.mockResolvedValue({ data: open() });
-      render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
-      fireEvent.click(screen.getByText("crqSave"));
-      const notice = await screen.findByText("crqSaved");
-      const table = screen.getAllByRole("table")[0];
-      expect(table.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      const saveButton = screen.getByText("crqSave").closest("button") as HTMLElement;
-      expect(table.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      await waitFor(() => expect(scrolled).toHaveBeenCalled());
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
+  it("toasts the success message and shows no inline notice", async () => {
+    put.mockResolvedValue({ data: open() });
+    render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
+    fireEvent.click(screen.getByText("crqSave"));
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqSaved"));
+    expect(screen.queryByText("crqSaved")).toBeNull();
   });
 
   it("saves an existing draft with a full-replace PUT: the whole header and every line, not a partial body", async () => {
@@ -179,14 +155,14 @@ describe("CommonRequisitionDetail", () => {
     expect(put.mock.calls[0][1]).not.toHaveProperty("company_id");
     await waitFor(() => expect(onView).toHaveBeenCalledWith(submitted, "crqSubmitted"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText("crqSubmitted")).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqSubmitted"));
   });
 
   it("does not submit when the save fails, and shows the refusal", async () => {
     put.mockRejectedValue({ message: "Quantity must be positive." });
     render(<CommonRequisitionDetail initial={open()} onView={jest.fn()} onBack={jest.fn()} />);
     fireEvent.click(screen.getByText("crqSubmit"));
-    expect(await screen.findByText("Quantity must be positive.")).toBeTruthy();
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith("Quantity must be positive."));
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -216,7 +192,7 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/release", {}));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), 'crqReleasedStore:{"no":"TR-9"}'));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText('crqReleasedStore:{"no":"TR-9"}')).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('crqReleasedStore:{"no":"TR-9"}'));
   });
 
   it("says the purchase is pending when a Purchase requisition is released", async () => {
@@ -241,7 +217,7 @@ describe("CommonRequisitionDetail", () => {
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqShipped"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText("crqShipped")).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqShipped"));
   });
 
   it("leaves a blank shipping line out of the body", async () => {
@@ -295,7 +271,7 @@ describe("CommonRequisitionDetail", () => {
     }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqReceived"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText("crqReceived")).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqReceived"));
   });
 
   // Rishi, 5 Oct: "The one requesting is the one who would be receiving." The
@@ -349,7 +325,7 @@ describe("CommonRequisitionDetail", () => {
     post.mockRejectedValue({ message });
     render(<CommonRequisitionDetail initial={base({ approval_status: "APPROVED", document_status: "APPROVED", may_release: true })} onView={jest.fn()} onBack={jest.fn()} />);
     fireEvent.click(screen.getByText("crqRelease"));
-    expect(await screen.findByText(message)).toBeTruthy();
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith(message));
   });
 
   // WP4a fix round 1: a released STORE document now loads them too, for the
@@ -391,6 +367,6 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/requisition/req-1/item-tracking", { lines: [{ line_id: "l1", lot_no: "LOT00001" }] }));
     await waitFor(() => expect(onView).toHaveBeenCalledWith(after, "crqTrackingSaved"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    expect(await screen.findByText("crqTrackingSaved")).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqTrackingSaved"));
   });
 });

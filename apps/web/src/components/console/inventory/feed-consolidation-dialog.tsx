@@ -5,7 +5,7 @@ import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
 
 type EligibleLine = {
@@ -27,13 +27,12 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const [approved, setApproved] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   const load = async () => {
-    setBusy(true); setError("");
+    setBusy(true);
     try {
       if (mode === "date" && (!fromDate || !toDate || fromDate > toDate)) {
-        setError("Choose a valid From date and To date.");
+        showToast.error("Choose a valid From date and To date.");
         return;
       }
       const params = new URLSearchParams();
@@ -41,7 +40,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       const data = unwrap<EligibleLine[]>(await api.get(`/feed-requisition/consolidations/eligible?${params.toString()}`));
       setRows(Array.isArray(data) ? data : []);
       setSelected([]); setApproved({}); setReasons({});
-    } catch (err: any) { setError(err?.message || "Unable to load eligible feed requisitions."); }
+    } catch (err: any) { showToast.error(err?.message || "Unable to load eligible feed requisitions."); }
     finally { setBusy(false); }
   };
 
@@ -55,8 +54,8 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
 
   const create = async () => {
-    if (!selectedRows.length) { setError("Select at least one approved requisition."); return; }
-    setBusy(true); setError("");
+    if (!selectedRows.length) { showToast.error("Select at least one approved requisition."); return; }
+    setBusy(true);
     try {
       const data = unwrap<{ consolidationNo: string }>(await api.post("/feed-requisition/consolidations", {
         requisitionIds: selected,
@@ -68,13 +67,12 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       }));
       onCreated(`Consolidation ${data.consolidationNo} created.`);
       onClose();
-    } catch (err: any) { setError(err?.message || "Unable to create the consolidation sheet."); }
+    } catch (err: any) { showToast.error(err?.message || "Unable to create the consolidation sheet."); }
     finally { setBusy(false); }
   };
 
   return <Dialog open={open} onClose={onClose} title="Mill Consolidation Sheet" description="Feed requisitions only. Approved requisitions without a consolidation sheet are eligible." maxWidth="xl" presentation="compact" footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={create} disabled={busy || !selectedRows.length}>Create consolidation</Button></>}>
       <div className="space-y-4">
-      {error && <InlineAlert>{error}</InlineAlert>}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Select by" htmlFor="consolidation-filter"><select id="consolidation-filter" className="nf-input-sm nf-select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="requisition">Requisition no.</option><option value="date">Date range</option></select></Field>
         {mode === "requisition" && <Field label="Requisition no." htmlFor="consolidation-search"><input id="consolidation-search" className="nf-input-sm" placeholder="Search requisition no." value={reqSearch} onChange={(event) => setReqSearch(event.target.value)} /></Field>}

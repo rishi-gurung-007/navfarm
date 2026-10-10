@@ -2071,6 +2071,7 @@ export const translations = {
     feedPlanGenerate: "Generate plan",
     feedPlanGenerating: "Generating…",
     feedPlanGenerateFailed: "The feed plan could not be generated.",
+    feedPlanGenerated: "Feed plan version generated.",
     feedPlanVersions: "Retained feed plan versions",
     feedPlanTentative: "Tentative",
     feedPlanActual: "Actual",

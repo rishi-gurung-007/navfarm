@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -59,20 +59,6 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const [draft, setDraft] = useState<CommonRequisitionView>(initial);
   const [options, setOptions] = useState<CommonRequisitionOptions | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  // P1 follow-up item 7: the success notice of the last action, shown here —
-  // inside the dialog that wraps this detail — rather than on the page behind
-  // it. A new action clears it; a new server view does not (the view an
-  // action returns is what triggers that reset below).
-  const [notice, setNotice] = useState("");
-  const noticeRef = useRef<HTMLDivElement>(null);
-  const errorRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (notice) noticeRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [notice]);
-  useEffect(() => {
-    if (error) errorRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [error]);
   const [poNo, setPoNo] = useState("");
   const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
@@ -133,18 +119,16 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       await work();
     } catch (err: any) {
-      setError(err?.message || tRef.current("crqActionFailed"));
+      showToast.error(err?.message || tRef.current("crqActionFailed"));
     } finally {
       setBusy(false);
     }
   };
   const emit = (res: unknown, message: string) => {
-    setNotice(message);
+    showToast.success(message);
     onView(unwrap<CommonRequisitionView>(res), message);
   };
 
@@ -161,7 +145,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     const message = res.purpose === "STORE"
       ? tRef.current("crqReleasedStore", { no: res.linked_transfer_no ?? "" })
       : tRef.current("crqReleasedPurchase");
-    setNotice(message);
+    showToast.success(message);
     onView(res, message);
   });
   // WP4a: Item Tracking after release, for the unshipped balance. Refusals
@@ -248,8 +232,6 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
             view; drafting controls live in the dialog footer and later
             workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
-        {error && <div ref={errorRef}><InlineAlert>{error}</InlineAlert></div>}
-        {notice && <div ref={noticeRef}><InlineAlert variant="success">{notice}</InlineAlert></div>}
         {panel === "ship" && actions.includes("ship") && (
           <div className="flex flex-wrap items-end gap-3">
             {dateField}

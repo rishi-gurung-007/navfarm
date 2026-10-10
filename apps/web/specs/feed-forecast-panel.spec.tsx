@@ -4,6 +4,9 @@ import FeedForecastPanel from '../src/components/console/inventory/feed-forecast
 import { api } from '../src/services/api-client';
 import { getActiveWorkspaceScope } from '../src/hooks/useAuth';
 import { getForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), delete: jest.fn() } }));
 // A stable `t`: the effects must not depend on its identity (the tRef pattern).
@@ -271,7 +274,7 @@ describe('FeedForecastPanel — admin', () => {
       farmId: 'farm-vil100', planningDate: '2026-09-25', view: 'CUSTOM',
       from: '2026-09-26', to: '2026-10-02',
     }));
-    expect(await screen.findByText('ffRunSaved:{"code":"FFR-farm-vil100-000001","version":1}')).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('ffRunSaved:{"code":"FFR-farm-vil100-000001","version":1}'));
   });
 
   it('keeps run history visible but hides Save Run without create authority', async () => {
@@ -290,7 +293,7 @@ describe('FeedForecastPanel — admin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ffDeleteCalculation' }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith('/feed-forecast/runs/run-current'));
     expect(await screen.findByText('ffCalculatePrompt')).toBeTruthy();
-    expect(screen.getByText('ffCalculationDeleted')).toBeTruthy();
+    expect(showToast.success).toHaveBeenCalledWith('ffCalculationDeleted');
   });
 
   it('does not crash when the response has rows but no flags array', async () => {
@@ -302,7 +305,7 @@ describe('FeedForecastPanel — admin', () => {
   it('shows the API error and hides the table', async () => {
     get.mockImplementation(routedGet({ current: () => Promise.reject({ message: 'Farm not found.' }) }));
     render(<FeedForecastPanel />);
-    await screen.findByText('Farm not found.');
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Farm not found.'));
     expect(screen.queryByRole('table')).toBeNull();
   });
 
@@ -382,7 +385,7 @@ describe('FeedForecastPanel — admin', () => {
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     fireEvent.click(await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ }));
-    await screen.findByText('Forbidden.');
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Forbidden.'));
     expect(screen.getByRole('table')).toBeTruthy();
   });
 

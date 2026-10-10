@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -47,13 +48,11 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
   const [remarks, setRemarks] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open || !runId) return;
     let alive = true;
     setLoading(true);
-    setError("");
     setPreview(null);
     setLines([]);
     setRemarks("");
@@ -65,7 +64,7 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
         setLines(Array.isArray(next.lines) ? next.lines.map((line) => ({ ...line })) : []);
       })
       .catch((err: any) => {
-        if (alive) setError(err?.message || tRef.current("rqFromRunLoadFailed"));
+        if (alive) showToast.error(err?.message || tRef.current("rqFromRunLoadFailed"));
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -80,11 +79,10 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
   const viewExisting = async () => {
     if (!preview?.existingRequisitionId) return;
     setBusy(true);
-    setError("");
     try {
       onView(unwrap<RequisitionView>(await api.get(`/feed-requisition/${preview.existingRequisitionId}`)));
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqLoadFailed"));
+      showToast.error(err?.message || tRef.current("rqLoadFailed"));
     } finally {
       setBusy(false);
     }
@@ -93,7 +91,6 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
   const create = async () => {
     if (!runId) return;
     setBusy(true);
-    setError("");
     try {
       const view = unwrap<RequisitionView>(await api.post(`/feed-requisition/from-run/${runId}`, {
         ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
@@ -104,9 +101,10 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
           proposed_delivery_date: line.proposed_delivery_date,
         })),
       }));
+      showToast.success(tRef.current("rqCreated"));
       onView(view);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
+      showToast.error(err?.message || tRef.current("rqActionFailed"));
     } finally {
       setBusy(false);
     }
@@ -129,7 +127,6 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
         </>
       )}
     >
-      {error && <InlineAlert>{error}</InlineAlert>}
       {loading ? <p className="text-sm text-[var(--text-secondary)]">{t("rqFromRunLoading")}</p> : null}
       {!loading && preview && lines.length === 0 ? <InlineAlert variant="info">{t("rqFromRunNoShortage")}</InlineAlert> : null}
       {!loading && preview && lines.length > 0 ? (

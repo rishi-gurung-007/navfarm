@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
@@ -71,7 +71,6 @@ export default function FeedPlanPanel() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [reload, setReload] = useState(0);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!farmId) {
@@ -82,7 +81,6 @@ export default function FeedPlanPanel() {
     }
     let alive = true;
     setLoading(true);
-    setError("");
     const params = new URLSearchParams({ farmId });
     if (from) params.set("from", from);
     if (to) params.set("to", to);
@@ -98,7 +96,7 @@ export default function FeedPlanPanel() {
         setVersions(Array.isArray(retained) ? retained : []);
       })
       .catch((err: any) => {
-        if (alive) setError(err?.message || tRef.current("feedPlanLoadFailed"));
+        if (alive) showToast.error(err?.message || tRef.current("feedPlanLoadFailed"));
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -107,23 +105,22 @@ export default function FeedPlanPanel() {
   async function generateVersion() {
     if (!farmId || !planningDate) return;
     setGenerating(true);
-    setError("");
     try {
       await api.post("/feed-forecast/feed-plan/versions", { farmId, productionDate: planningDate });
+      showToast.success(tRef.current("feedPlanGenerated"));
       setReload((value) => value + 1);
     } catch (err: any) {
-      setError(err?.message || tRef.current("feedPlanGenerateFailed"));
+      showToast.error(err?.message || tRef.current("feedPlanGenerateFailed"));
     } finally {
       setGenerating(false);
     }
   }
 
   async function viewVersion(version: FeedPlanVersion) {
-    setError("");
     try {
       setViewing(unwrap<FeedPlanVersion>(await api.get(`/feed-forecast/feed-plan/versions/${version.plan_id}`)));
     } catch (err: any) {
-      setError(err?.message || tRef.current("feedPlanLoadFailed"));
+      showToast.error(err?.message || tRef.current("feedPlanLoadFailed"));
     }
   }
 
@@ -142,7 +139,6 @@ export default function FeedPlanPanel() {
           {generating ? t("feedPlanGenerating") : t("feedPlanGenerate")}
         </Button>
       </div>
-      {error && <InlineAlert>{error}</InlineAlert>}
       {versions.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-2" aria-label={t("feedPlanVersions")}>
           {versions.map((version) => (

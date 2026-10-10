@@ -24,6 +24,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -145,8 +146,6 @@ export default function FeedStockCountPanel() {
   const [reasonIds, setReasonIds] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
   const loadList = useCallback(async () => {
     if (!farmId || !companyId) {
@@ -154,14 +153,13 @@ export default function FeedStockCountPanel() {
       return;
     }
     setLoading(true);
-    setError("");
     try {
       const params = new URLSearchParams({ companyId, farmId });
       if (status) params.set("status", status);
       const list = unwrap<CountRow[]>(await api.get(`/feed-stock-count?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
     } catch (err: any) {
-      setError(err?.message || t("fscLoadFailed"));
+      showToast.error(err?.message || t("fscLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -175,12 +173,10 @@ export default function FeedStockCountPanel() {
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       await work();
     } catch (err: any) {
-      setError(err?.message || t("fscActionFailed"));
+      showToast.error(err?.message || t("fscActionFailed"));
     } finally {
       setBusy(false);
     }
@@ -222,7 +218,7 @@ export default function FeedStockCountPanel() {
           lines,
         }),
       );
-      setNotice(t("fscCreated", { no: created.count_no }));
+      showToast.success(t("fscCreated", { no: created.count_no }));
       setEntry(null);
       await loadList();
       setSelected(unwrap<CountView>(await api.get(`/feed-stock-count/${created.count_id}`)));
@@ -236,14 +232,14 @@ export default function FeedStockCountPanel() {
   const submit = (id: string) =>
     run(async () => {
       await api.post(`/feed-stock-count/${id}/submit`, {});
-      setNotice(t("fscSubmitted"));
+      showToast.success(t("fscSubmitted"));
       await reloadCount(id);
     });
 
   const post = (id: string) =>
     run(async () => {
       await api.post(`/feed-stock-count/${id}/post`, {});
-      setNotice(t("fscPosted"));
+      showToast.success(t("fscPosted"));
       await reloadCount(id);
     });
 
@@ -270,7 +266,6 @@ export default function FeedStockCountPanel() {
   const closeDialog = () => {
     setEntry(null);
     setSelected(null);
-    setError("");
   };
 
   const farmPicker = (
@@ -317,8 +312,6 @@ export default function FeedStockCountPanel() {
         </div>
       </div>
 
-      {!dialogOpen && error && <InlineAlert>{error}</InlineAlert>}
-      {!dialogOpen && notice && <InlineAlert variant="success">{notice}</InlineAlert>}
 
       {farm.failed ? (
         <InlineAlert>
@@ -388,8 +381,6 @@ export default function FeedStockCountPanel() {
         ) : null}
       >
         <div className="flex flex-col gap-4">
-          {error && <InlineAlert>{error}</InlineAlert>}
-          {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
           {entry ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

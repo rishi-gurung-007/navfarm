@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState, LoadingState } from "@/components/ui/states";
@@ -113,16 +114,12 @@ function FeedForecastPanelContent() {
   const [periodsFailed, setPeriodsFailed] = useState(false);
   const [reload, setReload] = useState(0);
   const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState("");
   const [data, setData] = useState<ForecastData | null>(null);
   const [calculationState, setCalculationState] = useState<CalculationState>("EMPTY");
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [savingRun, setSavingRun] = useState(false);
-  const [runMessage, setRunMessage] = useState("");
-  const [runError, setRunError] = useState("");
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
   const [createAfterSave, setCreateAfterSave] = useState(false);
@@ -159,12 +156,10 @@ function FeedForecastPanelContent() {
       setData(null);
       setCurrentRun(null);
       setCalculationState("EMPTY");
-      setError("");
       return;
     }
     let cancelled = false;
     setLoading(true);
-    setError("");
     api
       .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
       .then(async (response) => {
@@ -216,7 +211,7 @@ function FeedForecastPanelContent() {
       })
       .catch((err: any) => {
         if (cancelled) return;
-        setError(err?.message || tRef.current("ffFailedToLoad"));
+        showToast.error(err?.message || tRef.current("ffFailedToLoad"));
         setData(null);
         setCurrentRun(null);
         setCalculationState("EMPTY");
@@ -245,12 +240,11 @@ function FeedForecastPanelContent() {
   async function generatePeriods() {
     const year = businessYearStartOf(planningDate || data?.planningDate || todayIso());
     setGenerating(true);
-    setGenerateError("");
     try {
       await api.post("/reporting-period/generate", { business_year_start: year });
       setReload((n) => n + 1);
     } catch (err: any) {
-      setGenerateError(err?.message || tRef.current("ffGenerateFailed"));
+      showToast.error(err?.message || tRef.current("ffGenerateFailed"));
     } finally {
       setGenerating(false);
     }
@@ -259,8 +253,6 @@ function FeedForecastPanelContent() {
   async function saveRun() {
     if (!farmId || !data) return;
     setSavingRun(true);
-    setRunMessage("");
-    setRunError("");
     try {
       const response = await api.post("/feed-forecast/runs", {
         farmId,
@@ -289,10 +281,10 @@ function FeedForecastPanelContent() {
         setFromRunOpen(true);
       }
       setCreateAfterSave(false);
-      setRunMessage(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
+      showToast.success(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
-      setRunError(err?.message || tRef.current("ffSaveRunFailed"));
+      showToast.error(err?.message || tRef.current("ffSaveRunFailed"));
     } finally {
       setSavingRun(false);
     }
@@ -301,9 +293,6 @@ function FeedForecastPanelContent() {
   async function calculate() {
     if (!farmId || currentRun) return;
     setLoading(true);
-    setError("");
-    setRunMessage("");
-    setRunError("");
     try {
       const response = await api.get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`);
       const resolved = unwrap<ForecastData>(response);
@@ -317,7 +306,7 @@ function FeedForecastPanelContent() {
         periodId: resolved.period?.periodId ?? "",
       });
     } catch (err: any) {
-      setError(err?.message || tRef.current("ffFailedToLoad"));
+      showToast.error(err?.message || tRef.current("ffFailedToLoad"));
     } finally {
       setLoading(false);
     }
@@ -326,21 +315,19 @@ function FeedForecastPanelContent() {
   async function deleteCalculation() {
     const runId = currentRun?.run_id ?? currentRun?.runId;
     if (!runId) return;
-    setRunError("");
     try {
       await api.delete(`/feed-forecast/runs/${runId}`);
       setCurrentRun(null);
       setData(null);
       setCalculationState("EMPTY");
-      setRunMessage(tRef.current("ffCalculationDeleted"));
+      showToast.success(tRef.current("ffCalculationDeleted"));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
-      setRunError(err?.message || tRef.current("ffDeleteCalculationFailed"));
+      showToast.error(err?.message || tRef.current("ffDeleteCalculationFailed"));
     }
   }
 
   async function viewHistoricalRun(runId: string) {
-    setRunError("");
     try {
       const run = unwrap<any>(await api.get(`/feed-forecast/runs/${runId}`));
       const display = run?.output_snapshot?.display;
@@ -351,7 +338,7 @@ function FeedForecastPanelContent() {
       setHistoricalRun(true);
       setCalculationState("SAVED");
     } catch (err: any) {
-      setRunError(err?.message || "Unable to restore saved calculation.");
+      showToast.error(err?.message || "Unable to restore saved calculation.");
     }
   }
 
@@ -422,8 +409,6 @@ function FeedForecastPanelContent() {
         </div>
         {farm.loaded && !farm.failed && !noFarms && (farmId || farm.isFixed) && (
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            {runMessage && <span className="text-xs text-[var(--success)]">{runMessage}</span>}
-            {runError && <span className="text-xs text-[var(--danger)]">{runError}</span>}
             {calculationState === "EMPTY" && (
               <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
                 {loading ? t("ffCalculating") : t("ffCalculate")}
@@ -467,12 +452,10 @@ function FeedForecastPanelContent() {
             {t("ffGenerateDraftPeriods", { year: businessYear })}
           </Button>
           {isTenantWorkspace && <span className="ml-3 text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffGenerateNeedsCompany")}</span>}
-          {generateError && <span className="ml-3 text-xs" style={{ color: "var(--danger)" }}>{generateError}</span>}
         </InlineAlert>
       )}
-      {error && <InlineAlert>{error}</InlineAlert>}
-      {rangeBeforePlanning && !error && <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>}
-      {rangeStartsAtPlanning && !error && <InlineAlert variant="info">{t("ffNoteRangeStartsAtPlanning", { date: formatDateShort(data!.forecastFrom!) })}</InlineAlert>}
+      {rangeBeforePlanning && <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>}
+      {rangeStartsAtPlanning && <InlineAlert variant="info">{t("ffNoteRangeStartsAtPlanning", { date: formatDateShort(data!.forecastFrom!) })}</InlineAlert>}
 
       {farm.failed ? (
         // The request failed: say so and offer to try again. "No farms to show."
@@ -485,7 +468,7 @@ function FeedForecastPanelContent() {
         <LoadingState label={t("ffLoading")} />
       ) : noFarms || (!farmId && !farm.isFixed) ? (
         <EmptyState title={t("ffNoFarms")} />
-      ) : error ? null : (
+      ) : (
         <>
           {data ? (
             <>

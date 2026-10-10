@@ -4,6 +4,9 @@ import { Dialog } from "../src/components/ui/dialog";
 import { FeedRequisitionDetail } from "../src/components/console/inventory/feed-requisition-detail";
 import type { RequisitionView } from "../src/components/console/inventory/feed-requisition-document";
 import { api } from "../src/services/api-client";
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => {
@@ -105,7 +108,8 @@ describe("FeedRequisitionDetail draft document", () => {
     await waitFor(() => expect(put).toHaveBeenCalledWith("/feed-requisition/req-1", {
       remarks: "", lines: [{ line_id: "L1", quantity_kg: 6100 }],
     }));
-    expect(onView).toHaveBeenCalledWith(draftView, "rqSaved");
+    expect(onView).toHaveBeenCalledWith(draftView);
+    expect(showToast.success).toHaveBeenCalledWith("rqSaved");
   });
 
   it("renders no Save or Submit buttons once approved", () => {
@@ -148,7 +152,8 @@ describe("FeedRequisitionDetail workflow actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "crqRelease" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith("/feed-requisition/req-1/release", {}));
-    expect(onView).toHaveBeenCalledWith(released, "rqReleased");
+    expect(onView).toHaveBeenCalledWith(released);
+    expect(showToast.success).toHaveBeenCalledWith("rqReleased");
   });
 
   it("selects one linked transfer and posts only bounded shipment quantities", async () => {
@@ -227,7 +232,7 @@ describe("FeedRequisitionDetail workflow actions", () => {
     fireEvent.change(qty, { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "crqPostShipment" }));
 
-    expect(await screen.findByText("Sender department does not match the mill bin.")).toBeTruthy();
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith("Sender department does not match the mill bin."));
     expect(qty.value).toBe("250");
   });
 });

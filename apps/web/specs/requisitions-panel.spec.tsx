@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import RequisitionsPanel, { needsRemarks, remarksRequiredMessage } from '../src/components/console/inventory/requisitions-panel';
 import { api } from '../src/services/api-client';
 import { invalidateReasonsCache } from '../src/hooks/useReasons';
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock('../src/hooks/useLanguage', () => {
@@ -203,7 +206,7 @@ describe('RequisitionsPanel (D26)', () => {
     fireEvent.change(screen.getByLabelText('rqdRemarks'), { target: { value: 'Extra pigs arriving' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqSubmit' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/submit', { remarks: 'Extra pigs arriving', lines: [{ line_id: 'L1', quantity_kg: 9000 }] }));
-    expect(await screen.findByText('rqSubmitted')).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('rqSubmitted'));
     expect(screen.getByText('rqWaiting')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'rqOpenApproval' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'rqSubmit' })).toBeNull();
@@ -366,7 +369,7 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/approval/ar-1/approve', {}));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(await screen.findByText('rhApprovedMsg:{"docNo":"REQ-VIL100-2026-00004"}')).toBeTruthy();
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('rhApprovedMsg:{"docNo":"REQ-VIL100-2026-00004"}'));
   });
 
   it('carries the approver remarks to the same endpoint', async () => {
@@ -389,7 +392,7 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
     await openPending();
     post.mockRejectedValueOnce(new Error('You cannot approve your own requisition.'));
     fireEvent.click(screen.getByRole('button', { name: 'rhApprove' }));
-    expect(await screen.findByText('You cannot approve your own requisition.')).toBeTruthy();
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('You cannot approve your own requisition.'));
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 

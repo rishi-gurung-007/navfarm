@@ -3375,3 +3375,18 @@ requisition) keep measuring against their own quantities.
 
 The rule lives in one place: `syncRequisitionFulfilment`
 (`apps/api/src/modules/procurement/requisition/requisition-fulfilment.ts`).
+
+## 2026-10-10 — Action messages use the common toast notification
+
+Success and error messages for actions (Save, Submit, Approve, Reject, Release,
+Shipment, Receipt, Item Tracking, Direct Transfer, Link PO, consolidation,
+loading, stock count, save run, create requisition from run) are not shown
+inline in the page or in a dialog. They use the app's common toast
+(`showToast` from `apps/web/src/components/ui/toast`): the top-right toast with
+a green check, the same one a master-data save shows ("Created successfully").
+Success uses the success variant; API errors use the error variant with the
+API's own message.
+
+Not covered by this rule, and kept inline: field validation hints beside
+inputs, explanatory gate text (for example "Release is unavailable: ... BIN
+assignment") and empty states.

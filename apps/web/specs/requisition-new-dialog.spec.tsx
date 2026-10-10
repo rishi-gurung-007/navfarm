@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { RequisitionNewDialog } from '../src/components/console/inventory/requisition-new-dialog';
 import { api } from '../src/services/api-client';
 import { translations } from '../src/utils/translations';
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 jest.mock('../src/hooks/useAuth', () => ({
@@ -109,7 +112,7 @@ describe('RequisitionNewDialog (D26)', () => {
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
     expect(create.disabled).toBe(false);
     fireEvent.click(create);
-    expect(await screen.findByText('Destination VIL100/SILO-001 has the same feed item on two lines.')).toBeTruthy();
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Destination VIL100/SILO-001 has the same feed item on two lines.'));
   });
 });
 

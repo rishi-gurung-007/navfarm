@@ -2,6 +2,9 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FeedRequisitionFromRunDialog } from "../src/components/console/inventory/feed-requisition-from-run-dialog";
 import { api } from "../src/services/api-client";
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => ({ useLanguage: () => ({ t: (key: string, vars?: object) => vars ? `${key}:${JSON.stringify(vars)}` : key }) }));
@@ -44,7 +47,7 @@ it("keeps edits visible when creation fails", async () => {
   const quantity = screen.getByLabelText('rqNewKg:{"line":1}') as HTMLInputElement;
   fireEvent.change(quantity, { target: { value: "7200" } });
   fireEvent.click(screen.getByRole("button", { name: "rqCreateFromSaved" }));
-  expect(await screen.findByText("Duplicate saved calculation")).toBeTruthy();
+  await waitFor(() => expect(showToast.error).toHaveBeenCalledWith("Duplicate saved calculation"));
   expect(quantity.value).toBe("7200");
 });
 

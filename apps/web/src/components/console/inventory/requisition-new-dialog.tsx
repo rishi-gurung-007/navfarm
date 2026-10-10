@@ -21,6 +21,7 @@
  * tenant templates in a tenant-wide workspace and refuse a farm login
  * outright, on a screen that lists the farm quite happily.
  */
+import { showToast } from "@/components/ui/toast";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Building2, Package, Plus, Trash2, Wheat, Wrench } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -127,7 +128,6 @@ export function RequisitionNewDialog({
   const [lines, setLines] = useState<Draft[]>([{ ...EMPTY }]);
   const [remarks, setRemarks] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [settings, setSettings] = useState<HeaderSettings | null>(null);
   const [step, setStep] = useState<"choose" | "item" | "FEED">("choose");
   const requester = getStoredUser();
@@ -137,7 +137,6 @@ export function RequisitionNewDialog({
     let alive = true;
     setLines([{ ...EMPTY }]);
     setRemarks("");
-    setError("");
     api
       .get(`/feed-requisition/options?${new URLSearchParams({ farmId: effectiveFarmId }).toString()}`)
       .then((res: any) => {
@@ -147,7 +146,7 @@ export function RequisitionNewDialog({
         setItems(Array.isArray(options?.items) ? options.items : []);
       })
       .catch((err: any) => {
-        if (alive) setError(err?.message || tRef.current("rqLoadFailed"));
+        if (alive) showToast.error(err?.message || tRef.current("rqLoadFailed"));
       });
     return () => {
       alive = false;
@@ -219,7 +218,6 @@ export function RequisitionNewDialog({
 
   const create = async () => {
     setBusy(true);
-    setError("");
     try {
       const body = {
         farmId: effectiveFarmId,
@@ -232,9 +230,11 @@ export function RequisitionNewDialog({
           ...(l.reasonId ? { reason_id: l.reasonId } : {}),
         })),
       };
-      onCreated(unwrap<RequisitionView>(await api.post("/feed-requisition", body)));
+      const created = unwrap<RequisitionView>(await api.post("/feed-requisition", body));
+      showToast.success(tRef.current("rqCreated"));
+      onCreated(created);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqActionFailed"));
+      showToast.error(err?.message || tRef.current("rqActionFailed"));
     } finally {
       setBusy(false);
     }
@@ -390,7 +390,6 @@ export function RequisitionNewDialog({
             </ScrollTable>
           </div>
         </FieldGroup>
-        {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
       </div>
       )}
     </Dialog>

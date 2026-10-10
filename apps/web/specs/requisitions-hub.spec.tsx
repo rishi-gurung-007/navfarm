@@ -2,6 +2,9 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RequisitionsHub } from "../src/components/console/requisitions/requisitions-hub";
 import { api } from "../src/services/api-client";
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => {
@@ -274,14 +277,14 @@ describe("RequisitionsHub — one list and creation surface for every requisitio
 
   // P1 follow-up item 7: a success notice from an action in the dialog is
   // shown inside the dialog — before, it went to the page behind it.
-  it("shows the Save notice inside the dialog, not on the page behind it", async () => {
+  it("toasts the Save result and shows no inline notice", async () => {
     (api.put as jest.Mock).mockResolvedValue({ data: { ...itemView, remarks: "saved" } });
     render(<RequisitionsHub />);
     fireEvent.click(await screen.findByText("NO-req-item"));
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByText("crqSave"));
-    expect(await within(screen.getByRole("dialog")).findByText("crqSaved")).toBeTruthy();
-    expect(screen.getAllByText("crqSaved")).toHaveLength(1);
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqSaved"));
+    expect(screen.queryByText("crqSaved")).toBeNull();
   });
 
   it("re-rendering the hub with the same view keeps unsaved edits in the common detail (C3)", async () => {

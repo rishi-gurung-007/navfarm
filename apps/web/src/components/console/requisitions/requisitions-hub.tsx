@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { showToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -103,8 +104,6 @@ export function RequisitionsHub() {
   const [waiting, setWaiting] = useState(false);
   const [rows, setRows] = useState<HubRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [needsCompany, setNeedsCompany] = useState(false);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<Open>(null);
@@ -121,7 +120,6 @@ export function RequisitionsHub() {
 
   const loadList = useCallback(async () => {
     setLoading(true);
-    setError("");
     try {
       const params = new URLSearchParams();
       if (type) params.set("doc_type", type);
@@ -132,7 +130,7 @@ export function RequisitionsHub() {
       const list = unwrap<HubRow[]>(await api.get(`/requisition?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqLoadFailed"));
+      showToast.error(err?.message || tRef.current("rqLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -161,8 +159,6 @@ export function RequisitionsHub() {
   }, [farmId, rows]);
 
   const openRow = async (id: string) => {
-    setError("");
-    setNotice("");
     setNeedsCompany(false);
     try {
       // The common read identifies the richer feed document without exposing
@@ -178,7 +174,7 @@ export function RequisitionsHub() {
       setOpenFeed(null);
       setOpen(view as CommonRequisitionView);
     } catch (err: any) {
-      setError(err?.message || tRef.current("rqLoadFailed"));
+      showToast.error(err?.message || tRef.current("rqLoadFailed"));
     }
   };
 
@@ -241,8 +237,6 @@ export function RequisitionsHub() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
       {needsCompany && <InlineAlert variant="warning">{t("rhNeedsCompany")}</InlineAlert>}
 
       {openFeed ? (
@@ -260,7 +254,7 @@ export function RequisitionsHub() {
                 setOpenFeed(null);
                 setDecision(null);
                 await loadList();
-                setNotice(message);
+                showToast.success(message);
               }}
             />
           )}
@@ -296,7 +290,7 @@ export function RequisitionsHub() {
                 setOpen(null);
                 setDecision(null);
                 await loadList();
-                setNotice(message);
+                showToast.success(message);
               }}
             />
           )}
@@ -348,7 +342,6 @@ export function RequisitionsHub() {
             setNeedsCompany(true);
             return;
           }
-          setNotice("");
           setDecision(null);
           const user = getStoredUser();
           const draft = emptyCommonRequisition(companyId, docType, purpose, todayIso(), user?.email ?? null);
