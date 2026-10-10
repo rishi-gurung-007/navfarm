@@ -2063,6 +2063,22 @@ export class FeedRequisitionService implements OnModuleInit {
       .where(and(inArray(schema.transferReceipt.shipment_id, shipmentIds), isNull(schema.transferReceipt.deleted_at)))
       .groupBy(schema.transferReceipt.shipment_id, schema.transferReceiptLine.line_id) : [];
     const receivedForShipment = new Map(receiptByShipmentLine.map((entry) => [`${entry.shipment_id}:${entry.line_id}`, Number(entry.quantity)]));
+    // W2T (Requisition row 148): the compartment each line came in, from its loading sheet.
+    const reqLineIds = [...new Set(transferLines.map((line) => line.requisition_line_id).filter((v): v is string => !!v))];
+    const loadingSheets = reqLineIds.length ? await this.db
+      .select({
+        requisition_line_id: schema.feedLoadingSheet.requisition_line_id,
+        loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+        loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+        compartment_no: schema.feedLoadingSheet.compartment_no,
+        shipment_id: schema.feedLoadingSheet.shipment_id,
+      })
+      .from(schema.feedLoadingSheet)
+      .where(inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds)) : [];
+    const sheetFor = (requisitionLineId: string | null, shipmentId: string) => {
+      const forLine = loadingSheets.filter((sheet) => sheet.requisition_line_id === requisitionLineId);
+      return forLine.find((sheet) => sheet.shipment_id === shipmentId) ?? forLine[0] ?? null;
+    };
 
     return transfers.map((transfer) => {
       const lines = transferLines.filter((line) => line.transfer_id === transfer.transfer_id).map((line) => {
@@ -2084,9 +2100,13 @@ export class FeedRequisitionService implements OnModuleInit {
           const shippedQty = Number(line.quantity);
           const receivedQty = receivedForShipment.get(`${shipment.shipment_id}:${line.line_id}`) ?? 0;
           const transferLine = transferLines.find((entry) => entry.transfer_line_id === line.line_id);
+          const sheet = sheetFor(transferLine?.requisition_line_id ?? null, shipment.shipment_id);
           return {
             line_id: line.line_id,
             requisition_line_id: transferLine?.requisition_line_id ?? null,
+            loading_sheet_id: sheet?.loading_sheet_id ?? null,
+            loading_sheet_no: sheet?.loading_sheet_no ?? null,
+            compartment_no: sheet?.compartment_no ?? null,
             quantity: shippedQty,
             qty_received: receivedQty,
             remaining_to_receive: Math.max(0, shippedQty - receivedQty),
