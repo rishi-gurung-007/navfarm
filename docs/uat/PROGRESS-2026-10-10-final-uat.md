@@ -111,46 +111,61 @@ between a classifying LOB master and a configured operating unit. "Operational
 Area: Piggery → Farms A/B/C" is therefore several area rows sharing the piggery
 `lob_id`, not a parent row owning farms. No extra level was introduced.
 
-## P0 — nx builds in a worktree compile the WRONG checkout
+## P0 — every nx task runs in the main checkout (root cause found)
 
-Discovered while proving the runtime, and it invalidates more than this session.
+The session environment carries an override that is in no shell profile:
 
-`npx nx build api` run from `/Users/nero/Desktop/navfarm-final-uat` wrote its
-output into **`/Users/nero/Desktop/navfarm/apps/api/dist/`** (the dirty root
-worktree). Invoking `webpack-cli` directly with the nx task env wrote to the
-UAT `dist/` but **compiled the root worktree's sources**: the bundle contained
-none of this branch's code (`grep -c NAVFARM_DB_ALLOWLIST dist/main.js` → 0)
-and webpack resolved modules from `../../../navfarm/node_modules`. The build
-hash was byte-identical across runs, so it was deterministically building the
-wrong tree. `NxAppWebpackPlugin` normalizes `main: './src/main.ts'` against a
-project-graph workspace root that resolves to the root worktree; killing the
-root worktree's nx daemon did not change it, and the UAT worktree's dependency
-tree is self-contained, so the daemon was not the cause.
+```
+NX_WORKSPACE_ROOT_PATH=/Users/nero/Desktop/navfarm
+```
 
-Consequences:
+`nx/dist/src/utils/workspace-root.js` returns it as the first action of
+`workspaceRootInner()`, before any upward search for `nx.json`. So **every** nx
+invocation — from this worktree, from a fresh clone anywhere on disk, daemon on
+or off, `--skip-nx-cache` or not — executes its tasks with cwd inside
+`/Users/nero/Desktop/navfarm`. Proven by overriding the target's own command:
 
+```
+nx run api:build --command='sh -c "echo CWD=$(pwd)"'
+→ CWD=/Users/nero/Desktop/navfarm/apps/api      # invoked from a clone under /private/tmp
+```
+
+Consequences, all observed here:
+
+- `nx build api` printed `webpack compiled` and `Successfully ran target build`
+  while writing the bundle into the **main** checkout's `apps/api/dist`. This
+  worktree got no artifact, and the artifact that did exist was compiled from
+  main's sources. A constant build hash across different commits is the tell.
 - **The isolation guard appeared to fail when it had simply never been
   deployed.** The first strong negative test opened a real `root → nf_devco`
-  connection because the running binary was the root worktree's build. The
+  connection because the running binary was the main checkout's build. The
   process was stopped per §12.3 and `nf_devco` verified unmodified: journal
   still 156 rows / max_id 156 (identical to the session-start reading) and no
   row created today across 92 tables. The request was a `GET` that failed at
   the JWT guard — one failed read, no writes.
-- **Any "passing" result obtained through an nx target inside a worktree is
-  suspect**, including the handoff's 209-suite / 2,680-test API baseline if it
-  was produced that way. It may have exercised a different checkout.
+- It also explains the two earlier incidents recorded against this workspace
+  (worktree test runs reporting the main checkout's failures, and
+  `db-migrate-all-tenants` "succeeding" without applying 0144): both ran
+  against main's files, not the worktree's.
 
-Workarounds used here, both verified to read UAT sources:
+**I initially mis-diagnosed this** as an `nx`/`@nx/webpack` defect and reported
+the API build as broken on `origin/main` — wrong: all three "reproductions"
+were quietly building the main checkout. Nothing is wrong with the build target.
 
-- Build: `npx tsc -p tsconfig.app.json --emitDeclarationOnly false
-  --declaration false --declarationMap false --composite false --outDir dist`
-  (the base tsconfig sets `emitDeclarationOnly`, hence the overrides). Verified
-  the guard is present in `dist/core/database/*.js` before trusting the binary.
-- Tests: `npx jest --config apps/api/jest.config.cts` directly — confirmed
-  reading UAT sources, since it discovers spec files that exist only here.
+Strip the override and nx works correctly:
+
+```
+env -u NX_WORKSPACE_ROOT_PATH NX_DAEMON=false npx nx build api --skip-nx-cache
+env -u NX_WORKSPACE_ROOT_PATH NX_DAEMON=false npx nx build web --skip-nx-cache
+```
+
+Verified in this worktree: API `dist/main.js` 10,159,198 bytes containing this
+branch's guard, and a fresh web `BUILD_ID`. The shipping API bundle was then
+booted and smoke-tested — login succeeded and every live connection was
+`nf_uat` on a disposable database.
 
 **Verify the artifact, not the exit code.** "Successfully ran target build" was
-printed twice while producing either nothing or the wrong tree.
+printed repeatedly while producing nothing in this tree.
 
 ## Runtime isolation — proven
 
@@ -261,13 +276,17 @@ row, no receipt row — which is the atomicity §9/13 asks for.
 | Web regression | **108 suites, 827 tests passed** |
 | API typecheck (`tsc --build`) | exit 0, no output |
 | Web typecheck (`next typegen` + `tsc --noEmit`) | exit 0, no output |
+| API build (`nx build api`, override stripped) | real bundle, 10,159,198 bytes, contains this branch's guard |
+| Web build (`nx build web`, override stripped) | succeeded, fresh `BUILD_ID` |
+| Shipping API bundle boots and serves | login OK, `GET /location` 200, connections `nf_uat` on disposable DBs only |
 
 Baseline accounting against the handoff's 209 / 2,680: +3 suites / +10 tests
 for the isolation specs, +1 suite / +3 tests for the drift guard. Web matches
 the handoff exactly. No assertion was weakened and no suite skipped.
 
 Run tests with jest directly — `apps/web` must run from `apps/web` because
-`next/jest` resolves `dir: './'` against the CWD.
+`next/jest` resolves `dir: './'` against the CWD. Anything run through nx needs
+`env -u NX_WORKSPACE_ROOT_PATH`, per the P0 above.
 
 ## Status
 
@@ -283,10 +302,8 @@ guard; the Common Requisition E2E; full regression and both typechecks.
 
 Remaining: Feed Requisition E2E (§15 — forecast → plan → requisition →
 consolidation → loading → transfer → receipts → forecast reconciliation); the
-populated migration rehearsal with representative pre-upgrade data (§16);
-browser smoke tests (§17); and a decision on the nx build path before anything
-is promoted (§20 asks for API and Web builds, and `nx build` cannot currently
-be trusted inside a worktree).
+populated migration rehearsal with representative pre-upgrade data (§16); and
+browser smoke tests (§17).
 
 Commits on this branch: `47f64d9b` (isolation guard), `a147ec61` (receipt fix
 and drift guard).
