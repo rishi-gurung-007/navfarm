@@ -12,7 +12,7 @@
  * Purpose -> Status -> Priority -> Deadline; the approval/transfer/forecast
  * fields follow only on a saved requisition (`saved`).
  */
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { ReadField as BaseReadField } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 
@@ -81,6 +81,22 @@ export function FeedRequisitionHeaderFields({ values: v }: { values: FeedRequisi
       )}
     </>
   );
+}
+
+/**
+ * W1 (10 Oct): routes for the records a requisition names. Locations (farm,
+ * silo, store) and items open in their master-data record (MasterDataTable
+ * reads `recordId`); a batch opens in Batch Data Entry (`batchId`).
+ */
+export const locationHref = (id: string) => `/master-data/location?recordId=${encodeURIComponent(id)}`;
+export const itemHref = (id: string) => `/master-data/item?recordId=${encodeURIComponent(id)}`;
+export const batchHref = (id: string) => `/batches/entry?batchId=${encodeURIComponent(id)}`;
+
+/** A code shown as a link when its record id is known, else as plain text; null when there is no code. */
+export function RecordLink({ code, href }: { code: string | null | undefined; href: string | null }): ReactElement | null {
+  if (!code) return null;
+  if (!href) return <>{code}</>;
+  return <a className="text-(--accent) hover:underline" href={href}>{code}</a>;
 }
 
 export type FeedType = "BULK" | "BAGGED";

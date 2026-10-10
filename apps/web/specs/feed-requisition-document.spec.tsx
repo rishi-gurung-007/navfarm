@@ -8,6 +8,7 @@ import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { FeedRequisitionDocument, type FeedRequisitionDocumentView } from "../src/components/console/inventory/feed-requisition-document";
 import { translations } from "../src/utils/translations";
+import { formatDateShort } from "../src/utils/date-short";
 
 jest.mock("../src/hooks/useLanguage", () => {
   const { translations: dict } = jest.requireActual("../src/utils/translations");
@@ -318,5 +319,86 @@ describe("FeedRequisitionDocument — breakdown row keys (9d D2)", () => {
     expect(headers.slice(0, 3)).toEqual(["Batch No.", "Stage", "House"]);
     const rows = within(breakdown).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
     expect(rows.map((cells) => cells.slice(0, 2))).toEqual([["BATCH-000007", "Flushing"], ["BATCH-000007", "GESTATION"]]);
+  });
+});
+
+// W1 (10 Oct): workbook-100-gaps §2 W1 (a)-(d). Req r24/r53, §7 r153-155, Req r89.
+describe("FeedRequisitionDocument — W1 line columns, links and consolidation labels", () => {
+  const millLine = {
+    ...view.lines[0],
+    quantity: "6200.0000", requested_qty_kg: 6100, mill_approved_qty_kg: 5900, adjustment_reason: "Mill short of R1",
+    bag_count: null, proposed_delivery_date: "2026-09-24",
+  };
+  const shipped: FeedRequisitionDocumentView = {
+    ...view,
+    lines: [millLine],
+    transfers: [{
+      transfer_id: "t1", transfer_no: "TO-0042", status: "SHIPPED", posting_date: "2026-09-24", from_warehouse_id: "m", to_warehouse_id: "s1", bin_assignment_id: "b",
+      lines: [{ transfer_line_id: "tl1", requisition_line_id: "L1", item_id: "r1", quantity: 5900, uom: "KG", qty_shipped: 5900, qty_received: 5000, balance_to_ship: 0, remaining_to_receive: 900 }],
+      open_shipments: [],
+    }],
+  };
+  const lineTable = () => screen.getByRole("table", { name: en.rqLinesLabel });
+  const headerCells = () => Array.from(lineTable().querySelector("thead > tr")!.children).map((c) => c.textContent);
+  const rowCells = (lineNo: string) => Array.from(within(lineTable()).getByText(lineNo, { selector: "td" }).closest("tr")!.children) as HTMLElement[];
+  const cellUnder = (header: string, lineNo = "10000") => {
+    const idx = headerCells().indexOf(header);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    return rowCells(lineNo)[idx];
+  };
+
+  it("(a) every header sits over its own value, read-only", () => {
+    render(<FeedRequisitionDocument view={shipped} editable={false} />);
+    expect(rowCells("10000")).toHaveLength(headerCells().length);
+    expect(cellUnder(en.rqdColRecommended).textContent).toContain("6,000");
+    expect(cellUnder(en.rqdColRequested).textContent).toBe("6,200");
+    expect(cellUnder(en.rqdColMillRequested).textContent).toBe("6,100");
+    expect(cellUnder(en.rqdColMillApproved).textContent).toBe("5,900");
+    expect(cellUnder(en.rqdColAdjustment).textContent).toBe("Mill short of R1");
+    expect(cellUnder(en.rqdColBags).textContent).toBe(en.rqNotApplicable);
+    expect(cellUnder(en.rqdColDelivery).textContent).toBe(formatDateShort("2026-09-24"));
+    // Requested directly follows Recommended (Req r24).
+    expect(headerCells().indexOf(en.rqdColRequested)).toBe(headerCells().indexOf(en.rqdColRecommended) + 1);
+  });
+
+  it("(a) the editable Requested Qty input is under Requested Qty KG", () => {
+    render(<FeedRequisitionDocument view={shipped} editable onLineEdit={jest.fn()} options={options} />);
+    const input = screen.getByRole("spinbutton", { name: "Requested Qty KG, line 10000" });
+    expect(cellUnder(en.rqdColRequested).contains(input)).toBe(true);
+  });
+
+  it("(b) Shipped / Received / Outstanding come from the linked transfer lines (§7 r154-155)", () => {
+    render(<FeedRequisitionDocument view={shipped} editable={false} />);
+    expect(cellUnder(en.rqdColShipped).textContent).toBe("5,900");
+    expect(cellUnder(en.rqdColReceived).textContent).toBe("5,000");
+    expect(cellUnder(en.rqdColOutstanding).textContent).toBe("900");
+  });
+
+  it("(b) before any transfer the shipment columns say so rather than 0", () => {
+    render(<FeedRequisitionDocument view={view} editable={false} />);
+    expect(cellUnder(en.rqdColShipped).textContent).toBe(en.rqNotYetAvailable);
+    expect(cellUnder(en.rqdColOutstanding).textContent).toBe(en.rqNotYetAvailable);
+  });
+
+  it("(c) links silo, farm, item and breakdown batch to their records", () => {
+    render(<FeedRequisitionDocument view={{ ...view, farm_id: "farm-grs" }} editable={false} />);
+    expect(screen.getByRole("link", { name: "GRS/SILO-001" }).getAttribute("href")).toBe("/master-data/location?recordId=s1");
+    expect(screen.getByRole("link", { name: "GRS" }).getAttribute("href")).toBe("/master-data/location?recordId=farm-grs");
+    expect(screen.getByRole("link", { name: "R1" }).getAttribute("href")).toBe("/master-data/item?recordId=r1");
+    expect(screen.getByRole("link", { name: "B-001" }).getAttribute("href")).toBe("/batches/entry?batchId=b1");
+  });
+
+  it("(c) a code without an id stays plain text", () => {
+    render(<FeedRequisitionDocument view={{ ...view, lines: [{ ...view.lines[0], destination_location_id: null }] }} editable={false} />);
+    expect(screen.queryByRole("link", { name: "GRS/SILO-001" })).toBeNull();
+    expect(screen.getByText("GRS/SILO-001")).toBeTruthy();
+  });
+
+  it("(d) consolidation block uses translated labels and words for status and next action", () => {
+    render(<FeedRequisitionDocument view={{ ...view, header: { ...view.header, consolidation_no: "MCS-0007", consolidation_status: "CONSOLIDATED", consolidation_next_action: "TRANSFER_SHIPMENT" } }} editable={false} />);
+    expect(screen.getByText(en.rqdConsolidationTitle)).toBeTruthy();
+    expect(valueOf(en.rqdConsolidationSheet)).toBe("MCS-0007");
+    expect(valueOf(en.rqdConsolidationStatus)).toBe(en.fcsStatusConsolidated);
+    expect(valueOf(en.rqdConsolidationNextAction)).toBe(en.rqdNextActionShipment);
   });
 });
