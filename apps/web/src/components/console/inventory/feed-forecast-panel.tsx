@@ -121,6 +121,7 @@ function FeedForecastPanelContent() {
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
+  const viewToken = useRef(0);
   const [savingRun, setSavingRun] = useState(false);
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
@@ -161,12 +162,16 @@ function FeedForecastPanelContent() {
       return;
     }
     let cancelled = false;
+    // A run opened by id (`?runId=` or the history list) bumps the token; a
+    // current-run response that lands after it is stale and is discarded.
+    const token = viewToken.current;
+    const superseded = () => cancelled || token !== viewToken.current;
     setLoading(true);
     setSavedRunFailed(false);
     api
       .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
       .then(async (response) => {
-        if (cancelled) return;
+        if (superseded()) return;
         const run = (response && typeof response === "object" && "data" in response ? response.data : response) as CurrentForecastRun | null;
         const display = run?.output_snapshot?.display;
         const filters = display?.filters;
@@ -200,7 +205,7 @@ function FeedForecastPanelContent() {
             // but it must not offer a requisition that the API will refuse.
           }
         }
-        if (cancelled) return;
+        if (superseded()) return;
         setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition });
         setCalculationState("SAVED");
         setData(resolved);
@@ -213,7 +218,7 @@ function FeedForecastPanelContent() {
         });
       })
       .catch((err: any) => {
-        if (cancelled) return;
+        if (superseded()) return;
         showToast.error(err?.message || tRef.current("ffFailedToLoad"));
         setSavedRunFailed(true);
         setData(null);
@@ -221,7 +226,7 @@ function FeedForecastPanelContent() {
         setCalculationState("EMPTY");
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!superseded()) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -332,22 +337,26 @@ function FeedForecastPanelContent() {
   }
 
   // A6: `?runId=` opens a saved run through the same endpoint "View calculation" uses.
-  // It waits for the current-run load so that load cannot overwrite the opened run.
+  // Opening a run bumps `viewToken`, so a current-run load still in flight cannot overwrite it.
   const pendingRunId = useRef<string | null>(null);
   if (pendingRunId.current === null && typeof window !== "undefined") {
     pendingRunId.current = new URLSearchParams(window.location.search).get("runId") ?? "";
   }
   useEffect(() => {
     const runId = pendingRunId.current;
-    if (!runId || !farmId || loading) return;
+    if (!runId || !farmId) return;
     pendingRunId.current = "";
     void viewHistoricalRun(runId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [farmId, loading]);
+  }, [farmId]);
 
   async function viewHistoricalRun(runId: string) {
+    viewToken.current += 1;
+    const token = viewToken.current;
+    setLoading(false);
     try {
       const run = unwrap<any>(await api.get(`/feed-forecast/runs/${runId}`));
+      if (token !== viewToken.current) return;
       const display = run?.output_snapshot?.display;
       if (!display?.rows || !display?.filters) throw new Error("This saved run has no restorable calculation snapshot.");
       setData({ ...display, planningDate: display.filters.planningDate, view: display.filters.view, from: display.filters.from, to: display.filters.to, period: display.period ?? null, farm: display.farm } as ForecastData);

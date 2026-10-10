@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import FeedForecastPanel from '../src/components/console/inventory/feed-forecast-panel';
 import { api } from '../src/services/api-client';
 import { getActiveWorkspaceScope } from '../src/hooks/useAuth';
@@ -121,6 +121,36 @@ describe('FeedForecastPanel — admin', () => {
       render(<FeedForecastPanel />);
       await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
       expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  it('keeps the ?runId= run on screen when the current-run load resolves after it (A6 race)', async () => {
+    window.history.pushState({}, '', '/inventory/feed-forecast?tab=forecast&runId=run-old');
+    const base = routedGet();
+    let resolveCurrent: (v: any) => void = () => undefined;
+    const currentPromise = new Promise((resolve) => { resolveCurrent = resolve; });
+    get.mockImplementation((url: string) => {
+      if (url === '/feed-forecast/runs/run-old') {
+        const display = currentRunResponse.data.output_snapshot.display;
+        const oldDisplay = { ...display, rows: display.rows.map((row) => ({ ...row, itemName: `OLD RUN ${row.itemName}` })) };
+        return Promise.resolve({ success: true, data: { ...currentRunResponse.data, run_id: 'run-old', run_code: 'RUN-OLD', farm_id: 'farm-vil100', output_snapshot: { display: oldDisplay } } });
+      }
+      if (url.startsWith('/feed-forecast/runs/current')) return currentPromise;
+      return base(url);
+    });
+    try {
+      render(<FeedForecastPanel />);
+      await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
+      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+      expect((await screen.findAllByText(/OLD RUN Weaner/)).length).toBeGreaterThan(0);
+      resolveCurrent(currentRunResponse);
+      await currentPromise;
+      for (let i = 0; i < 5; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Return to current calculation' })).toBeTruthy());
+      expect(screen.getAllByText(/OLD RUN Weaner/).length).toBeGreaterThan(0);
+      expect(screen.queryAllByText(/^Weaner Grower Mash/)).toHaveLength(0);
     } finally {
       window.history.pushState({}, '', '/');
     }
