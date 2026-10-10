@@ -112,7 +112,6 @@ export function FeedRequisitionPanel() {
   // Listing defaults to all authorized farms; the selected farm from the
   // shared hook remains the creation/document context for farm-bound actions.
   const [listFarmId, setListFarmId] = useState("");
-  const [type, setType] = useState("FEED");
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<ListRow[]>([]);
   const [selected, setSelected] = useState<RequisitionView | null>(null);
@@ -227,11 +226,6 @@ export function FeedRequisitionPanel() {
         <div className="flex flex-wrap items-end gap-3">
           <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={listFarmId} fixedLabel={fixedLabel} allLabel={t("rhAllFarms")}
             onChange={(id) => { setListFarmId(id); if (id) farm.setFarmId(id); show(null); }} />
-          <Field label={t("rqType")} htmlFor="rq-type">
-            <select id="rq-type" className="nf-input-sm nf-select" style={inputStyle} value={type} onChange={(e) => setType(e.target.value)}>
-              <option value="FEED">{t("rqTypeFeed")}</option>
-            </select>
-          </Field>
           <Field label={t("rqShow")} htmlFor="rq-status">
             <select id="rq-status" className="nf-input-sm nf-select" style={inputStyle} value={status} onChange={(e) => { setStatus(e.target.value); show(null); }}>
               <option value="">{t("rqShowAll")}</option>
