@@ -117,6 +117,8 @@ export interface FeedRequisitionDocumentView {
   submission_deadline: string | null;
   remarks: string | null;
   approved_at: string | null;
+  /** Saved on the requisition row by the API (GET returns it at the top level). */
+  requester_name?: string | null;
   header: FeedRequisitionHeader;
   lines: FeedRequisitionLine[];
   approval_status?: string;
@@ -365,6 +367,7 @@ export function FeedRequisitionDocument({
           reqDate: header?.requisition_date ? formatDateShort(header.requisition_date) : null,
           reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
           source: labelOf(SOURCE_LABEL, view.source, t),
+          requesterName: view.requester_name ?? null,
           farmCode: header?.farm_code,
           farmName: header?.farm_name,
           nextDiet: header?.is_next_diet_requisition ? t("rqYes") : t("rqNo"),

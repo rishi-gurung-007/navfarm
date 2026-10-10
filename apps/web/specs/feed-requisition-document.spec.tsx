@@ -91,6 +91,11 @@ describe("FeedRequisitionDocument — header form (Requisition §1)", () => {
     expect(within(reqNo.closest("section") as HTMLElement).queryByText("—")).toBeNull();
   });
 
+  it("shows the saved Requester Name the API returns", () => {
+    render(<FeedRequisitionDocument view={{ ...view, requester_name: "Tenant Administrator" }} editable={false} />);
+    expect(screen.getByRole("textbox", { name: en.crqRequester }).textContent).toBe("Tenant Administrator");
+  });
+
   it("shows the workbook header fields in their words", () => {
     render(<FeedRequisitionDocument view={view} editable={false} />);
     expect(valueOf(en.rqdReqNo)).toBe("REQ-GRS-2026-00041");
