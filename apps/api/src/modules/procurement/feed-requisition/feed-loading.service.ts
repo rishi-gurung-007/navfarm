@@ -5,6 +5,12 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
+import type { UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
+
+/** Row 60: LOAD-<Req No>-<Line No>. */
+export const loadingSheetNo = (reqNo: string, lineSeq: number) => `LOAD-${reqNo}-${lineSeq}`;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type User = { userId?: string; userType?: string };
 
@@ -47,13 +53,22 @@ export class FeedLoadingService {
       eq(schema.binDietAssignment.status, 'ACTIVE'),
       isNull(schema.binDietAssignment.deleted_at),
     )) : [];
-    const [sequence] = await this.db.select({ max: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.feedLoadingSheet.loading_sheet_no}, 6) AS UNSIGNED)), 0)` })
-      .from(schema.feedLoadingSheet).where(eq(schema.feedLoadingSheet.tenant_id, tenantId)).for('update');
-    let next = Number(sequence?.max ?? 0) + 1;
+    // Row 60: Loading Sheet No. is LOAD-<Req No>-<Line No>, the requisition
+    // line's own number. One sheet per consolidation line, and a requisition
+    // line is consolidated once, so the number is unique. Sheets numbered
+    // before this rule (LOAD-000001) keep their numbers.
+    const requisitionLines = await this.db.select({
+      line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, req_no: schema.requisition.req_no,
+    }).from(schema.requisitionLine)
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(inArray(schema.requisitionLine.line_id, lines.map((line) => line.requisition_line_id)));
+    const requisitionLineById = new Map(requisitionLines.map((line) => [line.line_id, line]));
     await this.db.insert(schema.feedLoadingSheet).values(lines.map((line) => {
       const binId = resolveLoadingBinId({ itemId: line.item_id, productionDate: line.production_date }, assignments);
+      const source = requisitionLineById.get(line.requisition_line_id);
+      if (!source) throw new NotFoundException('Requisition line for the consolidation line was not found.');
       return {
-        loading_sheet_id: randomUUID(), loading_sheet_no: `LOAD-${String(next++).padStart(6, '0')}`,
+        loading_sheet_id: randomUUID(), loading_sheet_no: loadingSheetNo(source.req_no, source.line_seq),
         tenant_id: tenantId, company_id: consolidation.companyId, consolidation_id: consolidationId,
         consolidation_line_id: line.consolidation_line_id, requisition_id: line.requisition_id,
         requisition_line_id: line.requisition_line_id, farm_id: line.farm_id,
@@ -74,7 +89,7 @@ export class FeedLoadingService {
     return this.decorate(rows);
   }
 
-  async update(id: string, dto: { compartmentNo?: string; kgLoaded?: number; loadedBy?: string }, tenantId: string, user: User) {
+  async update(id: string, dto: UpdateFeedLoadingSheetDto, tenantId: string, user: User) {
     const [sheet] = await this.db.select().from(schema.feedLoadingSheet).where(and(eq(schema.feedLoadingSheet.loading_sheet_id, id), eq(schema.feedLoadingSheet.tenant_id, tenantId))).limit(1);
     if (!sheet) throw new NotFoundException('Loading instruction sheet not found.');
     if (sheet.status !== 'DRAFT' && sheet.status !== 'LOADED') throw new ConflictException('Only draft loading sheets may be edited.');
@@ -114,14 +129,14 @@ export class FeedLoadingService {
     }
     const status = dto.compartmentNo?.trim() && kg != null ? 'LOADED' : 'DRAFT';
     const loadedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    await this.db.update(schema.feedLoadingSheet).set({ compartment_no: dto.compartmentNo?.trim() || sheet.compartment_no, kg_loaded: kg == null ? null : String(kg), loaded_by: dto.loadedBy || user.userId || sheet.loaded_by, loaded_at: status === 'LOADED' ? loadedAt : sheet.loaded_at, status }).where(eq(schema.feedLoadingSheet.loading_sheet_id, id));
+    await this.db.update(schema.feedLoadingSheet).set({ compartment_no: dto.compartmentNo?.trim() || sheet.compartment_no, kg_loaded: kg == null ? null : String(kg), loaded_by: dto.loadedBy?.trim() || sheet.loaded_by || user.userId || null, loaded_at: status === 'LOADED' ? loadedAt : sheet.loaded_at, status }).where(eq(schema.feedLoadingSheet.loading_sheet_id, id));
     return this.findOne(id, tenantId);
   }
 
   async dispatch(id: string, tenantId: string) {
     const [sheet] = await this.db.select().from(schema.feedLoadingSheet).where(and(eq(schema.feedLoadingSheet.loading_sheet_id, id), eq(schema.feedLoadingSheet.tenant_id, tenantId))).limit(1);
     if (!sheet) throw new NotFoundException('Loading instruction sheet not found.');
-    if (sheet.status === 'DISPATCHED') return sheet;
+    if (sheet.status === 'DISPATCHED') return this.findOne(id, tenantId);
     if (sheet.status !== 'LOADED' || !sheet.compartment_no || sheet.kg_loaded == null) throw new ConflictException('Compartment number and KG loaded are required before dispatch.');
     if (!sheet.shipment_id) {
       throw new ConflictException(
@@ -153,13 +168,13 @@ export class FeedLoadingService {
   }
 
   private async decorate(rows: Array<typeof schema.feedLoadingSheet.$inferSelect>) {
-    if (!rows.length) return rows;
+    if (!rows.length) return [];
     const locationIds = [...new Set(rows.flatMap((row) => [row.farm_id, row.destination_silo_id, row.mill_loading_bin_id].filter((id): id is string => !!id)))];
     const locations = locationIds.length ? await this.db.select({ id: schema.locationMaster.location_id, code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
       .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds)) : [];
     const locationById = new Map(locations.map((location) => [location.id, location]));
     const itemIds = [...new Set(rows.map((row) => row.item_id))];
-    const items = await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, name: schema.itemMaster.item_name })
+    const items = await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, name: schema.itemMaster.item_name, diet_no: schema.itemMaster.diet_no })
       .from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds));
     const itemById = new Map(items.map((item) => [item.id, item]));
     const reqIds = [...new Set(rows.map((row) => row.requisition_id))];
@@ -172,18 +187,49 @@ export class FeedLoadingService {
       adjustmentReason: schema.feedConsolidationLine.adjustment_reason,
     }).from(schema.feedConsolidationLine).where(inArray(schema.feedConsolidationLine.consolidation_line_id, lineIds)) : [];
     const consolidationLineById = new Map(consolidationLines.map((line) => [line.id, line]));
-    return rows.map((row) => ({
-      ...row,
-      adjustment_reason: consolidationLineById.get(row.consolidation_line_id)?.adjustmentReason ?? null,
-      requisition_no: reqById.get(row.requisition_id)?.no ?? row.requisition_id,
-      farm_code: locationById.get(row.farm_id)?.code ?? row.farm_id,
-      farm_name: locationById.get(row.farm_id)?.name ?? null,
-      destination_silo_code: row.destination_silo_id ? locationById.get(row.destination_silo_id)?.code ?? row.destination_silo_id : null,
-      destination_silo_name: row.destination_silo_id ? locationById.get(row.destination_silo_id)?.name ?? null : null,
-      item_code: itemById.get(row.item_id)?.code ?? row.item_id,
-      item_name: itemById.get(row.item_id)?.name ?? null,
-      mill_loading_bin_code: row.mill_loading_bin_id ? locationById.get(row.mill_loading_bin_id)?.code ?? row.mill_loading_bin_id : null,
-      mill_loading_bin_name: row.mill_loading_bin_id ? locationById.get(row.mill_loading_bin_id)?.name ?? null : null,
-    }));
+    // Row 72: Loaded By is the mill staff name. The column holds either the
+    // name the mill typed or, for sheets saved before that, the user's id.
+    const loaderIds = [...new Set(rows.map((row) => row.loaded_by).filter((id): id is string => !!id && UUID.test(id)))];
+    const users = loaderIds.length ? await this.db.select({ id: schema.userMaster.user_id, name: schema.userMaster.full_name })
+      .from(schema.userMaster).where(inArray(schema.userMaster.user_id, loaderIds)) : [];
+    const userById = new Map(users.map((user) => [user.id, user.name]));
+    const transfers = await transfersByRequisitionLine(this.db, rows.map((row) => row.requisition_line_id));
+    return rows.map(({ loaded_by, ...row }) => {
+      const location = (id: string | null) => (id ? locationById.get(id) : undefined);
+      const item = itemById.get(row.item_id);
+      const transfer = transfers.get(row.requisition_line_id);
+      return {
+        ...row,
+        adjustment_reason: consolidationLineById.get(row.consolidation_line_id)?.adjustmentReason ?? null,
+        requisition_no: reqById.get(row.requisition_id)?.no ?? null,
+        farm_code: location(row.farm_id)?.code ?? null,
+        farm_name: location(row.farm_id)?.name ?? null,
+        destination_silo_code: location(row.destination_silo_id)?.code ?? null,
+        destination_silo_name: location(row.destination_silo_id)?.name ?? null,
+        item_code: item?.code ?? null,
+        item_name: item?.name ?? null,
+        diet_no: item?.diet_no ?? null,
+        mill_loading_bin_code: location(row.mill_loading_bin_id)?.code ?? null,
+        mill_loading_bin_name: location(row.mill_loading_bin_id)?.name ?? null,
+        loaded_by_name: !loaded_by ? null : UUID.test(loaded_by) ? userById.get(loaded_by) ?? null : loaded_by,
+        transfer_id: transfer?.transfer_id ?? null,
+        transfer_no: transfer?.transfer_no ?? null,
+      };
+    });
   }
+}
+
+/** The shared Stock Transfer that carries each requisition line (one per line, created at Release). */
+export async function transfersByRequisitionLine(db: MySql2Database<typeof schema>, requisitionLineIds: string[]) {
+  const ids = [...new Set(requisitionLineIds)];
+  const rows = ids.length ? await db.select({
+    requisition_line_id: schema.stockTransferLine.requisition_line_id,
+    transfer_id: schema.stockTransfer.transfer_id,
+    transfer_no: schema.stockTransfer.transfer_no,
+  }).from(schema.stockTransferLine)
+    .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
+    .where(and(inArray(schema.stockTransferLine.requisition_line_id, ids), isNull(schema.stockTransfer.deleted_at))) : [];
+  const byLine = new Map<string, { transfer_id: string; transfer_no: string }>();
+  for (const row of rows) if (row.requisition_line_id && !byLine.has(row.requisition_line_id)) byLine.set(row.requisition_line_id, { transfer_id: row.transfer_id, transfer_no: row.transfer_no });
+  return byLine;
 }

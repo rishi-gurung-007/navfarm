@@ -8,7 +8,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
-import { FeedLoadingService } from './feed-loading.service';
+import { FeedLoadingService, transfersByRequisitionLine } from './feed-loading.service';
 import { MillCapacityService } from '../../inventory/feed-forecast/mill-capacity.service';
 import type { DietCapacity } from '../../inventory/feed-forecast/mill-capacity.rules';
 
@@ -229,30 +229,72 @@ export class FeedConsolidationService {
     return rows.map((row) => ({ ...row, line_count: lines.filter((line) => line.consolidation_id === row.consolidation_id).length, requested_qty_kg: lines.filter((line) => line.consolidation_id === row.consolidation_id).reduce((sum, line) => sum + Number(line.requested_qty_kg), 0), mill_approved_qty_kg: lines.filter((line) => line.consolidation_id === row.consolidation_id).reduce((sum, line) => sum + Number(line.mill_approved_qty_kg), 0) }));
   }
 
-  async findOne(consolidationId: string, tenantId: string, user: User) {
+  async findOne(consolidationId: string, tenantId: string, _user: User) {
     const [header] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId)));
     if (!header) throw new NotFoundException('Consolidation sheet not found.');
     const lines = await this.db.select().from(schema.feedConsolidationLine).where(eq(schema.feedConsolidationLine.consolidation_id, consolidationId));
-    const locationIds = [...new Set(lines.flatMap((line) => [line.farm_id, line.destination_silo_id].filter((id): id is string => !!id)))];
+    const loadingSheets = lines.length ? await this.db.select({
+      consolidation_line_id: schema.feedLoadingSheet.consolidation_line_id,
+      loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+      loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+      mill_loading_bin_id: schema.feedLoadingSheet.mill_loading_bin_id,
+    }).from(schema.feedLoadingSheet).where(eq(schema.feedLoadingSheet.consolidation_id, consolidationId)) : [];
+    const loadingByLine = new Map(loadingSheets.map((sheet) => [sheet.consolidation_line_id, sheet]));
+    // r122/r125: the diet's BIN and Mill Capacity Available on the line's production date.
+    const capacity = await this.capacityByDate(tenantId, lines.map((line) => ({
+      company_id: header.company_id, production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date,
+    })));
+    const dietOf = (line: typeof lines[number]) => capacity.get(this.productionDateOf({ production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date }))?.get(line.item_id);
+    // r122: the loading sheet's BIN snapshot is what the mill loads from; before a sheet exists, the assignment.
+    const binOf = (line: typeof lines[number]) => loadingByLine.get(line.consolidation_line_id)?.mill_loading_bin_id ?? dietOf(line)?.binId ?? null;
+    const locationIds = [...new Set(lines.flatMap((line) => [line.farm_id, line.destination_silo_id, binOf(line)].filter((id): id is string => !!id)))];
     const locations = locationIds.length ? await this.db.select({ id: schema.locationMaster.location_id, code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
       .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds)) : [];
     const locationById = new Map(locations.map((location) => [location.id, location]));
-    const items = lines.length ? await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, name: schema.itemMaster.item_name })
+    const items = lines.length ? await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, name: schema.itemMaster.item_name, diet_no: schema.itemMaster.diet_no })
       .from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, [...new Set(lines.map((line) => line.item_id))])) : [];
     const itemById = new Map(items.map((item) => [item.id, item]));
     const requisitions = lines.length ? await this.db.select({ id: schema.requisition.requisition_id, no: schema.requisition.req_no })
       .from(schema.requisition).where(inArray(schema.requisition.requisition_id, [...new Set(lines.map((line) => line.requisition_id))])) : [];
     const reqById = new Map(requisitions.map((req) => [req.id, req]));
-    return { ...header, lines: lines.map((line) => ({
-      ...line,
-      requisition_no: reqById.get(line.requisition_id)?.no ?? line.requisition_id,
-      farm_code: locationById.get(line.farm_id)?.code ?? line.farm_id,
-      farm_name: locationById.get(line.farm_id)?.name ?? null,
-      destination_silo_code: line.destination_silo_id ? locationById.get(line.destination_silo_id)?.code ?? line.destination_silo_id : null,
-      destination_silo_name: line.destination_silo_id ? locationById.get(line.destination_silo_id)?.name ?? null : null,
-      item_code: itemById.get(line.item_id)?.code ?? line.item_id,
-      item_name: itemById.get(line.item_id)?.name ?? null,
-    })) };
+    // r130: the transfer per farm line, created at Release.
+    const transfers = await transfersByRequisitionLine(this.db, lines.map((line) => line.requisition_line_id));
+    // r118: Feed Mill Manager = the user who created the sheet.
+    const [manager] = header.created_by ? await this.db.select({ id: schema.userMaster.user_id, name: schema.userMaster.full_name })
+      .from(schema.userMaster).where(eq(schema.userMaster.user_id, header.created_by)).limit(1) : [];
+    // r124: Total All Farms KG for the diet = the sheet's requested KG for that diet across every farm.
+    const dietTotal = new Map<string, number>();
+    for (const line of lines) dietTotal.set(line.item_id, (dietTotal.get(line.item_id) ?? 0) + (Number(line.requested_qty_kg) || 0));
+    return { ...header, feed_mill_manager_name: manager?.name ?? null, lines: lines.map((line) => {
+      const location = (id: string | null) => (id ? locationById.get(id) : undefined);
+      const item = itemById.get(line.item_id);
+      const diet = dietOf(line);
+      const binId = binOf(line);
+      const loadingSheet = loadingByLine.get(line.consolidation_line_id);
+      const transfer = transfers.get(line.requisition_line_id);
+      return {
+        ...line,
+        requisition_no: reqById.get(line.requisition_id)?.no ?? null,
+        farm_code: location(line.farm_id)?.code ?? null,
+        farm_name: location(line.farm_id)?.name ?? null,
+        destination_silo_code: location(line.destination_silo_id)?.code ?? null,
+        destination_silo_name: location(line.destination_silo_id)?.name ?? null,
+        item_code: item?.code ?? null,
+        item_name: item?.name ?? null,
+        diet_no: item?.diet_no ?? null,
+        mill_loading_bin_id: binId && location(binId) ? binId : null,
+        mill_loading_bin_code: location(binId)?.code ?? null,
+        mill_loading_bin_name: location(binId)?.name ?? null,
+        available_mill_output_kg: diet?.availableKg ?? null,
+        mill_capacity_state: diet?.state ?? 'NOT_CONFIGURED',
+        mill_capacity_status: diet?.status ?? null,
+        total_all_farms_kg: dietTotal.get(line.item_id) ?? 0,
+        transfer_id: transfer?.transfer_id ?? null,
+        transfer_no: transfer?.transfer_no ?? null,
+        loading_sheet_id: loadingSheet?.loading_sheet_id ?? null,
+        loading_sheet_no: loadingSheet?.loading_sheet_no ?? null,
+      };
+    }) };
   }
 
   async finalize(consolidationId: string, tenantId: string, user: User) {
