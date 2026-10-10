@@ -22,10 +22,12 @@ describe('FeedForecastRunHistory', () => {
     expect(api.get).toHaveBeenCalledWith('/feed-forecast/runs?farmId=farm-1');
     expect(screen.getByText('ffRunAsOf:{"date":"01/10/26","time":"09:00:00"}')).toBeTruthy();
     expect(screen.getByText('ffRunPostingCutoff:{"date":"01/10/26","time":"08:59:30"}')).toBeTruthy();
-    expect(screen.getByText('ffRunSelectedFilters:{"view":"CUSTOM","planning":"01/10/26","from":"01/10/26","to":"07/10/26"}')).toBeTruthy();
+    expect(screen.getByText('ffRunSelectedFilters:{"view":"ffViewCustom","planning":"01/10/26","from":"01/10/26","to":"07/10/26"}')).toBeTruthy();
     expect(screen.getByText('ffRunConfigVersion:{"version":"sha256:config-2"}')).toBeTruthy();
     expect(screen.getByText('ffRunAuthor:{"author":"Asha Rai"}')).toBeTruthy();
     expect(screen.queryByText(/user-2/)).toBeNull();
+    expect(screen.getByText('ffRunHistoryRow:{"version":2,"view":"ffViewCustom","from":"01/10/26","to":"07/10/26"}')).toBeTruthy();
+    expect(screen.queryByText(/"view":"CUSTOM"/)).toBeNull();
   });
 
   it('falls back to Unknown user when the author name is missing, never the raw id', async () => {

@@ -6,6 +6,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { formatDateShort, unwrap } from "./feed-format";
+import { FORECAST_VIEW_LABEL, type ForecastView } from "./feed-forecast-query";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -65,6 +66,8 @@ export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, o
   const currentRuns = loadedFarmId === farmId ? runs : [];
   const isLoading = loading || loadedFarmId !== farmId;
 
+  const viewText = (view: string | null | undefined) => (view && view in FORECAST_VIEW_LABEL ? t(FORECAST_VIEW_LABEL[view as ForecastView]) : view ?? "");
+
   const body = isLoading ? <LoadingState label={t("ffLoadingRunHistory")} /> : failed ? <InlineAlert>{t("ffRunHistoryFailed")}</InlineAlert> : currentRuns.length === 0 ? (
     <p className="px-3 pb-3 text-xs text-[var(--text-secondary)]">{t("ffNoSavedRuns")}</p>
   ) : (
@@ -72,10 +75,10 @@ export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, o
       {currentRuns.map((run) => (
         <li key={run.run_id} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(13rem,auto)_1fr]">
           <span className="font-mono font-semibold text-[var(--text-primary)]">{run.run_code}</span>
-          <span className="text-[var(--text-secondary)]">{t("ffRunHistoryRow", { version: run.version, view: run.view, from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>
+          <span className="text-[var(--text-secondary)]">{t("ffRunHistoryRow", { version: run.version, view: viewText(run.view), from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>
           {timestampParts(run.created_at) && <span className="text-[var(--text-secondary)]">{t("ffRunAsOf", timestampParts(run.created_at)!)}</span>}
           {timestampParts(run.source_cutoff_at) && <span className="text-[var(--text-secondary)]">{t("ffRunPostingCutoff", timestampParts(run.source_cutoff_at)!)}</span>}
-          {run.planning_date && <span className="text-[var(--text-secondary)]">{t("ffRunSelectedFilters", { view: run.view, planning: formatDateShort(run.planning_date), from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>}
+          {run.planning_date && <span className="text-[var(--text-secondary)]">{t("ffRunSelectedFilters", { view: viewText(run.view), planning: formatDateShort(run.planning_date), from: formatDateShort(run.from_date), to: formatDateShort(run.to_date) })}</span>}
           {run.config_snapshot?.version && <span className="break-all text-[var(--text-secondary)]">{t("ffRunConfigVersion", { version: run.config_snapshot.version })}</span>}
           {run.created_by && <span className="text-[var(--text-secondary)]">{t("ffRunAuthor", { author: run.created_by_name || t("ffUnknownUser") })}</span>}
           {onViewRun && <Button size="sm" variant="outline" className="justify-self-start" onClick={() => onViewRun(run.run_id)}>View calculation</Button>}

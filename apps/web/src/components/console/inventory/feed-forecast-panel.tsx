@@ -19,11 +19,10 @@ import { Dialog } from "@/components/ui/dialog";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort, todayIso, unwrap } from "./feed-format";
 import { FeedForecastGrid, ReportRow, SourceBalancePoint } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
-import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, ForecastView } from "./feed-forecast-query";
+import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, FORECAST_VIEW_LABEL, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
@@ -84,7 +83,6 @@ type SavedForecastDisplay = Partial<ForecastData> & {
   };
 };
 
-const VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const labelCls = "nf-text-label block text-(--text-secondary)";
 
@@ -407,7 +405,7 @@ function FeedForecastPanelContent() {
         <div>
           <label className={labelCls} htmlFor="ff-view">{t("ffView")}</label>
           <select id="ff-view" value={view} onChange={(e) => changeView(e.target.value as ForecastView)} className="nf-input-sm nf-select mt-1.5" style={inputStyle}>
-            {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(VIEW_LABEL[v])}</option>)}
+            {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(FORECAST_VIEW_LABEL[v])}</option>)}
           </select>
         </div>
         <div className="flex shrink-0 items-end gap-3">

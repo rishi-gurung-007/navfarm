@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { Field } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
-import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
-import { FORECAST_VIEWS, type ForecastView } from "./feed-forecast-query";
+import { FORECAST_VIEWS, FORECAST_VIEW_LABEL, type ForecastView } from "./feed-forecast-query";
 import {
   FeedForecastProvider,
   useFeedForecastContext,
@@ -47,12 +46,6 @@ interface SiloStatusResponse {
   farmTotalOrderKg: number;
 }
 
-const VIEW_LABEL: Record<ForecastView, TranslationKeys> = {
-  DAILY: "ffViewDaily",
-  WEEKLY: "ffViewWeekly",
-  PERIOD: "ffViewPeriod",
-  CUSTOM: "ffViewCustom",
-};
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 function FeedSiloDashboardContent() {
@@ -199,7 +192,7 @@ function FeedSiloDashboardContent() {
         </Field>
         <Field label={t("ffView")} htmlFor="sd-view">
           <select id="sd-view" className="nf-input-sm nf-select" style={inputStyle} value={view} onChange={(event) => changeView(event.target.value as ForecastView)}>
-            {FORECAST_VIEWS.map((option) => <option key={option} value={option}>{t(VIEW_LABEL[option])}</option>)}
+            {FORECAST_VIEWS.map((option) => <option key={option} value={option}>{t(FORECAST_VIEW_LABEL[option])}</option>)}
           </select>
         </Field>
         {view !== "PERIOD" && (
