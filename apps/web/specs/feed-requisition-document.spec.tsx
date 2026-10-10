@@ -415,3 +415,63 @@ describe("FeedRequisitionDocument — W1 line columns, links and consolidation l
     expect(valueOf(en.rqdConsolidationNextAction)).toBe(en.rqdNextActionRelease);
   });
 });
+
+// W2R (10 Oct): workbook-100-gaps W1 (c) and (e), on what A1 returns.
+describe("FeedRequisitionDocument — W2R requester, Mill Loading Bin and record links", () => {
+  const linked: FeedRequisitionDocumentView = {
+    ...view,
+    farm_id: "farm-grs",
+    requester_login: "fm@grs.test",
+    requester_department_name: "Farm Operations",
+    header: {
+      ...view.header, forecast_run_id: "run-1", consolidation_id: "cons-1", consolidation_no: "MCS-0007", consolidation_status: "CONSOLIDATED",
+      linked_transfers: [{ transfer_id: "tr-1", transfer_no: "TO-0001" }, { transfer_id: "tr-2", transfer_no: "TO-0002" }],
+    },
+    lines: [
+      { ...view.lines[0], lifecycle_ref_id: "lc-r1", mill_loading_bin_id: "bin-3", mill_loading_bin_code: "MILL/BIN-03" },
+      { ...view.lines[1], lifecycle_ref_id: "lc-r2", mill_loading_bin_id: null, mill_loading_bin_code: null,
+        breakdown: [{ ...view.lines[1].breakdown![0], lifecycle_ref_id: "lc-r2" }] },
+    ],
+  };
+  const lineTable = () => screen.getByRole("table", { name: en.rqLinesLabel });
+  const headerCells = () => Array.from(lineTable().querySelector("thead > tr")!.children).map((c) => c.textContent);
+  const cellUnder = (header: string, lineNo: string) => {
+    const idx = headerCells().indexOf(header);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    return (Array.from(within(lineTable()).getByText(lineNo, { selector: "td" }).closest("tr")!.children) as HTMLElement[])[idx];
+  };
+
+  it("shows the requester login and department", () => {
+    render(<FeedRequisitionDocument view={linked} editable={false} />);
+    expect(valueOf(en.crqRequesterUserId)).toBe("fm@grs.test");
+    expect(valueOf(en.crqRequesterDept)).toBe("Farm Operations");
+  });
+
+  it("shows each line's Mill Loading Bin, linked to its location, and says when there is none", () => {
+    render(<FeedRequisitionDocument view={linked} editable={false} />);
+    expect(within(cellUnder(en.rqdColMillBin, "10000")).getByRole("link", { name: "MILL/BIN-03" }).getAttribute("href")).toBe("/master-data/location?recordId=bin-3");
+    expect(cellUnder(en.rqdColMillBin, "20000").textContent).toBe(en.rqdMillBinNone);
+  });
+
+  it("links the lifecycle row, the shed, the forecast run and every linked transfer", () => {
+    render(<FeedRequisitionDocument view={linked} editable={false} />);
+    const lifecycleLinks = screen.getAllByRole("link", { name: "L-LINE WEANER days 25–27" }).map((a) => a.getAttribute("href"));
+    expect(lifecycleLinks).toEqual(["/master-data/breed-lifecycle-stage?recordId=lc-r2", "/master-data/breed-lifecycle-stage?recordId=lc-r2"]);
+    expect(screen.getByRole("link", { name: "L-LINE WEANER days 21–24" }).getAttribute("href")).toBe("/master-data/breed-lifecycle-stage?recordId=lc-r1");
+    expect(screen.getByRole("link", { name: "GRS/SHED-003" }).getAttribute("href")).toBe("/master-data/location?recordId=h3");
+    expect(screen.getByRole("link", { name: "FFR-farm-grs-000001" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=forecast&runId=run-1");
+    expect(screen.getByRole("link", { name: "TO-0001" }).getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
+    expect(screen.getByRole("link", { name: "TO-0002" }).getAttribute("href")).toBe("/inventory/transfers?id=tr-2");
+  });
+
+  it("keeps the consolidation no. as plain text: the Mill Consolidation tab does not open a sheet by ?id=", () => {
+    render(<FeedRequisitionDocument view={linked} editable={false} />);
+    expect(screen.queryByRole("link", { name: "MCS-0007" })).toBeNull();
+    expect(valueOf(en.rqdConsolidationSheet)).toBe("MCS-0007");
+  });
+
+  it("falls back to the old single transfer no. when the API sends no list", () => {
+    render(<FeedRequisitionDocument view={{ ...view, header: { ...view.header, linked_transfer_no: "TO-0099" } }} editable={false} />);
+    expect(valueOf(en.rqdLinkedTransfer)).toBe("TO-0099");
+  });
+});

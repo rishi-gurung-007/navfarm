@@ -91,6 +91,10 @@ export function FeedRequisitionHeaderFields({ values: v }: { values: FeedRequisi
 export const locationHref = (id: string) => `/master-data/location?recordId=${encodeURIComponent(id)}`;
 export const itemHref = (id: string) => `/master-data/item?recordId=${encodeURIComponent(id)}`;
 export const batchHref = (id: string) => `/batches/entry?batchId=${encodeURIComponent(id)}`;
+/** W2R (10 Oct): a lifecycle row opens in the Breed Lifecycle Stage master; a run in the Forecast tab (`runId`); a transfer in Stock Transfers (`id`). */
+export const lifecycleHref = (id: string) => `/master-data/breed-lifecycle-stage?recordId=${encodeURIComponent(id)}`;
+export const forecastRunHref = (id: string) => `/inventory/feed-forecast?tab=forecast&runId=${encodeURIComponent(id)}`;
+export const transferHref = (id: string) => `/inventory/transfers?id=${encodeURIComponent(id)}`;
 
 /** A code shown as a link when its record id is known, else as plain text; null when there is no code. */
 export function RecordLink({ code, href }: { code: string | null | undefined; href: string | null }): ReactElement | null {

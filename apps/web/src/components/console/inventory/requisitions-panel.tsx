@@ -39,6 +39,7 @@ import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
 import { RequisitionNewDialog } from "./requisition-new-dialog";
 import { useFeedFarm } from "./use-feed-farm";
 import type { RequisitionView } from "./feed-requisition-document";
+import { RecordLink, locationHref } from "./feed-requisition-header";
 
 /**
  * `RequisitionView`, `needsRemarks` and `remarksRequiredMessage` live in
@@ -65,12 +66,14 @@ interface ListRow {
   line_count: number;
   requested_kg: string | number;
   approval_request_id: string | null;
+  farm_id?: string | null;
   farm_code?: string | null;
   farm_name?: string | null;
 }
 
-// The API filters the requisition.status column, so only IN_CONSOLIDATION joins the list: RELEASED / SHIPPED / RECEIVED live in document_status / fulfilment_status.
-const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "IN_CONSOLIDATION"];
+// A1/W2R (10 Oct): the API reads RELEASED from document_status and SHIPPED / RECEIVED from fulfilment_status
+// (feedListStatusFilter); every other value from requisition.status.
+const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "IN_CONSOLIDATION", "RELEASED", "SHIPPED", "RECEIVED"];
 const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColSource", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
 const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
 
@@ -289,9 +292,17 @@ export function FeedRequisitionPanel() {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.requisition_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => openRequisition(r.requisition_id)}>
+              <tr key={r.requisition_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={(e) => {
+                // W2R: the row opens the requisition; a link inside it (the farm) opens its own record instead.
+                if ((e.target as HTMLElement).closest("a")) return;
+                openRequisition(r.requisition_id);
+              }}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
-                <td className={TD}>{r.farm_code ?? unavailable}</td>
+                <td className={TD}>
+                  {r.farm_code
+                    ? <RecordLink code={r.farm_code} href={r.farm_id ? locationHref(r.farm_id) : null} />
+                    : unavailable}
+                </td>
                 <td className={TD}>{labelOf(DOC_TYPE_LABEL, "ITEM", t)}</td>
                 <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
                 <td className={TD}><StatusDot variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</StatusDot></td>

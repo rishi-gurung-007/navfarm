@@ -13,7 +13,7 @@
  * false nothing here is an input. "Current Silo Feed Item No." is not shown —
  * the workbook removed it (rows 12, 44).
  */
-import { FeedRequisitionHeaderFields, RecordLink, batchHref, bulkTotalAndTrips, itemHref, locationHref } from "./feed-requisition-header";
+import { FeedRequisitionHeaderFields, RecordLink, batchHref, bulkTotalAndTrips, forecastRunHref, itemHref, lifecycleHref, locationHref, transferHref } from "./feed-requisition-header";
 import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldGroup, ReadField } from "@/components/ui/field";
@@ -45,6 +45,8 @@ export interface FeedRequisitionBreakdownRow {
   shed_code: string | null;
   heads: number | null;
   feed_rate_kg: number | null;
+  /** W2R: the Breed Lifecycle Stage row, linked from its label. */
+  lifecycle_ref_id?: string | null;
   lifecycle_ref_label: string | null;
   demand_kg: number;
   first_demand_date: string | null;
@@ -63,6 +65,7 @@ export interface FeedRequisitionLine {
   feed_type: string | null;
   is_next_diet: boolean;
   days_before_diet_change: number | null;
+  lifecycle_ref_id?: string | null;
   lifecycle_ref_label: string | null;
   system_balance_kg: string | null;
   daily_requirement_kg: string | null;
@@ -85,6 +88,9 @@ export interface FeedRequisitionLine {
   mill_approved_qty_kg?: number | null;
   adjustment_reason?: string | null;
   breakdown?: FeedRequisitionBreakdownRow[];
+  /** A1 (10 Oct), Req. r32: the BIN the line ships from (released transfer) or would (active assignment); null when none resolves. */
+  mill_loading_bin_id?: string | null;
+  mill_loading_bin_code?: string | null;
 }
 
 export interface FeedRequisitionHeader {
@@ -105,6 +111,11 @@ export interface FeedRequisitionHeader {
   consolidation_no?: string | null;
   consolidation_status?: string | null;
   consolidation_next_action?: string | null;
+  /** A1 (10 Oct): ids the document links by, and every transfer linked to the requisition (Req. r39). */
+  farm_id?: string | null;
+  forecast_run_id?: string | null;
+  consolidation_id?: string | null;
+  linked_transfers?: { transfer_id: string; transfer_no: string }[];
 }
 
 export interface FeedRequisitionDocumentView {
@@ -124,6 +135,9 @@ export interface FeedRequisitionDocumentView {
   approved_at: string | null;
   /** Saved on the requisition row by the API (GET returns it at the top level). */
   requester_name?: string | null;
+  /** A1 (10 Oct): the requester's login (user_master.email) and department name. */
+  requester_login?: string | null;
+  requester_department_name?: string | null;
   header: FeedRequisitionHeader;
   lines: FeedRequisitionLine[];
   approval_status?: string;
@@ -283,7 +297,7 @@ const NUM = "text-right tabular-nums";
 const MUTED = "text-[10px] text-[var(--text-muted)]";
 
 const LINE_COLUMNS = [
-  "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColReason", "rqdColFeedType", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
+  "rqdColLineNo", "rqdColSilo", "rqdColItemNo", "rqdColItemDesc", "rqdColReason", "rqdColFeedType", "rqdColMillBin", "rqdColNextDiet", "rqdColDaysBefore", "rqdColLifecycle",
   "rqdColSystemBalance", "rqdColDaily", "rqdColDaysRemaining", "rqdColRecommended", "rqdColRequested", "rqdColMillRequested", "rqdColMillApproved", "rqdColAdjustment",
   "rqdColShipped", "rqdColReceived", "rqdColOutstanding", "rqdColBags", "rqdColDelivery",
 ] as const;
@@ -367,6 +381,7 @@ export function FeedRequisitionDocument({
   const items = options && Array.isArray(options.items) ? options.items : [];
   const canEdit = editable && !!onLineEdit;
   const notAvailable = t("rqNotYetAvailable");
+  const linkedTransfers = Array.isArray(header?.linked_transfers) ? header.linked_transfers : [];
 
   // Requisition §1 rows 26–27, bagged beside them: the shared helper (feed-requisition-header.tsx).
   const target = header?.truck_target_kg ?? 0;
@@ -389,7 +404,9 @@ export function FeedRequisitionDocument({
           reqDate: header?.requisition_date ? formatDateShort(header.requisition_date) : null,
           reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
           source: labelOf(SOURCE_LABEL, view.source, t),
+          requesterLogin: view.requester_login ?? null,
           requesterName: view.requester_name ?? null,
+          requesterDepartment: view.requester_department_name ?? null,
           farmCode: header?.farm_code ? <RecordLink code={header.farm_code} href={view.farm_id ? locationHref(view.farm_id) : null} /> : null,
           farmName: header?.farm_name,
           nextDiet: header?.is_next_diet_requisition ? t("rqYes") : t("rqNo"),
@@ -406,10 +423,20 @@ export function FeedRequisitionDocument({
           status: <Badge variant={variantOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view))}>{labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}</Badge>,
           priority: view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
           deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,
-          saved: { approvedBy: header?.approved_by_name, approvedAt: dateTime(view.approved_at), linkedTransfer: header?.linked_transfer_no, forecastRun: header?.forecast_run_no },
+          saved: {
+            approvedBy: header?.approved_by_name,
+            approvedAt: dateTime(view.approved_at),
+            linkedTransfer: linkedTransfers.length
+              ? linkedTransfers.map((tr, i) => <span key={tr.transfer_id}>{i > 0 && ", "}<RecordLink code={tr.transfer_no} href={transferHref(tr.transfer_id)} /></span>)
+              : header?.linked_transfer_no,
+            forecastRun: header?.forecast_run_no
+              ? <RecordLink code={header.forecast_run_no} href={header.forecast_run_id ? forecastRunHref(header.forecast_run_id) : null} />
+              : null,
+          },
         }} />
         {(header?.consolidation_no || header?.consolidation_status) && (
           <FieldGroup title={t("rqdConsolidationTitle")} className="sm:col-span-12">
+            {/* W2R: plain text on purpose — FeedConsolidationsPanel does not open a sheet from `?id=` yet, so a link would land on the list. */}
             <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationSheet")} value={header.consolidation_no} mono appearance="control" emptyText={notAvailable} />
             <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationStatus")}
               value={header.consolidation_status ? labelOf(CONSOLIDATION_STATUS_LABEL, header.consolidation_status, t) : null} appearance="control" emptyText={notAvailable} />
@@ -501,9 +528,18 @@ export function FeedRequisitionDocument({
                       ) : t("rqNotApplicable")}
                     </td>
                     <td className={TD}>{labelOf(FEED_TYPE_LABEL, line.feed_type, t)}</td>
+                    <td className={TD}>
+                      {line.mill_loading_bin_code
+                        ? <RecordLink code={line.mill_loading_bin_code} href={line.mill_loading_bin_id ? locationHref(line.mill_loading_bin_id) : null} />
+                        : <span title={t("rqdMillBinNoneHint")}>{t("rqdMillBinNone")}</span>}
+                    </td>
                     <td className={TD}>{line.is_next_diet ? t("rqYes") : t("rqNo")}</td>
                     <td className={cn(TD, NUM)}>{line.days_before_diet_change ?? t("rqNotApplicable")}</td>
-                    <td className={TD}>{line.lifecycle_ref_label ?? notAvailable}</td>
+                    <td className={TD}>
+                      {line.lifecycle_ref_label
+                        ? <RecordLink code={line.lifecycle_ref_label} href={line.lifecycle_ref_id ? lifecycleHref(line.lifecycle_ref_id) : null} />
+                        : notAvailable}
+                    </td>
                     <td className={cn(TD, NUM)}>{kg(line.system_balance_kg, notAvailable)}</td>
                     <td className={cn(TD, NUM)}>{kg(line.daily_requirement_kg, notAvailable)}</td>
                     <td className={cn(TD, NUM)}>
@@ -567,12 +603,12 @@ export function FeedRequisitionDocument({
                               <tr key={`${b.batch_id}|${b.stage_id ?? ""}|${b.shed_id ?? ""}`}>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.batch_no ? <RecordLink code={b.batch_no} href={b.batch_id ? batchHref(b.batch_id) : null} /> : notAvailable}</td>
                                 <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.stage_name || b.stage_code || notAvailable}</td>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ?? notAvailable}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.shed_code ? <RecordLink code={b.shed_code} href={b.shed_id ? locationHref(b.shed_id) : null} /> : notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.heads)}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>
                                   {b.feed_rate_kg === null ? notAvailable : b.feed_rate_kg.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                                 </td>
-                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.lifecycle_ref_label ?? notAvailable}</td>
+                                <td className="whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]">{b.lifecycle_ref_label ? <RecordLink code={b.lifecycle_ref_label} href={b.lifecycle_ref_id ? lifecycleHref(b.lifecycle_ref_id) : null} /> : notAvailable}</td>
                                 <td className={cn("whitespace-nowrap px-2 py-0.5 text-[var(--text-secondary)]", NUM)}>{kg(b.demand_kg)}</td>
                               </tr>
                             ))}

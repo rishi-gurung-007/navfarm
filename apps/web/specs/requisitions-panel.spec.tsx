@@ -197,7 +197,7 @@ describe('RequisitionsPanel (D26)', () => {
     expect(screen.getByText('rqdReqNo')).toBeTruthy();
     const lines = screen.getByRole('table', { name: 'rqLinesLabel' });
     expect(within(lines).getAllByTestId('rqd-line-no').map((c) => c.textContent)).toEqual(['10000', '20000']);
-    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(22); // W1 (10 Oct): + Shipped, Received, Outstanding
+    expect(within(lines.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(23); // W1 (10 Oct): + Shipped, Received, Outstanding; W2R: + Mill Loading Bin
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' })).toBeTruthy();
   });
@@ -418,5 +418,32 @@ describe('Feed Forecast → Requisition — Approve / Reject (WP1g)', () => {
     await openPending();
     expect(screen.queryByRole('button', { name: 'rhApprove' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'rhReject' })).toBeNull();
+  });
+});
+
+// W2R (10 Oct): A1 returns farm_id on the list and filters RELEASED / SHIPPED / RECEIVED on their own columns.
+describe('RequisitionsPanel — W2R farm link and released/shipped/received filter', () => {
+  beforeEach(() => {
+    const base = get.getMockImplementation()!;
+    get.mockImplementation(async (url: string) => (url.startsWith('/feed-requisition?')
+      ? { data: [{ ...listRow, farm_id: 'farm-vil', farm_code: 'VIL100' }] }
+      : base(url)));
+  });
+
+  it('links the farm code to its location record without opening the requisition', async () => {
+    render(<RequisitionsPanel />);
+    const link = await screen.findByRole('link', { name: 'VIL100' });
+    expect(link.getAttribute('href')).toBe('/master-data/location?recordId=farm-vil');
+  });
+
+  it('offers Released, Shipped and Received in the status filter and sends them to the API', async () => {
+    render(<RequisitionsPanel />);
+    await screen.findByRole('table');
+    const select = screen.getByLabelText('rqShow');
+    for (const [value, name] of [['RELEASED', 'reqDocumentReleased'], ['SHIPPED', 'reqFulfilmentShipped'], ['RECEIVED', 'reqFulfilmentReceived']]) {
+      expect((within(select).getByRole('option', { name }) as HTMLOptionElement).value).toBe(value);
+    }
+    fireEvent.change(select, { target: { value: 'SHIPPED' } });
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition?status=SHIPPED'));
   });
 });

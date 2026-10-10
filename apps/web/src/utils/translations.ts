@@ -4537,6 +4537,10 @@ export const translations = {
     rolMemberRemoveFailed: "Failed to remove the role.",
     rolMemberSingleRoleNote: "A user holds one role at a time — assigning this role replaces the one they hold now.",
     rolHoldersBadge: "{{n}} users",
+    // W2R (10 Oct)
+    rqdColMillBin: "Mill Loading Bin No.",
+    rqdMillBinNone: "No BIN assigned",
+    rqdMillBinNoneHint: "No active mill BIN assignment for this feed item on the production date. Release needs one.",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",
