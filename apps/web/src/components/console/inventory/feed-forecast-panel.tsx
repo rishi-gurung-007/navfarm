@@ -374,7 +374,7 @@ function FeedForecastPanelContent() {
       {/* One row at >=1024px (review, 27 Sep): a wrapped filter row left
           "Date To" alone on a second line and took a third of the table's
           height. The date pair shares a container so it never splits. */}
-      <div className="flex shrink-0 flex-wrap items-end gap-3 lg:flex-nowrap">
+      <div className="flex shrink-0 flex-wrap items-end gap-3">
         <FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={setFarmId} fixedLabel={fixedLabel} />
         <div>
           <label className={labelCls} htmlFor="ff-planning">{t("ffPlanningDate")}</label>
