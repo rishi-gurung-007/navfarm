@@ -4154,10 +4154,14 @@ export const transferReceiptLine = mysqlTable('transfer_receipt_line', {
   line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'restrict' }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
-  // Copied from the shipment line (spec: receipt copies from shipment).
+  // Copied from the shipment line (spec: receipt copies from shipment), and
+  // declared exactly as 0146 creates it: the merge that brought this table in
+  // had added a `remarks` column no migration creates and widened serial_no to
+  // text, which made every receipt insert fail with "Unknown column 'remarks'"
+  // — Drizzle names every schema column in the statement, set or not. The
+  // sibling transferShipmentLine and the DTO's @MaxLength(100) agree on 100.
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: text('serial_no'),
-  remarks: text('remarks'),
+  serial_no: varchar('serial_no', { length: 100 }),
 });
 
 export const stockAdjustment = mysqlTable('stock_adjustment', {
