@@ -111,7 +111,7 @@ export default function MillComparePanel() {
 
   const nc = (v: number | null) => (v === null ? t("millCapNotConfigured") : formatKg(v));
   return (
-    <div data-fill-body>
+    <div data-fill-body className="min-h-0 overflow-y-auto">
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9 [&>button]:h-9">
         {(result?.mills.length ?? 0) > 0 && (
           <Field label={t("mcrMill")} htmlFor="mill-compare-mill">
@@ -157,7 +157,7 @@ export default function MillComparePanel() {
       ) : report.rows.length === 0 ? (
         <EmptyState title={t("mcrEmpty")} />
       ) : (
-        <div className="mt-4 max-h-[60vh] overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
+        <div className="mt-4 max-h-[60vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
           <table aria-label={t("mcrTableLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left text-xs">
             <thead><tr>
               {([["mcrColDate", "min-w-24"], ["mcrColPriority", "min-w-20"], ["mcrColDietNo", "min-w-16"], ["mcrColItemNo", "min-w-36"], ["mcrColItemName", "min-w-56"], ["mcrColBin", "min-w-36"], ["mcrColFarms", "min-w-16 text-right"], ["mcrColRequested", "min-w-32 text-right"], ["mcrColApproved", "min-w-32 text-right"], ["mcrColAvailable", "min-w-36 text-right"], ["mcrColStatus", "min-w-32"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
