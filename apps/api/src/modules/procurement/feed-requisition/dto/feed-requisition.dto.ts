@@ -29,6 +29,14 @@ export class CreateFeedConsolidationDto extends FeedConsolidationQueryDto {
   lines!: FeedConsolidationLineDto[];
 }
 
+/** Loading Instruction Sheet rows 70–72: what the mill records at loading. */
+export class UpdateFeedLoadingSheetDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) compartmentNo?: string;
+  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) kgLoaded?: number;
+  /** Row 72: the mill staff name confirming loading (stored in feed_loading_sheet.loaded_by, 36 characters). */
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(36, { message: 'Loaded By can be at most 36 characters.' }) loadedBy?: string;
+}
+
 export class AutoDraftFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
   @ApiPropertyOptional({ description: 'Last forecast day the draft covers (default planning date + 7, at most + 45)' })

@@ -13,6 +13,8 @@ export default function FeedLoadingPage() {
   const selectTab = useCallback((next: FeedForecastTab) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", next);
+    // An ?id= names a record of the tab it came with; it must not open in the next tab.
+    params.delete("id");
     router.replace(next === "loading-instructions" ? `${pathname}?${params.toString()}` : `/inventory/feed-forecast?${params.toString()}`, { scroll: false });
   }, [pathname, router, searchParams]);
   return <InventoryPageShell activeKey="feed-forecast"><div className="space-y-4 p-6"><FeedForecastSubTabs tab="loading-instructions" onTabChange={selectTab} /><FeedLoadingPanel /></div></InventoryPageShell>;

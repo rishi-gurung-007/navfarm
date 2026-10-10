@@ -8,7 +8,7 @@ import { FeedRequisitionService } from './feed-requisition.service';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
   CreateFeedRequisitionFromRunDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
-  CreateFeedConsolidationDto, FeedConsolidationQueryDto,
+  CreateFeedConsolidationDto, FeedConsolidationQueryDto, UpdateFeedLoadingSheetDto,
 } from './dto/feed-requisition.dto';
 import { FeedConsolidationService } from './feed-consolidation.service';
 import { FeedLoadingService } from './feed-loading.service';
@@ -116,7 +116,7 @@ export class FeedRequisitionController {
 
   @Put('loading-sheets/:id')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
-  async updateLoadingSheet(@Param('id', ParseUUIDPipe) id: string, @Body() dto: { compartmentNo?: string; kgLoaded?: number; loadedBy?: string }, @Req() req: any) {
+  async updateLoadingSheet(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFeedLoadingSheetDto, @Req() req: any) {
     const data = await this.loading!.update(id, dto, req.user?.tenantId || req['tenantId'], req.user);
     return { success: true, message: 'Feed loading sheet updated.', data };
   }
