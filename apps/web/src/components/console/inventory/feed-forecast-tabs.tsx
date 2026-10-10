@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Inventory -> Feed Forecast is one page with seven tabs: Dashboard, Forecast,
- * Feed Plan, Feed Requisition, Mill Consolidation, Loading Instructions and
+ * Inventory -> Feed Forecast is one page with eight tabs: Dashboard, Forecast,
+ * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Loading Instructions and
  * Physical Count — all of them work on the same selected farm.
  *
  * The chosen tab lives in `?tab=`, so a bookmark, a refresh and the redirect
@@ -22,19 +22,21 @@ import type { TranslationKeys } from "@/utils/translations";
 import FeedSiloDashboard from "./feed-silo-dashboard";
 import FeedForecastPanel from "./feed-forecast-panel";
 import FeedPlanPanel from "./feed-plan-panel";
+import MillComparePanel from "./mill-compare-panel";
 import { FeedRequisitionPanel } from "./requisitions-panel";
 import FeedStockCountPanel from "./feed-stock-count-panel";
 import { FeedForecastProvider } from "./feed-forecast-context";
 import { FeedConsolidationsPanel } from "./feed-consolidations-panel";
 import { FeedLoadingPanel } from "./feed-loading-panel";
 
-export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"] as const;
+export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
 const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   dashboard: "fftTabDashboard",
   forecast: "fftTabForecast",
   "feed-plan": "fftTabFeedPlan",
+  "compare-report": "fftTabCompareReport",
   "feed-requisition": "fftTabFeedRequisition",
   "mill-consolidation": "invFeedConsolidations",
   "loading-instructions": "invFeedLoading",
@@ -69,6 +71,7 @@ const PANELS: Partial<Record<FeedForecastTab, () => ReactNode>> = {
   dashboard: () => <FeedSiloDashboard />,
   forecast: () => <FeedForecastPanel />,
   "feed-plan": () => <FeedPlanPanel />,
+  "compare-report": () => <MillComparePanel />,
   "feed-requisition": () => <FeedRequisitionPanel />,
   "mill-consolidation": () => <FeedConsolidationsPanel />,
   "loading-instructions": () => <FeedLoadingPanel />,
