@@ -142,6 +142,10 @@ export default function FeedStockCountPanel() {
   const [entry, setEntry] = useState<EvidenceResponse | null>(null);
   const [entryAt, setEntryAt] = useState(localNowInput);
   const [entryScheduled, setEntryScheduled] = useState(false);
+  // Monthly Stock Take (Brief C): the same count, typed MONTHLY and tied to a Reporting Period.
+  const [countType, setCountType] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
+  const [periodId, setPeriodId] = useState("");
+  const [periods, setPeriods] = useState<Array<{ period_id: string; period_code: string; stock_take_date: string; period_status?: string }>>([]);
   const [counted, setCounted] = useState<Record<string, string>>({});
   const [reasonIds, setReasonIds] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -170,6 +174,16 @@ export default function FeedStockCountPanel() {
     setEntry(null);
     loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    if (countType !== "MONTHLY" || periods.length) return;
+    api.get("/reporting-period")
+      .then((res) => {
+        const list = unwrap<Array<{ period_id: string; period_code: string; stock_take_date: string; period_status?: string; status?: string }>>(res);
+        setPeriods((Array.isArray(list) ? list : []).filter((p) => p.status === "ACTIVE" && p.period_status !== "CLOSED"));
+      })
+      .catch((err: any) => showToast.error(err?.message || t("fscLoadFailed")));
+  }, [countType, periods.length, t]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -214,7 +228,8 @@ export default function FeedStockCountPanel() {
           companyId,
           farmId,
           countedAt: inputToInstant(entryAt),
-          scheduleSource: entryScheduled ? "SCHEDULED" : "ON_DEMAND",
+          scheduleSource: countType === "MONTHLY" ? "ON_DEMAND" : entryScheduled ? "SCHEDULED" : "ON_DEMAND",
+          ...(countType === "MONTHLY" ? { countType, reportingPeriodId: periodId || undefined } : {}),
           lines,
         }),
       );
@@ -395,6 +410,34 @@ export default function FeedStockCountPanel() {
                     onChange={(e) => setEntryAt(e.target.value || localNowInput())}
                   />
                 </Field>
+                <Field label={t("fscCountType")} htmlFor="sc-count-type">
+                  <select
+                    id="sc-count-type"
+                    className="nf-input-sm nf-select"
+                    style={inputStyle}
+                    value={countType}
+                    onChange={(e) => setCountType(e.target.value === "MONTHLY" ? "MONTHLY" : "WEEKLY")}
+                  >
+                    <option value="WEEKLY">{t("fscCountTypeWeekly")}</option>
+                    <option value="MONTHLY">{t("fscCountTypeMonthly")}</option>
+                  </select>
+                </Field>
+                {countType === "MONTHLY" && (
+                  <Field label={t("fscReportingPeriod")} htmlFor="sc-period">
+                    <select
+                      id="sc-period"
+                      className="nf-input-sm nf-select"
+                      style={inputStyle}
+                      value={periodId}
+                      onChange={(e) => setPeriodId(e.target.value)}
+                    >
+                      <option value="">{t("fscReportingPeriodPick")}</option>
+                      {periods.map((p) => (
+                        <option key={p.period_id} value={p.period_id}>{`${p.period_code} (${String(p.stock_take_date).slice(0, 10)})`}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
                 <Field label={t("fscSource")} htmlFor="sc-source">
                   <select
                     id="sc-source"
