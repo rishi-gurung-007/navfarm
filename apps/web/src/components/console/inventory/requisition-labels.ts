@@ -19,12 +19,29 @@ export const REQ_STATUS_LABEL: LabelMap = {
   REJECTED: { key: "reqStatusRejected", variant: "danger" },
   CANCELLED: { key: "reqStatusCancelled", variant: "neutral" },
   POSTED: { key: "reqStatusPosted", variant: "success" },
+  IN_CONSOLIDATION: { key: "reqStatusInConsolidation", variant: "info" },
   RELEASED: { key: "reqDocumentReleased", variant: "info" },
   TRANSFER_OPEN: { key: "reqFulfilmentOpen", variant: "info" },
   PARTIALLY_SHIPPED: { key: "reqFulfilmentPartShipped", variant: "warning" },
   SHIPPED: { key: "reqFulfilmentShipped", variant: "success" },
   PARTIALLY_RECEIVED: { key: "reqFulfilmentPartReceived", variant: "warning" },
   RECEIVED: { key: "reqFulfilmentReceived", variant: "success" },
+};
+
+/** Feed consolidation sheet status (feed_consolidation.status). */
+export const CONSOLIDATION_STATUS_LABEL: LabelMap = {
+  DRAFT: { key: "consolStatusDraft", variant: "neutral" },
+  REVIEWED: { key: "consolStatusReviewed", variant: "info" },
+  CONSOLIDATED: { key: "consolStatusConsolidated", variant: "success" },
+  CANCELLED: { key: "consolStatusCancelled", variant: "neutral" },
+};
+
+/** Feed loading sheet status (feed_loading_sheet.status). */
+export const LOADING_STATUS_LABEL: LabelMap = {
+  DRAFT: { key: "loadStatusDraft", variant: "neutral" },
+  LOADED: { key: "loadStatusLoaded", variant: "info" },
+  DISPATCHED: { key: "loadStatusDispatched", variant: "warning" },
+  RECEIVED: { key: "loadStatusReceived", variant: "success" },
 };
 
 export const PRIORITY_LABEL: LabelMap = {
@@ -35,6 +52,8 @@ export const PRIORITY_LABEL: LabelMap = {
 };
 
 export const REQ_TYPE_LABEL: LabelMap = { FEED_FORECAST: "reqTypeForecast", MANUAL: "reqTypeManual" };
+/** Source column of the feed requisition list: Forecast or Manual, from requisition_type. */
+export const REQ_LIST_SOURCE_LABEL: LabelMap = { FEED_FORECAST: "reqSourceForecast", MANUAL: "reqTypeManual" };
 export const FEED_TYPE_LABEL: LabelMap = { BULK: "reqFeedBulk", BAGGED: "reqFeedBagged" };
 export const SOURCE_LABEL: LabelMap = {
   AUTO_FORECAST: "reqSourceForecast", MANUAL_ENTRY: "reqSourceManual", STOCK_TAKE_TRIGGERED: "reqSourceStockTake", DIET_CHANGE_UPCOMING: "reqSourceDietChange",
@@ -83,7 +102,7 @@ export function humanizeCode(code: string): string {
 }
 
 export function labelOf(map: LabelMap, code: string | null | undefined, t: Translate): string {
-  if (!code) return "—";
+  if (!code) return t("labelNotSet");
   const entry = map[code];
   if (!entry) return humanizeCode(code);
   return t(typeof entry === "string" ? entry : entry.key);

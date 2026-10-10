@@ -32,7 +32,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisition-decision";
-import { PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
+import { PRIORITY_LABEL, REQ_LIST_SOURCE_LABEL, REQ_STATUS_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
 import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
@@ -69,8 +69,9 @@ interface ListRow {
   farm_name?: string | null;
 }
 
-const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"];
-const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
+// The API filters the requisition.status column, so only IN_CONSOLIDATION joins the list: RELEASED / SHIPPED / RECEIVED live in document_status / fulfilment_status.
+const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "IN_CONSOLIDATION"];
+const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColSource", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
 const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
@@ -291,7 +292,8 @@ export function FeedRequisitionPanel() {
               <tr key={r.requisition_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => openRequisition(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{r.farm_code ?? unavailable}</td>
-                <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
+                <td className={TD}>{t("rqTypeItem")}</td>
+                <td className={TD}>{labelOf(REQ_LIST_SOURCE_LABEL, r.requisition_type, t)}</td>
                 <td className={TD}><StatusDot variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</StatusDot></td>
                 <td className={TD}>{r.priority ? <StatusDot variant={variantOf(PRIORITY_LABEL, r.priority)}>{labelOf(PRIORITY_LABEL, r.priority, t)}</StatusDot> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>

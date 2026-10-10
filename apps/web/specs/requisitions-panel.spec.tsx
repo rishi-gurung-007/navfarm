@@ -165,10 +165,17 @@ describe('RequisitionsPanel (D26)', () => {
     const table = await screen.findByRole('table', { name: 'rqListLabel' });
     expect(get).toHaveBeenCalledWith('/feed-requisition?');
     const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells).toEqual(['REQ-VIL100-2026-00004', 'rqNotYetAvailable', 'reqTypeForecast', 'reqStatusAutoDraft', 'prioCritical', '23/09/99', '26/09/99', '2', '15,000']);
+    expect(cells).toEqual(['REQ-VIL100-2026-00004', 'rqNotYetAvailable', 'rqTypeItem', 'reqSourceForecast', 'reqStatusAutoDraft', 'prioCritical', '23/09/99', '26/09/99', '2', '15,000']);
     expect(screen.queryByText('FEED_FORECAST')).toBeNull();
     // Rishi (4 Oct): the Feed Forecast tab is feed only, so it offers no Type choice.
     expect(screen.queryByLabelText('rqType')).toBeNull();
+  });
+
+  it('offers the in-consolidation status in the filter (the API filters the status column)', async () => {
+    render(<RequisitionsPanel />);
+    await screen.findByRole('table');
+    const option = within(screen.getByLabelText('rqShow')).getByRole('option', { name: 'reqStatusInConsolidation' });
+    expect((option as HTMLOptionElement).value).toBe('IN_CONSOLIDATION');
   });
 
   it('filters by status through the API', async () => {
