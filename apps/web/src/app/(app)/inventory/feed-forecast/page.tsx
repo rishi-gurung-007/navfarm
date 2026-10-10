@@ -19,6 +19,8 @@ export default function InventoryFeedForecastPage() {
     (next: FeedForecastTab) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("tab", next);
+      // An ?id= names a record of the tab it came with; it must not open in the next tab.
+      params.delete("id");
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [router, pathname, searchParams],
