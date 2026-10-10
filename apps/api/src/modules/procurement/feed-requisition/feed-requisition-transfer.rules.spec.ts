@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { feedReleaseBlockReason, groupFeedTransferLines } from './feed-requisition-transfer.rules';
+import { feedReleaseBlockReason, groupFeedTransferLines, resolveLoadingBinId } from './feed-requisition-transfer.rules';
 
 const lines = [
   { lineId: 'line-1', itemId: 'feed-a', itemLabel: 'FEED-A', destinationLocationId: 'silo-1', quantityKg: 5000 },
@@ -47,5 +47,23 @@ describe('groupFeedTransferLines', () => {
     expect(feedReleaseBlockReason(lines, [], '2026-10-10')).toBe('FEED-A has no active mill BIN assignment on 2026-10-10.');
     expect(feedReleaseBlockReason(lines, [assignment], '2026-10-10')).toBeNull();
     expect(feedReleaseBlockReason(lines, [assignment], null)).toBe('A production date is required before Release.');
+  });
+});
+
+describe('resolveLoadingBinId', () => {
+  const bins = [
+    assignment,
+    { ...assignment, assignmentId: 'assignment-2', itemId: 'feed-b', binLocationId: 'bin-2' },
+  ];
+
+  it('names the BIN assigned to the item on the production date, the same one Release uses', () => {
+    expect(resolveLoadingBinId({ itemId: 'feed-a', productionDate: '2026-10-10' }, bins)).toBe('bin-1');
+    expect(resolveLoadingBinId({ itemId: 'feed-b', productionDate: '2026-10-10' }, bins)).toBe('bin-2');
+  });
+
+  it('names no BIN rather than guessing when the assignment is missing or ambiguous', () => {
+    expect(resolveLoadingBinId({ itemId: 'feed-a', productionDate: '2026-10-11' }, bins)).toBeNull();
+    expect(resolveLoadingBinId({ itemId: 'feed-a', productionDate: null }, bins)).toBeNull();
+    expect(resolveLoadingBinId({ itemId: 'feed-a', productionDate: '2026-10-10' }, [...bins, { ...assignment, assignmentId: 'a-3', binLocationId: 'bin-3' }])).toBeNull();
   });
 });

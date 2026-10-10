@@ -4,6 +4,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
+import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 
 type User = { userId?: string; userType?: string };
 
@@ -29,23 +30,35 @@ export class FeedLoadingService {
     const lines = await this.db.select().from(schema.feedConsolidationLine)
       .where(eq(schema.feedConsolidationLine.consolidation_id, consolidationId));
     if (!lines.length) return { created: 0, existing: false };
-    const bins = await this.db.select({ id: schema.locationMaster.location_id, code: schema.locationMaster.location_code, feedType: schema.locationMaster.bin_feed_type })
-      .from(schema.locationMaster).where(and(eq(schema.locationMaster.tenant_id, tenantId), eq(schema.locationMaster.location_type, 'BIN'), eq(schema.locationMaster.is_active, true), isNull(schema.locationMaster.deleted_at)));
-    const requisitions = await this.db.select({ lineId: schema.requisitionLine.line_id, feedType: schema.requisitionLine.feed_type })
-      .from(schema.requisitionLine).where(inArray(schema.requisitionLine.line_id, lines.map((line) => line.requisition_line_id)));
-    const feedTypeByLine = new Map(requisitions.map((row) => [row.lineId, row.feedType]));
+    const itemIds = [...new Set(lines.map((line) => line.item_id))];
+    const productionDates = [...new Set(lines.map((line) => line.production_date).filter((date): date is string => !!date))];
+    const assignments = productionDates.length ? await this.db.select({
+      assignmentId: schema.binDietAssignment.assignment_id,
+      itemId: schema.binDietAssignment.feed_item_id,
+      productionDate: schema.binDietAssignment.production_date,
+      binLocationId: schema.binDietAssignment.bin_location_id,
+      productionSlotId: schema.binDietAssignment.production_slot_id,
+    }).from(schema.binDietAssignment).where(and(
+      eq(schema.binDietAssignment.tenant_id, tenantId),
+      eq(schema.binDietAssignment.company_id, consolidation.companyId),
+      inArray(schema.binDietAssignment.production_date, productionDates),
+      inArray(schema.binDietAssignment.feed_item_id, itemIds),
+      eq(schema.binDietAssignment.is_active, true),
+      eq(schema.binDietAssignment.status, 'ACTIVE'),
+      isNull(schema.binDietAssignment.deleted_at),
+    )) : [];
     const [sequence] = await this.db.select({ max: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.feedLoadingSheet.loading_sheet_no}, 6) AS UNSIGNED)), 0)` })
       .from(schema.feedLoadingSheet).where(eq(schema.feedLoadingSheet.tenant_id, tenantId)).for('update');
     let next = Number(sequence?.max ?? 0) + 1;
     await this.db.insert(schema.feedLoadingSheet).values(lines.map((line) => {
-      const bin = bins.find((candidate) => candidate.feedType === (feedTypeByLine.get(line.requisition_line_id) ?? 'BULK')) ?? bins[0];
+      const binId = resolveLoadingBinId({ itemId: line.item_id, productionDate: line.production_date }, assignments);
       return {
         loading_sheet_id: randomUUID(), loading_sheet_no: `LOAD-${String(next++).padStart(6, '0')}`,
         tenant_id: tenantId, company_id: consolidation.companyId, consolidation_id: consolidationId,
         consolidation_line_id: line.consolidation_line_id, requisition_id: line.requisition_id,
         requisition_line_id: line.requisition_line_id, farm_id: line.farm_id,
         destination_silo_id: line.destination_silo_id, item_id: line.item_id,
-        mill_loading_bin_id: bin?.id ?? null, requested_qty_kg: line.requested_qty_kg,
+        mill_loading_bin_id: binId, requested_qty_kg: line.requested_qty_kg,
         mill_approved_qty_kg: line.mill_approved_qty_kg, scheduled_qty_kg: line.mill_approved_qty_kg,
         requested_delivery_date: line.requested_delivery_date, production_date: line.production_date,
         status: 'DRAFT',

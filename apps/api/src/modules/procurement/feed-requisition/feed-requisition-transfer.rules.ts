@@ -73,3 +73,22 @@ export function feedReleaseBlockReason(
     return error instanceof BadRequestException ? error.message : 'The mill BIN assignment is not ready for Release.';
   }
 }
+
+/** The loading-sheet BIN: the exact Release assignment for this item and production date, or null when Release would refuse. */
+export function resolveLoadingBinId(
+  line: { itemId: string; productionDate: string | null | undefined },
+  assignments: FeedBinAssignmentInput[],
+): string | null {
+  if (!line.productionDate) return null;
+  try {
+    const [plan] = groupFeedTransferLines(
+      [{ lineId: '', itemId: line.itemId, itemLabel: line.itemId, destinationLocationId: '', quantityKg: 0 }],
+      assignments,
+      line.productionDate,
+    );
+    return plan?.sourceLocationId ?? null;
+  } catch (error) {
+    if (error instanceof BadRequestException) return null;
+    throw error;
+  }
+}
