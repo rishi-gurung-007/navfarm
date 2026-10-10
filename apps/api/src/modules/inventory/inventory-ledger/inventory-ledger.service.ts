@@ -14,6 +14,7 @@ import { lotBalances, serialsInStock } from './lot-balance';
 import { costingMethodOf, explainCosting, type ExplainBookReceipt } from './costing-explanation';
 import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 import { mysqlTimestampFromEpoch } from '../../../common/mysql-utc-instant';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -261,6 +262,8 @@ export class InventoryLedgerService {
 
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
+    // r32: a closed Reporting Period blocks every posting dated in it (one shared guard).
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
     const [item] = await this.db
       .select()
       .from(schema.itemMaster)
@@ -609,6 +612,7 @@ export class InventoryLedgerService {
     if (params.quantity <= 0) {
       throw new BadRequestException(`Outbound quantity must be positive (got ${params.quantity}).`);
     }
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
 
     const [item] = await this.db
       .select()

@@ -52,5 +52,5 @@ export async function assertPostingPeriodOpen(
       lte(P.start_date, d),
       gte(P.end_date, d),
     ));
-  assertPeriodWindowOpen(rows ?? [], d);
+  assertPeriodWindowOpen(Array.isArray(rows) ? rows : [], d);
 }
