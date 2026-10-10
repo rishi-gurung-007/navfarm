@@ -13,6 +13,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { useFeedForecastContext } from "./feed-forecast-context";
+import { MillCapacityBadge, millCapacityText, formatKg, type DietCapacity } from "./mill-capacity-view";
 
 interface FeedPlanRow {
   farm: { id: string; code: string; name: string };
@@ -25,6 +26,8 @@ interface FeedPlanRow {
   remainingKg: number;
   varianceKg: number;
   capacityKg: number | null;
+  /** Engine r42–r43 for the selected production date; null when it cannot be computed. */
+  capacity?: DietCapacity | null;
 }
 
 interface FeedPlanResult {
@@ -84,6 +87,7 @@ export default function FeedPlanPanel() {
     const params = new URLSearchParams({ farmId });
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (planningDate) params.set("productionDate", planningDate);
     Promise.all([
       api.get(`/feed-forecast/feed-plan?${params.toString()}`),
       api.get(`/feed-forecast/feed-plan/versions?farmId=${encodeURIComponent(farmId)}`),
@@ -100,7 +104,7 @@ export default function FeedPlanPanel() {
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [farmId, from, reload, to]);
+  }, [farmId, from, planningDate, reload, to]);
 
   async function generateVersion() {
     if (!farmId || !planningDate) return;
@@ -153,7 +157,7 @@ export default function FeedPlanPanel() {
       ) : (
         <ScrollTable label={t("feedPlanTableLabel")}>
           <thead><tr>
-            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity"] as const).map((key) => <th key={key}>{t(key)}</th>)}
+            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity", "feedPlanColCapacityStatus"] as const).map((key) => <th key={key}>{t(key)}</th>)}
           </tr></thead>
           <tbody>{rows.map((row) => (
             <tr key={`${row.period}:${row.item.id}`}>
@@ -161,7 +165,14 @@ export default function FeedPlanPanel() {
               <td>{kg(row.tentativeKg, t("feedPlanUnavailable"))}</td><td>{kg(row.approvedRequisitionKg, t("feedPlanUnavailable"))}</td>
               <td>{kg(row.shippedKg, t("feedPlanUnavailable"))}</td><td>{kg(row.receivedKg, t("feedPlanUnavailable"))}</td>
               <td>{kg(row.remainingKg, t("feedPlanUnavailable"))}</td><td>{kg(row.varianceKg, t("feedPlanUnavailable"))}</td>
-              <td>{kg(row.capacityKg, t("feedPlanUnavailable"))}</td>
+              <td>{millCapacityText(row.capacity?.state ?? "NOT_CONFIGURED", row.capacity?.availableKg ?? null, t)}</td>
+              <td>
+                <MillCapacityBadge
+                  status={row.capacity?.status}
+                  t={t}
+                  title={row.capacity?.status ? t("millCapDemandOf", { demand: formatKg(row.capacity.demandKg), available: formatKg(row.capacity.availableKg) }) : undefined}
+                />
+              </td>
             </tr>
           ))}</tbody>
         </ScrollTable>

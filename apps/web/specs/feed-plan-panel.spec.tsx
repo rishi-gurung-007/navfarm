@@ -21,7 +21,7 @@ it("shows the saved plan quantities and human text for unavailable capacity", as
   render(<FeedForecastProvider><FeedPlanPanel /></FeedForecastProvider>);
   const table = await screen.findByRole("table", { name: "feedPlanTableLabel" });
   const cells = within(table).getAllByRole("cell").map((cell) => cell.textContent);
-  expect(cells).toEqual(["GRA100", "2026-10-12", "FD-01", "Grower", "6,000", "7,200", "4,000", "2,500", "4,700", "1,200", "feedPlanUnavailable"]);
+  expect(cells).toEqual(["GRA100", "2026-10-12", "FD-01", "Grower", "6,000", "7,200", "4,000", "2,500", "4,700", "1,200", "millCapNotConfigured", "millCapNoStatus"]);
   expect(cells).not.toContain("-");
   expect(cells).not.toContain("NaN");
 });
@@ -72,4 +72,24 @@ it("generates and opens retained feed plan versions with a dialog header and foo
   const dialog = await screen.findByRole("dialog", { name: "PLAN-GRA100-202642-R01" });
   expect(within(dialog).getByRole("table", { name: "feedPlanVersionLines" })).toBeTruthy();
   expect(within(dialog.querySelector("footer") as HTMLElement).getByRole("button", { name: "close" })).toBeTruthy();
+});
+
+it("shows Mill Capacity Available and Plan vs Mill Capacity for the selected production date (Engine r42-r43)", async () => {
+  (api.get as jest.Mock).mockImplementation(async (url: string) => {
+    if (url.includes("/versions")) return { data: [] };
+    return { data: { run: { runId: "run-1" }, rows: [
+      { farm: { id: "farm-1", code: "GRA100", name: "Grasmere" }, period: "2026-10-12", item: { id: "item-1", code: "FD-01", name: "Grower" },
+        tentativeKg: 6000, approvedRequisitionKg: 0, shippedKg: 0, receivedKg: 0, remainingKg: 0, varianceKg: -6000, capacityKg: 20000,
+        capacity: { state: "AVAILABLE", demandKg: 21000, availableKg: 20000, status: "RED" } },
+      { farm: { id: "farm-1", code: "GRA100", name: "Grasmere" }, period: "2026-10-12", item: { id: "item-2", code: "FD-02", name: "Finisher" },
+        tentativeKg: 3000, approvedRequisitionKg: 0, shippedKg: 0, receivedKg: 0, remainingKg: 0, varianceKg: -3000, capacityKg: null,
+        capacity: { state: "NOT_SCHEDULED", demandKg: 3000, availableKg: null, status: null } },
+    ] } };
+  });
+  render(<FeedForecastProvider><FeedPlanPanel /></FeedForecastProvider>);
+  fireEvent.change(screen.getByLabelText("feedPlanProductionDate"), { target: { value: "2026-10-11" } });
+  const table = await screen.findByRole("table", { name: "feedPlanTableLabel" });
+  const rows = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").slice(-2).map((cell) => cell.textContent));
+  expect(rows).toEqual([["20,000", "millCapRed"], ["millCapNotScheduled", "millCapNoStatus"]]);
+  expect((api.get as jest.Mock).mock.calls.some(([url]) => String(url).includes("productionDate=2026-10-11"))).toBe(true);
 });
