@@ -38,6 +38,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import ReceiveStockPanel from "./receive-stock-panel";
 import { transferStatusText } from "./stock-transfer-status";
+import { itemCodeOf, userDisplayNameOf, warehouseCodeOf } from "./stock-transfer-display";
 
 const PAGE_SIZE = 25;
 
@@ -95,6 +96,7 @@ interface TransferHeaderState {
 interface TransferLineState {
   line_id?: string;
   item_id: string;
+  item_code?: string;
   quantity: string;
   qty_to_ship?: string;
   qty_shipped?: number | string;
@@ -166,7 +168,7 @@ export default function StockTransferPanel() {
     DRAFT: statusLabel("DRAFT"),
     IN_TRANSIT: statusLabel("IN_TRANSIT"),
     PARTIALLY_RECEIVED: statusLabel("PARTIALLY_RECEIVED"),
-    RECEIVED: "Received",
+    RECEIVED: statusLabel("RECEIVED"),
     POSTED: statusLabel("POSTED"),
     CANCELLED: statusLabel("CANCELLED"),
   };
@@ -403,7 +405,7 @@ export default function StockTransferPanel() {
     const isTracked = Boolean(it?.is_lot_tracked || it?.is_serial_tracked || line.lot_no || line.serial_no);
     if (!isTracked) {
       showToast.info(
-        `Item Tracking is not active for item "${it?.item_code || line.item_id} — ${it?.item_name || ""}". This item is not configured for lot or serial tracking.`
+        `Item Tracking is not active for item "${itemCodeOf(items, line.item_id, line.item_code, notAvailable)} — ${it?.item_name || ""}". This item is not configured for lot or serial tracking.`
       );
       return;
     }
@@ -555,7 +557,7 @@ export default function StockTransferPanel() {
           }
           if (l.maxQty !== undefined && Number(l.quantity) > Number(l.maxQty)) {
             throw new Error(
-              `Quantity ${l.quantity} for "${it?.item_code || l.item_id}" exceeds available stock (${l.maxQty} ${l.uom}).`
+              `Quantity ${l.quantity} for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}" exceeds available stock (${l.maxQty} ${l.uom}).`
             );
           }
           const noteParts: string[] = [];
@@ -599,15 +601,13 @@ export default function StockTransferPanel() {
             throw new Error(`Quantity to Ship cannot be negative.`);
           }
           if (l.qty_to_ship > l.quantity + 0.0001) {
-            const it = items.find((i) => i.item_id === l.item_id);
             throw new Error(
-              `Quantity to Ship (${l.qty_to_ship}) cannot exceed Ordered Quantity (${l.quantity}) for "${it?.item_code || l.item_id}".`
+              `Quantity to Ship (${l.qty_to_ship}) cannot exceed Ordered Quantity (${l.quantity}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
             );
           }
           if (l.maxQty !== undefined && l.qty_to_ship > Number(l.maxQty) + 0.0001) {
-            const it = items.find((i) => i.item_id === l.item_id);
             throw new Error(
-              `Quantity to Ship (${l.qty_to_ship}) exceeds available stock (${l.maxQty} ${l.uom}) for "${it?.item_code || l.item_id}".`
+              `Quantity to Ship (${l.qty_to_ship}) exceeds available stock (${l.maxQty} ${l.uom}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
             );
           }
         }
@@ -769,6 +769,7 @@ export default function StockTransferPanel() {
         return {
           line_id: l.line_id,
           item_id: l.item_id,
+          item_code: l.item_code ?? undefined,
           quantity: String(orderedQty),
           qty_shipped: shippedQty,
           qty_in_transit: inTransit,
@@ -825,15 +826,13 @@ export default function StockTransferPanel() {
             throw new Error("Quantity to ship must be greater than 0.");
           }
           if (shipQty > maxCanShip + 0.0001) {
-            const it = items.find((i) => i.item_id === l.item_id);
             throw new Error(
-              `Quantity to ship (${shipQty}) exceeds remaining un-shipped balance (${maxCanShip}) for "${it?.item_code || l.item_id}".`
+              `Quantity to ship (${shipQty}) exceeds remaining un-shipped balance (${maxCanShip}) for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}".`
             );
           }
           if (l.maxQty !== undefined && shipQty > Number(l.maxQty) + 0.0001) {
-            const it = items.find((i) => i.item_id === l.item_id);
             throw new Error(
-              `Quantity to ship (${shipQty}) exceeds available stock (${l.maxQty} ${l.uom}) for "${it?.item_code || l.item_id}".`
+              `Quantity to ship (${shipQty}) exceeds available stock (${l.maxQty} ${l.uom}) for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}".`
             );
           }
           let serialToShip = l.serial_no || undefined;
@@ -899,9 +898,8 @@ export default function StockTransferPanel() {
             throw new Error("Quantity to receive (Good) or DOA loss must be greater than 0.");
           }
           if (toRec + toDoa > inTransit + 0.0001) {
-            const it = items.find((i) => i.item_id === l.item_id);
             throw new Error(
-              `Total accounted quantity (${toRec + toDoa}) cannot exceed in-transit quantity (${inTransit}) for "${it?.item_code || l.item_id}".`
+              `Total accounted quantity (${toRec + toDoa}) cannot exceed in-transit quantity (${inTransit}) for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}".`
             );
           }
           return {
@@ -1007,20 +1005,12 @@ export default function StockTransferPanel() {
     if (!w) return "—";
     return w.warehouse_code ? `${w.warehouse_code} (${w.warehouse_name})` : w.warehouse_name || "—";
   };
-  const warehouseCode = (id: string) => {
-    const w = warehouses.find((wh) => wh.warehouse_id === id);
-    return w?.warehouse_code || notAvailable;
-  };
+  const warehouseCode = (id: string, rowCodeOrName?: string | null) => warehouseCodeOf(warehouses, id, rowCodeOrName, notAvailable);
   const warehouseName = (id: string) => {
     const w = warehouses.find((wh) => wh.warehouse_id === id);
     return w?.warehouse_name || "";
   };
-  const getUserDisplayName = (idOrName?: string | null) => {
-    if (!idOrName) return "System";
-    const found = users.find((u) => u.user_id === idOrName || u.userId === idOrName);
-    if (found) return found.full_name || found.fullName || found.email || notAvailable;
-    return notAvailable;
-  };
+  const getUserDisplayName = (idOrName?: string | null, rowName?: string | null) => userDisplayNameOf(users, idOrName, rowName, notAvailable);
 
   // Location & Farm authorization helpers
   const getWarehouseFarm = (warehouseId: string | undefined): { farm_id: string | null; farm_code: string | null } => {
@@ -1348,7 +1338,7 @@ export default function StockTransferPanel() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap" style={S.primary}>
                           <div className="flex flex-col">
-                            <span className="font-semibold text-xs">{warehouseCode(row.from_warehouse_id)}</span>
+                            <span className="font-semibold text-xs">{warehouseCode(row.from_warehouse_id, row.from_warehouse_code || row.from_warehouse_name)}</span>
                             {warehouseName(row.from_warehouse_id) && (
                               <span className="text-[11px] truncate max-w-[220px]" style={S.sub}>
                                 {warehouseName(row.from_warehouse_id)}
@@ -1358,7 +1348,7 @@ export default function StockTransferPanel() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap" style={S.primary}>
                           <div className="flex flex-col">
-                            <span className="font-semibold text-xs">{warehouseCode(row.to_warehouse_id)}</span>
+                            <span className="font-semibold text-xs">{warehouseCode(row.to_warehouse_id, row.to_warehouse_code || row.to_warehouse_name)}</span>
                             {warehouseName(row.to_warehouse_id) && (
                               <span className="text-[11px] truncate max-w-[220px]" style={S.sub}>
                                 {warehouseName(row.to_warehouse_id)}
@@ -1604,7 +1594,7 @@ export default function StockTransferPanel() {
                           {!canUserReceive(editingTransfer) && (
                             <span className="inline-flex items-center gap-1.5 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md">
                               <Truck className="h-3.5 w-3.5 shrink-0" />
-                              <span>In transit to {warehouseCode(editingTransfer.to_warehouse_id)} — Awaiting receipt</span>
+                              <span>In transit to {warehouseCode(editingTransfer.to_warehouse_id, editingTransfer.to_warehouse_code || editingTransfer.to_warehouse_name)} — Awaiting receipt</span>
                             </span>
                           )}
                         </>
@@ -2737,7 +2727,7 @@ export default function StockTransferPanel() {
                                       <TableRow key={s.ledger_id || sIdx} className="border-b border-(--row-border)">
                                         <TableCell className="px-3 py-2 font-mono text-xs">{s.posting_date}</TableCell>
                                         <TableCell className="px-3 py-2 font-medium" style={S.primary}>
-                                          {it?.item_code || notAvailable} {it?.item_name ? `— ${it.item_name}` : ""}
+                                          {itemCodeOf(items, s.item_id, s.item_code, notAvailable)} {it?.item_name || s.item_name ? `— ${it?.item_name || s.item_name}` : ""}
                                         </TableCell>
                                         <TableCell className="px-3 py-2 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
                                           {Math.abs(Number(s.quantity)).toLocaleString()}
@@ -2750,7 +2740,7 @@ export default function StockTransferPanel() {
                                           {tracking}
                                         </TableCell>
                                         <TableCell className="px-3 py-2" style={S.sub}>
-                                          {s.created_by_name || getUserDisplayName(s.created_by)}
+                                          {getUserDisplayName(s.created_by_id || s.created_by, s.created_by_name)}
                                         </TableCell>
                                       </TableRow>
                                     );
@@ -2821,7 +2811,7 @@ export default function StockTransferPanel() {
                                           const isDoaOnlyTwin = r.external_reference_no === "DOA_IN_TRANSIT";
                                           const goodVal = isDoaOnlyTwin ? 0 : Number(r.quantity);
                                           const tracking = r.serial_no || r.lot_no || "—";
-                                          const author = r.created_by_name || getUserDisplayName(r.created_by);
+                                          const author = getUserDisplayName(r.created_by_id || r.created_by, r.created_by_name);
                                           const displayRemarks = doaVal > 0
                                             ? (r.remarks || `DOA in-transit loss auto-adjusted (${doaVal.toLocaleString()} ${r.uom || "units"}) [MRT-017]`)
                                             : (r.remarks || "—");
@@ -2830,7 +2820,7 @@ export default function StockTransferPanel() {
                                             <TableRow key={r.ledger_id || rIdx} className="border-b border-(--row-border)">
                                               <TableCell className="px-3 py-2 font-mono text-xs">{r.posting_date}</TableCell>
                                               <TableCell className="px-3 py-2 font-medium" style={S.primary}>
-                                                {it?.item_code || notAvailable} {it?.item_name ? `— ${it.item_name}` : ""}
+                                                {itemCodeOf(items, r.item_id, r.item_code, notAvailable)} {it?.item_name || r.item_name ? `— ${it?.item_name || r.item_name}` : ""}
                                               </TableCell>
                                               <TableCell className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                                 +{goodVal.toLocaleString()}
@@ -2977,7 +2967,7 @@ export default function StockTransferPanel() {
                     <div className="rounded-[var(--radius-md)] border p-3 grid grid-cols-2 sm:grid-cols-4 gap-2" style={S.raised}>
                       <div>
                         <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Item</span>
-                        <span className="font-semibold text-(--text-primary)">{it?.item_code || notAvailable}</span>
+                        <span className="font-semibold text-(--text-primary)">{itemCodeOf(items, line.item_id, line.item_code, notAvailable)}</span>
                         <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || "—"}</p>
                       </div>
                       <div>

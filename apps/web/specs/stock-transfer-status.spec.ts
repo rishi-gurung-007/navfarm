@@ -12,6 +12,7 @@ import {
   transferStatusText,
   transferStatusLabelKey,
 } from "../src/components/console/inventory/stock-transfer-status";
+import { itemCodeOf, userDisplayNameOf, warehouseCodeOf } from "../src/components/console/inventory/stock-transfer-display";
 
 const en = translations.en as Record<string, string>;
 
@@ -61,7 +62,35 @@ describe("W9 transfer status text and unavailable label", () => {
     expect(transferStatusText("WEIRD", t as never)).toBe("WEIRD");
     expect(transferStatusText(null, t as never)).toBe("");
   });
+  it("labels RECEIVED through the shared status text (ledger rows carry it)", () => {
+    expect(transferStatusText("RECEIVED", t as never)).toBe("Received");
+    expect(transferStatusLabelKey("RECEIVED")).toBe("stpStatusReceived");
+  });
   it("has the Not available label", () => {
     expect(en.stpNotAvailable).toBe("Not available");
+  });
+});
+
+describe("W9 display fallbacks: a code on the row before Not available, never an id", () => {
+  const NA = "Not available";
+  const items = [{ item_id: "i1", item_code: "FEED-1" }];
+  it("item code: client list, then the row's item_code, then Not available", () => {
+    expect(itemCodeOf(items, "i1", "ROW-CODE", NA)).toBe("FEED-1");
+    expect(itemCodeOf(items, "uuid-missing", "LEDGER-CODE", NA)).toBe("LEDGER-CODE");
+    expect(itemCodeOf(items, "uuid-missing", undefined, NA)).toBe(NA);
+    expect(itemCodeOf(items, "uuid-missing", "", NA)).not.toBe("uuid-missing");
+  });
+  it("warehouse code: client list, then the row's code or name, then Not available", () => {
+    const whs = [{ warehouse_id: "w1", warehouse_code: "VIL100/STORE" }];
+    expect(warehouseCodeOf(whs, "w1", "ROW", NA)).toBe("VIL100/STORE");
+    expect(warehouseCodeOf(whs, "w-missing", "GRS/SILO", NA)).toBe("GRS/SILO");
+    expect(warehouseCodeOf(whs, "w-missing", null, NA)).toBe(NA);
+  });
+  it("user: client list, then the row's name, then Not available; no actor is System", () => {
+    const users = [{ user_id: "u1", full_name: "Rishi" }];
+    expect(userDisplayNameOf(users, "u1", "Row Name", NA)).toBe("Rishi");
+    expect(userDisplayNameOf(users, "u-missing", "Row Name", NA)).toBe("Row Name");
+    expect(userDisplayNameOf(users, "u-missing", undefined, NA)).toBe(NA);
+    expect(userDisplayNameOf(users, null, undefined, NA)).toBe("System");
   });
 });

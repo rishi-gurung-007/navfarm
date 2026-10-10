@@ -15,6 +15,7 @@ const LABEL_KEY: Record<string, TranslationKeys> = {
   IN_TRANSIT: "stpStatusInTransit",
   PARTIALLY_RECEIVED: "stpStatusPartiallyReceived",
   POSTED: "stpStatusPosted",
+  RECEIVED: "stpStatusReceived",
   CANCELLED: "stpStatusCancelled",
 };
 

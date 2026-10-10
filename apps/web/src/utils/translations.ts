@@ -3390,6 +3390,7 @@ export const translations = {
     stpStatusInTransit: "In Transit",
     stpStatusPartiallyReceived: "Partially Received",
     stpStatusPosted: "Posted",
+    stpStatusReceived: "Received",
     stpStatusCancelled: "Cancelled",
     // W9 (10 Oct)
     stpNotAvailable: "Not available",
