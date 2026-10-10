@@ -97,7 +97,7 @@ export function FeedSiloDashboardCards({
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
-      <StatRow columns={6}>
+      <StatRow columns={3}>
         <StatCard label={t("fsdCurrentDietFeedItem")} value={silo.currentDietItemName ?? unavailable} />
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
