@@ -93,3 +93,38 @@ it("shows Mill Capacity Available and Plan vs Mill Capacity for the selected pro
   expect(rows).toEqual([["20,000", "millCapRed"], ["millCapNotScheduled", "millCapNoStatus"]]);
   expect((api.get as jest.Mock).mock.calls.some(([url]) => String(url).includes("productionDate=2026-10-11"))).toBe(true);
 });
+
+describe("W2D W10: feed plan links and ?planId= deep link", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("links farm and item in the plan table", async () => {
+    (api.get as jest.Mock).mockImplementation(async (url: string) => url.includes("/versions?") ? { data: [] } : { data: { run: { runId: "run-1" }, rows: [{
+      farm: { id: "farm-1", code: "GRA100", name: "Grasmere" }, period: "2026-10-12",
+      item: { id: "item-1", code: "FD-01", name: "Grower" }, tentativeKg: 6000, approvedRequisitionKg: 7200,
+      shippedKg: 4000, receivedKg: 2500, remainingKg: 4700, varianceKg: 1200, capacityKg: null,
+    }] } });
+    render(<FeedForecastProvider><FeedPlanPanel /></FeedForecastProvider>);
+    const table = await screen.findByRole("table", { name: "feedPlanTableLabel" });
+    expect(within(table).getByRole("link", { name: "GRA100" }).getAttribute("href")).toBe("/master-data/location?recordId=farm-1");
+    expect(within(table).getByRole("link", { name: "FD-01" }).getAttribute("href")).toBe("/master-data/item?recordId=item-1");
+  });
+
+  it("opens the plan version named by ?planId= and links its items", async () => {
+    window.history.replaceState(null, "", "/inventory/feed-forecast?tab=feed-plan&planId=plan-7");
+    (api.get as jest.Mock).mockImplementation(async (url: string) => {
+      if (url.endsWith("/feed-plan/versions/plan-7")) return { data: {
+        plan_id: "plan-7", plan_code: "PLAN-GRA100-202642-R07", plan_type: "ACTUAL", production_date: "2026-10-16", plan_week: "202642",
+        source_from: "2026-09-09", source_to: "2026-10-13", lines: [{
+          plan_line_id: "line-1", item_id: "item-1", item_code: "FD-01", item_name: "Grower", projected_target_kg: "7000",
+          adjustment_factor: "1.1", tentative_qty_kg: "7700", requested_qty_kg: null, mill_approved_qty_kg: null, variance_qty_kg: "0", history_snapshot: [],
+        }],
+      } };
+      if (url.includes("/versions?")) return { data: [] };
+      return { data: { run: null, rows: [] } };
+    });
+    render(<FeedForecastProvider><FeedPlanPanel /></FeedForecastProvider>);
+    const dialog = await screen.findByRole("dialog", { name: "PLAN-GRA100-202642-R07" });
+    const lines = within(dialog).getByRole("table", { name: "feedPlanVersionLines" });
+    expect(within(lines).getByRole("link", { name: "FD-01" }).getAttribute("href")).toBe("/master-data/item?recordId=item-1");
+  });
+});

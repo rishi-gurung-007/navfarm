@@ -7,6 +7,10 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "./feed-format";
+import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
+
+/** W2D W7: a planned feed requisition opens in the Feed Forecast requisition tab. */
+export const feedRequisitionHref = (id: string) => `/inventory/feed-forecast?tab=feed-requisition&id=${encodeURIComponent(id)}`;
 
 export interface ReportRow {
   key: string;
@@ -389,6 +393,16 @@ const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const MUTED = "text-[var(--text-muted)]";
 
+/** Planned requisition refs, each linked to its feed requisition; explanatory text when none. */
+function PlannedReferences({ references, empty }: { references: ReportRow["incomingReferences"]; empty: string }) {
+  const planned = (references ?? []).filter((reference) => reference.kind === "PLANNED_REQUISITION" && reference.referenceNo);
+  if (!planned.length) return <>{empty}</>;
+  return <>{planned.map((reference, index) => <span key={`${reference.referenceId ?? reference.referenceNo}-${index}`}>
+    {index > 0 && ", "}
+    <RecordLink code={reference.referenceNo} href={reference.referenceId ? feedRequisitionHref(reference.referenceId) : null} />
+  </span>)}</>;
+}
+
 function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
   return <tr><td colSpan={colSpan} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]">{children}</td></tr>;
 }
@@ -451,20 +465,20 @@ export function FeedForecastGrid({
           <StateRow colSpan={totalCols}><Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} />{t("ffNoRows")}</StateRow>
         ) : pivoted.map((row, index) => (
           <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
-            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}>{batchNoOnly(row)}</td>
+            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}><RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} /></td>
             <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
-            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}>{row.shedCode}</td>
-            <td className={cn(TD, MUTED)}>{row.sourceCode ?? t("ffNoSource")}</td>
+            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
+            <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
-            <td className={TD}>{row.itemName ?? ""}</td>
-            <td className={TD}>{row.currentItemName ?? t("ffNoCurrentSiloItem")}</td>
+            <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
+            <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.openingSystemBalanceKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.confirmedReceiptsKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.openTransferMovementKg ?? 0)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.plannedIncomingKg ?? 0)}</td>
-            <td className={TD}>{(row.incomingReferences ?? []).filter((reference) => reference.kind === "PLANNED_REQUISITION").map((reference) => reference.referenceNo).filter(Boolean).join(", ") || t("ffNoPlannedFeed")}</td>
+            <td className={TD}><PlannedReferences references={row.incomingReferences} empty={t("ffNoPlannedFeed")} /></td>
             <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
             {columns.map((column) => {
               const value = row.closingBySlot[column.key];

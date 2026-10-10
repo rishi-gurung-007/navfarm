@@ -221,7 +221,12 @@ function FeedSiloDashboardContent() {
       ) : data?.silo ? (
         <div data-dashboard-content className={cn("transition-opacity", loading && "opacity-50")}>
           <div className="flex min-h-0 flex-col gap-4">
-            <FeedSiloDashboardCards silo={data.silo} farmTotalOrderKg={data.farmTotalOrderKg} t={t} />
+            <FeedSiloDashboardCards
+              silo={data.silo}
+              shed={sheds.find((option) => option.id === data.selection.shedId) ?? null}
+              farmTotalOrderKg={data.farmTotalOrderKg}
+              t={t}
+            />
             <FeedSiloDashboardCharts
               balanceSeries={data.balanceSeries}
               demandSeries={data.demandSeries}

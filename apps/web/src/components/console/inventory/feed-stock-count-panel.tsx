@@ -37,6 +37,7 @@ import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { labelOf, REQ_STATUS_LABEL, variantOf } from "./requisition-labels";
 import { useFeedFarm } from "./use-feed-farm";
+import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 
 interface CountRow {
   count_id: string;
@@ -48,7 +49,23 @@ interface CountRow {
   stock_adjustment_id: string | null;
 }
 
-interface CountLine {
+/** W2D A7 (Engine §1 rows 9–17): what the API adds beside a silo's count line; absent on older responses. */
+interface SiloPlanning {
+  siloName?: string | null;
+  capacityKg?: number | null;
+  houses?: Array<{ id: string; code: string; name: string }>;
+  projectedShortfallKg?: number | null;
+  nextDietItemId?: string | null;
+  nextDietItemCode?: string | null;
+  nextDietItemName?: string | null;
+  nextDietDate?: string | null;
+  nextDietInDays?: number | null;
+}
+
+/** Engine §1 row 16: a diet change this close is warned. */
+const NEXT_DIET_WARN_DAYS = 7;
+
+interface CountLine extends SiloPlanning {
   count_line_id: string;
   silo_id: string;
   item_id: string;
@@ -58,6 +75,7 @@ interface CountLine {
   variance_pct_absolute: string;
   reason_id: string | null;
   silo_code: string;
+  silo_name?: string | null;
   item_code: string;
   item_name: string;
   reason_name: string | null;
@@ -67,11 +85,12 @@ interface CountView extends CountRow {
   lines: CountLine[];
 }
 
-interface EvidencePair {
+interface EvidencePair extends SiloPlanning {
   siloId: string;
   siloCode: string | null;
   itemId: string;
   itemCode: string;
+  itemName?: string | null;
   uom: string;
   systemQtyKg: number;
   costAvailable: boolean;
@@ -79,13 +98,19 @@ interface EvidencePair {
 
 interface EvidenceResponse {
   countedAt: string;
+  /** Null when the forecast could not run: the planning columns then say so. */
+  planningDate?: string | null;
   pairs: EvidencePair[];
 }
 
 const STATUS_FILTER = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "POSTED", "REJECTED"];
 const LIST_COLUMNS = ["fscColCountNo", "fscColCountedAt", "fscColSource", "fscColStatus"] as const;
-const LINE_COLUMNS = ["fscColSilo", "fscColItem", "fscColItemName", "fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColReason"] as const;
-const RIGHT = new Set<string>(["fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct"]);
+// Engine §1 rows 8–17; checkpoint 37: the system quantity is always "System Balance KG".
+const SILO_COLUMNS = ["fscColSilo", "fscColSiloName", "fscColHouse", "fscColItem", "fscColDiet", "fscColCapacity"] as const;
+const PLANNING_COLUMNS = ["fscColShortfall", "fscColNextDietIn", "fscColNextItem"] as const;
+const LINE_COLUMNS = [...SILO_COLUMNS, "fscColSystemBalance", "fscColCounted", "fscColVariance", "fscColVariancePct", ...PLANNING_COLUMNS, "fscColReason"] as const;
+const ENTRY_COLUMNS = [...SILO_COLUMNS, "fscColSystemBalance", ...PLANNING_COLUMNS, "fscColCounted", "fscColReason"] as const;
+const RIGHT = new Set<string>(["fscColCapacity", "fscColSystemBalance", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColShortfall", "fscColNextDietIn"]);
 
 const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
 const TD = "whitespace-nowrap border-b border-(--border) px-3 py-2 align-top text-sm text-(--text-primary)";
@@ -139,6 +164,41 @@ function shortTimestamp(value: string | null | undefined, unavailable: string): 
 
 const sourceLabel = (source: string, t: (key: any) => string): string =>
   source === "SCHEDULED" ? t("fscSourceScheduled") : t("fscSourceOnDemand");
+
+type T = (key: any, vars?: any) => string;
+
+/** Silo code, name, house(s), item and diet description, capacity — linked, never an id. */
+function SiloCells({ siloId, siloCode, siloName, houses, itemId, itemCode, itemName, capacityKg, t, unavailable }: SiloPlanning & {
+  siloId: string; siloCode: string | null | undefined; itemId: string; itemCode: string; itemName?: string | null; t: T; unavailable: string;
+}) {
+  return <>
+    <td className={TD}>{siloCode ? <RecordLink code={siloCode} href={locationHref(siloId)} /> : t("fscSiloCodeMissing")}</td>
+    <td className={TD}>{siloName || unavailable}</td>
+    <td className={TD}>{houses && houses.length
+      ? houses.map((house, index) => <span key={house.id}>{index > 0 && ", "}<RecordLink code={house.code} href={locationHref(house.id)} /></span>)
+      : t("fscNoHouse")}</td>
+    <td className={TD}><RecordLink code={itemCode} href={itemHref(itemId)} /></td>
+    <td className={`${TD} min-w-48 whitespace-normal break-words`}>{itemName || unavailable}</td>
+    <td className={cn(TD, NUM)}>{kg(capacityKg, unavailable)}</td>
+  </>;
+}
+
+/** Projected shortfall, next diet in X days (warned at ≤ 7) and the next item. */
+function PlanningCells({ siloId, projectedShortfallKg, nextDietInDays, nextDietItemId, nextDietItemCode, nextDietItemName, t, unavailable }: SiloPlanning & {
+  siloId: string; t: T; unavailable: string;
+}) {
+  const warn = nextDietInDays !== null && nextDietInDays !== undefined && nextDietInDays <= NEXT_DIET_WARN_DAYS;
+  return <>
+    <td className={cn(TD, NUM)}>{kg(projectedShortfallKg, unavailable)}</td>
+    <td className={cn(TD, NUM, warn && "font-semibold text-(--warning)")} data-testid={`next-diet-in-${siloId}`} data-warning={warn ? "true" : "false"}
+      title={warn ? t("fscNextDietSoon") : undefined}>
+      {nextDietInDays === null || nextDietInDays === undefined ? t("fscNoNextDiet") : `${nextDietInDays} ${t("fsdDaysUnit")}`}
+    </td>
+    <td className={TD}>{nextDietItemCode
+      ? <><RecordLink code={nextDietItemCode} href={nextDietItemId ? itemHref(nextDietItemId) : null} />{nextDietItemName ? ` — ${nextDietItemName}` : ""}</>
+      : t("fscNoNextDiet")}</td>
+  </>;
+}
 
 export default function FeedStockCountPanel() {
   const { t } = useLanguage();
@@ -423,33 +483,35 @@ export default function FeedStockCountPanel() {
                   {t("ffRetry")}
                 </Button>
               </div>
+              {entry.planningDate === null && entry.pairs.length > 0 && (
+                <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscPlanningUnavailable")}</p>
+              )}
               {entry.pairs.length === 0 ? (
                 <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscEntryEmpty")}</p>
               ) : (
                 <div className={cn(BOX, "mt-0")}><table aria-label={t("fscEntryLabel")} className={TABLE}>
                   <thead><tr>
-                    <th scope="col" className={TH}>{t("fscColSilo")}</th>
-                    <th scope="col" className={TH}>{t("fscColItem")}</th>
-                    <th scope="col" className={cn(TH, NUM)}>{t("fscColSystem")}</th>
-                    <th scope="col" className={cn(TH, NUM)}>{t("fscColCounted")}</th>
-                    <th scope="col" className={TH}>{t("fscColReason")}</th>
+                    {ENTRY_COLUMNS.map((column) => (
+                      <th key={column} scope="col" className={cn(TH, RIGHT.has(column) && "text-right")}>{t(column)}</th>
+                    ))}
                   </tr></thead>
                   <tbody>
                     {entry.pairs.map((pair) => {
                       const key = `${pair.siloId}:${pair.itemId}`;
                       const value = counted[key] ?? "";
                       const differs = value !== "" && Number.isFinite(Number(value)) && Number(value) !== pair.systemQtyKg;
+                      const siloLabel = pair.siloCode ?? pair.siloName ?? t("fscSiloCodeMissing");
                       return <tr key={key}>
-                        <td className={TD}>{pair.siloCode ?? pair.siloId}</td>
-                        <td className={TD}>{pair.itemCode}</td>
+                        <SiloCells {...pair} t={t} unavailable={unavailable} />
                         <td className={cn(TD, NUM)}>{kg(pair.systemQtyKg, unavailable)}</td>
+                        <PlanningCells {...pair} t={t} unavailable={unavailable} />
                         <td className={cn(TD, NUM)}>
                           <input type="number" min={0} step="any" className="nf-input-sm h-9 w-28 px-2 text-right tabular-nums" style={inputStyle}
-                            aria-label={t("fscCountedLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
+                            aria-label={t("fscCountedLabel", { silo: siloLabel, item: pair.itemCode })}
                             value={value} onChange={(e) => setCounted((current) => ({ ...current, [key]: e.target.value }))} />
                         </td>
                         <td className={TD}>{differs ? (
-                          <ReasonSelect id={`sc-reason-${key}`} ariaLabel={t("fscReasonLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
+                          <ReasonSelect id={`sc-reason-${key}`} ariaLabel={t("fscReasonLabel", { silo: siloLabel, item: pair.itemCode })}
                             valueFormat="id" value={reasonIds[key] ?? null}
                             onChange={(next) => setReasonIds((current) => ({ ...current, [key]: next }))} />
                         ) : <span style={{ color: "var(--text-secondary)" }}>{t("fscNoReason")}</span>}</td>
@@ -474,9 +536,11 @@ export default function FeedStockCountPanel() {
                 ))}</tr></thead>
                 <tbody>{lines.map((line) => (
                   <tr key={line.count_line_id}>
-                    <td className={TD}>{line.silo_code}</td><td className={TD}>{line.item_code}</td><td className={`${TD} min-w-48 whitespace-normal break-words`}>{line.item_name}</td>
+                    <SiloCells {...line} siloId={line.silo_id} siloCode={line.silo_code} siloName={line.silo_name ?? line.siloName}
+                      itemId={line.item_id} itemCode={line.item_code} itemName={line.item_name} t={t} unavailable={unavailable} />
                     <td className={cn(TD, NUM)}>{kg(line.system_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.counted_qty_kg, unavailable)}</td>
                     <td className={cn(TD, NUM)}>{kg(line.variance_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.variance_pct_absolute, unavailable)}</td>
+                    <PlanningCells {...line} siloId={line.silo_id} t={t} unavailable={unavailable} />
                     <td className={TD}>{line.reason_name ?? t("fscNoReason")}</td>
                   </tr>
                 ))}</tbody>

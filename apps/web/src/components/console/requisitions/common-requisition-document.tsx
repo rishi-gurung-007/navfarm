@@ -21,6 +21,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import { COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, labelOf } from "../inventory/requisition-labels";
+import { RecordLink, itemHref, locationHref } from "../inventory/feed-requisition-header";
 import { commonStatus, emptyLine, type CommonRequisitionLine, type CommonRequisitionOptions, type CommonRequisitionView } from "./common-requisition-model";
 
 /** WP1c: the header's two-value Status (Rishi's list), separate from Approval. */
@@ -100,6 +101,11 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
   const departments = options?.departments ?? [];
   const items = options?.items ?? [];
   const locCode = (id: string | null, code?: string | null) => code ?? locations.find((l) => l.location_id === id)?.location_code ?? null;
+  /** W2D W12: a location's code linked to its record; null when there is no code (the caller's empty text then shows). */
+  const locLink = (id: string | null | undefined, code?: string | null) => {
+    const shown = locCode(id ?? null, code);
+    return shown ? <RecordLink code={shown} href={id ? locationHref(id) : null} /> : null;
+  };
   const deptName = (id: string | null, name?: string | null) => name ?? departments.find((d) => d.cost_center_id === id)?.cost_center_name ?? null;
 
   const select = (id: string, label: string, value: string | null, choices: { value: string; label: string }[], onPick: (v: string | null) => void) => (
@@ -157,7 +163,7 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
         {can ? input("crq-date", t("crqReqDate"), view.requisition_date, "date", (v) => set({ requisition_date: v }))
           : <ReadField className={HALF} label={t("crqReqDate")} value={view.requisition_date ? formatDateShort(view.requisition_date) : null} />}
         {can ? select("crq-main", t("crqMainLocation"), view.main_location_id, farmChoices, (v) => set({ main_location_id: v }))
-          : <ReadField className={HALF} label={t("crqMainLocation")} value={locCode(view.main_location_id, view.main_location_code)} mono />}
+          : <ReadField className={HALF} label={t("crqMainLocation")} value={locLink(view.main_location_id, view.main_location_code)} mono />}
         {/* Rishi, 5 Oct: "Requester User ID shows the user's login (email)". */}
         <ReadField className={HALF} label={t("crqRequesterUserId")} value={view.requester_login ?? null} mono />
         <ReadField className={HALF} label={t("crqRequester")} value={view.requester_name ?? null} />
@@ -174,11 +180,11 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
           : <ReadField className={HALF} label={t("crqPurpose")} value={labelOf(COMMON_PURPOSE_LABEL, view.purpose, t)} />}
         {store
           ? (can ? select("crq-from", t("crqFrom"), view.from_location_id, locChoices, (v) => set({ from_location_id: v }))
-            : <ReadField className={HALF} label={t("crqFrom")} value={locCode(view.from_location_id, view.from_location_code)} mono />)
+            : <ReadField className={HALF} label={t("crqFrom")} value={locLink(view.from_location_id, view.from_location_code)} mono />)
           : <ReadField className={HALF} label={t("crqFrom")} value={t("rqNotApplicable")} />}
         {store
           ? (can ? select("crq-to", t("crqTo"), view.to_location_id, locChoices, (v) => set({ to_location_id: v }))
-            : <ReadField className={HALF} label={t("crqTo")} value={locCode(view.to_location_id, view.to_location_code)} mono />)
+            : <ReadField className={HALF} label={t("crqTo")} value={locLink(view.to_location_id, view.to_location_code)} mono />)
           : <ReadField className={HALF} label={t("crqTo")} value={t("rqNotApplicable")} />}
         {store && isItem ? (can ? (
           <Field
@@ -230,7 +236,7 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
                           columnHeaders={[t("crqColItem"), t("crqColItemDescription")]} placeholder={t("crqChoose")} searchPlaceholder={t("crqSearch")}
                           noMatchesLabel={t("crqNoMatches")} triggerClassName="w-48"
                           onChange={(itemId) => { const it = items.find((x) => x.item_id === itemId); setLine(i, { item_id: itemId || null, uom: it?.uom_primary ?? line.uom }); }} />
-                      ) : line.item_code ?? ""}</td>
+                      ) : <RecordLink code={line.item_code} href={line.item_id ? itemHref(line.item_id) : null} />}</td>
                       {/* Item Description is the Item Master's name, never typed here. */}
                       <td className={TD}>{line.item_name ?? items.find((x) => x.item_id === line.item_id)?.item_name ?? ""}</td>
                       <td className={TD}>{t("rqNotApplicable")}</td>
@@ -243,8 +249,10 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
                     )}
                     <td className={cn(TD, NUM)}>{cell("crqQtyFor", line.quantity, (v) => setLine(i, { quantity: v ?? "" }), "number")}</td>
                     {store ? <>
-                      <td className={TD}>{locCode(line.from_location_id, line.from_location_code) ?? locCode(view.from_location_id, view.from_location_code) ?? t("crqFromHeader")}</td>
-                      <td className={TD}>{locCode(line.to_location_id, line.to_location_code) ?? locCode(view.to_location_id, view.to_location_code) ?? t("crqToHeader")}</td>
+                      <td className={TD}>{(can ? locCode(line.from_location_id, line.from_location_code) ?? locCode(view.from_location_id, view.from_location_code)
+                        : locLink(line.from_location_id, line.from_location_code) ?? locLink(view.from_location_id, view.from_location_code)) ?? t("crqFromHeader")}</td>
+                      <td className={TD}>{(can ? locCode(line.to_location_id, line.to_location_code) ?? locCode(view.to_location_id, view.to_location_code)
+                        : locLink(line.to_location_id, line.to_location_code) ?? locLink(view.to_location_id, view.to_location_code)) ?? t("crqToHeader")}</td>
                       <td className={cn(TD, NUM)}>{qty(line.qty_to_ship ?? line.quantity) || t("crqCalculatedAfterPosting")}</td>
                       <td className={cn(TD, NUM)}>{qty(line.qty_shipped) || t("crqNotShipped")}</td>
                       <td className={cn(TD, NUM)}>{qty(line.qty_to_receive ?? line.quantity) || t("crqCalculatedAfterPosting")}</td>

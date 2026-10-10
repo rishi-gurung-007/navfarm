@@ -21,6 +21,7 @@ import { downloadCsvFile, escapeCsvCell } from "@/modules/master-data/utils/mast
 import { unwrap } from "./feed-format";
 import { useFeedForecastContext } from "./feed-forecast-context";
 import { millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
+import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 
 interface CompareRow {
   productionDate: string;
@@ -35,6 +36,7 @@ interface CompareRow {
   state: MillCapacityState;
   status: MillCapacityStatus | null;
   priority: number | null;
+  binId?: string | null;
   binCode: string | null;
   feedForm: "BULK" | "BAGGED" | null;
 }
@@ -168,9 +170,9 @@ export default function MillComparePanel() {
                   <td className={`${TD} whitespace-nowrap`}>{formatDateShort(row.productionDate)}</td>
                   <td className={`${TD} whitespace-nowrap`}>{row.priority ?? t("millCapNotScheduled")}</td>
                   <td className={`${TD} whitespace-nowrap`}>{row.dietNo ?? t("feedPlanUnavailable")}</td>
-                  <td className={`${TD} whitespace-nowrap`}>{row.itemCode}</td>
+                  <td className={`${TD} whitespace-nowrap`}><RecordLink code={row.itemCode} href={row.itemId ? itemHref(row.itemId) : null} /></td>
                   <td className={`${TD} min-w-56 whitespace-normal break-words text-(--text-primary)`}>{row.itemName}</td>
-                  <td className={`${TD} whitespace-nowrap`}>{row.binCode ?? t("millCapNotScheduled")}</td>
+                  <td className={`${TD} whitespace-nowrap`}>{row.binCode ? <RecordLink code={row.binCode} href={row.binId ? locationHref(row.binId) : null} /> : t("millCapNotScheduled")}</td>
                   <td className={`${TD} ${NUM}`}>{row.farmCount}</td>
                   <td className={`${TD} ${NUM}`}>{formatKg(row.requestedKg)}</td>
                   <td className={`${TD} ${NUM}`}>{row.millApprovedKg === null ? t("mcrNotConsolidated") : formatKg(row.millApprovedKg)}</td>

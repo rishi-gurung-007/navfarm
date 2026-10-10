@@ -105,3 +105,75 @@ it("uses human unavailable text for a missing count timestamp and invalid quanti
   expect(within(dialog).getAllByText("fsdNotAvailable").length).toBeGreaterThan(0);
   expect(within(dialog).queryByText("—")).toBeNull();
 });
+
+/** W2D W8 (Engine §1 rows 8–17; checkpoint 37). */
+describe("W2D W8: count entry and lines show the silo planning facts", () => {
+  const planning = {
+    siloName: "Grower silo", capacityKg: 12000, houses: [{ id: "shed-3", code: "GRA100/SHED-003", name: "Third shed" }],
+    itemName: "Grower Feed R1", projectedShortfallKg: 4500,
+    nextDietItemId: "item-2", nextDietItemCode: "FEED-002", nextDietItemName: "Grower Feed R2", nextDietDate: "2026-10-12", nextDietInDays: 4,
+  };
+
+  it("entry rows show name, house, capacity, diet description, shortfall, next diet days (warned at 7 or less) and next item, all linked", async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith("/feed-stock-count/evidence?")) return Promise.resolve({ data: {
+        countedAt: "2026-10-08T18:00:00+05:30", planningDate: "2026-10-08",
+        pairs: [{ siloId: "silo-1", siloCode: "GRA100/SILO-001", itemId: "item-1", itemCode: "FEED-001", uom: "KG", systemQtyKg: 1000, costAvailable: true, ...planning }],
+      } });
+      return Promise.resolve({ data: [row] });
+    });
+    render(<FeedStockCountPanel />);
+    await screen.findByText("FSC-00001");
+    fireEvent.click(screen.getByRole("button", { name: "fscNew" }));
+    const table = await screen.findByRole("table", { name: "fscEntryLabel" });
+    const href = (name: string) => within(table).getByRole("link", { name }).getAttribute("href");
+    expect(href("GRA100/SILO-001")).toBe("/master-data/location?recordId=silo-1");
+    expect(href("GRA100/SHED-003")).toBe("/master-data/location?recordId=shed-3");
+    expect(href("FEED-001")).toBe("/master-data/item?recordId=item-1");
+    expect(href("FEED-002")).toBe("/master-data/item?recordId=item-2");
+    for (const text of ["Grower silo", "Grower Feed R1", "12,000", "4,500"]) expect(within(table).getByText(text)).toBeTruthy();
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(expect.arrayContaining(["fscColSiloName", "fscColHouse", "fscColCapacity", "fscColDiet", "fscColSystemBalance", "fscColShortfall", "fscColNextDietIn", "fscColNextItem"]));
+    expect(headers).not.toContain("fscColSystem");
+    const warn = within(table).getByTestId("next-diet-in-silo-1");
+    expect(warn.textContent).toContain("4");
+    expect(warn.getAttribute("data-warning")).toBe("true");
+  });
+
+  it("never shows a silo id when the code is missing", async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith("/feed-stock-count/evidence?")) return Promise.resolve({ data: {
+        countedAt: "2026-10-08T18:00:00+05:30",
+        pairs: [{ siloId: "silo-1", siloCode: null, itemId: "item-1", itemCode: "FEED-001", uom: "KG", systemQtyKg: 1000, costAvailable: true }],
+      } });
+      return Promise.resolve({ data: [row] });
+    });
+    render(<FeedStockCountPanel />);
+    await screen.findByText("FSC-00001");
+    fireEvent.click(screen.getByRole("button", { name: "fscNew" }));
+    const table = await screen.findByRole("table", { name: "fscEntryLabel" });
+    expect(within(table).queryByText("silo-1")).toBeNull();
+    expect(within(table).queryByText("—")).toBeNull();
+  });
+
+  it("saved lines show the same facts and link silo and items", async () => {
+    get.mockImplementation((url: string) => {
+      if (url === "/feed-stock-count/count-1") return Promise.resolve({ data: { ...row, lines: [{
+        count_line_id: "line-1", silo_id: "silo-1", silo_code: "GRA100/SILO-001", silo_name: "Grower silo",
+        item_id: "item-1", item_code: "FEED-001", item_name: "Grower Feed R1",
+        system_qty_kg: "1000", counted_qty_kg: "950", variance_qty_kg: "-50", variance_pct_absolute: "5",
+        reason_id: null, reason_name: null, ...planning, nextDietInDays: 12,
+      }] } });
+      return Promise.resolve({ data: [row] });
+    });
+    render(<FeedStockCountPanel />);
+    fireEvent.click(await screen.findByText("FSC-00001"));
+    const table = await screen.findByRole("table", { name: "fscLinesLabel" });
+    expect(within(table).getByRole("link", { name: "GRA100/SILO-001" }).getAttribute("href")).toBe("/master-data/location?recordId=silo-1");
+    expect(within(table).getByRole("link", { name: "FEED-001" }).getAttribute("href")).toBe("/master-data/item?recordId=item-1");
+    expect(within(table).getByRole("link", { name: "GRA100/SHED-003" })).toBeTruthy();
+    expect(within(table).getByText("Grower silo")).toBeTruthy();
+    expect(within(table).getByTestId("next-diet-in-silo-1").getAttribute("data-warning")).toBe("false");
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toContain("fscColSystemBalance");
+  });
+});
