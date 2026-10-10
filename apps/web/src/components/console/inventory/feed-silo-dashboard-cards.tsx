@@ -90,11 +90,11 @@ export function FeedSiloDashboardCards({
     ? <a className="text-(--accent) hover:underline" href={`/requisitions?id=${encodeURIComponent(silo.requisitionId)}`}>{silo.requisitionStatus}</a>
     : silo.requisitionStatus ?? unavailable;
 
-  const status: { tone: Tone; label: string } = silo.projectedShortfallKg > 0
-    ? { tone: "danger", label: t("fsdStatusShortfall") }
-    : silo.daysRemaining !== null && silo.currentDietDaysRemaining !== null && silo.daysRemaining < silo.currentDietDaysRemaining
-      ? { tone: "warning", label: t("fsdStatusLow") }
-      : { tone: "success", label: t("fsdStatusOk") };
+  // Days of Feed Remaining colour (master plan WP3): under 3 days critical, under 7 warning.
+  const status: { tone: Tone; label: string } | null = silo.daysRemaining === null ? null
+    : silo.daysRemaining < 3 ? { tone: "danger", label: t("fsdStatusShortfall") }
+    : silo.daysRemaining < 7 ? { tone: "warning", label: t("fsdStatusLow") }
+    : { tone: "success", label: t("fsdStatusOk") };
 
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
     { label: "fsdCurrentDietFeedItem", value: silo.currentDietItemName ?? unavailable },
@@ -126,7 +126,7 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdDailyRequirementKg")} value={number(silo.dailyRequirementKg, unavailable)} unit="kg" />
-        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={<StatusDot tone={status.tone} label={status.label} />} />
+        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status ? <StatusDot tone={status.tone} label={status.label} /> : undefined} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
 
@@ -138,7 +138,7 @@ export function FeedSiloDashboardCards({
             <Summary label={t("fsdCurrentDietDaysRemaining")} value={number(silo.currentDietDaysRemaining, unavailable)} />
             <Summary label={t("fsdNextDietFeedItem")} value={nextDiet} />
             <Summary label={t("fsdSiloAvailableNextDiet")} value={yesNo} />
-            <Summary label={t("fsdProjectedShortfallKg")} value={<span className="inline-flex flex-wrap items-center justify-end gap-2"><StatusDot tone={status.tone} label={status.label} /><span className="tabular-nums">{number(silo.projectedShortfallKg, unavailable)}</span></span>} />
+            <Summary label={t("fsdProjectedShortfallKg")} value={<span className="tabular-nums">{number(silo.projectedShortfallKg, unavailable)}</span>} />
           </CardContent>
         </Card>
         <Card>
