@@ -18,15 +18,14 @@
  * item; the API checks them (Req. row 13, checkpoint 4).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Inbox, Loader2 } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { ScrollTable } from "@/components/ui/scroll-table";
+import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
@@ -80,10 +79,20 @@ const kg = (v: string | number | null | undefined, unavailable: string) => {
   return n === null || !Number.isFinite(n) ? unavailable : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
-const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TD = "whitespace-nowrap border-b border-(--border) px-3 py-2 align-top text-sm text-(--text-primary)";
 const NUM = "text-right tabular-nums";
-const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
+
+const DOT: Record<string, string> = { success: "bg-(--success)", warning: "bg-(--warning)", danger: "bg-(--danger)", info: "bg-(--accent)", accent: "bg-(--accent)", neutral: "bg-(--text-muted)" };
+/** A small colour dot plus plain text instead of a badge. */
+function StatusDot({ variant, children }: { variant?: string | null; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-(--text-secondary)">
+      <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[variant ?? "neutral"] ?? DOT.neutral}`} />
+      {children}
+    </span>
+  );
+}
 
 const workflowStatus = (row: Pick<ListRow, "status" | "document_status" | "fulfilment_status">) =>
   row.fulfilment_status && row.fulfilment_status !== "NOT_APPLICABLE"
@@ -209,8 +218,12 @@ export function FeedRequisitionPanel() {
     : undefined;
 
   return (
-    <div data-fill-body>
-      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
+    <div data-fill-body className="min-h-0 overflow-y-auto">
+      <div className="mb-3 shrink-0">
+        <h2 className="text-base font-semibold text-(--text-primary)">{t("rqTitle")}</h2>
+        <p className="mt-0.5 text-sm text-(--text-secondary)">{t("rqIntro")}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9 [&>div>button]:h-9">
         <div className="flex flex-wrap items-end gap-3">
           <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={listFarmId} fixedLabel={fixedLabel} allLabel={t("rhAllFarms")}
             onChange={(id) => { setListFarmId(id); if (id) farm.setFarmId(id); show(null); }} />
@@ -228,7 +241,7 @@ export function FeedRequisitionPanel() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => setCreating(true)} disabled={!farmId || busy}>{t("rqNew")}</Button>
-          {eligibleCount > 0 && <Button size="sm" onClick={() => setConsolidateOpen(true)} disabled={busy}>Consolidate ({eligibleCount})</Button>}
+          {eligibleCount > 0 && <Button size="sm" onClick={() => setConsolidateOpen(true)} disabled={busy}>{t("rqConsolidate", { count: eligibleCount })}</Button>}
           {savedRun && (
             <Button size="sm" onClick={() => setFromRunOpen(true)} disabled={!farmId || busy}>
               {t(savedRun.existingRequisitionId ? "rqViewRequisition" : "rqCreateFromSaved")}
@@ -270,22 +283,23 @@ export function FeedRequisitionPanel() {
           )}
         </Dialog>
       ) : loading ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("rqLoading")}</div>
+        <LoadingState label={t("rqLoading")} />
       ) : rows.length === 0 ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}><Inbox className="mx-auto mb-2 h-6 w-6" /> {t("rqNone")}</div>
+        <EmptyState icon={Inbox} title={t("rqNone")} />
       ) : (
-        <ScrollTable label={t("rqListLabel")}>
+        <div className="mt-4 max-h-[65vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
+        <table aria-label={t("rqListLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
           <thead>
             <tr>{LIST_COLUMNS.map((c) => <th key={c} scope="col" className={cn(TH, RIGHT.has(c) && "text-right")}>{t(c)}</th>)}</tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.requisition_id} className="cursor-pointer" onClick={() => openRequisition(r.requisition_id)}>
+              <tr key={r.requisition_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => openRequisition(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{r.farm_code ?? unavailable}</td>
                 <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
-                <td className={TD}><Badge variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))} className={SMALL_BADGE}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</Badge></td>
-                <td className={TD}>{r.priority ? <Badge variant={variantOf(PRIORITY_LABEL, r.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, r.priority, t)}</Badge> : unavailable}</td>
+                <td className={TD}><StatusDot variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</StatusDot></td>
+                <td className={TD}>{r.priority ? <StatusDot variant={variantOf(PRIORITY_LABEL, r.priority)}>{labelOf(PRIORITY_LABEL, r.priority, t)}</StatusDot> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>
                 <td className={TD}>{formatDateShort(r.submission_deadline)}</td>
                 <td className={cn(TD, NUM)}>{r.line_count}</td>
@@ -293,7 +307,8 @@ export function FeedRequisitionPanel() {
               </tr>
             ))}
           </tbody>
-        </ScrollTable>
+        </table>
+        </div>
       )}
 
       {farmId && (

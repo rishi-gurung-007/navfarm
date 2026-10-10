@@ -5,10 +5,12 @@ import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
+import { EmptyState } from "@/components/ui/states";
+import { Layers } from "lucide-react";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
-import { MillCapacityBadge, millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
+import { millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
 
 type EligibleLine = {
   requisition_id: string; req_no: string; farm_id: string; farm_code: string; farm_name: string | null;
@@ -20,6 +22,10 @@ type EligibleLine = {
   /** Engine r42–r43 for the line's diet on its production date (Requisition and Loading Sheet r125). */
   mill_capacity_state?: MillCapacityState; mill_capacity_status?: MillCapacityStatus | null; mill_demand_kg?: number | null;
 };
+
+const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TD = "border-b border-(--border) px-3 py-2 align-top text-sm";
+const NUM = "whitespace-nowrap text-right tabular-nums";
 
 export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (message: string) => void }) {
   const { t } = useLanguage();
@@ -80,26 +86,41 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
     finally { setBusy(false); }
   };
 
-  return <Dialog open={open} onClose={onClose} title="Mill Consolidation Sheet" description="Feed requisitions only. Approved requisitions without a consolidation sheet are eligible." maxWidth="xl" presentation="compact" footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={create} disabled={busy || !selectedRows.length}>Create consolidation</Button></>}>
-      <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Select by" htmlFor="consolidation-filter"><select id="consolidation-filter" className="nf-input-sm nf-select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="requisition">Requisition no.</option><option value="date">Date range</option></select></Field>
-        {mode === "requisition" && <Field label="Requisition no." htmlFor="consolidation-search"><input id="consolidation-search" className="nf-input-sm" placeholder="Search requisition no." value={reqSearch} onChange={(event) => setReqSearch(event.target.value)} /></Field>}
-        {mode === "date" && <><Field label="From date" htmlFor="consolidation-from"><input id="consolidation-from" type="date" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label="To date" htmlFor="consolidation-to"><input id="consolidation-to" type="date" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
-        <Button variant="outline" onClick={load} disabled={busy}>{busy ? "Loading…" : "Find approved requisitions"}</Button>
+  const NA = t("fcdNotAvailable");
+  const siloText = (row: EligibleLine) => row.destination_silo_code ? `${row.destination_silo_code}${row.destination_silo_name ? ` — ${row.destination_silo_name}` : ""}` : NA;
+  const itemText = (row: EligibleLine) => `${row.item_code} — ${row.item_name}${row.diet_no == null ? "" : ` · ${t("fcdDiet", { no: row.diet_no })}`}`;
+  const binText = (row: EligibleLine) => row.loading_bin ? `${row.loading_bin}${row.loading_bin_name ? ` — ${row.loading_bin_name}` : ""}${row.loading_bin_capacity_kg == null ? "" : ` · ${formatKg(row.loading_bin_capacity_kg)} KG`}` : t("fcdNotConfigured");
+  const th = (label: string, cls = "") => <th key={label} scope="col" className={`${TH} ${cls}`}>{label}</th>;
+
+  return <Dialog open={open} onClose={onClose} title={t("fcdTitle")} description={t("fcdIntro")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={<><Button variant="outline" onClick={onClose}>{t("fcdCancel")}</Button><Button onClick={create} disabled={busy || !selectedRows.length}>{t("fcdCreate")}</Button></>}>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9 [&>button]:h-9">
+        <Field label={t("fcdSelectBy")} htmlFor="consolidation-filter"><select id="consolidation-filter" className="nf-input-sm nf-select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="requisition">{t("fcdByRequisition")}</option><option value="date">{t("fcdByDate")}</option></select></Field>
+        {mode === "requisition" && <Field label={t("fcdByRequisition")} htmlFor="consolidation-search"><input id="consolidation-search" className="nf-input-sm" placeholder={t("fcdSearchPlaceholder")} value={reqSearch} onChange={(event) => setReqSearch(event.target.value)} /></Field>}
+        {mode === "date" && <><Field label={t("fcdFromDate")} htmlFor="consolidation-from"><input id="consolidation-from" type="date" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label={t("fcdToDate")} htmlFor="consolidation-to"><input id="consolidation-to" type="date" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
+        <Button variant="outline" onClick={load} disabled={busy}>{busy ? t("fcdLoading") : t("fcdFind")}</Button>
       </div>
       {dateHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{dateHint}</p>}
-      {rows.length > 0 && <div className="overflow-x-auto rounded border border-[var(--border)]"><table className="w-full text-xs"><thead><tr className="border-b border-[var(--border)] text-left"><th className="p-2">Select</th><th className="p-2">Requisition No.</th><th className="p-2">Farm</th><th className="p-2">Destination silo</th><th className="p-2">Feed item / Diet No.</th><th className="p-2">Mill loading bin</th><th className="p-2">{t("feedPlanColCapacity")}</th><th className="p-2 text-right">Farm requested KG</th><th className="p-2">Mill approved KG</th><th className="p-2">Adjustment reason</th></tr></thead><tbody>{requisitions.map((req) => <tr key={req.requisition_id} className="border-b border-[var(--border-subtle)]"><td className="p-2"><input type="checkbox" checked={selected.includes(req.requisition_id)} onChange={() => toggle(req.requisition_id)} /></td><td className="p-2 font-medium">{req.req_no}</td><td className="p-2">{req.farm_code} — {req.farm_name}</td><td className="p-2">{req.destination_silo_code ? `${req.destination_silo_code}${req.destination_silo_name ? ` — ${req.destination_silo_name}` : ""}` : "Not available"}</td><td className="p-2">{req.item_code} — {req.item_name}{req.diet_no == null ? "" : ` · Diet ${req.diet_no}`}</td><td className="p-2">{req.loading_bin ? `${req.loading_bin}${req.loading_bin_name ? ` — ${req.loading_bin_name}` : ""}${req.loading_bin_capacity_kg == null ? "" : ` · ${Number(req.loading_bin_capacity_kg).toLocaleString()} KG`}` : "Not configured"}</td><td className="p-2"><CapacityCell row={req} t={t} /></td><td className="p-2 text-right">{rows.filter((row) => row.requisition_id === req.requisition_id).reduce((sum, row) => sum + Number(row.quantity), 0).toLocaleString()}</td><td className="p-2">—</td><td className="p-2">Select the requisition to edit its lines below.</td></tr>)}{selectedRows.map((row) => <tr key={`line-${row.line_id}`} className="bg-[var(--surface-raised)]"><td className="p-2" /><td className="p-2 text-[var(--text-secondary)]">Line</td><td className="p-2">{row.farm_code}</td><td className="p-2">{row.destination_silo_code ? `${row.destination_silo_code}${row.destination_silo_name ? ` — ${row.destination_silo_name}` : ""}` : "Not available"}</td><td className="p-2">{row.item_code} — {row.item_name}{row.diet_no == null ? "" : ` · Diet ${row.diet_no}`}</td><td className="p-2">{row.loading_bin ? `${row.loading_bin}${row.loading_bin_name ? ` — ${row.loading_bin_name}` : ""}${row.loading_bin_capacity_kg == null ? "" : ` · ${Number(row.loading_bin_capacity_kg).toLocaleString()} KG`}` : "Not configured"}</td><td className="p-2"><CapacityCell row={row} t={t} /></td><td className="p-2 text-right">{Number(row.quantity).toLocaleString()}</td><td className="p-2"><input aria-label={`Mill approved quantity ${row.req_no} ${row.item_code}`} className="nf-input-sm w-28" type="number" min="0" placeholder={String(Number(row.quantity))} value={approved[row.line_id] ?? ""} onChange={(event) => setApproved((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td><td className="p-2"><input aria-label={`Adjustment reason ${row.req_no} ${row.item_code}`} className="nf-input-sm w-52" placeholder="Required if adjusted" value={reasons[row.line_id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td></tr>)}</tbody></table></div>}
+      {rows.length > 0 && <div className="max-h-[50vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)"><table aria-label={t("fcdTableLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left"><thead><tr>{th(t("fcdColSelect"))}{th(t("fcdColReqNo"))}{th(t("fcdColFarm"))}{th(t("fcdColSilo"), "min-w-40")}{th(t("fcdColItem"), "min-w-56")}{th(t("fcdColBin"), "min-w-44")}{th(t("feedPlanColCapacity"), "min-w-36")}{th(t("fcdColRequested"), "text-right")}{th(t("fcdColApproved"), "text-right")}{th(t("fcdColReason"), "min-w-52")}</tr></thead><tbody>{requisitions.map((req) => <tr key={req.requisition_id}><td className={TD}><input type="checkbox" aria-label={req.req_no} checked={selected.includes(req.requisition_id)} onChange={() => toggle(req.requisition_id)} /></td><td className={`${TD} whitespace-nowrap font-medium`}>{req.req_no}</td><td className={TD}>{req.farm_code} — {req.farm_name}</td><td className={`${TD} whitespace-normal break-words`}>{siloText(req)}</td><td className={`${TD} whitespace-normal break-words`}>{itemText(req)}</td><td className={`${TD} whitespace-normal break-words`}>{binText(req)}</td><td className={TD}><CapacityCell row={req} t={t} /></td><td className={`${TD} ${NUM}`}>{formatKg(rows.filter((row) => row.requisition_id === req.requisition_id).reduce((sum, row) => sum + Number(row.quantity), 0))}</td><td className={TD}>—</td><td className={`${TD} text-(--text-secondary)`}>{t("fcdSelectToEdit")}</td></tr>)}{selectedRows.map((row) => <tr key={`line-${row.line_id}`} className="bg-(--surface-raised)"><td className={TD} /><td className={`${TD} text-(--text-secondary)`}>{t("fcdLine")}</td><td className={TD}>{row.farm_code}</td><td className={`${TD} whitespace-normal break-words`}>{siloText(row)}</td><td className={`${TD} whitespace-normal break-words`}>{itemText(row)}</td><td className={`${TD} whitespace-normal break-words`}>{binText(row)}</td><td className={TD}><CapacityCell row={row} t={t} /></td><td className={`${TD} ${NUM}`}>{formatKg(row.quantity)}</td><td className={TD}><input aria-label={t("fcdApprovedLabel", { req: row.req_no, item: row.item_code })} className="nf-input-sm h-9 w-28 text-right tabular-nums" type="number" min="0" placeholder={String(Number(row.quantity))} value={approved[row.line_id] ?? ""} onChange={(event) => setApproved((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td><td className={TD}><input aria-label={t("fcdReasonLabel", { req: row.req_no, item: row.item_code })} className="nf-input-sm h-9 w-52" placeholder={t("fcdReasonPlaceholder")} value={reasons[row.line_id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [row.line_id]: event.target.value }))} /></td></tr>)}</tbody></table></div>}
       {selectHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{selectHint}</p>}
-      {!rows.length && <p className="text-sm text-[var(--text-secondary)]">Choose a filter and load approved requisitions that have no consolidation sheet.</p>}
+      {!rows.length && <EmptyState icon={Layers} title={t("fcdPrompt")} className="py-10" />}
     </div>
   </Dialog>;
 }
 
+const CAP_DOT: Record<MillCapacityStatus, string> = { GREEN: "bg-(--success)", AMBER: "bg-(--warning)", RED: "bg-(--danger)" };
+const CAP_LABEL = { GREEN: "millCapGreen", AMBER: "millCapAmber", RED: "millCapRed" } as const;
+
 function CapacityCell({ row, t }: { row: EligibleLine; t: ReturnType<typeof useLanguage>["t"] }) {
   const state = row.mill_capacity_state ?? "NOT_CONFIGURED";
-  return <span className="inline-flex items-center gap-2">
+  const status = row.mill_capacity_status;
+  return <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 tabular-nums">
     {millCapacityText(state, row.available_mill_output_kg, t)}
-    {row.mill_capacity_status && <MillCapacityBadge status={row.mill_capacity_status} t={t} title={t("millCapDemandOf", { demand: formatKg(row.mill_demand_kg), available: formatKg(row.available_mill_output_kg) })} />}
+    {status && (
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-(--text-secondary)" title={t("millCapDemandOf", { demand: formatKg(row.mill_demand_kg), available: formatKg(row.available_mill_output_kg) })}>
+        <span aria-hidden className={`h-2 w-2 rounded-full ${CAP_DOT[status]}`} />
+        {t(CAP_LABEL[status])}
+      </span>
+    )}
   </span>;
 }

@@ -21,16 +21,15 @@
  * submits, links to the request, and posts once the decision is in.
  */
 import { useCallback, useEffect, useState } from "react";
-import { Inbox, Loader2 } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, ReadField } from "@/components/ui/field";
 import { ReasonSelect } from "@/components/ui/reason-select";
-import { ScrollTable } from "@/components/ui/scroll-table";
+import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
@@ -88,10 +87,22 @@ const LIST_COLUMNS = ["fscColCountNo", "fscColCountedAt", "fscColSource", "fscCo
 const LINE_COLUMNS = ["fscColSilo", "fscColItem", "fscColItemName", "fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColReason"] as const;
 const RIGHT = new Set<string>(["fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct"]);
 
-const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
-const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TD = "whitespace-nowrap border-b border-(--border) px-3 py-2 align-top text-sm text-(--text-primary)";
 const NUM = "text-right tabular-nums";
-const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
+const BOX = "mt-4 max-h-[60vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)";
+const TABLE = "w-max min-w-full border-separate border-spacing-0 text-left";
+
+const DOT: Record<string, string> = { success: "bg-(--success)", warning: "bg-(--warning)", danger: "bg-(--danger)", info: "bg-(--accent)", accent: "bg-(--accent)", neutral: "bg-(--text-muted)" };
+/** A small colour dot plus plain text instead of a badge. */
+function StatusDot({ variant, children }: { variant?: string | null; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-(--text-secondary)">
+      <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[variant ?? "neutral"] ?? DOT.neutral}`} />
+      {children}
+    </span>
+  );
+}
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 
 const kg = (value: string | number | null | undefined, unavailable: string): string => {
@@ -284,8 +295,12 @@ export default function FeedStockCountPanel() {
   );
 
   return (
-    <div data-fill-body>
-      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
+    <div data-fill-body className="min-h-0 overflow-y-auto">
+      <div className="mb-3 shrink-0">
+        <h2 className="text-base font-semibold text-(--text-primary)">{t("fscTitle")}</h2>
+        <p className="mt-0.5 text-sm text-(--text-secondary)">{t("fscIntro")}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9 [&>div>button]:h-9">
         <div className="flex flex-wrap items-end gap-3">
           {farmPicker}
           <Field label={t("fscShow")} htmlFor="sc-status">
@@ -321,21 +336,15 @@ export default function FeedStockCountPanel() {
           </Button>
         </InlineAlert>
       ) : !farm.loaded ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("fscLoading")}
-        </div>
+        <LoadingState label={t("fscLoading")} />
       ) : noFarms || !farmId || !companyId ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffNoFarms")}</div>
+        <EmptyState icon={Inbox} title={t("ffNoFarms")} />
       ) : loading ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
-          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("fscLoading")}
-        </div>
+        <LoadingState label={t("fscLoading")} />
       ) : rows.length === 0 ? (
-        <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
-          <Inbox className="mx-auto mb-2 h-6 w-6" /> {t("fscNone")}
-        </div>
+        <EmptyState icon={Inbox} title={t("fscNone")} />
       ) : (
-        <ScrollTable label={t("fscListLabel")}>
+        <div className={BOX}><table aria-label={t("fscListLabel")} className={TABLE}>
           <thead>
             <tr>
               {LIST_COLUMNS.map((column) => (
@@ -347,26 +356,26 @@ export default function FeedStockCountPanel() {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.count_id} className="cursor-pointer" onClick={() => void openCount(row.count_id)}>
+              <tr key={row.count_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => void openCount(row.count_id)}>
                 <td className={cn(TD, "font-medium")}>{row.count_no}</td>
                 <td className={TD}>{shortTimestamp(row.counted_at, unavailable)}</td>
                 <td className={TD}>{sourceLabel(row.schedule_source, t)}</td>
                 <td className={TD}>
-                  <Badge variant={variantOf(REQ_STATUS_LABEL, row.status)} className={SMALL_BADGE}>
-                    {labelOf(REQ_STATUS_LABEL, row.status, t)}
-                  </Badge>
+                  <StatusDot variant={variantOf(REQ_STATUS_LABEL, row.status)}>{labelOf(REQ_STATUS_LABEL, row.status, t)}</StatusDot>
                 </td>
               </tr>
             ))}
           </tbody>
-        </ScrollTable>
+        </table></div>
       )}
 
       <Dialog
         open={dialogOpen}
         onClose={closeDialog}
         title={entry ? t("fscNew") : selected?.count_no ?? t("fftTabPhysicalCount")}
-        presentation="page"
+        presentation="compact"
+        maxWidth="xl"
+        className="w-[95vw] max-h-[85vh]"
         footer={entry ? (
           <>
             <Button size="sm" variant="outline" onClick={closeDialog} disabled={busy}>{t("cancel")}</Button>
@@ -417,7 +426,7 @@ export default function FeedStockCountPanel() {
               {entry.pairs.length === 0 ? (
                 <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscEntryEmpty")}</p>
               ) : (
-                <ScrollTable label={t("fscEntryLabel")}>
+                <div className={cn(BOX, "mt-0")}><table aria-label={t("fscEntryLabel")} className={TABLE}>
                   <thead><tr>
                     <th scope="col" className={TH}>{t("fscColSilo")}</th>
                     <th scope="col" className={TH}>{t("fscColItem")}</th>
@@ -435,7 +444,7 @@ export default function FeedStockCountPanel() {
                         <td className={TD}>{pair.itemCode}</td>
                         <td className={cn(TD, NUM)}>{kg(pair.systemQtyKg, unavailable)}</td>
                         <td className={cn(TD, NUM)}>
-                          <input type="number" min={0} step="any" className="nf-input-sm w-28 px-2 text-right" style={inputStyle}
+                          <input type="number" min={0} step="any" className="nf-input-sm h-9 w-28 px-2 text-right tabular-nums" style={inputStyle}
                             aria-label={t("fscCountedLabel", { silo: pair.siloCode ?? pair.siloId, item: pair.itemCode })}
                             value={value} onChange={(e) => setCounted((current) => ({ ...current, [key]: e.target.value }))} />
                         </td>
@@ -447,31 +456,31 @@ export default function FeedStockCountPanel() {
                       </tr>;
                     })}
                   </tbody>
-                </ScrollTable>
+                </table></div>
               )}
             </>
           ) : selected ? (
             <>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Badge variant={variantOf(REQ_STATUS_LABEL, selected.status)}>{labelOf(REQ_STATUS_LABEL, selected.status, t)}</Badge>
-                <Badge variant="neutral">{sourceLabel(selected.schedule_source, t)}</Badge>
+                <StatusDot variant={variantOf(REQ_STATUS_LABEL, selected.status)}>{labelOf(REQ_STATUS_LABEL, selected.status, t)}</StatusDot>
+                <span className="text-xs text-(--text-secondary)">{sourceLabel(selected.schedule_source, t)}</span>
                 <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscColCountedAt")}: {shortTimestamp(selected.counted_at, unavailable)}</span>
                 {selected.status === "PENDING_APPROVAL" && <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscWaiting")}</span>}
                 {href && <a href={href} className="text-xs font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("fscOpenApproval")}</a>}
               </div>
-              <ScrollTable label={t("fscLinesLabel")}>
+              <div className={cn(BOX, "mt-0")}><table aria-label={t("fscLinesLabel")} className={TABLE}>
                 <thead><tr>{LINE_COLUMNS.map((column) => (
                   <th key={column} scope="col" className={cn(TH, RIGHT.has(column) && "text-right")}>{t(column)}</th>
                 ))}</tr></thead>
                 <tbody>{lines.map((line) => (
                   <tr key={line.count_line_id}>
-                    <td className={TD}>{line.silo_code}</td><td className={TD}>{line.item_code}</td><td className={TD}>{line.item_name}</td>
+                    <td className={TD}>{line.silo_code}</td><td className={TD}>{line.item_code}</td><td className={`${TD} min-w-48 whitespace-normal break-words`}>{line.item_name}</td>
                     <td className={cn(TD, NUM)}>{kg(line.system_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.counted_qty_kg, unavailable)}</td>
                     <td className={cn(TD, NUM)}>{kg(line.variance_qty_kg, unavailable)}</td><td className={cn(TD, NUM)}>{kg(line.variance_pct_absolute, unavailable)}</td>
                     <td className={TD}>{line.reason_name ?? t("fscNoReason")}</td>
                   </tr>
                 ))}</tbody>
-              </ScrollTable>
+              </table></div>
             </>
           ) : null}
         </div>
