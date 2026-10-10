@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/mysql2';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
+import { assertDatabaseAllowed } from '../core/database/database-allowlist';
 
 /**
  * Applies pending master-schema migrations (src/drizzle/master) to the master
@@ -26,6 +27,7 @@ const ssl = process.env.DATABASE_SSL === 'true'
 const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 
 async function run() {
+  assertDatabaseAllowed(masterDatabase, 'migrate-master');
   const pool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
   const db = drizzle(pool, { schema: master, mode: 'default' });
 

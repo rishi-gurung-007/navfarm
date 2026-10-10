@@ -4,6 +4,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
+import { assertDatabaseAllowed } from '../core/database/database-allowlist';
 
 /**
  * Applies any pending tenant-schema migrations (src/drizzle/tenant) to every
@@ -23,6 +24,7 @@ const ssl = process.env.DATABASE_SSL === 'true'
 const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 
 async function run() {
+  assertDatabaseAllowed(masterDatabase, 'migrate-all-tenants master');
   const masterPool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
   const masterDb = drizzle(masterPool, { schema: master, mode: 'default' });
 
@@ -32,6 +34,15 @@ async function run() {
     const failedTenants: string[] = [];
 
     for (const t of tenants) {
+      // A registry row decides which database this migrates; refuse any the
+      // allowlist does not name before DDL can reach it.
+      try {
+        assertDatabaseAllowed(t.db_name, `migrate-all-tenants tenant ${t.tenant_code}`);
+      } catch (err) {
+        console.error(`  [${t.tenant_code}] REFUSED:`, err instanceof Error ? err.message : err);
+        failedTenants.push(t.tenant_code);
+        continue;
+      }
       const tenantPool = mysql.createPool({
         host: t.db_host || host,
         port: t.db_port || port,

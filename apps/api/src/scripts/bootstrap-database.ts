@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
+import { assertDatabaseAllowed } from '../core/database/database-allowlist';
 import { CURRENCY_SEED_ROWS, defaultCurrencyIdFor } from './lib/currency-seed-data';
 import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE } from '../core/database/database-names';
 
@@ -56,6 +57,8 @@ export async function bootstrap() {
 
   assertDatabaseName(masterDatabase);
   assertDatabaseName(systemDatabase);
+  assertDatabaseAllowed(masterDatabase, 'bootstrap master');
+  assertDatabaseAllowed(systemDatabase, 'bootstrap system tenant');
 
   const server = await mysql.createConnection({ host, port, user, password, ssl });
   await server.query(`CREATE DATABASE IF NOT EXISTS \`${masterDatabase}\``);
