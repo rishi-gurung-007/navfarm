@@ -171,13 +171,122 @@ With the correctly built binary:
   NAVFARM_DB_ALLOWLIST`. The row was then removed. (It surfaces as HTTP 500,
   an unhandled error — loud and fail-closed, not a graceful status.)
 
+## P1 — the merge broke every receipt (found, fixed, proven)
+
+`transfer_receipt_line.remarks` was declared in `schema.ts` and created by no
+migration on any branch. Drizzle builds an insert's column list from the schema
+and emits `default` for omitted columns, so the statement named `remarks`
+whether the code set it or not, and **every** Common Requisition and Feed
+Requisition receipt failed against real MySQL with `Unknown column 'remarks'
+in 'field list'` (errno 1054).
+
+Provenance — a merge-resolution hand-edit, not either stream's work:
+
+| Commit | `transferReceiptLine` |
+|---|---|
+| `28db5c11` upstream main | table absent entirely (shipment/receipt events are a feed-branch feature) |
+| `1c3af137` feed forecast | table present, **no** `remarks`, `serial_no varchar(100)` |
+| `b2be0a03` the merge | `remarks: text(...)` added, `serial_no` widened to `text` |
+
+Neither artifact is used anywhere: `remarks` is read and written nowhere, and
+`serial_no: text` contradicts migration 0146, the sibling
+`transferShipmentLine.serial_no`, and the DTO's `@MaxLength(100)`. Both were
+reverted to what 0146 creates, rather than adding a migration for a column
+nothing uses.
+
+A full schema-vs-database audit found this was the **only** drift: 0 missing
+tables, 1 missing column, across the canonical database and the
+Windows-restored rehearsal database alike — so the test server would have hit
+it too.
+
+`schema-migration-drift.spec.ts` now guards the class: it reads the migrations
+in journal order and fails when the schema declares a column they never
+produce. Its parser was validated against the live database — both report
+exactly one drifted column and nothing else, so it is not guessing. (It checks
+column existence, not types; the `serial_no` width was caught by hand.)
+
+**2,690 unit tests passed over this bug** because they mock the database. This
+is the project's documented lesson repeating itself, and the reason §14/§15
+demand real-database E2E.
+
+## Common Requisition E2E — PASS (real MySQL)
+
+Opening stock created through the app's own path (`ADJ-000001`, 100 KG @ 2.50),
+then:
+
+| Step | Result |
+|---|---|
+| Create | `REQ-2026-0001` OPEN |
+| Submit | PENDING_APPROVAL |
+| Approve | APPROVED |
+| Release | `TR-000001`, RELEASED / TRANSFER_OPEN |
+| Shipment | `SH-2026-0001`, 50 KG, transfer IN_TRANSIT, requisition SHIPPED |
+| Partial receipt | `RC-2026-0001`, 25 KG, both PARTIALLY_RECEIVED |
+| Final receipt | `RC-2026-0002`, 25 KG, requisition RECEIVED, transfer POSTED |
+
+Ledger (read from MySQL): entries 1–4, `entry_no` unique, rate 2.50 carried
+throughout. Source 50 KG @ 125.00, destination 50 KG @ 125.00, against 100 KG
+@ 250.00 opening — quantity and value both conserved.
+
+Refusals, each leaving no ledger, shipment or receipt row:
+
+- over-receipt 30 KG against 25 outstanding → "Receipt quantity exceeds the
+  remaining quantity to receive."
+- duplicate shipment → "Shipment quantity exceeds the remaining balance to ship."
+- duplicate receipt after completion → "Stock Transfer TR-000001 cannot take a
+  further shipment or receipt — it is already POSTED."
+
+The earlier 500 on the first receipt attempt rolled back cleanly — no ledger
+row, no receipt row — which is the atomicity §9/13 asks for.
+
+## Fixture notes (for whoever rebuilds this)
+
+- `seed-dev-tenant` leaves masters tenant-wide (`company_id IS NULL`), but
+  requisitions require `item_master.company_id = companyId` (a deliberate
+  cross-company leak guard, `requisition.service.ts:344`), and
+  `assertItemTypeExists` requires the same of item types. The fixture therefore
+  needs `adopt-company-master-templates.ts` (dry-run default; `--apply` needs a
+  real backup) — 152 company-scoped copies, with existing stock references
+  redirected onto them.
+- That adoption rewrites role/permission rows and **invalidates live sessions**:
+  the next call returned 401 "Invalid session token" until re-login.
+- `mysqldump` needs RELOAD/FLUSH_TABLES, which the least-privileged account
+  correctly lacks — take backups as an admin account.
+
+## Verification results (this checkout, measured here)
+
+| Check | Result |
+|---|---|
+| API regression | **213 suites, 2,693 tests passed** |
+| Web regression | **108 suites, 827 tests passed** |
+| API typecheck (`tsc --build`) | exit 0, no output |
+| Web typecheck (`next typegen` + `tsc --noEmit`) | exit 0, no output |
+
+Baseline accounting against the handoff's 209 / 2,680: +3 suites / +10 tests
+for the isolation specs, +1 suite / +3 tests for the drift guard. Web matches
+the handoff exactly. No assertion was weakened and no suite skipped.
+
+Run tests with jest directly — `apps/web` must run from `apps/web` because
+`next/jest` resolves `dir: './'` against the CWD.
+
 ## Status
 
 Done: git verification; isolated worktree; isolation guard (code + grants, 10
 unit tests); disposable master/system/tenant databases; synthetic tenant with
 company, piggery operational area, farm, warehouse, silo, shed and four users.
 
-Next: prove runtime identity through the app's own connections; negative
-isolation test with a retained tenant id; then the database-backed Common
-Requisition and Feed Requisition E2E, the populated migration rehearsal, and
-full regression.
+Done: git verification; isolated worktree; isolation guard (code + grants)
+proven against a running API; disposable master/system/tenant databases;
+synthetic tenant (company, piggery operational area, farm, warehouse, silo,
+shed, four users, company-scoped masters); the P1 receipt fix and its drift
+guard; the Common Requisition E2E; full regression and both typechecks.
+
+Remaining: Feed Requisition E2E (§15 — forecast → plan → requisition →
+consolidation → loading → transfer → receipts → forecast reconciliation); the
+populated migration rehearsal with representative pre-upgrade data (§16);
+browser smoke tests (§17); and a decision on the nx build path before anything
+is promoted (§20 asks for API and Web builds, and `nx build` cannot currently
+be trusted inside a worktree).
+
+Commits on this branch: `47f64d9b` (isolation guard), `a147ec61` (receipt fix
+and drift guard).
