@@ -88,7 +88,7 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
     .from(schema.requisitionLine)
     .leftJoin(schema.feedConsolidationLine, eq(schema.feedConsolidationLine.requisition_line_id, schema.requisitionLine.line_id))
     .where(eq(schema.requisitionLine.requisition_id, linked.requisition_id)))
-    .map(({ mill_approved_qty_kg, ...line }) => (mill_approved_qty_kg == null ? line : { ...line, qty_to_ship: mill_approved_qty_kg, qty_to_receive: mill_approved_qty_kg }));
+    .map(({ mill_approved_qty_kg, ...line }) => ({ ...line, mill_approved: mill_approved_qty_kg == null ? null : { qty_to_ship: mill_approved_qty_kg, qty_to_receive: mill_approved_qty_kg } }));
 
   // Ownership guard (required addition, moved here from the originally
   // planned Tasks 9/12 hardening — see docs/decisions and the task brief):
@@ -116,8 +116,11 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
   for (const line of lines) {
     const qtyShipped = sum(shipped, line.line_id);
     const qtyReceived = sum(received, line.line_id);
-    await db.update(schema.requisitionLine).set({ qty_shipped: String(qtyShipped), qty_received: String(qtyReceived) }).where(eq(schema.requisitionLine.line_id, line.line_id));
-    updated.push({ ...line, qty_shipped: qtyShipped, qty_received: qtyReceived });
+    // A mill-approved line also stores its to-ship/to-receive as that quantity,
+    // so every line view reads a balance against it (no phantom adjustment).
+    const { mill_approved, ...own } = line;
+    await db.update(schema.requisitionLine).set({ qty_shipped: String(qtyShipped), qty_received: String(qtyReceived), ...(mill_approved ?? {}) }).where(eq(schema.requisitionLine.line_id, line.line_id));
+    updated.push({ ...own, ...(mill_approved ?? {}), qty_shipped: qtyShipped, qty_received: qtyReceived });
   }
   await db.update(schema.requisition).set({ fulfilment_status: fulfilmentStatusOf(updated) }).where(eq(schema.requisition.requisition_id, linked.requisition_id));
 }

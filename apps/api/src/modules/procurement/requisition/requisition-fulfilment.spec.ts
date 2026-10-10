@@ -179,6 +179,11 @@ describe('syncRequisitionFulfilment', () => {
     await syncRequisitionFulfilment(d, 'tr-1');
 
     expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
+    // No phantom 50 KG: the line's stored to-ship/to-receive are the mill-approved quantity,
+    // so every line view (feed read model, common lineBalances) shows a zero balance.
+    expect(sets.filter((s) => s.table === schema.requisitionLine).map((s) => s.values)).toEqual([
+      { qty_shipped: '6000', qty_received: '6000', qty_to_ship: '6000.0000', qty_to_receive: '6000.0000' },
+    ]);
   });
 
   it('keeps a mill-adjusted feed line PARTIALLY_RECEIVED until the mill-approved quantity is received', async () => {
