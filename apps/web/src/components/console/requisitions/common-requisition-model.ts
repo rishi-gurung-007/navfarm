@@ -105,6 +105,8 @@ export interface CommonRequisitionView {
   released_at?: string | null;
   linked_po_no?: string | null;
   linked_transfer_no?: string | null;
+  /** W2D W12: the transfer order a released Store requisition created, for the link. */
+  linked_transfer_id?: string | null;
   lines: CommonRequisitionLine[];
   shipments?: CommonShipment[];
 }

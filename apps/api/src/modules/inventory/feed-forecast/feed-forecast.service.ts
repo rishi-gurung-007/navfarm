@@ -8,7 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
-import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, forecastDemandHorizon, ForecastInput, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
+import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, forecastDemandHorizon, ForecastInput, ForecastResult, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
@@ -23,7 +23,7 @@ import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
-import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact } from './feed-silo-status';
+import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact, SiloStatusRow } from './feed-silo-status';
 import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
 import { FeedPlanService } from './feed-plan.service';
 import { MillCapacityService } from './mill-capacity.service';
@@ -1710,6 +1710,7 @@ export class FeedForecastService {
         },
         rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
         stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, stageNames: stageNames ?? {}, sourceSnapshot,
+        itemCodes: input.itemCodes ?? {},
       };
     });
   }
@@ -1800,9 +1801,7 @@ export class FeedForecastService {
         { planningDate, from: resolved.from, to: sentTo, horizonTo: forecastHorizon(planningDate) },
         clock,
       );
-      const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
-      const requisitions = await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline);
-      const statuses = buildSiloStatus({ silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings });
+      const statuses = await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings);
       const status = statuses.find((candidate) => candidate.siloId === query.siloId);
       if (!status) throw new NotFoundException('Selected Silo is not available for feed planning.');
       const itemId = status.currentDietItemId ?? status.feedInSiloItemId;
@@ -1821,6 +1820,60 @@ export class FeedForecastService {
         farmTotalOrderKg: Math.round(statuses.reduce((sum, candidate) => sum + candidate.recommendedOrderKg, 0) * 1000) / 1000,
       };
     });
+  }
+
+  /** One row per ACTIVE silo from an already computed farm forecast (Dashboard rows 47–64). */
+  private async statusesFromForecast(
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+    forecast: Pick<ForecastResult, 'sources' | 'dietChanges'> & { itemCodes?: Record<string, string> },
+    submissionDeadline: string | null,
+    settings: ReturnType<typeof toFarmFeedSettings>,
+  ) {
+    const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
+    const requisitions = submissionDeadline ? await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline) : new Map();
+    const itemFeedTypes = await this.loadItemFeedTypes(forecast.dietChanges.map((change) => change.toItemId), tenantId);
+    return buildSiloStatus({
+      silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings,
+      itemCodes: forecast.itemCodes ?? {}, itemFeedTypes,
+    });
+  }
+
+  /**
+   * W2D A7 (Engine §1 rows 8–17): the farm's silo statuses as of the farm's today over the standard seven-day
+   * window — what the Physical Count shows beside each silo (projected shortfall, next diet, next item).
+   */
+  async currentSiloStatuses(farmId: string, companyId: string, tenantId: string): Promise<{ planningDate: string; statuses: SiloStatusRow[] }> {
+    const clock = await this.farmToday(companyId, tenantId);
+    const planningDate = clock.today;
+    return this.withFarmScope(farmId, companyId, async () => {
+      const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
+      const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
+      const forecast = await this.computeForFarm(farmId, companyId, tenantId, draftForecastRange(planningDate), clock);
+      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings) };
+    });
+  }
+
+  /**
+   * Feed form (BULK/BAGGED) of each item from its Breed Lifecycle feed rows (Master Setup row 37) — what
+   * checkpoint 9 matches a silo's Feed Type against. An item whose rows disagree, or have none, is left out.
+   */
+  private async loadItemFeedTypes(itemIds: string[], tenantId: string): Promise<Record<string, 'BULK' | 'BAGGED'>> {
+    const ids = [...new Set(itemIds)];
+    if (!ids.length) return {};
+    const rows = await this.db
+      .select({ item_id: schema.breedLifecycleStages.feed_item_id, feed_form: schema.breedLifecycleStages.feed_form })
+      .from(schema.breedLifecycleStages)
+      .where(and(eq(schema.breedLifecycleStages.tenant_id, tenantId), inArray(schema.breedLifecycleStages.feed_item_id, ids), isNotNull(schema.breedLifecycleStages.feed_form)));
+    const forms = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (!row.item_id || (row.feed_form !== 'BULK' && row.feed_form !== 'BAGGED')) continue;
+      forms.set(row.item_id, (forms.get(row.item_id) ?? new Set()).add(row.feed_form));
+    }
+    const out: Record<string, 'BULK' | 'BAGGED'> = {};
+    for (const [itemId, set] of forms) if (set.size === 1) out[itemId] = [...set][0] as 'BULK' | 'BAGGED';
+    return out;
   }
 
   /** Implemented by the Mill/BIN foundation plan; null is truthful until assignments exist. */
@@ -1881,6 +1934,7 @@ export class FeedForecastService {
         siloCode: silo.code,
         siloName: silo.name,
         houseCodes: silo.linkedSheds.map((shed) => shed.code),
+        houses: silo.linkedSheds.map((shed) => ({ id: shed.locationId, code: shed.code, name: shed.name })),
         capacityKg: silo.capacityKg,
         belowFeedLevelKg: silo.lowLevelKg,
         aboveThresholdKg: silo.highLevelKg,

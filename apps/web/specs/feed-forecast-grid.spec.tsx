@@ -222,6 +222,22 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(await screen.findByText('ffPlannedIncomingReference:{"references":"REQ-VIL100-2026-00005"}')).toBeTruthy();
   });
 
+  it('W2D W7: links batch, house, silo, required and current item, and the planned requisition reference', () => {
+    render(<FeedForecastGrid rows={[row({
+      currentItemId: 'r0', currentItemName: 'Weaner Diet R0',
+      plannedIncomingKg: 3000,
+      incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceId: 'req-9', referenceNo: 'FRQ-0009', expectedDate: '2026-09-23' }],
+    })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const table = screen.getByRole('table');
+    const href = (name: string) => within(table).getByRole('link', { name }).getAttribute('href');
+    expect(href('WG-2026-38')).toBe('/batches/entry?batchId=batch-1');
+    expect(href('GRS/SHED-003')).toBe('/master-data/location?recordId=shed-1');
+    expect(href('GRS/SILO-001')).toBe('/master-data/location?recordId=silo-1');
+    expect(href('Weaner Diet R1')).toBe('/master-data/item?recordId=r1');
+    expect(href('Weaner Diet R0')).toBe('/master-data/item?recordId=r0');
+    expect(href('FRQ-0009')).toBe('/inventory/feed-forecast?tab=feed-requisition&id=req-9');
+  });
+
   it('uses human text for a non-finite quantity instead of NaN', () => {
     expect(fmtKg(Number.NaN)).toBe('Not available');
   });

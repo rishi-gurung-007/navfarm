@@ -107,3 +107,38 @@ describe('Alerts page (D24)', () => {
     expect(await screen.findByText('alrtFeedPartly:{"farms":"GRA100, VIL100"}')).toBeTruthy();
   });
 });
+
+/** W2D W11: the alert's subject (silo, requisition, batch) and its farm are links; nothing shows "—". */
+describe('W2D W11: alert subject and farm links', () => {
+  it('maps the subject of each kind', () => {
+    expect(fromFeedAlert({ ...feedAlert, subject_type: 'SILO', subject_id: 'silo-4' }).subject).toEqual({ type: 'SILO', id: 'silo-4', code: null });
+    expect(fromFeedAlert({ ...feedAlert, subject_type: 'REQUISITION', subject_id: 'req-1' }).subject).toEqual({ type: 'REQUISITION', id: 'req-1', code: null });
+    expect(fromBatchAlert({ ...batchAlert, batch_id: 'batch-13' }, () => 'GRA100').subject).toEqual({ type: 'BATCH', id: 'batch-13', code: 'BATCH-000013' });
+    expect(fromBatchAlert({ ...batchAlert, batch_id: null }, () => 'GRA100').subject).toBeNull();
+  });
+
+  it('links silo, requisition and batch subjects and the farm, and never shows a dash', async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith('/feed-alert/scope')) return Promise.resolve({ data: [
+        { ...feedAlert, subject_type: 'SILO', subject_id: 'silo-4' },
+        { ...feedAlert, alert_id: 'f2', subject_type: 'REQUISITION', subject_id: 'req-1', farm_code: null, farm_id: 'farm-x' },
+      ] });
+      return Promise.resolve({ data: [{ ...batchAlert, batch_id: 'batch-13' }] });
+    });
+    render(<AlertPanel />);
+    const table = await screen.findByRole('table');
+    await waitFor(() => expect(within(table).getAllByRole('link').length).toBeGreaterThan(3));
+    const hrefs = within(table).getAllByRole('link').map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(expect.arrayContaining([
+      '/master-data/location?recordId=silo-4',
+      '/requisitions?id=req-1',
+      '/batches/entry?batchId=batch-13',
+      '/master-data/location?recordId=farm-vil',
+      '/master-data/location?recordId=farm-gra',
+    ]));
+    expect(within(table).getByRole('link', { name: 'BATCH-000013' })).toBeTruthy();
+    expect(within(table).getByRole('link', { name: 'VIL100' })).toBeTruthy();
+    expect(within(table).queryByText('—')).toBeNull();
+    expect(within(table).getAllByText('alrtNoFarmCode').length).toBe(1);
+  });
+});

@@ -6,6 +6,7 @@ import { StatCard, StatRow } from "@/components/ui/stat-row";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort } from "./feed-format";
 import { REQ_STATUS_LABEL, labelOf } from "./requisition-labels";
+import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 
 export interface MillLoadingBin {
   binId: string;
@@ -25,15 +26,27 @@ export interface SelectedSiloDashboard {
   aboveThresholdKg: number | null;
   systemBalanceKg: number;
   currentDietItemName: string | null;
+  /** W2D A5: item ids and Item No. for the item links (Dashboard rows 50, 58). */
+  currentDietItemId?: string | null;
+  currentDietItemCode?: string | null;
+  feedInSiloItemId?: string | null;
+  feedInSiloItemCode?: string | null;
   dailyRequirementKg: number;
   daysRemaining: number | null;
+  /** Dashboard row 55: Days of Feed Remaining is read with the first shortage date. */
+  firstShortageDate?: string | null;
   projectedNeedKg: number;
   currentProjectedNeedKg: number;
   nextProjectedNeedKg: number;
   currentDietDaysRemaining: number | null;
   nextDietItemName: string | null;
+  nextDietItemId?: string | null;
+  nextDietItemCode?: string | null;
   nextDietDate: string | null;
   siloAvailableForNextDiet: boolean | null;
+  /** Checkpoint 9: the ACTIVE silo at the house whose Feed Type matches the next diet. */
+  nextDietSiloId?: string | null;
+  nextDietSiloCode?: string | null;
   projectedShortfallKg: number;
   recommendedOrderKg: number;
   requisitionId: string | null;
@@ -64,26 +77,53 @@ const TD = "border-b border-(--border) px-3 py-2 align-top";
 
 const date = (value: string | null | undefined, unavailable: string) => value ? formatDateShort(value) : unavailable;
 
+/** "CODE — Name" with the code linked to the item record; the name alone when no code is known. */
+function ItemValue({ id, code, name, unavailable }: { id?: string | null; code?: string | null; name: string | null; unavailable: string }) {
+  if (!code) return <>{name ?? unavailable}</>;
+  return <><RecordLink code={code} href={id ? itemHref(id) : null} />{name ? ` — ${name}` : ""}</>;
+}
+
+export interface DashboardShed {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export function FeedSiloDashboardCards({
   silo,
+  shed,
   farmTotalOrderKg,
   t,
 }: {
   silo: SelectedSiloDashboard;
+  /** Dashboard row 48: the selected House Shed, shown as a linked row. */
+  shed?: DashboardShed | null;
   farmTotalOrderKg: number;
   t: Translate;
 }) {
   const bin = silo.millLoadingBin;
   const unavailable = t("fsdNotAvailable");
-  const binValue = bin
-    ? `${bin.binCode} · ${date(bin.productionDate, unavailable)} · ${bin.slotName || bin.slotCode}`
+  const binValue: ReactNode = bin
+    ? <><RecordLink code={bin.binCode} href={locationHref(bin.binId)} />{` · ${date(bin.productionDate, unavailable)} · ${bin.slotName || bin.slotCode}`}</>
     : t("fsdNotScheduled");
-  const yesNo = silo.siloAvailableForNextDiet === null
+  const yesNo: ReactNode = silo.siloAvailableForNextDiet === null
     ? unavailable
-    : silo.siloAvailableForNextDiet ? t("fsdYes") : t("fsdNo");
-  const nextDiet = silo.nextDietItemName
-    ? `${silo.nextDietItemName}${silo.nextDietDate ? ` · ${date(silo.nextDietDate, unavailable)}` : ""}`
+    : silo.siloAvailableForNextDiet
+      ? silo.nextDietSiloCode
+        ? <>{t("fsdYes")} · <RecordLink code={silo.nextDietSiloCode} href={silo.nextDietSiloId ? locationHref(silo.nextDietSiloId) : null} /></>
+        : t("fsdYes")
+      : t("fsdNo");
+  const nextDiet: ReactNode = silo.nextDietItemName || silo.nextDietItemCode
+    ? <><ItemValue id={silo.nextDietItemId} code={silo.nextDietItemCode} name={silo.nextDietItemName} unavailable={unavailable} />{silo.nextDietDate ? ` · ${date(silo.nextDietDate, unavailable)}` : ""}</>
     : unavailable;
+  // Current diet: the item eaten today, else Feed in Silo — the same fallback the API uses for the name.
+  const currentDiet: ReactNode = silo.currentDietItemCode
+    ? <ItemValue id={silo.currentDietItemId} code={silo.currentDietItemCode} name={silo.currentDietItemName} unavailable={unavailable} />
+    : <ItemValue id={silo.feedInSiloItemId} code={silo.feedInSiloItemCode} name={silo.currentDietItemName} unavailable={unavailable} />;
+  const firstShortage = date(silo.firstShortageDate, t("fsdNoShortage"));
+  const daysRemaining = silo.daysRemaining === null || !Number.isFinite(silo.daysRemaining)
+    ? unavailable
+    : silo.firstShortageDate ? `${number(silo.daysRemaining, unavailable)} · ${formatDateShort(silo.firstShortageDate)}` : number(silo.daysRemaining, unavailable);
   const projectedNeed = silo.nextProjectedNeedKg > 0
     ? `${number(silo.projectedNeedKg, unavailable)} (${number(silo.currentProjectedNeedKg, unavailable)} + ${number(silo.nextProjectedNeedKg, unavailable)})`
     : number(silo.projectedNeedKg, unavailable);
@@ -99,12 +139,13 @@ export function FeedSiloDashboardCards({
     : { tone: "success", label: t("fsdStatusOk") };
 
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
-    { label: "fsdCurrentDietFeedItem", value: silo.currentDietItemName ?? unavailable },
+    { label: "fsdCurrentDietFeedItem", value: currentDiet },
     { label: "fsdMillLoadingBin", value: binValue },
     { label: "fsdSiloCapacityKg", value: number(silo.capacityKg, unavailable) },
     { label: "fsdSystemBalanceKg", value: number(silo.systemBalanceKg, unavailable) },
     { label: "fsdDailyRequirementKg", value: number(silo.dailyRequirementKg, unavailable) },
-    { label: "fsdDaysFeedRemaining", value: number(silo.daysRemaining, unavailable) },
+    { label: "fsdDaysFeedRemaining", value: daysRemaining },
+    { label: "fsdFirstShortageDate", value: firstShortage },
     { label: "fsdProjectedNeedRangeKg", value: projectedNeed },
     { label: "fsdCurrentDietDaysRemaining", value: number(silo.currentDietDaysRemaining, unavailable) },
     { label: "fsdNextDietFeedItem", value: nextDiet },
@@ -128,7 +169,7 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdDailyRequirementKg")} value={number(silo.dailyRequirementKg, unavailable)} unit="kg" />
-        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status ? <StatusDot tone={status.tone} label={status.label} /> : undefined} />
+        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status || silo.firstShortageDate ? <span className="inline-flex flex-wrap items-center gap-2">{status && <StatusDot tone={status.tone} label={status.label} />}{silo.firstShortageDate && <span className="text-xs text-(--text-secondary)">{t("fsdFirstShortageDate")}: {formatDateShort(silo.firstShortageDate)}</span>}</span> : undefined} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
 
@@ -136,6 +177,7 @@ export function FeedSiloDashboardCards({
         <Card>
           <CardHeader className="p-4 pb-2"><CardTitle>{t("fsdForecastDetails")}</CardTitle></CardHeader>
           <CardContent className="grid gap-3 p-4 pt-0 text-sm">
+            <Summary label={t("fsdFirstShortageDate")} value={firstShortage} />
             <Summary label={t("fsdProjectedNeedRangeKg")} value={projectedNeed} />
             <Summary label={t("fsdCurrentDietDaysRemaining")} value={number(silo.currentDietDaysRemaining, unavailable)} />
             <Summary label={t("fsdNextDietFeedItem")} value={nextDiet} />
@@ -162,6 +204,12 @@ export function FeedSiloDashboardCards({
               <td className={`${TD} font-medium`}>{t("fsdSilo")}</td>
               <td className={`${TD} break-words text-right`}><a className="text-(--accent) hover:underline" href={`/master-data/location?recordId=${encodeURIComponent(silo.siloId)}`}>{silo.siloCode}</a>{silo.siloName ? ` — ${silo.siloName}` : ""}</td>
             </tr>
+            {shed && (
+              <tr>
+                <td className={`${TD} font-medium`}>{t("fsdShed")}</td>
+                <td className={`${TD} break-words text-right`}><RecordLink code={shed.code} href={locationHref(shed.id)} />{shed.name ? ` — ${shed.name}` : ""}</td>
+              </tr>
+            )}
             {details.map((detail) => <tr key={detail.label}><td className={`${TD} font-medium`}>{t(detail.label)}</td><td className={`${TD} min-w-48 break-words text-right tabular-nums`}>{detail.value}</td></tr>)}
           </tbody>
         </table>

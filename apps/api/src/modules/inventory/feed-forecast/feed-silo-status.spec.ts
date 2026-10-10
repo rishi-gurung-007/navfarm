@@ -114,6 +114,72 @@ describe('buildSiloStatus', () => {
     expect(a).toMatchObject({ nextDietItemId: 'r2', nextDietDate: '2026-09-26' });
     expect(b).toMatchObject({ nextDietItemId: null, nextDietDate: null, siloAvailableForNextDiet: null });
   });
+
+  /**
+   * W2D / A5 (Dashboard rows 50, 58, 59; checkpoint 9): the current and next diet items come with their Item No.
+   * for a link, and the next-diet silo is an ACTIVE silo at the changing house whose Feed Type (BULK/BAGGED)
+   * matches the next diet's feed form — not the engine's "a silo already holds the item".
+   */
+  describe('W2D A5: item codes and next-diet silo by Feed Type', () => {
+    const change = (over: object = {}) => ({
+      sources: [],
+      dietChanges: [{
+        batchId: 'b', realBatchId: 'b' as any, batchNo: 'B1', shedCode: 'SHED-A', fromItemId: 'r1', fromItemName: 'R1', toItemId: 'r2', toItemName: 'R2',
+        changeDate: '2026-09-26', nextSourceType: 'STORE' as const, nextSourceCode: null, ...over,
+      }],
+    });
+    const silosAtA = [
+      fact({ siloId: 'sa', siloCode: 'SILO-A', houseCodes: ['SHED-A'], feedType: 'BULK' }),
+      fact({ siloId: 'sb', siloCode: 'SILO-B', houseCodes: ['SHED-A'], feedType: 'BAGGED', feedInSiloItemId: 'r9' }),
+      fact({ siloId: 'sc', siloCode: 'SILO-C', houseCodes: ['SHED-Z'], feedType: 'BAGGED', feedInSiloItemId: 'r9' }),
+    ];
+
+    it('returns current and next diet item codes', () => {
+      const [row] = buildSiloStatus({
+        silos: [fact({})], result: buildFeedForecast(workedExample), requisitionStatusBySilo: new Map(), submissionDeadline: null,
+        itemCodes: { r1: 'FEED-R1', r2: 'FEED-R2' },
+      });
+      expect(row).toMatchObject({ currentDietItemId: 'r1', currentDietItemCode: 'FEED-R1', nextDietItemId: 'r2', nextDietItemCode: 'FEED-R2' });
+    });
+
+    it('codes are null when unknown, never an id', () => {
+      const [row] = buildSiloStatus({ silos: [fact({})], result: buildFeedForecast(workedExample), requisitionStatusBySilo: new Map(), submissionDeadline: null });
+      expect(row).toMatchObject({ currentDietItemCode: null, nextDietItemCode: null });
+    });
+
+    it('finds a BAGGED silo at the house for a BAGGED next diet even though no silo holds the item', () => {
+      const [a] = buildSiloStatus({
+        silos: silosAtA, result: change(), requisitionStatusBySilo: new Map(), submissionDeadline: null,
+        itemFeedTypes: { r2: 'BAGGED' },
+      });
+      expect(a).toMatchObject({ nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: true, nextDietSiloId: 'sb', nextDietSiloCode: 'SILO-B' });
+    });
+
+    it('is not available when no silo at that house has the feed type, even if the engine found a silo holding the item', () => {
+      const [a] = buildSiloStatus({
+        silos: silosAtA.map((s) => ({ ...s, feedType: 'BULK' as const })),
+        result: change({ nextSourceType: 'SILO', nextSourceCode: 'SILO-A' }), requisitionStatusBySilo: new Map(), submissionDeadline: null,
+        itemFeedTypes: { r2: 'BAGGED' },
+      });
+      expect(a).toMatchObject({ siloAvailableForNextDiet: false, nextDietSiloId: null, nextDietSiloCode: null });
+    });
+
+    it('prefers the silo the engine will draw from when it matches the feed type', () => {
+      const silos = [...silosAtA, fact({ siloId: 'sd', siloCode: 'SILO-D', houseCodes: ['SHED-A'], feedType: 'BAGGED', feedInSiloItemId: 'r2' })];
+      const [a] = buildSiloStatus({
+        silos, result: change({ nextSourceType: 'SILO', nextSourceCode: 'SILO-D' }), requisitionStatusBySilo: new Map(), submissionDeadline: null,
+        itemFeedTypes: { r2: 'BAGGED' },
+      });
+      expect(a).toMatchObject({ siloAvailableForNextDiet: true, nextDietSiloId: 'sd', nextDietSiloCode: 'SILO-D' });
+    });
+
+    it('without a configured feed form falls back to the engine source', () => {
+      const [a] = buildSiloStatus({
+        silos: silosAtA, result: change({ nextSourceType: 'SILO', nextSourceCode: 'SILO-B' }), requisitionStatusBySilo: new Map(), submissionDeadline: null,
+      });
+      expect(a).toMatchObject({ nextDietFeedType: null, siloAvailableForNextDiet: true, nextDietSiloId: 'sb', nextDietSiloCode: 'SILO-B' });
+    });
+  });
 });
 
 describe('buildSelectedSiloDashboard', () => {
@@ -134,6 +200,13 @@ describe('buildSelectedSiloDashboard', () => {
       requisitionStatus: 'DRAFT',
       submissionDeadline: '2026-09-25',
       alert: null,
+      currentDietItemCode: null,
+      feedInSiloItemCode: null,
+      nextDietItemCode: null,
+      nextDietItemName: null,
+      nextDietFeedType: null,
+      nextDietSiloId: null,
+      nextDietSiloCode: null,
     };
     const source = (itemId: string, itemName: string, walkDemandKg: number) => ({
       sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 's1', itemId, itemName,

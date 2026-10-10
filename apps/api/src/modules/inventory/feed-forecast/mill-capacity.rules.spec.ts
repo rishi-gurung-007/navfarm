@@ -132,7 +132,8 @@ describe('buildCompareReport (Feed Forecast r11, Checkpoint 34)', () => {
       diets,
     });
     expect(report.rows).toEqual([
-      expect.objectContaining({ itemCode: 'FEED-R1', farmCount: 2, requestedKg: 21_000, millApprovedKg: 6_000, availableKg: 20_000, status: 'RED' }),
+      // W2D W10: the BIN id travels with its code so the report can link it.
+      expect.objectContaining({ itemCode: 'FEED-R1', farmCount: 2, requestedKg: 21_000, millApprovedKg: 6_000, availableKg: 20_000, status: 'RED', binId: 'bin-d1', binCode: 'BIN-d1' }),
       expect.objectContaining({ itemCode: 'FEED-R4', farmCount: 1, requestedKg: 9_000, millApprovedKg: 8_000, availableKg: 0, status: 'RED' }),
     ]);
     expect(report.total).toEqual({ requestedKg: 30_000, millApprovedKg: 14_000, capacityKg: 30_000, status: 'AMBER' });

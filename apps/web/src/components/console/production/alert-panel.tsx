@@ -25,7 +25,8 @@ import { formatStampShort } from "@/utils/date-short";
 import type { TranslationKeys } from "@/utils/translations";
 import { loadFeedFarms, type FeedFarm } from "@/components/console/inventory/use-feed-farm";
 import { PRIORITY_LABEL, labelOf, variantOf } from "@/components/console/inventory/requisition-labels";
-import { AlertRow, AlertState, fromBatchAlert, fromFeedAlert, mergeAlerts } from "./alerts-list";
+import { RecordLink, batchHref, locationHref } from "@/components/console/inventory/feed-requisition-header";
+import { AlertRow, AlertState, AlertSubject, AlertSubjectType, fromBatchAlert, fromFeedAlert, mergeAlerts } from "./alerts-list";
 
 type TypeFilter = "ALL" | "BATCH" | "FEED";
 type ShowFilter = "OPEN" | "ALL";
@@ -33,7 +34,22 @@ type ShowFilter = "OPEN" | "ALL";
 const STATE_KEY: Record<AlertState, TranslationKeys> = {
   OPEN: "alrtStatusOpen", READ: "alrtStatusRead", ACKNOWLEDGED: "alrtStatusAcknowledged", RESOLVED: "alrtStatusResolved",
 };
-const COLUMNS = ["alrtColPriority", "alrtColType", "alrtColAlert", "alrtColFarm", "alrtColRaised", "alrtColStatus", "alrtColAction"] as const;
+const COLUMNS = ["alrtColPriority", "alrtColType", "alrtColAlert", "alrtColSubject", "alrtColFarm", "alrtColRaised", "alrtColStatus", "alrtColAction"] as const;
+
+/** W2D W11: where each subject opens. A requisition opens through the Requisition page, which routes feed ids on. */
+const SUBJECT_HREF: Record<AlertSubjectType, (id: string) => string> = {
+  SILO: locationHref,
+  REQUISITION: (id) => `/requisitions?id=${encodeURIComponent(id)}`,
+  BATCH: batchHref,
+};
+const SUBJECT_LABEL: Record<AlertSubjectType, TranslationKeys> = {
+  SILO: "alrtSubjectSilo", REQUISITION: "alrtSubjectRequisition", BATCH: "alrtSubjectBatch",
+};
+
+function SubjectLink({ subject, t }: { subject: AlertSubject | null; t: (key: TranslationKeys) => string }) {
+  if (!subject) return <span className="text-[var(--text-secondary)]">{t("alrtNoSubject")}</span>;
+  return <RecordLink code={subject.code ?? t(SUBJECT_LABEL[subject.type])} href={SUBJECT_HREF[subject.type](subject.id)} />;
+}
 const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
@@ -179,7 +195,10 @@ export default function AlertPanel() {
                   <span className="font-medium">{row.title}</span>
                   <span className="ml-2 inline-block max-w-[24rem] truncate align-bottom text-[var(--text-secondary)]" title={row.message}>{row.message}</span>
                 </td>
-                <td className={TD}>{row.farmCode ?? "—"}</td>
+                <td className={TD}><SubjectLink subject={row.subject} t={t} /></td>
+                <td className={TD}>{row.farmId
+                  ? <RecordLink code={row.farmCode ?? t("alrtNoFarmCode")} href={locationHref(row.farmId)} />
+                  : <span className="text-[var(--text-secondary)]">{t("alrtNoFarmCode")}</span>}</td>
                 <td className={cn(TD, "tabular-nums")}>{formatStampShort(row.raisedAt, row.raisedUtc)}</td>
                 <td className={TD}>{t(STATE_KEY[row.state])}</td>
                 <td className={TD}>

@@ -195,6 +195,20 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('crqReleasedStore:{"no":"TR-9"}'));
   });
 
+  it("W2D W12: shows the linked transfer order, linked to it, on a released Store requisition", () => {
+    render(<CommonRequisitionDetail initial={released({ linked_transfer_no: "TR-9", linked_transfer_id: "tr-9" } as any)} onView={jest.fn()} onBack={jest.fn()} />);
+    expect(screen.getByText("crqLinkedTransfer")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "TR-9" }).getAttribute("href")).toBe("/inventory/transfers?id=tr-9");
+  });
+
+  it("W2D W12: shows the linked PO no. on a Purchase requisition, and says when none is linked yet", () => {
+    const { rerender } = render(<CommonRequisitionDetail initial={released({ purpose: "PURCHASE", linked_po_no: "PO-77" })} onView={jest.fn()} onBack={jest.fn()} />);
+    expect(screen.getByText("crqLinkedPo")).toBeTruthy();
+    expect(screen.getByText("PO-77")).toBeTruthy();
+    rerender(<CommonRequisitionDetail key="b" initial={released({ purpose: "PURCHASE", linked_po_no: null })} onView={jest.fn()} onBack={jest.fn()} />);
+    expect(screen.getByText("crqNoLinkedPo")).toBeTruthy();
+  });
+
   it("says the purchase is pending when a Purchase requisition is released", async () => {
     const onView = jest.fn();
     post.mockResolvedValue({ data: released({ purpose: "PURCHASE" }) });

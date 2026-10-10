@@ -169,6 +169,8 @@ export interface CompareReportRow extends DietInfo {
   state: CapacityState;
   status: CapacityStatus | null;
   priority: number | null;
+  /** W2D W10: the BIN's location id, so the report can link it. */
+  binId: string | null;
   binCode: string | null;
   feedForm: FeedForm | null;
 }
@@ -222,6 +224,7 @@ export function buildCompareReport(input: {
         state: capacity.state,
         status: capacity.status,
         priority: capacity.priority,
+        binId: capacity.binId,
         binCode: capacity.binCode,
         feedForm: capacity.feedForm,
       });

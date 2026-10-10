@@ -253,6 +253,22 @@ describe("CommonRequisitionDocument — Rishi's header field list", () => {
     expect(remarksField.className).not.toContain("lg:col-span-4");
   });
 
+  it("W2D W12: links main/from/to locations and the line's item and locations once read-only", () => {
+    const view = { ...emptyCommonRequisition("co-1", "ITEM", "STORE", "2026-10-04"), requisition_id: "r", req_no: "REQ-2026-0002",
+      approval_status: "APPROVED", document_status: "RELEASED", main_location_id: "f1", main_location_code: "F1",
+      from_location_id: "st", from_location_code: "F1/STORE", to_location_id: "sh", to_location_code: "F1/SHED-1",
+      lines: [{ line_id: "l1", line_seq: 1, item_id: "i1", item_code: "IT-1", item_name: "Fixture item", resource_id: null, description: null,
+        quantity: "10", uom: "EA", est_rate: null, from_location_id: "st", to_location_id: "sh", qty_to_ship: "10", qty_shipped: 0,
+        qty_to_receive: "10", qty_received: 0, balance_to_ship: 10, remaining_to_receive: 10 }] };
+    render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
+    const hrefs = (name: string) => screen.getAllByRole("link", { name }).map((a) => a.getAttribute("href"));
+    expect(hrefs("F1")).toEqual(["/master-data/location?recordId=f1"]);
+    expect(hrefs("F1/STORE")).toEqual(["/master-data/location?recordId=st", "/master-data/location?recordId=st"]);
+    expect(hrefs("F1/SHED-1")).toEqual(["/master-data/location?recordId=sh", "/master-data/location?recordId=sh"]);
+    const lines = screen.getByRole("table", { name: "crqLinesLabel" });
+    expect(within(lines).getByRole("link", { name: "IT-1" }).getAttribute("href")).toBe("/master-data/item?recordId=i1");
+  });
+
   it("lays the header out in the order of Rishi's list", () => {
     const { container } = render(<CommonRequisitionDocument view={storeView() as any} editable options={options} onChange={jest.fn()} />);
     const labels = labelsInOrder(container);

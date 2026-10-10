@@ -132,6 +132,30 @@ describe('FeedSiloDashboard', () => {
     expect(within(table).getByRole('link', { name: 'reqStatusDraft' }).getAttribute('href')).toContain('/requisitions?id=req-1');
   });
 
+  it('W2D W6: shows the first shortage date, a linked Shed row, and links BIN, current and next diet items and the next-diet silo', async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      const query = new URL(url, 'http://navfarm.local').searchParams;
+      const routed: any = response(query.get('shedId'), query.get('siloId'));
+      if (routed.data.silo) {
+        Object.assign(routed.data.silo, {
+          currentDietItemCode: 'FEED-R1', nextDietItemCode: 'FEED-R2', nextDietSiloId: 'silo-b', nextDietSiloCode: 'GRS/SILO-002',
+          millLoadingBin: { binId: 'bin-1', binCode: 'BIN-001', productionDate: '2026-10-06', slotId: 'slot-1', slotCode: 'AM', slotName: 'Morning' },
+        });
+      }
+      return Promise.resolve(routed);
+    });
+    render(<FeedSiloDashboard />);
+    const table = await screen.findByRole('table', { name: 'fsdLabel' });
+
+    expect(within(table).getByText('fsdFirstShortageDate')).toBeTruthy();
+    expect(within(table).getAllByText(/08\/10\/26/).length).toBeGreaterThan(0);
+    expect(within(table).getByRole('link', { name: 'GRS/SHED-001' }).getAttribute('href')).toBe('/master-data/location?recordId=shed-a');
+    expect(within(table).getByRole('link', { name: 'FEED-R1' }).getAttribute('href')).toBe('/master-data/item?recordId=r1');
+    expect(within(table).getByRole('link', { name: 'FEED-R2' }).getAttribute('href')).toBe('/master-data/item?recordId=r2');
+    expect(within(table).getByRole('link', { name: 'BIN-001' }).getAttribute('href')).toBe('/master-data/location?recordId=bin-1');
+    expect(within(table).getByRole('link', { name: 'GRS/SILO-002' }).getAttribute('href')).toBe('/master-data/location?recordId=silo-b');
+  });
+
   it('uses explanatory text for unavailable dashboard values', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
       const routed = response(

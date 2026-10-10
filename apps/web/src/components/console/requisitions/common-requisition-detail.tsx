@@ -27,6 +27,7 @@ import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "../inventory/feed-format";
 import { CommonRequisitionDocument, type TrackingAssignment } from "./common-requisition-document";
+import { RecordLink } from "../inventory/feed-requisition-header";
 import {
   commonActions, isCommonEditable, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionOptions, type CommonRequisitionView,
 } from "./common-requisition-model";
@@ -223,6 +224,18 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
         </div>
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
+      {(draft.document_status ?? "OPEN") === "RELEASED" && (
+        // W2D W12: the record the release created — the Store transfer order, or the Purchase's PO no.
+        <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+          {draft.purpose === "STORE" ? (
+            <span className="inline-flex gap-1.5"><span>{t("crqLinkedTransfer")}</span>{draft.linked_transfer_no
+              ? <RecordLink code={draft.linked_transfer_no} href={draft.linked_transfer_id ? `/inventory/transfers?id=${encodeURIComponent(draft.linked_transfer_id)}` : null} />
+              : t("crqNoLinkedTransfer")}</span>
+          ) : (
+            <span className="inline-flex gap-1.5"><span>{t("crqLinkedPo")}</span><span className="font-mono" style={{ color: "var(--text-primary)" }}>{draft.linked_po_no || t("crqNoLinkedPo")}</span></span>
+          )}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">
         <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
           onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />

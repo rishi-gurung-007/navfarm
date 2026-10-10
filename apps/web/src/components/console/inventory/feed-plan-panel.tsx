@@ -14,6 +14,7 @@ import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { useFeedForecastContext } from "./feed-forecast-context";
 import { MillCapacityBadge, millCapacityText, formatKg, type DietCapacity } from "./mill-capacity-view";
+import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 
 interface FeedPlanRow {
   farm: { id: string; code: string; name: string };
@@ -46,6 +47,7 @@ interface FeedPlanVersion {
   source_to: string;
   lines?: Array<{
     plan_line_id: string;
+    item_id?: string;
     item_code: string;
     item_name: string;
     projected_target_kg: string;
@@ -120,13 +122,25 @@ export default function FeedPlanPanel() {
     }
   }
 
-  async function viewVersion(version: FeedPlanVersion) {
+  async function viewVersion(version: Pick<FeedPlanVersion, "plan_id">) {
     try {
-      setViewing(unwrap<FeedPlanVersion>(await api.get(`/feed-forecast/feed-plan/versions/${version.plan_id}`)));
+      setViewing(unwrap<FeedPlanVersion>(await api.get(`/feed-forecast/feed-plan/versions/${encodeURIComponent(version.plan_id)}`)));
     } catch (err: any) {
       showToast.error(err?.message || tRef.current("feedPlanLoadFailed"));
     }
   }
+
+  // W2D W10: opened by link — /inventory/feed-forecast?tab=feed-plan&planId=<plan> (GET feed-plan/versions/:id).
+  useEffect(() => {
+    let planId: string | null = null;
+    try {
+      planId = new URLSearchParams(window.location.search).get("planId");
+    } catch {
+      planId = null;
+    }
+    if (planId) void viewVersion({ plan_id: planId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on open
+  }, []);
 
   const fixedLabel = farm.isFixed
     ? farm.fixedFarm?.location_code ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" }) : null
@@ -161,7 +175,8 @@ export default function FeedPlanPanel() {
           </tr></thead>
           <tbody>{rows.map((row) => (
             <tr key={`${row.period}:${row.item.id}`}>
-              <td>{row.farm.code}</td><td>{formatDateShort(row.period)}</td><td>{row.item.code}</td><td>{row.item.name}</td>
+              <td><RecordLink code={row.farm.code} href={row.farm.id ? locationHref(row.farm.id) : null} /></td><td>{formatDateShort(row.period)}</td>
+              <td><RecordLink code={row.item.code} href={row.item.id ? itemHref(row.item.id) : null} /></td><td>{row.item.name}</td>
               <td>{kg(row.tentativeKg, t("feedPlanUnavailable"))}</td><td>{kg(row.approvedRequisitionKg, t("feedPlanUnavailable"))}</td>
               <td>{kg(row.shippedKg, t("feedPlanUnavailable"))}</td><td>{kg(row.receivedKg, t("feedPlanUnavailable"))}</td>
               <td>{kg(row.remainingKg, t("feedPlanUnavailable"))}</td><td>{kg(row.varianceKg, t("feedPlanUnavailable"))}</td>
@@ -231,7 +246,7 @@ export default function FeedPlanPanel() {
                       <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanColVariance")}</th>
                     </tr></thead>
                     <tbody className="divide-y divide-[var(--border-subtle)]">{lines.map((line) => <tr key={line.plan_line_id}>
-                      <td className="px-3 py-2 align-top whitespace-nowrap" title={line.item_code}>{line.item_code}</td>
+                      <td className="px-3 py-2 align-top whitespace-nowrap" title={line.item_code}><RecordLink code={line.item_code} href={line.item_id ? itemHref(line.item_id) : null} /></td>
                       <td className="px-3 py-2 align-top break-words" title={line.item_name}>{line.item_name}</td>
                       <td className={num}>{cell(Number(line.projected_target_kg))}</td>
                       <td className={num}>×{Number(line.adjustment_factor).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>

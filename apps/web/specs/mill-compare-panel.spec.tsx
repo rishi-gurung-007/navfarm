@@ -24,7 +24,7 @@ const report = {
     from: "2026-10-05", to: "2026-10-11",
     rows: [
       { productionDate: "2026-10-11", itemId: "i8", itemCode: "ICAT-004-ITM-0008", itemName: "Weaner Grower Mash", dietNo: 8, farmCount: 1,
-        requestedKg: 6050, millApprovedKg: 6000, availableKg: 150000, state: "AVAILABLE", status: "GREEN", priority: 1, binCode: "MILL-001/BIN-001", feedForm: "BULK" },
+        requestedKg: 6050, millApprovedKg: 6000, availableKg: 150000, state: "AVAILABLE", status: "GREEN", priority: 1, binId: "bin-1", binCode: "MILL-001/BIN-001", feedForm: "BULK" },
       { productionDate: "2026-10-11", itemId: "i3", itemCode: "ICAT-004-ITM-0003", itemName: "Lactation", dietNo: 3, farmCount: 1,
         requestedKg: 2000, millApprovedKg: null, availableKg: null, state: "NOT_SCHEDULED", status: null, priority: null, binCode: null, feedForm: null },
     ],
@@ -46,6 +46,10 @@ it("shows all farms' requested KG, mill-approved KG and Mill Capacity Available 
     ["2026-10-11", "millCapNotScheduled", "3", "ICAT-004-ITM-0003", "Lactation", "millCapNotScheduled", "1", "2,000", "mcrNotConsolidated", "millCapNotScheduled", "millCapNoStatus"],
     ["mcrTotal", "8,050", "6,000", "1,400,000", "millCapGreen"],
   ]);
+
+  // W2D W10: item and BIN link to their records.
+  expect(within(table).getByRole("link", { name: "ICAT-004-ITM-0008" }).getAttribute("href")).toBe("/master-data/item?recordId=i8");
+  expect(within(table).getByRole("link", { name: "MILL-001/BIN-001" }).getAttribute("href")).toBe("/master-data/location?recordId=bin-1");
 
   fireEvent.click(screen.getByRole("button", { name: "mcrExport" }));
   const [name, csv] = (downloadCsvFile as jest.Mock).mock.calls[0];
