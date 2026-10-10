@@ -27,14 +27,22 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "./feed-format";
 import {
   FeedRequisitionDocument, isLineExceptioned, needsRemarks, remarksRequiredMessage, requestedKgOf,
-  type FeedLineEdit, type FeedRequisitionLine, type FeedRequisitionOptions, type RequisitionView,
+  type FeedLineEdit, type FeedPostedReceipt, type FeedRequisitionLine, type FeedRequisitionOptions, type RequisitionView,
 } from "./feed-requisition-document";
+import { FEED_TYPE_LABEL, labelOf } from "./requisition-labels";
 
 /** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
 export const isEditable = (v: { status: string; approval_request_id: string | null }) =>
   v.status === "AUTO_DRAFT" || v.status === "DRAFT" || (v.status === "PENDING_APPROVAL" && !v.approval_request_id);
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
+const kgText = (v: string | number | null | undefined, empty: string) => {
+  const n = num(v);
+  return n === null || !Number.isFinite(n) ? empty : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+};
+/** Silo TO Receipt row 24 / checkpoint 27: bag count x bag size within 1 percent of the KG received (the API decides). */
+const BAG_TOLERANCE = 0.01;
+const transferHref = (transferId: string) => `/inventory/transfers?id=${encodeURIComponent(transferId)}`;
 
 export function FeedRequisitionDetail({
   view,
@@ -69,6 +77,11 @@ export function FeedRequisitionDetail({
   const [shipmentId, setShipmentId] = useState("");
   const [shipQty, setShipQty] = useState<Record<string, string>>({});
   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
+  // W2T: per requisition line — variance reason, bag count, delivery note no.
+  const [receiveReason, setReceiveReason] = useState<Record<string, string>>({});
+  const [receiveBags, setReceiveBags] = useState<Record<string, string>>({});
+  const [receiveNote, setReceiveNote] = useState<Record<string, string>>({});
+  const [lastReceipt, setLastReceipt] = useState<FeedPostedReceipt | null>(null);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -186,13 +199,39 @@ export function FeedRequisitionDetail({
     && shipLines.every((line) => withinCap(shipQty[line.requisition_line_id!], line.balance_to_ship))
     && shipBody.length > 0;
   const receiveLines = (chosenShipment?.lines ?? []).filter((line) => !!line.requisition_line_id && line.remaining_to_receive > 1e-9);
-  const receiveBody = receiveLines.flatMap((line) => {
-    const quantity = entered(receiveQty[line.requisition_line_id!]);
-    return quantity !== null && quantity > 0 ? [{ requisition_line_id: line.requisition_line_id!, quantity }] : [];
+  const bagSizeKg = Number(view.header?.bag_size_kg ?? 50) || 50;
+  // W2T: what each receipt line shows and checks (Requisition rows 139-148).
+  const receiptRows = receiveLines.map((line, index) => {
+    const key = line.requisition_line_id!;
+    const reqLine = lines.find((l) => l.line_id === key) ?? null;
+    const transferLine = chosenTransfer?.lines.find((tl) => tl.transfer_line_id === line.line_id) ?? null;
+    const shipped = Number(transferLine?.qty_shipped ?? line.quantity);
+    const previouslyReceived = Number(transferLine?.qty_received ?? line.qty_received);
+    const outstanding = Number(transferLine?.remaining_to_receive ?? line.remaining_to_receive);
+    const quantity = entered(receiveQty[key]);
+    const bagged = reqLine?.feed_type === "BAGGED";
+    // Requisition row 145: shipped minus everything received once this posting lands.
+    const variance = quantity === null ? null : Math.round((shipped - previouslyReceived - quantity) * 10000) / 10000;
+    const short = variance !== null && variance > 1e-9;
+    const bags = entered(receiveBags[key]);
+    const bagsOk = !bagged || quantity === null || (bags !== null && Number.isInteger(bags) && bags > 0
+      && Math.abs(bags * bagSizeKg - quantity) <= quantity * BAG_TOLERANCE + 1e-9);
+    const reasonOk = !short || !!receiveReason[key]?.trim();
+    const noteOk = quantity === null || !!receiveNote[key]?.trim();
+    return { line, key, index, reqLine, transferLine, shipped, previouslyReceived, outstanding, quantity, bagged, variance, short, bags, bagsOk, reasonOk, noteOk };
   });
+  const receiveBody = receiptRows.flatMap((row) => row.quantity !== null && row.quantity > 0 ? [{
+    requisition_line_id: row.key,
+    quantity: row.quantity,
+    delivery_note_no: receiveNote[row.key]?.trim() ?? "",
+    ...(row.short ? { variance_reason: receiveReason[row.key]?.trim() ?? "" } : {}),
+    ...(row.bagged && row.bags !== null ? { bag_count: row.bags } : {}),
+  }] : []);
   const receiveValid = !!chosenTransfer && !!chosenShipment
     && receiveLines.every((line) => withinCap(receiveQty[line.requisition_line_id!], line.remaining_to_receive))
+    && receiptRows.every((row) => row.quantity === null || (row.bagsOk && row.reasonOk && row.noteOk))
     && receiveBody.length > 0;
+  const resetReceiptInputs = () => { setReceiveQty({}); setReceiveReason({}); setReceiveBags({}); setReceiveNote({}); };
   const lineNumber = (requisitionLineId: string, fallback: number) =>
     lines.find((line) => line.line_id === requisitionLineId)?.line_seq ?? fallback;
 
@@ -213,8 +252,11 @@ export function FeedRequisitionDetail({
     const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/receipts`, {
       transfer_id: transferId, shipment_id: shipmentId, posting_date: postingDate, lines: receiveBody,
     }));
-    setReceiveQty({});
-    showToast.success(tRef.current("crqReceived"));
+    resetReceiptInputs();
+    setLastReceipt(result?.receipt ?? null);
+    showToast.success(result?.receipt?.receipt_no
+      ? tRef.current("w2tReceiptPosted", { receipt: result.receipt.receipt_no })
+      : tRef.current("crqReceived"));
     onView(result);
   });
 
@@ -222,7 +264,7 @@ export function FeedRequisitionDetail({
     setTransferId(value);
     setShipmentId("");
     setShipQty({});
-    setReceiveQty({});
+    resetReceiptInputs();
   };
 
   const actionBar = (
@@ -302,23 +344,116 @@ export function FeedRequisitionDetail({
           {transferField}
           <Field className="w-48" label={t("crqShipment")} htmlFor="feed-shipment">
             <select id="feed-shipment" className="nf-input-sm nf-select" value={shipmentId}
-              onChange={(event) => { setShipmentId(event.target.value); setReceiveQty({}); }} disabled={!chosenTransfer}>
+              onChange={(event) => { setShipmentId(event.target.value); resetReceiptInputs(); }} disabled={!chosenTransfer}>
               <option value="">{t("crqChoose")}</option>
               {(chosenTransfer?.open_shipments ?? []).map((shipment) => (
                 <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>
               ))}
             </select>
           </Field>
-          {receiveLines.map((line, index) => {
-            const key = line.requisition_line_id!;
-            return (
-              <Field key={key} className="w-40" label={t("crqReceiveQtyFor", { line: lineNumber(key, index + 1) })} htmlFor={`feed-receive-${key}`}>
-                <input id={`feed-receive-${key}`} type="number" min={0} max={line.remaining_to_receive} className="nf-input-sm text-right"
-                  value={receiveQty[key] ?? ""} onChange={(event) => setReceiveQty((current) => ({ ...current, [key]: event.target.value }))} />
-              </Field>
-            );
-          })}
+          {chosenTransfer && (
+            <a className="pb-1.5 text-xs font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>
+              {t("w2tOpenTransfer", { no: chosenTransfer.transfer_no })}
+            </a>
+          )}
+          {chosenTransfer && chosenShipment && (
+            <a className="pb-1.5 text-xs font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>
+              {t("w2tOpenShipment", { no: chosenShipment.shipment_no })}
+            </a>
+          )}
           <Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>
+          {receiptRows.length > 0 && (
+            <div className="w-full overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs" aria-label={t("w2tReceiptLines")}>
+                <thead>
+                  <tr style={{ color: "var(--text-secondary)" }}>
+                    <th className="px-2 py-1">{t("w2tColLine")}</th>
+                    <th className="px-2 py-1">{t("w2tColItem")}</th>
+                    <th className="px-2 py-1">{t("w2tColFeedType")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColRequested")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColMillApproved")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColShipped")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColPrevReceived")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColOutstanding")}</th>
+                    <th className="px-2 py-1">{t("w2tColCompartment")}</th>
+                    <th className="px-2 py-1 text-right">{t("w2tColVariance")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {receiptRows.map((row) => {
+                    const n = lineNumber(row.key, row.index + 1);
+                    const na = t("rqNotApplicable");
+                    return (
+                      <tr key={row.key} className="align-top border-t" style={{ borderColor: "var(--row-border)" }}>
+                        <td className="px-2 py-1">{n}</td>
+                        <td className="px-2 py-1">
+                          <div className="font-mono">{row.reqLine?.item_code ?? row.transferLine?.item_code ?? na}</div>
+                          <div style={{ color: "var(--text-secondary)" }}>{row.reqLine?.item_description ?? row.transferLine?.item_name ?? na}</div>
+                        </td>
+                        <td className="px-2 py-1">{labelOf(FEED_TYPE_LABEL, row.reqLine?.feed_type ?? null, t)}</td>
+                        <td className="px-2 py-1 text-right">{kgText(row.reqLine?.requested_qty_kg ?? row.reqLine?.quantity, na)}</td>
+                        <td className="px-2 py-1 text-right">{kgText(row.reqLine?.mill_approved_qty_kg, na)}</td>
+                        <td className="px-2 py-1 text-right">{kgText(row.shipped, na)}</td>
+                        <td className="px-2 py-1 text-right">{kgText(row.previouslyReceived, na)}</td>
+                        <td className="px-2 py-1 text-right">{kgText(row.outstanding, na)}</td>
+                        <td className="px-2 py-1">
+                          {row.line.compartment_no ?? na}
+                          {row.line.loading_sheet_no && <div style={{ color: "var(--text-secondary)" }}>{t("w2tLoadingSheet")}: {row.line.loading_sheet_no}</div>}
+                        </td>
+                        <td className="px-2 py-1 text-right">{row.variance === null ? na : kgText(row.variance, na)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="flex flex-col gap-2 pt-2">
+                {receiptRows.map((row) => {
+                  const n = lineNumber(row.key, row.index + 1);
+                  return (
+                    <div key={row.key} className="flex flex-wrap items-end gap-3">
+                      <Field className="w-40" label={t("crqReceiveQtyFor", { line: n })} htmlFor={`feed-receive-${row.key}`}>
+                        <input id={`feed-receive-${row.key}`} type="number" min={0} max={row.line.remaining_to_receive} className="nf-input-sm text-right"
+                          value={receiveQty[row.key] ?? ""} onChange={(event) => setReceiveQty((current) => ({ ...current, [row.key]: event.target.value }))} />
+                      </Field>
+                      <Field className="w-44" label={t("w2tDeliveryNoteFor", { line: n })} htmlFor={`feed-receive-note-${row.key}`}
+                        error={row.noteOk ? undefined : t("w2tDeliveryNoteRequired")}>
+                        <input id={`feed-receive-note-${row.key}`} type="text" maxLength={80} className="nf-input-sm"
+                          value={receiveNote[row.key] ?? ""} onChange={(event) => setReceiveNote((current) => ({ ...current, [row.key]: event.target.value }))} />
+                      </Field>
+                      {row.bagged && (
+                        <Field className="w-36" label={t("w2tBagCountFor", { line: n })} htmlFor={`feed-receive-bags-${row.key}`}
+                          error={row.bagsOk ? undefined : t("w2tBagCountHint", { size: bagSizeKg })}>
+                          <input id={`feed-receive-bags-${row.key}`} type="number" min={1} step={1} className="nf-input-sm text-right"
+                            value={receiveBags[row.key] ?? ""} onChange={(event) => setReceiveBags((current) => ({ ...current, [row.key]: event.target.value }))} />
+                        </Field>
+                      )}
+                      <Field className="min-w-56 flex-1" label={t("w2tVarianceReasonFor", { line: n })} htmlFor={`feed-receive-reason-${row.key}`}
+                        error={row.reasonOk ? undefined : t("w2tVarianceReasonRequired")}>
+                        <input id={`feed-receive-reason-${row.key}`} type="text" maxLength={500} className="nf-input-sm"
+                          value={receiveReason[row.key] ?? ""} onChange={(event) => setReceiveReason((current) => ({ ...current, [row.key]: event.target.value }))} />
+                      </Field>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {lastReceipt && (
+        <div className="shrink-0 pt-3 text-xs" role="status" aria-label={t("w2tLastReceipt")} style={{ color: "var(--text-primary)" }}>
+          <span className="font-semibold">{t("w2tReceiptPosted", { receipt: lastReceipt.receipt_no })}</span>{" "}
+          <a className="font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(lastReceipt.transfer_id)}>{t("w2tOpenTransferPlain")}</a>
+          {lastReceipt.lines.map((line) => (
+            <div key={line.line_id}>
+              {t("w2tReceiptLineResult", {
+                line: line.requisition_line_id ? lineNumber(line.requisition_line_id, 0) : "",
+                kg: kgText(line.qty_received, "0"),
+                variance: kgText(line.variance_qty ?? 0, "0"),
+                balance: kgText(line.silo_balance_after, t("rqNotApplicable")),
+              })}
+            </div>
+          ))}
         </div>
       )}
       {editable ? (

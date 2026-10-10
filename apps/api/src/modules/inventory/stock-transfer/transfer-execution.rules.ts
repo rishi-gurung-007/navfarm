@@ -245,3 +245,56 @@ export function assertTrackingForShipment(
     }
   }
 }
+
+/**
+ * W2T — feed TO receipt controls (Requisition rows 145-147, Silo TO Receipt
+ * rows 17, 24 and 27, Checkpoints rows 26 and 27). Over-receipt is refused
+ * before these run (decisions.md, 10 Oct: the block stays, departing from row
+ * 29), so the variance here is never negative.
+ */
+export const BAG_COUNT_TOLERANCE = 0.01; // Silo row 24: "within 1 percent tolerance"
+
+/** Shipped minus everything received on the line once this posting lands. */
+export function receiptVariance(shipped: number, previouslyReceived: number, quantity: number): number {
+  const v = Math.round((shipped - previouslyReceived - quantity) * 10000) / 10000;
+  return Math.abs(v) < FLOAT_SUM_TOLERANCE ? 0 : v;
+}
+
+export interface FeedReceiptLineCheck {
+  label: string;
+  shipped: number;
+  previouslyReceived: number;
+  quantity: number;
+  feedType: string | null;
+  bagSizeKg: number;
+  bagCount?: number | null;
+  varianceReason?: string | null;
+  deliveryNoteNo?: string | null;
+}
+
+/** Refuses a feed receipt line that breaks a control; returns its variance. */
+export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
+  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  if (!c.deliveryNoteNo?.trim()) {
+    throw new BadRequestException(`${c.label}: enter the delivery note no. for this feed receipt.`);
+  }
+  const variance = receiptVariance(c.shipped, c.previouslyReceived, c.quantity);
+  if (variance > 0 && !c.varianceReason?.trim()) {
+    throw new BadRequestException(
+      `${c.label}: ${fmt(c.shipped)} KG shipped but ${fmt(c.previouslyReceived + c.quantity)} KG received leaves ${fmt(variance)} KG short; enter a variance reason (checkpoint 26).`,
+    );
+  }
+  if (c.feedType === 'BAGGED') {
+    const bags = c.bagCount;
+    if (bags == null || !Number.isInteger(bags) || bags <= 0) {
+      throw new BadRequestException(`${c.label}: enter the bag count received, a whole number, for bagged feed (checkpoint 27).`);
+    }
+    const bagKg = bags * c.bagSizeKg;
+    if (Math.abs(bagKg - c.quantity) > c.quantity * BAG_COUNT_TOLERANCE + FLOAT_SUM_TOLERANCE) {
+      throw new BadRequestException(
+        `${c.label}: ${bags} bags x ${fmt(c.bagSizeKg)} KG = ${fmt(bagKg)} KG does not match ${fmt(c.quantity)} KG received within 1 percent (checkpoint 27).`,
+      );
+    }
+  }
+  return variance;
+}

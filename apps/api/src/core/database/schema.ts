@@ -4162,6 +4162,16 @@ export const transferReceiptLine = mysqlTable('transfer_receipt_line', {
   // sibling transferShipmentLine and the DTO's @MaxLength(100) agree on 100.
   lot_no: varchar('lot_no', { length: 50 }),
   serial_no: varchar('serial_no', { length: 100 }),
+  // 0165 (W2T): feed TO receipt controls. variance_qty = shipped − (previously
+  // received + this receipt) on the line; a shortfall needs variance_reason
+  // (Checkpoints row 26). bag_count for BAGGED feed (row 27), delivery note and
+  // loading sheet (Silo TO Receipt rows 17-18). NULL on common receipts' optional fields.
+  variance_qty: decimal('variance_qty', { precision: 18, scale: 4 }),
+  variance_reason: varchar('variance_reason', { length: 500 }),
+  bag_count: int('bag_count'),
+  delivery_note_no: varchar('delivery_note_no', { length: 80 }),
+  loading_sheet_id: varchar('loading_sheet_id', { length: 36 }),
+  loading_sheet_no: varchar('loading_sheet_no', { length: 80 }),
 });
 
 export const stockAdjustment = mysqlTable('stock_adjustment', {

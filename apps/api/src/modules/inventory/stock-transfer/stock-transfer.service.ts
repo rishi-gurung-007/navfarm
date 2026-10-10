@@ -13,7 +13,33 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { OPEN_TRANSFER_STATUSES, transferStatusFor, assertTrackingForShipment, serialsForReceipt, splitAmount } from './transfer-execution.rules';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor, assertTrackingForShipment, serialsForReceipt, splitAmount, assertFeedReceiptLine, receiptVariance } from './transfer-execution.rules';
+
+/**
+ * W2T: what a feed receipt checks per transfer line (FeedRequisitionService
+ * builds it). A common requisition or hand-made transfer passes none, so its
+ * receipt keeps today's rules and only records the variance.
+ */
+export interface SourceLink {
+  source_requisition_id: string | null;
+  source_requisition_no: string | null;
+  source_requisition_kind: 'FEED' | 'COMMON' | null;
+  source_consolidation_id: string | null;
+  source_consolidation_no: string | null;
+  source_loading_sheet_id: string | null;
+  source_loading_sheet_no: string | null;
+  source_loading_sheets: Array<{ loading_sheet_id: string; loading_sheet_no: string; requisition_line_id: string | null }>;
+}
+const EMPTY_SOURCE_LINK: SourceLink = {
+  source_requisition_id: null, source_requisition_no: null, source_requisition_kind: null,
+  source_consolidation_id: null, source_consolidation_no: null,
+  source_loading_sheet_id: null, source_loading_sheet_no: null, source_loading_sheets: [],
+};
+
+export interface FeedReceiptControls {
+  bagSizeKg: number;
+  lines: Map<string, { label: string; feedType: string | null; loadingSheetId: string | null; loadingSheetNo: string | null }>;
+}
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -646,8 +672,10 @@ export class StockTransferService {
       this.shippedQuantities(id, transfer.tenant_id),
       this.receivedQuantities(id, transfer.tenant_id),
     ]);
+    const source = (await this.sourceLinks([id])).get(id) ?? EMPTY_SOURCE_LINK;
     return {
       ...transfer,
+      ...source,
       lines: enrichedLines.map((line: any) => ({
         ...line,
         qty_shipped: shipped.get(line.line_id) ?? 0,
@@ -655,6 +683,54 @@ export class StockTransferService {
       })),
       ledgerEntries,
     };
+  }
+
+  /**
+   * W2T / W9 (cp 43, Req r136): the requisition a transfer fulfils, through
+   * stock_transfer_line.requisition_line_id — its id, no. and kind (FEED or
+   * COMMON), and for feed the Mill Consolidation Sheet and loading sheet(s).
+   * A hand-made transfer has no requisition line and gets EMPTY_SOURCE_LINK.
+   */
+  private async sourceLinks(transferIds: string[]): Promise<Map<string, SourceLink>> {
+    const out = new Map<string, SourceLink>();
+    if (!transferIds.length) return out;
+    const rows = await this.db
+      .select({
+        transfer_id: schema.stockTransferLine.transfer_id,
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+        requisition_id: schema.requisition.requisition_id,
+        req_no: schema.requisition.req_no,
+        doc_type: schema.requisition.doc_type,
+        consolidation_id: schema.feedConsolidation.consolidation_id,
+        consolidation_no: schema.feedConsolidation.consolidation_no,
+        loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+        loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+      })
+      .from(schema.stockTransferLine)
+      .innerJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .leftJoin(schema.feedConsolidation, eq(schema.feedConsolidation.consolidation_id, schema.requisition.feed_consolidation_id))
+      .leftJoin(schema.feedLoadingSheet, eq(schema.feedLoadingSheet.requisition_line_id, schema.stockTransferLine.requisition_line_id))
+      .where(inArray(schema.stockTransferLine.transfer_id, transferIds));
+    for (const r of rows) {
+      const link = out.get(r.transfer_id) ?? {
+        source_requisition_id: r.requisition_id,
+        source_requisition_no: r.req_no,
+        source_requisition_kind: r.doc_type === 'FEED' ? 'FEED' : 'COMMON',
+        source_consolidation_id: r.consolidation_id ?? null,
+        source_consolidation_no: r.consolidation_no ?? null,
+        source_loading_sheet_id: null,
+        source_loading_sheet_no: null,
+        source_loading_sheets: [],
+      } as SourceLink;
+      if (r.loading_sheet_id && !link.source_loading_sheets.some((ls) => ls.loading_sheet_id === r.loading_sheet_id)) {
+        link.source_loading_sheets.push({ loading_sheet_id: r.loading_sheet_id, loading_sheet_no: r.loading_sheet_no!, requisition_line_id: r.requisition_line_id });
+        link.source_loading_sheet_id ??= r.loading_sheet_id;
+        link.source_loading_sheet_no ??= r.loading_sheet_no;
+      }
+      out.set(r.transfer_id, link);
+    }
+    return out;
   }
 
   async findAll(query: QueryStockTransferDto, tenantId: string) {
@@ -702,12 +778,14 @@ export class StockTransferService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(schema.stockTransfer)
       .where(and(...conditions))
       .limit(limit)
       .offset(offset);
+    const links = await this.sourceLinks(rows.map((r: any) => r.transfer_id));
+    return rows.map((r: any) => ({ ...r, ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK) }));
   }
 
   async getPendingReceipts(query: QueryStockTransferDto, tenantId: string) {
@@ -1237,7 +1315,7 @@ export class StockTransferService {
    * event, never re-typed. The receipt that closes a shipment line takes the
    * line's remaining shipped value, so Inventory in Transit nets to zero.
    */
-  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any, requisitionExecution = false) {
+  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any, requisitionExecution = false, feedControls?: FeedReceiptControls) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
       this.assertOpen(transfer);
@@ -1262,6 +1340,7 @@ export class StockTransferService {
 
       const receiptId = randomUUID();
       const receiptNo = await this.nextEventNo(transfer.company_id, tenantId, 'RC');
+      const receiptControls = new Map<string, { previouslyReceived: number; shipped: number; varianceQty: number }>();
       await this.db.insert(schema.transferReceipt).values({
         receipt_id: receiptId,
         tenant_id: tenantId,
@@ -1298,6 +1377,18 @@ export class StockTransferService {
         if (input.quantity > leftOnShipment + 1e-9) {
           throw new BadRequestException(`Receipt quantity exceeds what shipment ${shipment.shipment_no} has left to receive on this line (${leftOnShipment}).`);
         }
+        // W2T: variance = shipped − (previously received + this posting). Over-receipt
+        // never gets here (refused above, decisions.md 10 Oct). A feed line must
+        // explain a shortfall, count its bags if BAGGED and name its delivery note.
+        const control = feedControls?.lines.get(line.line_id);
+        const varianceQty = control
+          ? assertFeedReceiptLine({
+            label: control.label, shipped: alreadyShipped, previouslyReceived: alreadyReceived, quantity: input.quantity,
+            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null,
+            varianceReason: input.variance_reason ?? null, deliveryNoteNo: input.delivery_note_no ?? null,
+          })
+          : receiptVariance(alreadyShipped, alreadyReceived, input.quantity);
+        receiptControls.set(line.line_id, { previouslyReceived: alreadyReceived, shipped: alreadyShipped, varianceQty });
         // Into the destination only, at the rate the shipment carried out (Part E Task 4).
         // The receipt that closes the shipment line takes its remaining value
         // instead, so per-unit rounding never strands a residue in In Transit.
@@ -1344,6 +1435,12 @@ export class StockTransferService {
           // multi-serial line, the serials this receipt actually carried.
           lot_no: shipmentLine.lot_no,
           serial_no: receivedSerialNo,
+          variance_qty: String(varianceQty),
+          variance_reason: input.variance_reason?.trim() || null,
+          bag_count: control?.feedType === 'BAGGED' ? input.bag_count ?? null : null,
+          delivery_note_no: input.delivery_note_no?.trim() || null,
+          loading_sheet_id: control?.loadingSheetId ?? null,
+          loading_sheet_no: control?.loadingSheetNo ?? null,
         });
       }
 
@@ -1364,7 +1461,30 @@ export class StockTransferService {
       });
       // Part E Task 7: a requisition linked to this transfer follows its events.
       await syncRequisitionFulfilment(this.db, id);
-      return { receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id, lines: dto.lines.map((l) => ({ line_id: l.line_id, qty_received: l.quantity })) };
+      // Requisition row 150: the silo balance after this receipt, for the Farm
+      // Manager to confirm. Feed receipts only; the line's unit at the destination.
+      const balanceAfter = new Map<string, number>();
+      if (feedControls) {
+        for (const l of dto.lines) {
+          const line = transfer.lines.find((tl) => tl.line_id === l.line_id)!;
+          const rows = await this.ledgerService.getStockBalance({ companyId: transfer.company_id, warehouseId: transfer.to_warehouse_id, itemId: line.item_id } as any, tenantId);
+          const onHand = rows.filter((r: any) => r.item_id === line.item_id && r.uom === line.uom).reduce((sum: number, r: any) => sum + Number(r.on_hand_qty), 0);
+          balanceAfter.set(l.line_id, Math.round(onHand * 10000) / 10000);
+        }
+      }
+      return {
+        receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id,
+        lines: dto.lines.map((l) => ({
+          line_id: l.line_id,
+          qty_received: l.quantity,
+          ...(feedControls ? {
+            qty_shipped: receiptControls.get(l.line_id)?.shipped ?? null,
+            previously_received: receiptControls.get(l.line_id)?.previouslyReceived ?? null,
+            variance_qty: receiptControls.get(l.line_id)?.varianceQty ?? null,
+            silo_balance_after: balanceAfter.get(l.line_id) ?? null,
+          } : {}),
+        })),
+      };
     });
   }
 

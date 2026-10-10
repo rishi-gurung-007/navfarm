@@ -50,6 +50,7 @@ describe('StockTransferService', () => {
     const self: any = {
       from: () => self,
       innerJoin: () => self,
+      leftJoin: () => self,
       where: (cond: unknown) => { capturedWhere ??= cond; return self; },
       orderBy: () => self,
       limit: () => self,

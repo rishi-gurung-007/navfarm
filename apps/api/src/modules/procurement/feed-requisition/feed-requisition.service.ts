@@ -37,7 +37,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { ApprovalService } from '../../production/approval/approval.service';
 import type { ApprovalRequestRow } from '../../production/approval/approval.service';
 import { FeedSettingsService } from '../../inventory/feed-settings/feed-settings.service';
-import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
+import { StockTransferService, FeedReceiptControls } from '../../inventory/stock-transfer/stock-transfer.service';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import { maySelfApprove } from '../requisition/requisition.rules';
 import {
@@ -1460,7 +1460,7 @@ export class FeedRequisitionService implements OnModuleInit {
   private mapEventLines(
     transferId: string,
     available: Array<{ transfer_line_id: string; requisition_line_id: string | null }>,
-    requested: Array<{ requisition_line_id: string; quantity: number }>,
+    requested: Array<{ requisition_line_id: string; quantity: number; variance_reason?: string; bag_count?: number; delivery_note_no?: string }>,
   ) {
     const transferLineOf = new Map(available.map((line) => [line.requisition_line_id, line.transfer_line_id]));
     return requested.map((line) => {
@@ -1468,8 +1468,57 @@ export class FeedRequisitionService implements OnModuleInit {
       if (!transferLineId) {
         throw new BadRequestException(`Requisition line '${line.requisition_line_id}' is not part of transfer ${transferId}.`);
       }
-      return { line_id: transferLineId, quantity: line.quantity };
+      return {
+        line_id: transferLineId,
+        quantity: line.quantity,
+        // W2T: receipt controls ride through to the receipt line (shipments carry none).
+        ...(line.variance_reason !== undefined ? { variance_reason: line.variance_reason } : {}),
+        ...(line.bag_count !== undefined ? { bag_count: line.bag_count } : {}),
+        ...(line.delivery_note_no !== undefined ? { delivery_note_no: line.delivery_note_no } : {}),
+      };
     });
+  }
+
+  /**
+   * W2T: per transfer line, what the feed receipt checks — the line's feed type
+   * (BAGGED needs a bag count, checkpoint 27), the farm's bag size, and the
+   * loading sheet the feed came on (Silo TO Receipt row 18), preferring the one
+   * linked to this shipment.
+   */
+  private async feedReceiptControls(
+    lines: Array<{ transfer_line_id: string; requisition_line_id: string | null }>,
+    shipmentId: string,
+    companyId: string,
+    farmId: string,
+  ): Promise<FeedReceiptControls> {
+    const reqLineIds = lines.map((l) => l.requisition_line_id).filter((v): v is string => !!v);
+    const reqLines = reqLineIds.length ? await this.db
+      .select({ line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, feed_type: schema.requisitionLine.feed_type })
+      .from(schema.requisitionLine)
+      .where(inArray(schema.requisitionLine.line_id, reqLineIds)) : [];
+    const sheets = reqLineIds.length ? await this.db
+      .select({
+        requisition_line_id: schema.feedLoadingSheet.requisition_line_id,
+        loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+        loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+        shipment_id: schema.feedLoadingSheet.shipment_id,
+      })
+      .from(schema.feedLoadingSheet)
+      .where(inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds)) : [];
+    const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
+    const controls: FeedReceiptControls = { bagSizeKg: settings.bagSizeKg, lines: new Map() };
+    for (const l of lines) {
+      const reqLine = reqLines.find((r) => r.line_id === l.requisition_line_id);
+      const forLine = sheets.filter((sh) => sh.requisition_line_id === l.requisition_line_id);
+      const sheet = forLine.find((sh) => sh.shipment_id === shipmentId) ?? forLine[0] ?? null;
+      controls.lines.set(l.transfer_line_id, {
+        label: `Line ${reqLine?.line_seq ?? '?'}`,
+        feedType: reqLine?.feed_type ?? null,
+        loadingSheetId: sheet?.loading_sheet_id ?? null,
+        loadingSheetNo: sheet?.loading_sheet_no ?? null,
+      });
+    }
+    return controls;
   }
 
   async shipment(requisitionId: string, dto: FeedRequisitionShipmentDto, tenantId: string, user: UserCtx) {
@@ -1495,16 +1544,27 @@ export class FeedRequisitionService implements OnModuleInit {
       if (linked.transfer.destination_farm_id !== farmId && linked.transfer.destination_parent_id !== farmId) {
         throw new ForbiddenException(`Transfer ${dto.transfer_id} destination is outside requisition farm ${farmId}.`);
       }
-      await this.stockTransfers.postReceipt(dto.transfer_id, {
+      const controls = await this.feedReceiptControls(linked.lines, dto.shipment_id, companyId, farmId);
+      const posted = await this.stockTransfers.postReceipt(dto.transfer_id, {
         shipment_id: dto.shipment_id,
         posting_date: dto.posting_date,
         lines: this.mapEventLines(dto.transfer_id, linked.lines, dto.lines),
-      }, tenantId, user, true);
+      }, tenantId, user, true, controls);
       const view = await this.readView(requisitionId, tenantId, user);
       if (this.loading && view.fulfilment_status === 'RECEIVED') {
         await this.loading.markReceivedForRequisition(requisitionId, tenantId);
       }
-      return view;
+      // W2T: the receipt just posted — its no. and, per line, the variance and the
+      // silo balance after it (Requisition row 150).
+      const reqLineOf = new Map(linked.lines.map((l) => [l.transfer_line_id, l.requisition_line_id]));
+      const receipt = posted ? {
+        receipt_id: posted.receipt_id,
+        receipt_no: posted.receipt_no,
+        transfer_id: posted.transfer_id,
+        shipment_id: dto.shipment_id,
+        lines: (posted.lines ?? []).map((l: any) => ({ ...l, requisition_line_id: reqLineOf.get(l.line_id) ?? null })),
+      } : null;
+      return { ...view, receipt };
     });
   }
 
@@ -2092,6 +2152,22 @@ export class FeedRequisitionService implements OnModuleInit {
       .where(and(inArray(schema.transferReceipt.shipment_id, shipmentIds), isNull(schema.transferReceipt.deleted_at)))
       .groupBy(schema.transferReceipt.shipment_id, schema.transferReceiptLine.line_id) : [];
     const receivedForShipment = new Map(receiptByShipmentLine.map((entry) => [`${entry.shipment_id}:${entry.line_id}`, Number(entry.quantity)]));
+    // W2T (Requisition row 148): the compartment each line came in, from its loading sheet.
+    const reqLineIds = [...new Set(transferLines.map((line) => line.requisition_line_id).filter((v): v is string => !!v))];
+    const loadingSheets = reqLineIds.length ? await this.db
+      .select({
+        requisition_line_id: schema.feedLoadingSheet.requisition_line_id,
+        loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+        loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+        compartment_no: schema.feedLoadingSheet.compartment_no,
+        shipment_id: schema.feedLoadingSheet.shipment_id,
+      })
+      .from(schema.feedLoadingSheet)
+      .where(inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds)) : [];
+    const sheetFor = (requisitionLineId: string | null, shipmentId: string) => {
+      const forLine = loadingSheets.filter((sheet) => sheet.requisition_line_id === requisitionLineId);
+      return forLine.find((sheet) => sheet.shipment_id === shipmentId) ?? forLine[0] ?? null;
+    };
 
     return transfers.map((transfer) => {
       const lines = transferLines.filter((line) => line.transfer_id === transfer.transfer_id).map((line) => {
@@ -2113,9 +2189,13 @@ export class FeedRequisitionService implements OnModuleInit {
           const shippedQty = Number(line.quantity);
           const receivedQty = receivedForShipment.get(`${shipment.shipment_id}:${line.line_id}`) ?? 0;
           const transferLine = transferLines.find((entry) => entry.transfer_line_id === line.line_id);
+          const sheet = sheetFor(transferLine?.requisition_line_id ?? null, shipment.shipment_id);
           return {
             line_id: line.line_id,
             requisition_line_id: transferLine?.requisition_line_id ?? null,
+            loading_sheet_id: sheet?.loading_sheet_id ?? null,
+            loading_sheet_no: sheet?.loading_sheet_no ?? null,
+            compartment_no: sheet?.compartment_no ?? null,
             quantity: shippedQty,
             qty_received: receivedQty,
             remaining_to_receive: Math.max(0, shippedQty - receivedQty),
