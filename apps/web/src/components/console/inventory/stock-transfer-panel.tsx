@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Plus,
   Trash2,
@@ -36,6 +37,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import ReceiveStockPanel from "./receive-stock-panel";
+import { transferStatusText } from "./stock-transfer-status";
 
 const PAGE_SIZE = 25;
 
@@ -155,12 +157,18 @@ export default function StockTransferPanel() {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<"transfers" | "receive">("transfers");
 
+  const searchParams = useSearchParams();
+  const deepLinkId = searchParams?.get("id") ?? "";
+  const deepLinkOpened = useRef("");
+  const notAvailable = t("stpNotAvailable") || "Not available";
+  const statusLabel = (status: string | null | undefined) => transferStatusText(status, t);
   const STATUS_LABEL: Record<string, string> = {
-    DRAFT: t("stpStatusDraft") || "Draft",
-    IN_TRANSIT: "In Transit",
+    DRAFT: statusLabel("DRAFT"),
+    IN_TRANSIT: statusLabel("IN_TRANSIT"),
+    PARTIALLY_RECEIVED: statusLabel("PARTIALLY_RECEIVED"),
     RECEIVED: "Received",
-    POSTED: t("stpStatusPosted") || "Posted",
-    CANCELLED: t("stpStatusCancelled") || "Cancelled",
+    POSTED: statusLabel("POSTED"),
+    CANCELLED: statusLabel("CANCELLED"),
   };
 
   const [rows, setRows] = useState<Row[]>([]);
@@ -793,6 +801,13 @@ export default function StockTransferPanel() {
     }
   };
 
+  useEffect(() => {
+    if (!deepLinkId || deepLinkOpened.current === deepLinkId) return;
+    deepLinkOpened.current = deepLinkId;
+    void openOrder({ transfer_id: deepLinkId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkId]);
+
 
   const handleShipOrder = async () => {
     if (!editingTransfer) return;
@@ -994,7 +1009,7 @@ export default function StockTransferPanel() {
   };
   const warehouseCode = (id: string) => {
     const w = warehouses.find((wh) => wh.warehouse_id === id);
-    return w?.warehouse_code || id || "—";
+    return w?.warehouse_code || notAvailable;
   };
   const warehouseName = (id: string) => {
     const w = warehouses.find((wh) => wh.warehouse_id === id);
@@ -1003,8 +1018,8 @@ export default function StockTransferPanel() {
   const getUserDisplayName = (idOrName?: string | null) => {
     if (!idOrName) return "System";
     const found = users.find((u) => u.user_id === idOrName || u.userId === idOrName);
-    if (found) return found.full_name || found.fullName || found.email || idOrName;
-    return idOrName;
+    if (found) return found.full_name || found.fullName || found.email || notAvailable;
+    return notAvailable;
   };
 
   // Location & Farm authorization helpers
@@ -1261,6 +1276,7 @@ export default function StockTransferPanel() {
                 <option value="">{t("stpAllStatuses") || "All Statuses"}</option>
                 <option value="DRAFT">{STATUS_LABEL.DRAFT}</option>
                 <option value="IN_TRANSIT">{STATUS_LABEL.IN_TRANSIT}</option>
+                <option value="PARTIALLY_RECEIVED">{STATUS_LABEL.PARTIALLY_RECEIVED}</option>
                 <option value="RECEIVED">{STATUS_LABEL.RECEIVED}</option>
                 <option value="POSTED">{STATUS_LABEL.POSTED}</option>
                 <option value="CANCELLED">{STATUS_LABEL.CANCELLED}</option>
@@ -1354,7 +1370,7 @@ export default function StockTransferPanel() {
                           {row.posting_date}
                         </TableCell>
                         <TableCell className="text-right">
-                          <StatusBadge status={row.status} label={STATUS_LABEL[row.status] || row.status} />
+                          <StatusBadge status={row.status} label={statusLabel(row.status)} />
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -1418,7 +1434,7 @@ export default function StockTransferPanel() {
             onClose={() => !saving && !shipping && !receiving && setModalOpen(false)}
             title={
               editingTransfer
-                ? `Transfer Order — ${editingTransfer.transfer_no || editingTransfer.transfer_id.slice(0, 8)}`
+                ? `Transfer Order — ${editingTransfer.transfer_no || notAvailable}`
                 : "New Transfer Order"
             }
             description={
@@ -1621,7 +1637,7 @@ export default function StockTransferPanel() {
                     {editingTransfer && (
                       <StatusBadge
                         status={editingTransfer.status}
-                        label={STATUS_LABEL[editingTransfer.status] || editingTransfer.status}
+                        label={statusLabel(editingTransfer.status)}
                       />
                     )}
                   </div>
@@ -2150,7 +2166,7 @@ export default function StockTransferPanel() {
                                   />
                                 ) : (
                                   <span className="font-semibold text-xs py-2 block" style={S.primary}>
-                                    {it?.item_name || line.item_id}
+                                    {it?.item_name || notAvailable}
                                   </span>
                                 )}
                                 {line.item_id && (
@@ -2721,7 +2737,7 @@ export default function StockTransferPanel() {
                                       <TableRow key={s.ledger_id || sIdx} className="border-b border-(--row-border)">
                                         <TableCell className="px-3 py-2 font-mono text-xs">{s.posting_date}</TableCell>
                                         <TableCell className="px-3 py-2 font-medium" style={S.primary}>
-                                          {it?.item_code || s.item_id} {it?.item_name ? `— ${it.item_name}` : ""}
+                                          {it?.item_code || notAvailable} {it?.item_name ? `— ${it.item_name}` : ""}
                                         </TableCell>
                                         <TableCell className="px-3 py-2 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
                                           {Math.abs(Number(s.quantity)).toLocaleString()}
@@ -2814,7 +2830,7 @@ export default function StockTransferPanel() {
                                             <TableRow key={r.ledger_id || rIdx} className="border-b border-(--row-border)">
                                               <TableCell className="px-3 py-2 font-mono text-xs">{r.posting_date}</TableCell>
                                               <TableCell className="px-3 py-2 font-medium" style={S.primary}>
-                                                {it?.item_code || r.item_id} {it?.item_name ? `— ${it.item_name}` : ""}
+                                                {it?.item_code || notAvailable} {it?.item_name ? `— ${it.item_name}` : ""}
                                               </TableCell>
                                               <TableCell className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                                 +{goodVal.toLocaleString()}
@@ -2961,7 +2977,7 @@ export default function StockTransferPanel() {
                     <div className="rounded-[var(--radius-md)] border p-3 grid grid-cols-2 sm:grid-cols-4 gap-2" style={S.raised}>
                       <div>
                         <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Item</span>
-                        <span className="font-semibold text-(--text-primary)">{it?.item_code || line.item_id}</span>
+                        <span className="font-semibold text-(--text-primary)">{it?.item_code || notAvailable}</span>
                         <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || "—"}</p>
                       </div>
                       <div>

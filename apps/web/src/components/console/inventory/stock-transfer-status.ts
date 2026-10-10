@@ -30,3 +30,9 @@ export function transferStatusLabelKey(status: string | null | undefined): Trans
 export function isDraftTransfer(transfer: { status?: string | null } | null | undefined): boolean {
   return transfer?.status === "DRAFT";
 }
+
+/** The localized status label for every status the API writes; an unknown code shows as-is. */
+export function transferStatusText(status: string | null | undefined, t: (key: TranslationKeys) => string): string {
+  const key = transferStatusLabelKey(status);
+  return (key && t(key)) || status || "";
+}

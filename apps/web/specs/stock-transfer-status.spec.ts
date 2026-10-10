@@ -9,6 +9,7 @@ import { statusVariant } from "../src/components/ui/status-badge";
 import {
   TRANSFER_STATUS_OPTIONS,
   isDraftTransfer,
+  transferStatusText,
   transferStatusLabelKey,
 } from "../src/components/console/inventory/stock-transfer-status";
 
@@ -47,5 +48,20 @@ describe("stock transfer statuses", () => {
   it("the event states read as in-progress, not as a neutral draft or a completed post", () => {
     expect(statusVariant("IN_TRANSIT")).toBe("accent");
     expect(statusVariant("PARTIALLY_RECEIVED")).toBe("warning");
+  });
+});
+
+describe("W9 transfer status text and unavailable label", () => {
+  const t = (k: string) => en[k] ?? "";
+  it("labels PARTIALLY_RECEIVED instead of showing the raw code", () => {
+    expect(transferStatusText("PARTIALLY_RECEIVED", t as never)).toBe("Partially Received");
+    expect(transferStatusText("IN_TRANSIT", t as never)).toBe("In Transit");
+  });
+  it("falls back to the raw code only for an unknown status", () => {
+    expect(transferStatusText("WEIRD", t as never)).toBe("WEIRD");
+    expect(transferStatusText(null, t as never)).toBe("");
+  });
+  it("has the Not available label", () => {
+    expect(en.stpNotAvailable).toBe("Not available");
   });
 });

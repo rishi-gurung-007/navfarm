@@ -3368,6 +3368,8 @@ export const translations = {
     stpStatusPartiallyReceived: "Partially Received",
     stpStatusPosted: "Posted",
     stpStatusCancelled: "Cancelled",
+    // W9 (10 Oct)
+    stpNotAvailable: "Not available",
     stpSearchPlaceholder: "Search transfer order #, notes…",
     stpNewTransfer: "New Transfer Order",
     stpColTransferNo: "Transfer Order No.",
