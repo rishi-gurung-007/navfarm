@@ -129,7 +129,7 @@ describe('FeedSiloDashboard', () => {
     expect(screen.getAllByText('fsdNotScheduled').length).toBeGreaterThan(0);
     expect(screen.getAllByText('9,000').length).toBeGreaterThan(0);
     expect(within(table).getByRole('link', { name: 'GRS/SILO-001' }).getAttribute('href')).toContain('recordId=silo-a');
-    expect(within(table).getByRole('link', { name: 'DRAFT' }).getAttribute('href')).toContain('/requisitions?id=req-1');
+    expect(within(table).getByRole('link', { name: 'reqStatusDraft' }).getAttribute('href')).toContain('/requisitions?id=req-1');
   });
 
   it('uses explanatory text for unavailable dashboard values', async () => {

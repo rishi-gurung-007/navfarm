@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard, StatRow } from "@/components/ui/stat-row";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort } from "./feed-format";
+import { REQ_STATUS_LABEL, labelOf } from "./requisition-labels";
 
 export interface MillLoadingBin {
   binId: string;
@@ -86,9 +87,10 @@ export function FeedSiloDashboardCards({
   const projectedNeed = silo.nextProjectedNeedKg > 0
     ? `${number(silo.projectedNeedKg, unavailable)} (${number(silo.currentProjectedNeedKg, unavailable)} + ${number(silo.nextProjectedNeedKg, unavailable)})`
     : number(silo.projectedNeedKg, unavailable);
-  const requisition = silo.requisitionId && silo.requisitionStatus
-    ? <a className="text-(--accent) hover:underline" href={`/requisitions?id=${encodeURIComponent(silo.requisitionId)}`}>{silo.requisitionStatus}</a>
-    : silo.requisitionStatus ?? unavailable;
+  const requisitionLabel = silo.requisitionStatus ? labelOf(REQ_STATUS_LABEL, silo.requisitionStatus, t as never) : null;
+  const requisition = silo.requisitionId && requisitionLabel
+    ? <a className="text-(--accent) hover:underline" href={`/requisitions?id=${encodeURIComponent(silo.requisitionId)}`}>{requisitionLabel}</a>
+    : requisitionLabel ?? unavailable;
 
   // Days of Feed Remaining colour (master plan WP3): under 3 days critical, under 7 warning.
   const status: { tone: Tone; label: string } | null = silo.daysRemaining === null ? null
