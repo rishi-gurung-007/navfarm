@@ -3390,3 +3390,9 @@ API's own message.
 Not covered by this rule, and kept inline: field validation hints beside
 inputs, explanatory gate text (for example "Release is unavailable: ... BIN
 assignment") and empty states.
+
+## 2026-10-10 — TO receipt: over-receipt stays blocked
+
+Rishi, 10 Oct, asked against the workbook's Checkpoints row 29 (over-receipt allowed with a reason and flagged):
+**keep the block**. A receipt may never exceed the quantity shipped. Only an under-receipt (shipped minus received
+greater than zero) needs a variance reason (Checkpoints row 26). This deliberately departs from row 29.
