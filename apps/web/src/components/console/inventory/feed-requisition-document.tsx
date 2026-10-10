@@ -25,7 +25,7 @@ import type { TranslationKeys } from "@/utils/translations";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "@/utils/date-short";
 import {
-  DOC_TYPE_LABEL, FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
+  CONSOLIDATION_NEXT_ACTION_LABEL, CONSOLIDATION_STATUS_LABEL, DOC_TYPE_LABEL, FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
 } from "./requisition-labels";
 
 export interface FeedRequisitionBreakdownRow {
@@ -296,17 +296,9 @@ const BREAKDOWN_COLUMNS = [
 ] as const;
 const BREAKDOWN_RIGHT = new Set<string>(["rqdBreakdownHeads", "rqdBreakdownRate", "rqdBreakdownDemand"]);
 
-/** W1 (d): the consolidation status and next action readView sends, in words (feed-requisition.service.ts readView). */
-const CONSOLIDATION_STATUS_LABEL: Parameters<typeof labelOf>[0] = {
-  DRAFT: "fcsStatusDraft", REVIEWED: "rqdConsolStatusReviewed", CONSOLIDATED: { key: "fcsStatusConsolidated", variant: "success" },
-};
-const CONSOLIDATION_NEXT_ACTION_LABEL: Parameters<typeof labelOf>[0] = {
-  FINALIZE_CONSOLIDATION: "rqdNextActionFinalize", RELEASE: "rqdNextActionRelease", TRANSFER_SHIPMENT: "rqdNextActionShipment",
-};
-
 /**
  * W1 (b), §7 r154-155 / Req r89: shipped and received per requisition line, summed over every linked
- * transfer's lines. Outstanding = shipped − received, display only. null when no transfer line carries it.
+ * transfer's lines. Outstanding is the API's remaining_to_receive, summed. null when no transfer line carries it.
  */
 export function shipmentOf(view: Pick<FeedRequisitionDocumentView, "transfers">, lineId: string) {
   const tlines = (Array.isArray(view.transfers) ? view.transfers : [])
@@ -315,7 +307,8 @@ export function shipmentOf(view: Pick<FeedRequisitionDocumentView, "transfers">,
   if (!tlines.length) return null;
   const shipped = tlines.reduce((sum, tl) => sum + Number(tl.qty_shipped ?? 0), 0);
   const received = tlines.reduce((sum, tl) => sum + Number(tl.qty_received ?? 0), 0);
-  return { shipped, received, outstanding: shipped - received };
+  const outstanding = tlines.reduce((sum, tl) => sum + Number(tl.remaining_to_receive ?? 0), 0);
+  return { shipped, received, outstanding };
 }
 
 /** Requested Qty as the farm currently has it — its edit if any, else the stored quantity. */

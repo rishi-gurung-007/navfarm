@@ -1,4 +1,5 @@
-import { CONSOLIDATION_STATUS_LABEL, LOADING_STATUS_LABEL, PRIORITY_LABEL, REQ_STATUS_LABEL, humanizeCode, labelOf, variantOf, requisitionOrigin } from '../src/components/console/inventory/requisition-labels';
+import { CONSOLIDATION_NEXT_ACTION_LABEL, CONSOLIDATION_STATUS_LABEL, LOADING_STATUS_LABEL, PRIORITY_LABEL, REQ_STATUS_LABEL, humanizeCode, labelOf, variantOf, requisitionOrigin } from '../src/components/console/inventory/requisition-labels';
+import { translations } from '../src/utils/translations';
 
 const t = (key: string) => `T:${key}`;
 
@@ -49,6 +50,14 @@ describe('W3 — consolidation and loading status maps', () => {
     for (const c of ['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED']) expect(labelOf(CONSOLIDATION_STATUS_LABEL, c, t)).not.toBe(humanizeCode(c));
     expect(variantOf(CONSOLIDATION_STATUS_LABEL, 'CONSOLIDATED')).toBe('success');
     expect(variantOf(CONSOLIDATION_STATUS_LABEL, 'REVIEWED')).toBe('info');
+  });
+  it('uses one translation key per consolidation word (no duplicates)', () => {
+    expect(labelOf(CONSOLIDATION_STATUS_LABEL, 'DRAFT', t)).toBe('T:fcsStatusDraft');
+    expect(labelOf(CONSOLIDATION_STATUS_LABEL, 'CONSOLIDATED', t)).toBe('T:fcsStatusConsolidated');
+    expect(labelOf(CONSOLIDATION_STATUS_LABEL, 'REVIEWED', t)).toBe('T:consolStatusReviewed');
+    expect(labelOf(CONSOLIDATION_NEXT_ACTION_LABEL, 'TRANSFER_SHIPMENT', t)).toBe('T:rqdNextActionShipment');
+    const en = translations.en as Record<string, string>;
+    for (const k of ['rqdConsolStatusReviewed', 'consolStatusDraft', 'consolStatusConsolidated', 'rqTypeItem']) expect(en[k]).toBeUndefined();
   });
   it('labels every loading status', () => {
     for (const c of ['DRAFT', 'LOADED', 'DISPATCHED', 'RECEIVED']) expect(labelOf(LOADING_STATUS_LABEL, c, t)).toMatch(/^T:/);

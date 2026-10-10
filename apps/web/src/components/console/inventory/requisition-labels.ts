@@ -30,10 +30,15 @@ export const REQ_STATUS_LABEL: LabelMap = {
 
 /** Feed consolidation sheet status (feed_consolidation.status). */
 export const CONSOLIDATION_STATUS_LABEL: LabelMap = {
-  DRAFT: { key: "consolStatusDraft", variant: "neutral" },
+  DRAFT: { key: "fcsStatusDraft", variant: "neutral" },
   REVIEWED: { key: "consolStatusReviewed", variant: "info" },
-  CONSOLIDATED: { key: "consolStatusConsolidated", variant: "success" },
+  CONSOLIDATED: { key: "fcsStatusConsolidated", variant: "success" },
   CANCELLED: { key: "consolStatusCancelled", variant: "neutral" },
+};
+
+/** W1 (d): the consolidation next action readView sends (feed-requisition.service.ts readView). */
+export const CONSOLIDATION_NEXT_ACTION_LABEL: LabelMap = {
+  FINALIZE_CONSOLIDATION: "rqdNextActionFinalize", RELEASE: "rqdNextActionRelease", TRANSFER_SHIPMENT: "rqdNextActionShipment",
 };
 
 /** Feed loading sheet status (feed_loading_sheet.status). */
@@ -52,8 +57,6 @@ export const PRIORITY_LABEL: LabelMap = {
 };
 
 export const REQ_TYPE_LABEL: LabelMap = { FEED_FORECAST: "reqTypeForecast", MANUAL: "reqTypeManual" };
-/** Source column of the feed requisition list: Forecast or Manual, from requisition_type. */
-export const REQ_LIST_SOURCE_LABEL: LabelMap = { FEED_FORECAST: "reqSourceForecast", MANUAL: "reqTypeManual" };
 export const FEED_TYPE_LABEL: LabelMap = { BULK: "reqFeedBulk", BAGGED: "reqFeedBagged" };
 export const SOURCE_LABEL: LabelMap = {
   AUTO_FORECAST: "reqSourceForecast", MANUAL_ENTRY: "reqSourceManual", STOCK_TAKE_TRIGGERED: "reqSourceStockTake", DIET_CHANGE_UPCOMING: "reqSourceDietChange",

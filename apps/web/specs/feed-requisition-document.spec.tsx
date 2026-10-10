@@ -374,6 +374,13 @@ describe("FeedRequisitionDocument — W1 line columns, links and consolidation l
     expect(cellUnder(en.rqdColOutstanding).textContent).toBe("900");
   });
 
+  it("(b) Outstanding is the API's remaining_to_receive, not shipped minus received", () => {
+    const tr = shipped.transfers![0];
+    const view2: FeedRequisitionDocumentView = { ...shipped, transfers: [{ ...tr, lines: [{ ...tr.lines[0], remaining_to_receive: 700 }] }] };
+    render(<FeedRequisitionDocument view={view2} editable={false} />);
+    expect(cellUnder(en.rqdColOutstanding).textContent).toBe("700");
+  });
+
   it("(b) before any transfer the shipment columns say so rather than 0", () => {
     render(<FeedRequisitionDocument view={view} editable={false} />);
     expect(cellUnder(en.rqdColShipped).textContent).toBe(en.rqNotYetAvailable);
@@ -400,5 +407,11 @@ describe("FeedRequisitionDocument — W1 line columns, links and consolidation l
     expect(valueOf(en.rqdConsolidationSheet)).toBe("MCS-0007");
     expect(valueOf(en.rqdConsolidationStatus)).toBe(en.fcsStatusConsolidated);
     expect(valueOf(en.rqdConsolidationNextAction)).toBe(en.rqdNextActionShipment);
+  });
+
+  it("(d) a cancelled consolidation reads as a word, from the shared status map", () => {
+    render(<FeedRequisitionDocument view={{ ...view, header: { ...view.header, consolidation_no: "MCS-0008", consolidation_status: "CANCELLED", consolidation_next_action: "RELEASE" } }} editable={false} />);
+    expect(valueOf(en.rqdConsolidationStatus)).toBe(en.consolStatusCancelled);
+    expect(valueOf(en.rqdConsolidationNextAction)).toBe(en.rqdNextActionRelease);
   });
 });

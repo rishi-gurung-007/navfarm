@@ -32,7 +32,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisition-decision";
-import { PRIORITY_LABEL, REQ_LIST_SOURCE_LABEL, REQ_STATUS_LABEL, labelOf, variantOf } from "./requisition-labels";
+import { DOC_TYPE_LABEL, PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
 import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
@@ -292,8 +292,8 @@ export function FeedRequisitionPanel() {
               <tr key={r.requisition_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => openRequisition(r.requisition_id)}>
                 <td className={cn(TD, "font-medium")}>{r.req_no}</td>
                 <td className={TD}>{r.farm_code ?? unavailable}</td>
-                <td className={TD}>{t("rqTypeItem")}</td>
-                <td className={TD}>{labelOf(REQ_LIST_SOURCE_LABEL, r.requisition_type, t)}</td>
+                <td className={TD}>{labelOf(DOC_TYPE_LABEL, "ITEM", t)}</td>
+                <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
                 <td className={TD}><StatusDot variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</StatusDot></td>
                 <td className={TD}>{r.priority ? <StatusDot variant={variantOf(PRIORITY_LABEL, r.priority)}>{labelOf(PRIORITY_LABEL, r.priority, t)}</StatusDot> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>
