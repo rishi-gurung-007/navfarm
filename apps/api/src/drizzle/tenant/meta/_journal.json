@@ -1149,6 +1149,13 @@
       "when": 1792000000032,
       "tag": "0164_feed_loading_sheet",
       "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "5",
+      "when": 1792000000035,
+      "tag": "0167_monthly_stock_take_period_close",
+      "breakpoints": true
     }
   ]
 }
