@@ -182,32 +182,97 @@ export default function FeedPlanPanel() {
         onClose={() => setViewing(null)}
         title={viewing?.plan_code ?? t("feedPlanTableLabel")}
         description={viewing ? `${viewing.plan_type === "ACTUAL" ? t("feedPlanActual") : t("feedPlanTentative")} · ${formatDateShort(viewing.production_date)}` : undefined}
-        presentation="page"
+        presentation="compact"
+        maxWidth="xl"
+        className="max-h-[85vh] w-[95vw] max-w-5xl"
         footer={<Button type="button" variant="outline" onClick={() => setViewing(null)}>{t("close")}</Button>}
       >
-        {viewing && (
-          <div className="space-y-5">
-            <p className="text-sm text-[var(--text-secondary)]">
-              {t("feedPlanEvidenceRange")}: {formatDateShort(viewing.source_from)} – {formatDateShort(viewing.source_to)}
-            </p>
-            <ScrollTable label={t("feedPlanVersionLines")}>
-              <thead><tr><th>{t("feedPlanColItemNo")}</th><th>{t("feedPlanColItemName")}</th><th>{t("feedPlanProjected")}</th><th>{t("feedPlanFactor")}</th><th>{t("feedPlanColTentative")}</th><th>{t("feedPlanRequested")}</th><th>{t("feedPlanMillApproved")}</th><th>{t("feedPlanColVariance")}</th></tr></thead>
-              <tbody>{(viewing.lines ?? []).map((line) => <tr key={line.plan_line_id}>
-                <td>{line.item_code}</td><td>{line.item_name}</td><td>{kg(Number(line.projected_target_kg), t("feedPlanUnavailable"))}</td>
-                <td>{Number(line.adjustment_factor).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
-                <td>{kg(Number(line.tentative_qty_kg), t("feedPlanUnavailable"))}</td><td>{line.requested_qty_kg === null ? t("feedPlanUnavailable") : kg(Number(line.requested_qty_kg), t("feedPlanUnavailable"))}</td>
-                <td>{line.mill_approved_qty_kg === null ? t("feedPlanUnavailable") : kg(Number(line.mill_approved_qty_kg), t("feedPlanUnavailable"))}</td><td>{kg(Number(line.variance_qty_kg), t("feedPlanUnavailable"))}</td>
-              </tr>)}</tbody>
-            </ScrollTable>
-            <ScrollTable label={t("feedPlanHistory")}>
-              <thead><tr><th>{t("feedPlanColItemNo")}</th><th>{t("feedPlanHistoryWeek")}</th><th>{t("feedPlanHistoryActual")}</th><th>{t("feedPlanHistoryExpected")}</th></tr></thead>
-              <tbody>{(viewing.lines ?? []).flatMap((line) => line.history_snapshot.map((week) => <tr key={`${line.plan_line_id}:${week.from}`}>
-                <td>{line.item_code}</td><td>{formatDateShort(week.from)} – {formatDateShort(week.to)}</td>
-                <td>{kg(Number(week.actualKg), t("feedPlanUnavailable"))}</td><td>{kg(Number(week.expectedKg), t("feedPlanUnavailable"))}</td>
-              </tr>))}</tbody>
-            </ScrollTable>
-          </div>
-        )}
+        {viewing && (() => {
+          const lines = viewing.lines ?? [];
+          const na = t("feedPlanUnavailable");
+          const sum = (pick: (l: NonNullable<FeedPlanVersion["lines"]>[number]) => string) =>
+            lines.reduce((acc, l) => acc + (Number.isFinite(Number(pick(l))) ? Number(pick(l)) : 0), 0);
+          const farmOption = farm.farms?.find((f: any) => f.id === farmId);
+          const farmText = fixedLabel ?? (farmOption ? feedFarmLabel(farmOption) : null);
+          const num = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
+          const head = "px-3 py-2 text-left font-medium whitespace-nowrap";
+          const headNum = "px-3 py-2 text-right font-medium whitespace-nowrap";
+          const cell = (v: number | null) => kg(v, na);
+          const optional = (v: string | null) => (v === null ? na : cell(Number(v)));
+          const summary: Array<[string, string, boolean?]> = [
+            [t("feedPlanTableLabel"), viewing.plan_code],
+            ...(farmText ? [[t("feedPlanColFarm"), farmText] as [string, string]] : []),
+            [t("feedPlanProductionDate"), `${formatDateShort(viewing.production_date)} · ${viewing.plan_week}`],
+            ["Status", viewing.plan_type === "ACTUAL" ? t("feedPlanActual") : t("feedPlanTentative")],
+            [t("feedPlanProjected"), cell(sum((l) => l.projected_target_kg)), true],
+            [t("feedPlanColTentative"), cell(sum((l) => l.tentative_qty_kg)), true],
+          ];
+          return (
+            <div className="space-y-6">
+              <dl className="grid grid-cols-2 gap-3 rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-4 sm:grid-cols-3 lg:grid-cols-6">
+                {summary.map(([label, value, numeric]) => (
+                  <div key={label} className="min-w-0">
+                    <dt className="text-xs text-[var(--text-secondary)]">{label}</dt>
+                    <dd className={`mt-1 break-words text-sm font-medium text-[var(--text-primary)] ${numeric ? "tabular-nums" : ""}`} title={value}>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <section className="space-y-2">
+                <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--border-subtle)]">
+                  <table className="w-full min-w-[56rem] border-collapse text-sm" aria-label={t("feedPlanVersionLines")}>
+                    <thead className="bg-[var(--surface-raised)] text-xs text-[var(--text-secondary)]"><tr>
+                      <th className={`${head} min-w-[6rem]`}>{t("feedPlanColItemNo")}</th>
+                      <th className={`${head} min-w-[12rem]`}>{t("feedPlanColItemName")}</th>
+                      <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanProjected")}</th>
+                      <th className={`${headNum} min-w-[6rem]`}>{t("feedPlanFactor")} (×)</th>
+                      <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanColTentative")}</th>
+                      <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanRequested")}</th>
+                      <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanMillApproved")}</th>
+                      <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanColVariance")}</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)]">{lines.map((line) => <tr key={line.plan_line_id}>
+                      <td className="px-3 py-2 align-top whitespace-nowrap" title={line.item_code}>{line.item_code}</td>
+                      <td className="px-3 py-2 align-top break-words" title={line.item_name}>{line.item_name}</td>
+                      <td className={num}>{cell(Number(line.projected_target_kg))}</td>
+                      <td className={num}>×{Number(line.adjustment_factor).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                      <td className={num}>{cell(Number(line.tentative_qty_kg))}</td>
+                      <td className={num}>{optional(line.requested_qty_kg)}</td>
+                      <td className={num}>{optional(line.mill_approved_qty_kg)}</td>
+                      <td className={num}>{cell(Number(line.variance_qty_kg))}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </section>
+              <section className="space-y-2" aria-labelledby="feed-plan-evidence-heading">
+                <h3 id="feed-plan-evidence-heading" className="nf-text-body-strong text-base text-[var(--text-primary)]">
+                  {t("feedPlanHistory")}
+                </h3>
+                <p className="text-sm text-[var(--text-secondary)]">
+                  {t("feedPlanEvidenceRange")}: {formatDateShort(viewing.source_from)} – {formatDateShort(viewing.source_to)}
+                </p>
+                <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--border-subtle)]">
+                  <table className="w-full min-w-[32rem] border-collapse text-sm" aria-label={t("feedPlanHistory")}>
+                    <thead className="bg-[var(--surface-raised)] text-xs text-[var(--text-secondary)]"><tr>
+                      <th className={`${head} min-w-[8rem]`}>{t("feedPlanHistoryWeek")}</th>
+                      <th className={`${headNum} min-w-[8rem]`}>{t("feedPlanHistoryActual")}</th>
+                      <th className={`${headNum} min-w-[8rem]`}>{t("feedPlanHistoryExpected")}</th>
+                    </tr></thead>
+                    {lines.map((line) => (
+                      <tbody key={line.plan_line_id} className="divide-y divide-[var(--border-subtle)] border-t border-[var(--border-subtle)]">
+                        <tr className="bg-[var(--surface-raised)]"><th scope="colgroup" colSpan={3} className="px-3 py-2 text-left font-medium break-words" title={`${line.item_code} ${line.item_name}`}>{line.item_code} · {line.item_name}</th></tr>
+                        {line.history_snapshot.map((week) => <tr key={`${line.plan_line_id}:${week.from}`}>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatDateShort(week.from)} – {formatDateShort(week.to)}</td>
+                          <td className={num}>{cell(Number(week.actualKg))}</td>
+                          <td className={num}>{cell(Number(week.expectedKg))}</td>
+                        </tr>)}
+                      </tbody>
+                    ))}
+                  </table>
+                </div>
+              </section>
+            </div>
+          );
+        })()}
       </Dialog>
     </div>
   );
