@@ -254,6 +254,72 @@ Refusals, each leaving no ledger, shipment or receipt row:
 The earlier 500 on the first receipt attempt rolled back cleanly — no ledger
 row, no receipt row — which is the atomicity §9/13 asks for.
 
+## Feed Requisition E2E — the chain runs; one blocking defect found
+
+Fixtures built through the application's own endpoints (reporting periods
+generated and 2026-10 activated, a BATCH_WISE piggery batch of 120 head on a
+company-scoped breed in GILT_GROWER, a MILL + BIN, a production slot, and a
+BIN diet assignment). Then:
+
+| Step | Result |
+|---|---|
+| Forecast | 42 daily rows; 120 head x 2.2 kg = **264 KG/day**, matching `feed_qty_per_head_per_day_kg` read from the breed row |
+| Saved run | `RUN-FARM-001-20261010-002` (v2; runs are immutable, one current, archive required before re-save) |
+| Requisition | `REQ-FARM-001-2026-00001`, source `AUTO_FORECAST`, 6,050 KG = (42 x 264) − 5,050 on hand, rounded up to the 50 KG bag multiple |
+| Approval | through the **shared** ApprovalService, `doc_type=FEED_REQUISITION`, 6,050 KG |
+| Consolidation | `CONS-202641-001`, mill approved **6,000** of 6,050 with a mandatory reason |
+| Loading sheet | `LOAD-000001`, 6,000 KG, compartment C1 |
+| Release | `TR-000002` MILL-001/BIN-001 → FARM-001/STORE-001 for **6,000** — the mill-approved quantity, per the 2026-10-09 ruling |
+| Shipment | `SH-2026-0002` via the shared transfer service, ledger −6,000 from the mill bin |
+| Dispatch | allowed only *after* the shared shipment — `LOAD-000001` DISPATCHED, bound to `SH-2026-0002` |
+| Receipts | `RC-2026-0003` + `RC-2026-0004`, 3,000 each |
+| Refusals | over-receipt 3,500 against 3,000 outstanding, and a duplicate after completion — both refused, nothing written |
+
+Ledger read from MySQL: 9 entries, `entry_no` unique, mill bin 8,000−6,000 =
+2,000, store 100−50+5,000+3,000+3,000 = 11,050, shed 50. Total value 39,250 in
+and 39,250 held — quantity and value both conserved, no double posting.
+
+**Forecast reconciliation is correct.** The receipts were posted 2026-10-11, and
+the day-walk picks them up exactly once on that date: 10-10 closes at 4,786;
+10-11 opens 4,786, takes `confirmedReceiptsKg` 6,000, uses 264, closes 10,522;
+10-12 opens 10,522 with `confirmedReceiptsKg` 0. `plannedIncomingKg` is 0
+throughout because the quantity is received, not planned. Nothing is counted
+twice.
+
+**Wastage is correctly ignored** — `feed_wastage_pct` (5%) is loaded into the
+row and applied to nothing. That is the recorded decision, not a defect:
+2026-10-02 ruling 6 keeps `silo_reorder_days` and `feed_wastage_pct` as
+pre-feed fields "but the forecast no longer uses them". Do not "fix" this.
+
+### P1 — a mill down-adjustment permanently deadlocks that silo+item
+
+The two 2026-10-09 rulings combine into a dead end:
+
+- "Consolidation-approved quantity is authoritative at release" — the transfer
+  moves `mill_approved_qty_kg` (6,000), verified.
+- "A feed silo/item may be requisitioned again only after its prior requisition
+  is fully received (`RECEIVED`)".
+
+Fulfilment is measured against the original 6,050 request, so delivering the
+mill-approved 6,000 in full leaves the requisition at `PARTIALLY_RECEIVED` /
+`IN_CONSOLIDATION` forever. Every exit was tried against the running system:
+
+| Attempt | Result |
+|---|---|
+| Receive the remaining 50 KG | refused — `TR-000002` is already POSTED |
+| Release again | succeeds but creates no second transfer |
+| Edit the line down to 6,000 (what the error message advises) | refused — "is In Consolidation and can no longer be changed" |
+| New requisition for the same silo+item | refused — "FARM-001/STORE-001 already has Pig Feed on requisition REQ-FARM-001-2026-00001 (IN_CONSOLIDATION) this cycle" |
+
+So `FARM-001/STORE-001` + Pig Feed can never be requisitioned again. A mill
+adjustment is a routine operation — the adjustment reason is mandatory, which
+implies it is expected — so this is reachable on the first real week where the
+mill rounds a farm request down.
+
+Not fixed here: which quantity fulfilment should measure against is a business
+rule, and the sensible candidates lead to materially different reporting. Left
+for Rishi's ruling (see the handoff question).
+
 ## Fixture notes (for whoever rebuilds this)
 
 - `seed-dev-tenant` leaves masters tenant-wide (`company_id IS NULL`), but
@@ -263,8 +329,15 @@ row, no receipt row — which is the atomicity §9/13 asks for.
   needs `adopt-company-master-templates.ts` (dry-run default; `--apply` needs a
   real backup) — 152 company-scoped copies, with existing stock references
   redirected onto them.
-- That adoption rewrites role/permission rows and **invalidates live sessions**:
-  the next call returned 401 "Invalid session token" until re-login.
+- Access tokens live **15 minutes** (`auth.service.ts:708` hardcodes `15m`;
+  `JWT_EXPIRES_IN` does not apply to them), so a long scripted run must
+  re-login between steps. Two 401 "Invalid session token" responses during this
+  work were plain expiry — my earlier guess that the master-template adoption
+  invalidated the session was wrong.
+- A feed item needs an item type whose code/name contains BULK or BAGGED
+  (`feedFormFromItemType`) **and** a `diet_no` before a BIN diet assignment is
+  accepted; release then requires an active BIN assignment on the production
+  date.
 - `mysqldump` needs RELOAD/FLUSH_TABLES, which the least-privileged account
   correctly lacks — take backups as an admin account.
 
