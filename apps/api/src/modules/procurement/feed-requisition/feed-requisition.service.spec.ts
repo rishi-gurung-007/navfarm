@@ -1335,6 +1335,7 @@ describe('FeedRequisitionService view — the document header and line display f
     const { service } = setup([], queues);
     const view: any = await service.findOne('req-1', 'tenant-1', { userType: 'COMPANY_ADMIN' });
     expect(view.header).toEqual({
+      farm_id: 'farm-grs', forecast_run_id: 'run-1', consolidation_id: null, linked_transfers: [],
       farm_code: 'GRS', farm_name: 'Green Ridge', requisition_date: '2026-09-23', is_next_diet_requisition: true,
       farm_total_requested_kg: 15000, truck_target_kg: 30000, bulk_multiple_kg: 3000, bag_size_kg: 50, trips: 1, required_delivery_date: '2026-09-23',
       approved_by_name: 'Mill Manager', linked_transfer_no: null, forecast_run_no: 'FFR-farm-grs-000001', consolidation_no: null, consolidation_status: null, consolidation_next_action: null,
@@ -1349,5 +1350,88 @@ describe('FeedRequisitionService view — the document header and line display f
       breakdown: [{ batch_id: 'b1', batch_no: 'B-001', stage_id: 'st-wean', stage_code: 'WEANER', stage_name: 'Weaner', shed_id: 'h3', shed_code: 'GRS/SHED-003', heads: 1000, feed_rate_kg: 0.5,
         lifecycle_ref_label: 'L-LINE WEANER days 25–27', demand_kg: 995, first_demand_date: '2026-09-26' }],
     });
+  });
+});
+
+describe('A1 (10 Oct) — the document returns requester, Mill Loading Bin, linked transfers and record ids', () => {
+  const REQ = { requisition_id: 'req-1', farm_id: 'farm-grs', company_id: 'co-1' };
+  const viewRow = (over: Record<string, unknown> = {}) => ({
+    req: {
+      ...REQ, req_no: 'REQ-GRS-2026-00041', requisition_date: '2026-09-23', created_at: '2026-09-23 06:00:00', required_date: '2026-09-26',
+      approved_by: null, approved_at: null, linked_transfer_id: null, feed_forecast_run_id: 'run-1', forecast_run_key: 'RUN-1',
+      feed_consolidation_id: 'cons-1', production_date: '2026-09-27', approval_status: 'APPROVED', document_status: 'OPEN',
+      requester_user_id: null, requester_department_id: null, created_by: 'u-7', ...over,
+    },
+    farm_code: 'GRS', farm_name: 'Green Ridge', approved_by_name: null, linked_transfer_no: null, forecast_run_no: 'RUN-1',
+  });
+  const lineRow = { line: { line_id: 'L1', line_seq: 1, quantity: '6000.0000', feed_type: 'BULK', is_next_diet: false, description: 'Weaner Diet R1',
+    item_id: 'item-r1', destination_location_id: 'silo-1', lifecycle_ref_id: 'lc-r1' }, item_code: 'R1', item_name: 'Weaner Diet R1', destination_code: 'GRS/SILO-001' };
+
+  it('resolves the requester login and department from the creator when the row names no requester, and each line\'s BIN', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.requisition, [[REQ], [viewRow()]]],
+      [schema.feedConsolidation, [[{ status: 'CONSOLIDATED', consolidation_no: 'MCS-0001' }]]],
+      [schema.requisitionLine, [[lineRow]]],
+      [schema.userMaster, [[{ user_id: 'u-7', email: 'fm@grs.test', department_id: 'dept-farm' }]]],
+      [schema.costCenterMaster, [[{ cost_center_id: 'dept-farm', cost_center_name: 'Farm Operations' }]]],
+      [schema.feedRequisitionTransfer, [[{ transfer_id: 'tr-1', transfer_no: 'TO-0001' }, { transfer_id: 'tr-2', transfer_no: 'TO-0002' }]]],
+      [schema.binDietAssignment, [[{ assignmentId: 'as-1', itemId: 'item-r1', productionDate: '2026-09-27', binLocationId: 'bin-3', productionSlotId: 'slot-1' }]]],
+      [schema.locationMaster, [[{ location_id: 'bin-3', location_code: 'MILL/BIN-03' }]]],
+    ]);
+    const { service } = setup([], queues);
+    const view: any = await service.findOne('req-1', 'tenant-1', { userType: 'COMPANY_ADMIN' });
+    expect(view).toMatchObject({ requester_login: 'fm@grs.test', requester_department_name: 'Farm Operations' });
+    expect(view.header).toMatchObject({
+      farm_id: 'farm-grs', forecast_run_id: 'run-1', consolidation_id: 'cons-1',
+      linked_transfers: [{ transfer_id: 'tr-1', transfer_no: 'TO-0001' }, { transfer_id: 'tr-2', transfer_no: 'TO-0002' }],
+    });
+    expect(view.lines[0]).toMatchObject({ lifecycle_ref_id: 'lc-r1', mill_loading_bin_id: 'bin-3', mill_loading_bin_code: 'MILL/BIN-03' });
+  });
+
+  it('prefers the requester recorded on the row, and leaves the BIN empty when the assignment is missing', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.requisition, [[REQ], [viewRow({ requester_user_id: 'u-8', requester_department_id: 'dept-mill' })]]],
+      [schema.requisitionLine, [[lineRow]]],
+      [schema.userMaster, [[{ user_id: 'u-8', email: 'req@grs.test', department_id: 'dept-farm' }]]],
+      [schema.costCenterMaster, [[{ cost_center_id: 'dept-mill', cost_center_name: 'Mill' }]]],
+    ]);
+    const { service } = setup([], queues);
+    const view: any = await service.findOne('req-1', 'tenant-1', { userType: 'COMPANY_ADMIN' });
+    expect(view).toMatchObject({ requester_login: 'req@grs.test', requester_department_name: 'Mill' });
+    expect(view.header.linked_transfers).toEqual([]);
+    expect(view.lines[0]).toMatchObject({ mill_loading_bin_id: null, mill_loading_bin_code: null });
+  });
+});
+
+describe('A1 (10 Oct) — the list filters RELEASED / SHIPPED / RECEIVED on the column they live in', () => {
+  const chain = (rows: unknown[]) => {
+    const self: any = { from: () => self, where: () => self, leftJoin: () => self, orderBy: () => self, limit: async () => rows,
+      then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej) };
+    return self;
+  };
+  const whereFor = async (status: string) => {
+    const whereCalls: unknown[] = [];
+    const db: any = { select: jest.fn(() => { const c = chain([]); const innerWhere = c.where; c.where = (cond: unknown) => { whereCalls.push(cond); return innerWhere(cond); }; return c; }) };
+    const forecast: any = { resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })) };
+    const cls = transactionCls(db);
+    useFarmScope(cls, { farmId: 'farm-grs', restricted: false, companyId: 'co-1', lobId: null } as any);
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, { resolveForFeedPlanning: jest.fn() } as any);
+    await service.findAll({ farmId: 'farm-grs', status } as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' });
+    return new MySqlDialect().sqlToQuery(whereCalls[0] as any);
+  };
+
+  it('RELEASED reads document_status', async () => {
+    const q = await whereFor('RELEASED');
+    expect(q.sql).toContain('`requisition`.`document_status` = ?');
+    expect(q.params).toContain('RELEASED');
+  });
+  it('SHIPPED and RECEIVED read fulfilment_status', async () => {
+    expect((await whereFor('SHIPPED')).sql).toContain('`requisition`.`fulfilment_status` = ?');
+    expect((await whereFor('RECEIVED')).params).toContain('RECEIVED');
+  });
+  it('APPROVED still reads status', async () => {
+    const q = await whereFor('APPROVED');
+    expect(q.sql).toContain('`requisition`.`status` = ?');
+    expect(q.sql).not.toContain('fulfilment_status');
   });
 });

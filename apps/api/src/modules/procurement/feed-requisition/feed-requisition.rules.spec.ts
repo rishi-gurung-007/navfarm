@@ -2,6 +2,7 @@ import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../.
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
+  feedListStatusFilter, isOffBulkMultiple, priorityChangeProblem,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -489,5 +490,51 @@ describe('buildLineBreakdown — per batch and house under each silo/item line (
       ['b', 'FLUSH', 'h3', 10],
       ['b', 'INSEM', 'h3', 12],
     ]);
+  });
+});
+
+describe('A1 (10 Oct) — checkpoint 16: a bulk quantity off the bulk multiple needs a reason', () => {
+  const line = { lineSeq: 1, itemName: 'Weaner Diet R1', quantityKg: 4500, recommendedQtyKg: null, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-23', feedType: 'BULK' as const };
+  const args = { remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26', bulkMultipleKg: 3000 };
+
+  it('names the bulk line whose quantity is not a multiple of the bulk multiple when there are no remarks', () => {
+    expect(approvalProblems({ ...args, lines: [line] }))
+      .toEqual(['Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple. Remarks are required (checkpoint 16).']);
+  });
+  it('accepts it with remarks', () => {
+    expect(approvalProblems({ ...args, remarks: 'Compartment 2 is half full', lines: [line] })).toEqual([]);
+  });
+  it('accepts a bulk multiple, and a bagged line off the bulk multiple', () => {
+    expect(approvalProblems({ ...args, lines: [{ ...line, quantityKg: 6000 }, { ...line, lineSeq: 2, feedType: 'BAGGED' as const }] })).toEqual([]);
+  });
+  it('tolerates floating-point noise on a multiple', () => {
+    expect(isOffBulkMultiple(6000.0000000004, 3000)).toBe(false);
+    expect(isOffBulkMultiple(4500, 3000)).toBe(true);
+    expect(isOffBulkMultiple(4500, 0)).toBe(false);
+  });
+});
+
+describe('A1 (10 Oct) — Requisition row 34: the farm may escalate priority, never lower it', () => {
+  it('accepts the same or a higher priority', () => {
+    expect(priorityChangeProblem('WARNING', 'CRITICAL')).toBeNull();
+    expect(priorityChangeProblem('INFO', 'CRITICAL_FIRST_PRIORITY')).toBeNull();
+    expect(priorityChangeProblem('CRITICAL', 'CRITICAL')).toBeNull();
+    expect(priorityChangeProblem(null, 'INFO')).toBeNull();
+  });
+  it('refuses a lower priority', () => {
+    expect(priorityChangeProblem('CRITICAL', 'WARNING')).toBe('Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Warning.');
+  });
+});
+
+describe('A1 (10 Oct) — the list status filter reads the column each status lives in', () => {
+  it('filters approval statuses on requisition.status', () => {
+    expect(feedListStatusFilter('APPROVED')).toEqual({ column: 'status', value: 'APPROVED' });
+    expect(feedListStatusFilter('IN_CONSOLIDATION')).toEqual({ column: 'status', value: 'IN_CONSOLIDATION' });
+  });
+  it('filters RELEASED on document_status and fulfilment states on fulfilment_status', () => {
+    expect(feedListStatusFilter('RELEASED')).toEqual({ column: 'document_status', value: 'RELEASED' });
+    expect(feedListStatusFilter('SHIPPED')).toEqual({ column: 'fulfilment_status', value: 'SHIPPED' });
+    expect(feedListStatusFilter('RECEIVED')).toEqual({ column: 'fulfilment_status', value: 'RECEIVED' });
+    expect(feedListStatusFilter('PARTIALLY_RECEIVED')).toEqual({ column: 'fulfilment_status', value: 'PARTIALLY_RECEIVED' });
   });
 });

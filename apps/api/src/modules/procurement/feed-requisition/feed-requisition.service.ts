@@ -44,12 +44,13 @@ import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday, wasEdited,
+  feedListStatusFilter, priorityChangeProblem,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateFeedRequisitionFromRunDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
-import { feedReleaseBlockReason, groupFeedTransferLines } from './feed-requisition-transfer.rules';
+import { feedReleaseBlockReason, groupFeedTransferLines, resolveLoadingBinId, type FeedBinAssignmentInput } from './feed-requisition-transfer.rules';
 import { FeedLoadingService } from './feed-loading.service';
 
 /** The caller as the JWT carries it. userType is required by resolveFarm, which fails closed without it. */
@@ -110,6 +111,8 @@ export function requisitionListFields() {
     requisition_id: R.requisition_id,
     req_no: R.req_no,
     requisition_type: R.requisition_type,
+    // A1 (10 Oct): the list links the farm (W3).
+    farm_id: R.farm_id,
     status: R.status,
     document_status: R.document_status,
     fulfilment_status: R.fulfilment_status,
@@ -1174,7 +1177,11 @@ export class FeedRequisitionService implements OnModuleInit {
     ];
     if (companyIds.length === 1) conditions.push(eq(schema.requisition.company_id, companyIds[0]));
     if (!allFarms) conditions.push(...this.scopeConditions());
-    if (query.status) conditions.push(eq(schema.requisition.status, query.status));
+    if (query.status) {
+      // A1 (10 Oct): RELEASED / the transfer states live in their own columns, not requisition.status.
+      const filter = feedListStatusFilter(query.status);
+      conditions.push(eq(schema.requisition[filter.column], filter.value));
+    }
     return this.db
       .select({ ...requisitionListFields(), farm_code: schema.locationMaster.location_code, farm_name: schema.locationMaster.location_name })
       .from(schema.requisition)
@@ -1739,10 +1746,16 @@ export class FeedRequisitionService implements OnModuleInit {
     const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
     return this.forecast.withFarmScope(farmId, companyId, async () => {
       await withTenantTransaction(this.cls, async () => {
-        await this.lockOpen(id, tenantId, farmId, companyId);
+        const row = await this.lockOpen(id, tenantId, farmId, companyId);
+        // A1 (10 Oct), Requisition §1 row 34 "can escalate": whoever may edit the document may raise its priority.
+        if (dto.priority !== undefined) {
+          const problem = priorityChangeProblem(row.priority, dto.priority);
+          if (problem) throw new BadRequestException(problem);
+        }
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         await this.db.update(schema.requisition).set({
           ...(dto.remarks !== undefined ? { remarks: dto.remarks?.trim() || null } : {}),
+          ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
           updated_by: user?.userId ?? null,
         }).where(eq(schema.requisition.requisition_id, id));
       });
@@ -1761,6 +1774,7 @@ export class FeedRequisitionService implements OnModuleInit {
         recommended: schema.requisitionLine.recommended_qty_kg,
         recommended_delivery_date: schema.requisitionLine.recommended_delivery_date,
         proposed_delivery_date: schema.requisitionLine.proposed_delivery_date,
+        feed_type: schema.requisitionLine.feed_type,
       })
       .from(schema.requisitionLine)
       .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
@@ -1778,7 +1792,14 @@ export class FeedRequisitionService implements OnModuleInit {
       proposedDeliveryDate: l.proposed_delivery_date ?? '',
       // Review finding (Important 4, Task 9): header Remarks are also required on an item exception (row 36).
       itemException: exceptionReasonOf(l.description) !== null,
+      feedType: (l.feed_type as FeedType | null) ?? null,
     }));
+  }
+
+  /** A1 (10 Oct), checkpoint 16: the farm's bulk order multiple, read only when a line is BULK. */
+  private async bulkMultipleFor(lines: ApprovalLine[], companyId: string, farmId: string | null): Promise<number | undefined> {
+    if (!farmId || !lines.some((l) => l.feedType === 'BULK')) return undefined;
+    return toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId)).bulkMultipleKg;
   }
 
   /**
@@ -1798,7 +1819,8 @@ export class FeedRequisitionService implements OnModuleInit {
       const lines = await this.linesForCheck(id);
       const remarks = dto.remarks !== undefined ? dto.remarks?.trim() || null : row.remarks?.trim() || null;
       const { today } = await this.forecast.farmToday(companyId, tenantId);
-      const problems = approvalProblems({ lines, remarks, today, submissionDeadline: row.submission_deadline });
+      const bulkMultipleKg = await this.bulkMultipleFor(lines, companyId, farmId);
+      const problems = approvalProblems({ lines, remarks, today, submissionDeadline: row.submission_deadline, bulkMultipleKg });
       if (problems.length) throw new BadRequestException(problems.join(' '));
       const totalKg = lines.reduce((sum, l) => sum + l.quantityKg, 0);
       const requestId = await this.approvals.submitFarmDocument({
@@ -1897,7 +1919,9 @@ export class FeedRequisitionService implements OnModuleInit {
     }
     const finalRemarks = remarks || row.remarks?.trim() || null;
     const { today } = await this.forecast.farmToday(row.company_id, tenantId);
-    const problems = approvalProblems({ lines: await this.linesForCheck(row.requisition_id), remarks: finalRemarks, today, submissionDeadline: row.submission_deadline });
+    const checkLines = await this.linesForCheck(row.requisition_id);
+    const bulkMultipleKg = await this.bulkMultipleFor(checkLines, row.company_id, row.farm_id);
+    const problems = approvalProblems({ lines: checkLines, remarks: finalRemarks, today, submissionDeadline: row.submission_deadline, bulkMultipleKg });
     if (problems.length) throw new BadRequestException(problems.join(' '));
     // F6: append, as a rejection does. Replacing threw away the farm's own
     // justification — the very thing checkpoints 18 and 22 asked it for.
@@ -1924,6 +1948,71 @@ export class FeedRequisitionService implements OnModuleInit {
     }).where(eq(schema.requisition.requisition_id, row.requisition_id));
   }
 
+
+  /**
+   * The active mill BIN assignments for these feed items on the production
+   * date — the read-model's copy of Release's lookup, shared by the Release
+   * gate (feedReleaseBlockReason) and each line's Mill Loading Bin
+   * (resolveLoadingBinId, Req. r32) so the two never disagree.
+   */
+  private async activeBinAssignments(companyId: string, productionDate: string | null, itemIds: string[], tenantId: string): Promise<FeedBinAssignmentInput[]> {
+    if (!productionDate || !itemIds.length) return [];
+    return this.db.select({
+      assignmentId: schema.binDietAssignment.assignment_id,
+      itemId: schema.binDietAssignment.feed_item_id,
+      productionDate: schema.binDietAssignment.production_date,
+      binLocationId: schema.binDietAssignment.bin_location_id,
+      productionSlotId: schema.binDietAssignment.production_slot_id,
+    }).from(schema.binDietAssignment).where(and(
+      eq(schema.binDietAssignment.tenant_id, tenantId),
+      eq(schema.binDietAssignment.company_id, companyId),
+      eq(schema.binDietAssignment.production_date, productionDate),
+      inArray(schema.binDietAssignment.feed_item_id, itemIds),
+      eq(schema.binDietAssignment.is_active, true),
+      eq(schema.binDietAssignment.status, 'ACTIVE'),
+      isNull(schema.binDietAssignment.deleted_at),
+    ));
+  }
+
+  /**
+   * A1 (10 Oct), Req. §1 r37/r39: who raised the requisition and every
+   * transfer it is linked to. The login is user_master.email and the
+   * department the Cost Center Master name, as the common requisition
+   * resolves requester_login (requisition.service.ts findOne). A forecast or
+   * run-made requisition records no requester, so its creator stands in, with
+   * the creator's own department.
+   */
+  private async readRequesterAndTransfers(req: typeof schema.requisition.$inferSelect, tenantId: string) {
+    const requesterId = req.requester_user_id ?? req.created_by ?? null;
+    const [requester] = requesterId
+      ? await this.db.select({ user_id: schema.userMaster.user_id, email: schema.userMaster.email, department_id: schema.userMaster.department_id })
+        .from(schema.userMaster).where(and(eq(schema.userMaster.tenant_id, tenantId), eq(schema.userMaster.user_id, requesterId))).limit(1)
+      : [];
+    const departmentId = req.requester_department_id ?? requester?.department_id ?? null;
+    const [department] = departmentId && req.company_id
+      ? await this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
+        .from(schema.costCenterMaster).where(and(
+          eq(schema.costCenterMaster.tenant_id, tenantId),
+          eq(schema.costCenterMaster.company_id, req.company_id),
+          eq(schema.costCenterMaster.cost_center_id, departmentId),
+        )).limit(1)
+      : [];
+    const linked = await this.db
+      .select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no })
+      .from(schema.feedRequisitionTransfer)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.feedRequisitionTransfer.transfer_id))
+      .where(and(
+        eq(schema.feedRequisitionTransfer.tenant_id, tenantId),
+        eq(schema.feedRequisitionTransfer.requisition_id, req.requisition_id),
+        isNull(schema.stockTransfer.deleted_at),
+      ))
+      .orderBy(schema.stockTransfer.transfer_no);
+    return {
+      requester_login: requester?.email ?? null,
+      requester_department_name: department?.cost_center_name ?? null,
+      linked_transfers: linked.map((t) => ({ transfer_id: t.transfer_id, transfer_no: t.transfer_no })),
+    };
+  }
 
   /**
    * The requisition view, read under the farm scope the caller already set
@@ -2191,6 +2280,11 @@ export class FeedRequisitionService implements OnModuleInit {
     const transfers = documentStatus === 'RELEASED' || fulfilmentStatus !== 'NOT_APPLICABLE'
       ? await this.readTransferViews(requisitionId, tenantId)
       : [];
+    const requesterAndTransfers = await this.readRequesterAndTransfers(row.req, tenantId);
+    const lineItemIds = [...new Set(lines.map(({ line }) => line.item_id).filter((id): id is string => !!id))];
+    const binAssignments = row.req.company_id
+      ? await this.activeBinAssignments(row.req.company_id, row.req.production_date ?? null, lineItemIds, tenantId)
+      : [];
     const hasShipBalance = transfers.some((transfer) => transfer.lines.some((line) => line.balance_to_ship > 0));
     const hasReceiptBalance = transfers.some((transfer) => transfer.open_shipments.length > 0);
     let releaseReason: string | null = null;
@@ -2210,28 +2304,23 @@ export class FeedRequisitionService implements OnModuleInit {
         : []);
       if (releasableLines.length !== lines.length) {
         releaseReason = 'Every feed line needs a Feed Item and destination SILO or STORE before Release.';
-      } else if (row.req.production_date) {
-        const itemIds = [...new Set(releasableLines.map((line) => line.itemId))];
-        const assignments = itemIds.length ? await this.db.select({
-          assignmentId: schema.binDietAssignment.assignment_id,
-          itemId: schema.binDietAssignment.feed_item_id,
-          productionDate: schema.binDietAssignment.production_date,
-          binLocationId: schema.binDietAssignment.bin_location_id,
-          productionSlotId: schema.binDietAssignment.production_slot_id,
-        }).from(schema.binDietAssignment).where(and(
-          eq(schema.binDietAssignment.tenant_id, tenantId),
-          eq(schema.binDietAssignment.company_id, row.req.company_id),
-          eq(schema.binDietAssignment.production_date, row.req.production_date),
-          inArray(schema.binDietAssignment.feed_item_id, itemIds),
-          eq(schema.binDietAssignment.is_active, true),
-          eq(schema.binDietAssignment.status, 'ACTIVE'),
-          isNull(schema.binDietAssignment.deleted_at),
-        )) : [];
-        releaseReason = feedReleaseBlockReason(releasableLines, assignments, row.req.production_date);
       } else {
-        releaseReason = feedReleaseBlockReason(releasableLines, [], row.req.production_date);
+        releaseReason = feedReleaseBlockReason(releasableLines, binAssignments, row.req.production_date);
       }
     }
+    // Req. r32 Mill Loading Bin per line: the BIN a released transfer actually ships from, else the
+    // assignment Release would pick (resolveLoadingBinId — the loading sheet's rule), else empty.
+    const releasedBinOf = new Map(transfers.flatMap((transfer) => transfer.lines
+      .filter((line) => line.requisition_line_id)
+      .map((line) => [line.requisition_line_id!, transfer.from_warehouse_id] as const)));
+    const lineBinId = new Map(lines.map(({ line }) => [line.line_id,
+      releasedBinOf.get(line.line_id)
+        ?? (line.item_id ? resolveLoadingBinId({ itemId: line.item_id, productionDate: row.req.production_date }, binAssignments) : null)]));
+    const binIds = [...new Set([...lineBinId.values()].filter((id): id is string => !!id))];
+    const binCode = new Map((binIds.length
+      ? await this.db.select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code })
+        .from(schema.locationMaster).where(and(eq(schema.locationMaster.tenant_id, tenantId), inArray(schema.locationMaster.location_id, binIds)))
+      : []).map((b) => [b.location_id, b.location_code]));
     const releaseEnabled = releaseReason === null;
     const shipmentEnabled = documentStatus === 'RELEASED' && hasShipBalance;
     const receiptEnabled = documentStatus === 'RELEASED' && hasReceiptBalance;
@@ -2248,7 +2337,14 @@ export class FeedRequisitionService implements OnModuleInit {
       },
       transfers,
       farm_code: row.farm_code,
+      requester_login: requesterAndTransfers.requester_login,
+      requester_department_name: requesterAndTransfers.requester_department_name,
       header: {
+        // A1 (10 Oct): the ids the document links by (W1 c).
+        farm_id: row.req.farm_id ?? null,
+        forecast_run_id: row.req.feed_forecast_run_id ?? null,
+        consolidation_id: consolidationId,
+        linked_transfers: requesterAndTransfers.linked_transfers,
         farm_code: row.farm_code ?? null,
         farm_name: row.farm_name ?? null,
         consolidation_no: consolidation?.consolidation_no ?? null,
@@ -2289,6 +2385,8 @@ export class FeedRequisitionService implements OnModuleInit {
         reason_label: l.reason_name ?? null,
         exception_reason: l.reason_name ?? exceptionReasonOf(l.line.description),
         breakdown: breakdownOf.get(l.line.line_id) ?? [],
+        mill_loading_bin_id: lineBinId.get(l.line.line_id) ?? null,
+        mill_loading_bin_code: binCode.get(lineBinId.get(l.line.line_id) ?? '') ?? null,
       })),
       farm_total_requested_kg: farmTotal,
       truck_target_kg: truckTarget,

@@ -90,6 +90,8 @@ export class FeedLineEditInput {
 
 export class UpdateFeedRequisitionDto {
   @ApiPropertyOptional({ description: 'Requisition §1 row 36' }) @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
+  @ApiPropertyOptional({ description: 'Requisition §1 row 34: escalate only', enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'] })
+  @IsOptional() @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO']) priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
   @ApiPropertyOptional({ type: [FeedLineEditInput] })
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => FeedLineEditInput)
   lines?: FeedLineEditInput[];

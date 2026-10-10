@@ -415,3 +415,56 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
       .rejects.toThrow('Requisition REQ-GRS-2026-00041 is not waiting for this approval.');
   });
 });
+
+describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edit', () => {
+  it('refuses a bulk quantity off the 3,000 kg multiple without remarks, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple. Remarks are required (checkpoint 16).'));
+    expect(writes()).toEqual([]);
+  });
+
+  it('accepts the same line when remarks give the reason', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }], []]],
+      [schema.approvalRequest, [[]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { remarks: 'Half compartment' }, 'tenant-1', ADMIN));
+    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'PENDING_APPROVAL' });
+  });
+
+  it('lets the farm escalate the priority of a requisition it may edit', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [{ ...REQ_ROW, priority: 'WARNING' }], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'CRITICAL' } as any, 'tenant-1', ADMIN));
+    expect(writes().find((e) => e.op === 'update' && e.table === schema.requisition)!.set).toMatchObject({ priority: 'CRITICAL' });
+  });
+
+  it('refuses to lower the priority, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'INFO' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow('Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Info.');
+    expect(writes()).toEqual([]);
+  });
+
+  it('will not change the priority of a requisition waiting for approval', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [PENDING_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'CRITICAL_FIRST_PRIORITY' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(writes()).toEqual([]);
+  });
+});

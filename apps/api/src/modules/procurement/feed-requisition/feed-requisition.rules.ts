@@ -334,6 +334,8 @@ export interface ApprovalLine {
    * header-level rule the brief asks for.
    */
   itemException?: boolean;
+  /** A1 (10 Oct), checkpoint 16: the line's Feed Type — only a BULK line is held to the bulk order multiple. */
+  feedType?: FeedType | null;
 }
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -344,7 +346,7 @@ const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 }
  * one field on the header (row 36), so one set of remarks covers every line.
  * The deadline day itself is still on time — only a later day is the exception.
  */
-export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null }): string[] {
+export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null; bulkMultipleKg?: number }): string[] {
   if (!args.lines.length) return ['A requisition needs at least one line to be approved.'];
   if (args.remarks?.trim()) return [];
   const problems: string[] = [];
@@ -358,11 +360,52 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
     if (l.itemException) {
       problems.push(`Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`);
     }
+    if (l.feedType === 'BULK' && args.bulkMultipleKg && isOffBulkMultiple(l.quantityKg, args.bulkMultipleKg)) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(args.bulkMultipleKg)} kg bulk order multiple. Remarks are required (checkpoint 16).`);
+    }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
     problems.push(`The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`);
   }
   return problems;
+}
+
+/**
+ * A1 (10 Oct), checkpoint 16: "Any exception requires approved reason" — a
+ * bulk quantity that is not a whole number of compartments (Req. row 28, the
+ * bulk order multiple). Same 1e-6 tolerance roundOrderKg uses.
+ */
+export function isOffBulkMultiple(quantityKg: number, bulkMultipleKg: number): boolean {
+  if (!(bulkMultipleKg > 0)) return false;
+  const compartments = Math.round((quantityKg / bulkMultipleKg) * 1e6) / 1e6;
+  return Math.abs(compartments - Math.round(compartments)) > 1e-6;
+}
+
+/** Requisition §1 row 34, highest first. */
+export const PRIORITY_ORDER: readonly Priority[] = ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'];
+const PRIORITY_WORDS: Record<Priority, string> = { CRITICAL_FIRST_PRIORITY: 'Critical first priority', CRITICAL: 'Critical', WARNING: 'Warning', INFO: 'Info' };
+
+/**
+ * A1 (10 Oct), Requisition §1 row 34 "Yes - can escalate": the farm may raise
+ * the priority the forecast set, never lower it. null when the change is allowed.
+ */
+export function priorityChangeProblem(current: string | null | undefined, requested: Priority): string | null {
+  const from = PRIORITY_ORDER.indexOf(current as Priority);
+  if (from < 0) return null;
+  if (PRIORITY_ORDER.indexOf(requested) <= from) return null;
+  return `Priority can only be escalated (Requisition row 34): ${PRIORITY_WORDS[current as Priority]} cannot be lowered to ${PRIORITY_WORDS[requested]}.`;
+}
+
+/**
+ * A1 (10 Oct): the list's status filter. RELEASED lives in document_status and
+ * the transfer states in fulfilment_status; everything else (the approval
+ * workflow, IN_CONSOLIDATION) in requisition.status.
+ */
+const FULFILMENT_FILTERS = new Set(['TRANSFER_OPEN', 'PARTIALLY_SHIPPED', 'SHIPPED', 'PARTIALLY_RECEIVED', 'RECEIVED']);
+export function feedListStatusFilter(status: string): { column: 'status' | 'document_status' | 'fulfilment_status'; value: string } {
+  if (status === 'RELEASED') return { column: 'document_status', value: status };
+  if (FULFILMENT_FILTERS.has(status)) return { column: 'fulfilment_status', value: status };
+  return { column: 'status', value: status };
 }
 
 /**
