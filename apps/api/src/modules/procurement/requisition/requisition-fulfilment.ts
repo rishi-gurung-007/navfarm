@@ -75,10 +75,20 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
     .innerJoin(schema.stockTransferLine, eq(schema.stockTransferLine.line_id, schema.transferReceiptLine.line_id))
     .where(inArray(schema.stockTransferLine.transfer_id, linkedTransferIds))
     .groupBy(schema.stockTransferLine.requisition_line_id);
-  const lines = await db
-    .select({ line_id: schema.requisitionLine.line_id, quantity: schema.requisitionLine.quantity, qty_to_ship: schema.requisitionLine.qty_to_ship, qty_to_receive: schema.requisitionLine.qty_to_receive })
+  // 2026-10-10 ruling (decisions.md, "Feed fulfilment measures against the
+  // mill-approved quantity"): a feed line on a Mill Consolidation Sheet is
+  // released at its mill_approved_qty_kg, so it is fully shipped/received
+  // against that quantity, not the original request. The difference stays on
+  // the consolidation line as the mill adjustment with its reason. Lines with
+  // no consolidation row (every common requisition) keep their own quantities.
+  // feed_consolidation_line.requisition_line_id is unique, so this join never
+  // multiplies a line.
+  const lines = (await db
+    .select({ line_id: schema.requisitionLine.line_id, quantity: schema.requisitionLine.quantity, qty_to_ship: schema.requisitionLine.qty_to_ship, qty_to_receive: schema.requisitionLine.qty_to_receive, mill_approved_qty_kg: schema.feedConsolidationLine.mill_approved_qty_kg })
     .from(schema.requisitionLine)
-    .where(eq(schema.requisitionLine.requisition_id, linked.requisition_id));
+    .leftJoin(schema.feedConsolidationLine, eq(schema.feedConsolidationLine.requisition_line_id, schema.requisitionLine.line_id))
+    .where(eq(schema.requisitionLine.requisition_id, linked.requisition_id)))
+    .map(({ mill_approved_qty_kg, ...line }) => (mill_approved_qty_kg == null ? line : { ...line, qty_to_ship: mill_approved_qty_kg, qty_to_receive: mill_approved_qty_kg }));
 
   // Ownership guard (required addition, moved here from the originally
   // planned Tasks 9/12 hardening — see docs/decisions and the task brief):

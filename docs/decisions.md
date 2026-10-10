@@ -3355,3 +3355,23 @@ lot tracked, seeded by chapter `09-costing-scenarios`; `pnpm verify:costing` reh
   The entry now takes the in-date lot with the nearest expiry first, then the next, noted on the entry. Expired
   stock is never taken on the system's own choice. A lot the user names still wins; the price follows the item's
   costing method either way.
+
+## 2026-10-10 — Feed fulfilment measures against the mill-approved quantity
+
+Asked (final UAT, P1 in `docs/uat/PROGRESS-2026-10-10-final-uat.md`): the mill
+approved 6,000 of a 6,050 KG request, release moved 6,000, and after all 6,000
+were received the requisition stayed `PARTIALLY_RECEIVED` / `IN_CONSOLIDATION`
+forever. Because only a `RECEIVED` requisition frees its silo+item for the
+cycle, that silo+item could never be requisitioned again.
+
+Rishi's ruling: when a feed line has a mill-approved quantity (its Mill
+Consolidation Sheet line), "fully shipped" and "fully received" are measured
+against `mill_approved_qty_kg`, not the requested quantity. Receiving the
+mill-approved quantity makes the line, and then the requisition, `RECEIVED`,
+which frees the silo+item for a new requisition. The difference between
+request and approval is the mill adjustment and stays on the consolidation line
+with its mandatory reason. Lines with no mill-approved quantity (every common
+requisition) keep measuring against their own quantities.
+
+The rule lives in one place: `syncRequisitionFulfilment`
+(`apps/api/src/modules/procurement/requisition/requisition-fulfilment.ts`).

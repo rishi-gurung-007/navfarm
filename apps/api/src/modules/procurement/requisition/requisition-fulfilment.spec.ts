@@ -158,4 +158,42 @@ describe('syncRequisitionFulfilment', () => {
 
     expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
   });
+  /**
+   * 2026-10-10 ruling (decisions.md, "Feed fulfilment measures against the
+   * mill-approved quantity"): the mill approved 6,000 of a 6,050 KG request and
+   * release moved 6,000. Receiving that 6,000 must close the line and the
+   * requisition (RECEIVED) — lockCycle only frees a silo+item once the prior
+   * requisition is RECEIVED, so measuring against 6,050 deadlocked it forever.
+   */
+  it('marks a feed line RECEIVED once its mill-approved quantity (not the request) is received', async () => {
+    const { db: d, sets } = db([
+      [],
+      [{ requisition_id: 'feed-req-1' }],
+      [{ transfer_id: 'tr-1' }],
+      [{ requisition_line_id: 'l1' }],
+      [{ requisition_line_id: 'l1', qty: '6000' }],
+      [{ requisition_line_id: 'l1', qty: '6000' }],
+      [{ line_id: 'l1', quantity: '6050', qty_to_ship: '6050', qty_to_receive: '6050', mill_approved_qty_kg: '6000.0000' }],
+    ]);
+
+    await syncRequisitionFulfilment(d, 'tr-1');
+
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
+  });
+
+  it('keeps a mill-adjusted feed line PARTIALLY_RECEIVED until the mill-approved quantity is received', async () => {
+    const { db: d, sets } = db([
+      [],
+      [{ requisition_id: 'feed-req-1' }],
+      [{ transfer_id: 'tr-1' }],
+      [{ requisition_line_id: 'l1' }],
+      [{ requisition_line_id: 'l1', qty: '6000' }],
+      [{ requisition_line_id: 'l1', qty: '3000' }],
+      [{ line_id: 'l1', quantity: '6050', qty_to_ship: '6050', qty_to_receive: '6050', mill_approved_qty_kg: '6000.0000' }],
+    ]);
+
+    await syncRequisitionFulfilment(d, 'tr-1');
+
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
+  });
 });
