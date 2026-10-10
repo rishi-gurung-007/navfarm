@@ -1,6 +1,7 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, UnauthorizedException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional, UnauthorizedException,
 } from '@nestjs/common';
+import { alias } from 'drizzle-orm/mysql-core';
 import { and, desc, eq, getTableColumns, inArray, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +19,7 @@ import { StockAdjustmentService } from '../stock-adjustment/stock-adjustment.ser
 import { CurrencyService } from '../../system/currency/currency.service';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
+import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import {
   CreateFeedStockCountDto, QueryFeedStockCountDto, UpdateFeedStockCountDto,
 } from './dto/feed-stock-count.dto';
@@ -50,6 +52,23 @@ const routeEvidence = (line: { variance_pct_absolute: string | number; variance_
     : Number(line.variance_value_base),
 });
 
+/** Whole days from one calendar date to another (UTC midnights). */
+const daysBetween = (from: string, to: string): number =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+/** W2D A7 (Engine §1 rows 15–17): a silo's forecast facts beside its count line; all null when no forecast ran. */
+export interface SiloPlanningFacts {
+  projectedShortfallKg: number | null;
+  nextDietItemId: string | null;
+  nextDietItemCode: string | null;
+  nextDietItemName: string | null;
+  nextDietDate: string | null;
+  nextDietInDays: number | null;
+}
+const NO_PLANNING: SiloPlanningFacts = {
+  projectedShortfallKg: null, nextDietItemId: null, nextDietItemCode: null, nextDietItemName: null, nextDietDate: null, nextDietInDays: null,
+};
+
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
 @Injectable()
@@ -63,7 +82,10 @@ export class FeedStockCountService implements OnModuleInit {
     private readonly approvals: ApprovalService,
     private readonly adjustments: StockAdjustmentService,
     private readonly feedAlerts: FeedAlertService,
+    @Optional() private readonly forecast?: FeedForecastService,
   ) {}
+
+  private readonly logger = new Logger(FeedStockCountService.name);
 
   /** D25: tells the approval engine what approving, rejecting and withdrawing a count does. */
   onModuleInit(): void {
@@ -116,6 +138,8 @@ export class FeedStockCountService implements OnModuleInit {
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
       location_code: schema.locationMaster.location_code,
+      location_name: schema.locationMaster.location_name,
+      silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
       lob_id: schema.locationMaster.lob_id,
       farm_id: schema.locationMaster.farm_id,
       parent_location_id: schema.locationMaster.parent_location_id,
@@ -139,6 +163,53 @@ export class FeedStockCountService implements OnModuleInit {
       throw new BadRequestException('Physical counts may use only active SILOs belonging to the authorized farm.');
     }
     return silos;
+  }
+
+  /**
+   * W2D A7: what a count shows beside each silo that the count itself does not store — the linked House
+   * Shed(s) (Engine §1 row 10) and, from the farm's silo status, projected shortfall, next diet and the days
+   * until it (rows 15–17). A forecast that cannot run (no feed settings, no lifecycle) must not stop a count,
+   * so its facts are then empty and `planningDate` is null.
+   */
+  private async siloContext(farmId: string, companyId: string, tenantId: string, siloIds: string[]) {
+    const houses = new Map<string, Array<{ id: string; code: string; name: string }>>();
+    if (siloIds.length) {
+      const Shed = alias(schema.locationMaster, 'count_shed') as unknown as typeof schema.locationMaster;
+      const links = await this.db.select({
+        silo_id: schema.siloShedLink.silo_id, shed_id: Shed.location_id, shed_code: Shed.location_code, shed_name: Shed.location_name,
+      }).from(schema.siloShedLink)
+        .innerJoin(Shed, eq(Shed.location_id, schema.siloShedLink.shed_id))
+        .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.silo_id, siloIds), isNull(Shed.deleted_at)))
+        .orderBy(Shed.location_code);
+      for (const link of links) {
+        houses.set(link.silo_id, [...(houses.get(link.silo_id) ?? []), { id: link.shed_id, code: link.shed_code, name: link.shed_name }]);
+      }
+    }
+    const planning = new Map<string, SiloPlanningFacts>();
+    let planningDate: string | null = null;
+    if (this.forecast) {
+      try {
+        const current = await this.forecast.currentSiloStatuses(farmId, companyId, tenantId);
+        planningDate = current.planningDate;
+        for (const status of current.statuses) {
+          planning.set(status.siloId, {
+            projectedShortfallKg: status.projectedShortfallKg,
+            nextDietItemId: status.nextDietItemId,
+            nextDietItemCode: status.nextDietItemCode,
+            nextDietItemName: status.nextDietItemName,
+            nextDietDate: status.nextDietDate,
+            nextDietInDays: status.nextDietDate ? daysBetween(current.planningDate, status.nextDietDate) : null,
+          });
+        }
+      } catch (error) {
+        this.logger.warn(`Silo planning facts unavailable for farm ${farmId}: ${(error as Error)?.message ?? error}`);
+      }
+    }
+    return {
+      planningDate,
+      housesOf: (siloId: string) => houses.get(siloId) ?? [],
+      planningOf: (siloId: string) => planning.get(siloId) ?? NO_PLANNING,
+    };
   }
 
   private async currencyEvidence(companyId: string) {
@@ -229,22 +300,38 @@ export class FeedStockCountService implements OnModuleInit {
       postingDate,
       countedAtEpochSeconds: instant.epochSeconds,
     }, tenantId);
-    const codeOf = new Map(silos.map((silo) => [silo.location_id, silo.location_code]));
+    const siloOf = new Map(silos.map((silo) => [silo.location_id, silo]));
+    const itemIds = [...new Set(rows.map((row) => row.item_id))];
+    const items = itemIds.length
+      ? await this.db.select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name })
+        .from(schema.itemMaster).where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)))
+      : [];
+    const nameOf = new Map(items.map((item) => [item.item_id, item.item_name]));
+    const context = await this.siloContext(query.farmId, query.companyId, tenantId, silos.map((silo) => silo.location_id));
     return {
       farmId: query.farmId,
       companyId: query.companyId,
       countedAt: instant.utcIso,
       postingDate,
+      planningDate: context.planningDate,
       silos: silos.map((silo) => ({ siloId: silo.location_id, siloCode: silo.location_code })),
-      pairs: rows.map((row) => ({
-        siloId: row.warehouse_id,
-        siloCode: codeOf.get(row.warehouse_id) ?? null,
-        itemId: row.item_id,
-        itemCode: row.item_code,
-        uom: row.uom,
-        systemQtyKg: row.system_qty_kg,
-        costAvailable: row.unit_cost_base !== null,
-      })),
+      pairs: rows.map((row) => {
+        const silo = siloOf.get(row.warehouse_id);
+        return {
+          siloId: row.warehouse_id,
+          siloCode: silo?.location_code ?? null,
+          siloName: silo?.location_name ?? null,
+          capacityKg: silo?.silo_capacity_kg == null ? null : Number(silo.silo_capacity_kg),
+          houses: context.housesOf(row.warehouse_id),
+          itemId: row.item_id,
+          itemCode: row.item_code,
+          itemName: nameOf.get(row.item_id) ?? null,
+          uom: row.uom,
+          systemQtyKg: row.system_qty_kg,
+          costAvailable: row.unit_cost_base !== null,
+          ...context.planningOf(row.warehouse_id),
+        };
+      }),
     };
   }
 
@@ -346,6 +433,8 @@ export class FeedStockCountService implements OnModuleInit {
     const lines = await this.db.select({
       ...getTableColumns(schema.feedStockCountLine),
       silo_code: schema.locationMaster.location_code,
+      silo_name: schema.locationMaster.location_name,
+      silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
       item_code: schema.itemMaster.item_code,
       item_name: schema.itemMaster.item_name,
       reason_name: schema.reasonMaster.reason_name,
@@ -355,7 +444,17 @@ export class FeedStockCountService implements OnModuleInit {
       .leftJoin(schema.reasonMaster, eq(schema.reasonMaster.reason_id, schema.feedStockCountLine.reason_id))
       .where(eq(schema.feedStockCountLine.count_id, countId))
       .orderBy(schema.feedStockCountLine.silo_id, schema.feedStockCountLine.item_id);
-    return { ...count, lines };
+    const context = await this.siloContext(count.farm_id, count.company_id, tenantId, [...new Set(lines.map((line) => line.silo_id))]);
+    return {
+      ...count,
+      planningDate: context.planningDate,
+      lines: lines.map((line) => ({
+        ...line,
+        capacityKg: line.silo_capacity_kg == null ? null : Number(line.silo_capacity_kg),
+        houses: context.housesOf(line.silo_id),
+        ...context.planningOf(line.silo_id),
+      })),
+    };
   }
 
   private async mutableCount(countId: string, tenantId: string) {

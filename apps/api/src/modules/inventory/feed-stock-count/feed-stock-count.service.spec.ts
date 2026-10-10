@@ -309,9 +309,10 @@ describe('FeedStockCountService', () => {
       .resolves.toEqual({
         farmId: 'farm-1', companyId: 'company-1', countedAt: '2026-10-05T07:30:00.000Z', postingDate: '2026-10-05',
         silos: [{ siloId: 'silo-1', siloCode: 'SILO-001' }],
+        planningDate: null,
         pairs: [
-          { siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-1', itemCode: 'FEED-1', uom: 'KG', systemQtyKg: 100, costAvailable: true },
-          { siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-2', itemCode: 'FEED-2', uom: 'KG', systemQtyKg: 50, costAvailable: false },
+          expect.objectContaining({ siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-1', itemCode: 'FEED-1', uom: 'KG', systemQtyKg: 100, costAvailable: true }),
+          expect.objectContaining({ siloId: 'silo-1', siloCode: 'SILO-001', itemId: 'item-2', itemCode: 'FEED-2', uom: 'KG', systemQtyKg: 50, costAvailable: false }),
         ],
       });
     // The same cutoff create() will use, so the preview cannot promise a pair
@@ -319,6 +320,67 @@ describe('FeedStockCountService', () => {
     expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith({
       companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-05', countedAtEpochSeconds: 1791185400,
     }, 'tenant-1');
+  });
+
+  /**
+   * W2D A7 (Engine §1 rows 8–17): each entry pair carries the silo name, linked house(s), capacity, the diet
+   * description, and from the farm's silo status the projected shortfall, the next diet and the days until it.
+   */
+  describe('W2D A7: count entry and lines carry the silo planning facts', () => {
+    const shedLinks = [{ silo_id: 'silo-1', shed_id: 'shed-3', shed_code: 'SHED-003', shed_name: 'Third shed' }];
+    const status = {
+      siloId: 'silo-1', projectedShortfallKg: 4500, nextDietItemId: 'item-2', nextDietItemCode: 'FEED-2', nextDietItemName: 'Grower R2',
+      nextDietDate: '2026-10-09',
+    };
+    const forecastStub = () => ({ currentSiloStatuses: jest.fn(async () => ({ planningDate: '2026-10-05', statuses: [status] })) });
+    const queues = () => {
+      const q = createQueues({ silo: [{ ...silo, location_name: 'Grower silo', silo_capacity_kg: '12000.000' }] });
+      q.set(schema.siloShedLink, [shedLinks]);
+      q.set(schema.itemMaster, [[{ item_id: 'item-1', item_name: 'Grower R1' }]]);
+      return q;
+    };
+
+    it('evidence pairs show silo name, houses, capacity, diet description, shortfall and the next diet in days', async () => {
+      const { service } = setup(queues());
+      const forecast = forecastStub();
+      (service as any).forecast = forecast;
+      const out = await service.evidence({ companyId: 'company-1', farmId: 'farm-1', countedAt: '2026-10-05T07:30:00.000Z' }, 'tenant-1');
+      expect(forecast.currentSiloStatuses).toHaveBeenCalledWith('farm-1', 'company-1', 'tenant-1');
+      expect(out.planningDate).toBe('2026-10-05');
+      expect(out.pairs[0]).toEqual({
+        siloId: 'silo-1', siloCode: 'SILO-001', siloName: 'Grower silo', capacityKg: 12000,
+        houses: [{ id: 'shed-3', code: 'SHED-003', name: 'Third shed' }],
+        itemId: 'item-1', itemCode: 'FEED-1', itemName: 'Grower R1', uom: 'KG', systemQtyKg: 100, costAvailable: true,
+        projectedShortfallKg: 4500, nextDietItemId: 'item-2', nextDietItemCode: 'FEED-2', nextDietItemName: 'Grower R2',
+        nextDietDate: '2026-10-09', nextDietInDays: 4,
+      });
+    });
+
+    it('a forecast that cannot run leaves the planning facts empty and the count still opens', async () => {
+      const { service } = setup(queues());
+      (service as any).forecast = { currentSiloStatuses: jest.fn(async () => { throw new Error('no settings'); }) };
+      const out = await service.evidence({ companyId: 'company-1', farmId: 'farm-1', countedAt: '2026-10-05T07:30:00.000Z' }, 'tenant-1');
+      expect(out.planningDate).toBeNull();
+      expect(out.pairs[0]).toMatchObject({
+        siloName: 'Grower silo', houses: [{ code: 'SHED-003' }], projectedShortfallKg: null, nextDietItemId: null, nextDietInDays: null,
+      });
+    });
+
+    it('saved lines carry silo name, capacity, houses and the planning facts', async () => {
+      const count = { count_id: 'count-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', status: 'DRAFT' };
+      const line = { count_line_id: 'line-1', silo_id: 'silo-1', silo_code: 'SILO-001', silo_name: 'Grower silo', silo_capacity_kg: '12000.000', item_id: 'item-1' };
+      const q = new Map<unknown, unknown[][]>([
+        [schema.feedStockCount, [[count]]], [schema.locationMaster, [[farm]]], [schema.feedStockCountLine, [[line]]], [schema.siloShedLink, [shedLinks]],
+      ]);
+      const { service } = setup(q);
+      (service as any).forecast = forecastStub();
+      const out = await service.findOne('count-1', 'tenant-1');
+      expect(out.planningDate).toBe('2026-10-05');
+      expect(out.lines[0]).toMatchObject({
+        silo_name: 'Grower silo', capacityKg: 12000, houses: [{ id: 'shed-3', code: 'SHED-003', name: 'Third shed' }],
+        projectedShortfallKg: 4500, nextDietItemCode: 'FEED-2', nextDietInDays: 4,
+      });
+    });
   });
 
   it('defaults the evidence instant to now for an on-demand count', async () => {

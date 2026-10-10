@@ -173,6 +173,43 @@ describe('FeedForecastService.siloStatus', () => {
       { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
   });
 
+  it('W2D A5/A7: currentSiloStatuses runs the seven-day window from the farm today and returns item codes and the next-diet silo by feed type', async () => {
+    const { cls, service } = build();
+    const twoDiets = {
+      ...input,
+      silos: [...input.silos, { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: null, balanceKg: 0 }],
+      sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
+      items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
+      itemCodes: { r1: 'FEED-R1', r2: 'FEED-R2' },
+      feedRows: [
+        { lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 27, kgPerHeadPerDay: 2.0, wastagePct: 0 },
+        { lifecycleId: 'row-r2', breedId: 'l', stageId: 'wean', itemId: 'r2', itemName: 'Weaner Diet R2', fromDay: 28, toDay: 60, kgPerHeadPerDay: 2.5, wastagePct: 0 },
+      ],
+    };
+    jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: unknown[]) => {
+      const [, planningDate, from, to, , opts] = args as [unknown, string, string, string, string, { horizonTo: string }];
+      return { input: { ...twoDiets, planningDate, from, to, horizonTo: opts.horizonTo }, flags: [], stageBlocks: [] };
+    });
+    jest.spyOn(service as any, 'loadSiloFacts').mockResolvedValue([
+      siloFact,
+      { ...siloFact, siloId: 's2', siloCode: 'GRS/SILO-002', siloName: 'Bag store', feedType: 'BAGGED', feedInSiloItemId: null, systemBalanceKg: 0 },
+    ]);
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map());
+    const feedTypes = jest.spyOn(service as any, 'loadItemFeedTypes').mockResolvedValue({ r2: 'BAGGED' });
+    const compute = jest.spyOn(service, 'computeForFarm');
+
+    const out = await cls.run(() => service.currentSiloStatuses('farm-b', 'co-1', 'tenant-1'));
+
+    expect(out.planningDate).toBe('2026-09-23');
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
+    expect(feedTypes).toHaveBeenCalledWith(['r2'], 'tenant-1');
+    expect(out.statuses[0]).toMatchObject({
+      siloId: 's1', currentDietItemCode: 'FEED-R1', nextDietItemId: 'r2', nextDietItemCode: 'FEED-R2', nextDietItemName: 'Weaner Diet R2',
+      nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: true, nextDietSiloId: 's2', nextDietSiloCode: 'GRS/SILO-002',
+    });
+  });
+
   it('refuses a malformed planning date', async () => {
     const { cls, service } = build();
     await expect(cls.run(() => service.siloStatus({ planningDate: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN'))).rejects.toThrow(/calendar date/);
