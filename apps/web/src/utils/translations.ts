@@ -2307,6 +2307,8 @@ export const translations = {
     ffRunSelectedFilters: "{{view}} · Planning {{planning}} · {{from}} to {{to}}",
     ffRunConfigVersion: "Configuration {{version}}",
     ffRunAuthor: "Saved by {{author}}",
+    // A6 (10 Oct)
+    ffUnknownUser: "Unknown user",
     ffRunHistoryFailed: "The saved run history could not be loaded.",
     ffLoadingRunHistory: "Loading saved run history…",
     ffNoSavedRuns: "No saved runs for this farm.",
