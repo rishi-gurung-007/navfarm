@@ -3461,3 +3461,9 @@ Changed by Rishi:
 4. A transfer may **take stock from other stores** of the company when its From location lacks the lot/serial (the
    original fallback). This replaces the "From location only" reading.
 5. A feed requisition's **Status becomes Received** when it is fully received.
+
+## 2026-10-11 — Dispatch notice carries a typed estimated arrival
+
+Rishi, 11 Oct, on Requisition and Loading Sheet row 76: NAVFarm has no vehicle or route tracking, so the loading sheet
+gets an optional **Estimated arrival** (date and time) that the mill enters at dispatch. The MILL_DISPATCH notice
+includes it when set.
