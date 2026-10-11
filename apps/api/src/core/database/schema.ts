@@ -2416,6 +2416,9 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   feed_form: varchar('feed_form', { length: 10 }), // TDD Master Setup row 37: BULK | BAGGED
   feed_qty_per_head_per_day_kg: decimal('feed_qty_per_head_per_day_kg', { precision: 8, scale: 4 }),
   feed_wastage_pct: decimal('feed_wastage_pct', { precision: 5, scale: 2 }),
+  // 0170, Master Setup r30/r38: effective-dated feed rows for advance diet-change planning. NULL = always effective.
+  effective_from: date('effective_from', { mode: 'string' }),
+  effective_to: date('effective_to', { mode: 'string' }),
   std_body_weight_kg: decimal('std_body_weight_kg', { precision: 8, scale: 3 }),
   std_adg_gpd: decimal('std_adg_gpd', { precision: 8, scale: 2 }), // standard Average Daily Gain, grams/day
   std_fcr: decimal('std_fcr', { precision: 5, scale: 3 }),

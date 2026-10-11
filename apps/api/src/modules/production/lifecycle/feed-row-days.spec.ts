@@ -51,3 +51,21 @@ describe('feedRowFor', () => {
     expect(feedRowFor([r1, overlapping], 26)).toEqual({ error: 'OVERLAP' });
   });
 });
+
+describe('feedRowFor with effective dates', () => {
+  const base: FeedRow = { lifecycleId: 'a', breedId: 'b', stageId: 's', itemId: 'old', itemName: null, fromDay: 1, toDay: 60, kgPerHeadPerDay: 2, wastagePct: 0 };
+  const next: FeedRow = { ...base, lifecycleId: 'n', itemId: 'new', kgPerHeadPerDay: 2.5, effectiveFrom: '2026-10-20' };
+  const old: FeedRow = { ...base, effectiveTo: '2026-10-19' };
+
+  it('picks the row effective on the forecast date', () => {
+    expect(feedRowFor([old, next], 10, '2026-10-19')).toEqual({ row: old });
+    expect(feedRowFor([old, next], 10, '2026-10-20')).toEqual({ row: next });
+  });
+  it('reports NONE when no row is effective that day', () => {
+    expect(feedRowFor([next], 10, '2026-10-01')).toEqual({ error: 'NONE' });
+  });
+  it('ignores dates entirely when no date is passed (today behaviour)', () => {
+    expect(feedRowFor([old, next], 10)).toEqual({ error: 'OVERLAP' });
+    expect(feedRowFor([base], 10, '2030-01-01')).toEqual({ row: base });
+  });
+});

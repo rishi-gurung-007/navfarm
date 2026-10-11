@@ -709,7 +709,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
       const dayOfStage = diffDays(segment.start, date) + 1;
       const candidates = feedRowsForBreed.filter((r) => r.stageId === segment.stageId);
-      const result = feedRowFor(candidates, dayOfStage);
+      const result = feedRowFor(candidates, dayOfStage, date);
 
       if ('error' in result) {
         // Flags are emitted for the visible window (from..to) and, for NO_FEED_ROW only, for the first

@@ -43,6 +43,17 @@ export interface FeedRow {
   toDay: number;
   kgPerHeadPerDay: number;
   wastagePct: number;
+  /** Master Setup r30/r38: first calendar day this row applies. Absent/null = no start limit. */
+  effectiveFrom?: string | null;
+  /** Last calendar day (inclusive) this row applies. Absent/null = open-ended. */
+  effectiveTo?: string | null;
+}
+
+/** True when `onDate` (YYYY-MM-DD) falls in the row's effective window; a row with no dates is always effective. */
+export function isEffectiveOn(row: Pick<FeedRow, 'effectiveFrom' | 'effectiveTo'>, onDate: string): boolean {
+  if (row.effectiveFrom && onDate < row.effectiveFrom) return false;
+  if (row.effectiveTo && onDate > row.effectiveTo) return false;
+  return true;
 }
 
 /**
@@ -51,8 +62,9 @@ export interface FeedRow {
  * than one breed/stage, that mixing is the caller's concern, not something
  * this function detects or guards against.
  */
-export function feedRowFor(rows: FeedRow[], dayOfStage: number): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
-  const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay);
+export function feedRowFor(rows: FeedRow[], dayOfStage: number, onDate?: string): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
+  // onDate is the forecast date: with it, only rows effective that day compete (the one place effective dating is applied).
+  const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay && (onDate === undefined || isEffectiveOn(r, onDate)));
   if (matches.length === 0) return { error: 'NONE' };
   if (matches.length > 1) return { error: 'OVERLAP' };
   return { row: matches[0] };

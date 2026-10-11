@@ -51,5 +51,7 @@ describe("feed forecasting terminology", () => {
     expect(label(lifecycle.fields, "feed_form")).toBe("Feed Form");
     expect(label(getConfig("item")!.fields, "diet_no")).toBe("Diet No.");
     expect(label(lifecycle.fields, "feed_wastage_pct")).toBe("Feed Wastage (%)");
+    expect(label(lifecycle.fields, "effective_from")).toBe("Effective From");
+    expect(label(lifecycle.fields, "effective_to")).toBe("Effective To");
   });
 });

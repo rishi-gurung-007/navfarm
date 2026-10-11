@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, Matches } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -648,6 +648,18 @@ export class CreateBreedLifecycleStageDto {
   @Min(0)
   feed_wastage_pct?: number;
 
+  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
+  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_from?: string | null;
+
+  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
+  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_to?: string | null;
+
   @ApiProperty({ description: 'Expected average body weight at end of this range, KG', required: false })
   @IsNumber()
   @IsOptional()
@@ -818,6 +830,18 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   @Min(0)
   feed_wastage_pct?: number;
+
+  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
+  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_from?: string | null;
+
+  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
+  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_to?: string | null;
 
   @ApiProperty({ required: false })
   @IsNumber()
