@@ -66,9 +66,6 @@ export interface NextBinAssignment {
   binId: string;
   binCode: string;
   productionDate: string;
-  slotId: string;
-  slotCode: string;
-  slotName: string;
 }
 
 export interface SiloBalancePoint {

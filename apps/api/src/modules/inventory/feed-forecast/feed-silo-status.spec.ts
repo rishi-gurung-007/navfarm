@@ -261,8 +261,7 @@ describe('buildSelectedSiloDashboard', () => {
       submissionDeadline: null, alert: null,
     } as SiloStatusRow;
     const assignment = {
-      binId: 'bin-1', binCode: 'BIN-001', productionDate: '2026-09-24',
-      slotId: 'slot-1', slotCode: 'AM', slotName: 'Morning',
+      binId: 'bin-1', binCode: 'BIN-001', productionDate: '2026-09-24'
     };
 
     const shaped = buildSelectedSiloDashboard({

@@ -12,9 +12,6 @@ export interface MillLoadingBin {
   binId: string;
   binCode: string;
   productionDate: string;
-  slotId: string;
-  slotCode: string;
-  slotName: string;
 }
 
 export interface SelectedSiloDashboard {
@@ -107,7 +104,7 @@ export function FeedSiloDashboardCards({
   const bin = silo.millLoadingBin;
   const unavailable = t("fsdNotAvailable");
   const binValue: ReactNode = bin
-    ? <><RecordLink code={bin.binCode} href={locationHref(bin.binId)} />{` · ${date(bin.productionDate, unavailable)} · ${bin.slotName || bin.slotCode}`}</>
+    ? <><RecordLink code={bin.binCode} href={locationHref(bin.binId)} />{` · ${date(bin.productionDate, unavailable)}`}</>
     : t("fsdNotScheduled");
   const yesNo: ReactNode = silo.siloAvailableForNextDiet === null
     ? unavailable

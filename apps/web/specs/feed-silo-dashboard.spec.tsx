@@ -181,7 +181,7 @@ describe('FeedSiloDashboard', () => {
       if (routed.data.silo) {
         Object.assign(routed.data.silo, {
           currentDietItemCode: 'FEED-R1', nextDietItemCode: 'FEED-R2', nextDietSiloId: 'silo-b', nextDietSiloCode: 'GRS/SILO-002',
-          millLoadingBin: { binId: 'bin-1', binCode: 'BIN-001', productionDate: '2026-10-06', slotId: 'slot-1', slotCode: 'AM', slotName: 'Morning' },
+          millLoadingBin: { binId: 'bin-1', binCode: 'BIN-001', productionDate: '2026-10-06' },
         });
       }
       return Promise.resolve(routed);
