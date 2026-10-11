@@ -189,6 +189,15 @@ export class FeedLoadingService {
       .from(schema.userMaster).where(inArray(schema.userMaster.user_id, loaderIds)) : [];
     const userById = new Map(users.map((user) => [user.id, user.name]));
     const transfers = await transfersByRequisitionLine(this.db, rows.map((row) => row.requisition_line_id));
+    // Req r75/r76: the MILL_DISPATCH alert raised at dispatch is the dispatch notification; read it by its subject.
+    const sheetIds = rows.map((row) => row.loading_sheet_id);
+    const alerts = await this.db.select({ subject_id: schema.feedAlert.subject_id, message: schema.feedAlert.message, raised_at: schema.feedAlert.raised_at })
+      .from(schema.feedAlert).where(and(
+        eq(schema.feedAlert.event_type, 'MILL_DISPATCH'), eq(schema.feedAlert.subject_type, 'LOADING_SHEET'),
+        inArray(schema.feedAlert.subject_id, sheetIds),
+      )).orderBy(desc(schema.feedAlert.raised_at));
+    const alertBySheet = new Map<string, { message: string; raised_at: string }>();
+    for (const alert of alerts) if (!alertBySheet.has(alert.subject_id)) alertBySheet.set(alert.subject_id, alert);
     return rows.map(({ loaded_by, ...row }) => {
       const location = (id: string | null) => (id ? locationById.get(id) : undefined);
       const item = itemById.get(row.item_id);
@@ -209,6 +218,9 @@ export class FeedLoadingService {
         loaded_by_name: !loaded_by ? null : UUID.test(loaded_by) ? userById.get(loaded_by) ?? null : loaded_by,
         transfer_id: transfer?.transfer_id ?? null,
         transfer_no: transfer?.transfer_no ?? null,
+        dispatch_notification_status: alertBySheet.has(row.loading_sheet_id) ? 'SENT' : 'NOT_SENT',
+        dispatch_notification_message: alertBySheet.get(row.loading_sheet_id)?.message ?? null,
+        dispatch_notification_at: alertBySheet.get(row.loading_sheet_id)?.raised_at ?? null,
       };
     });
   }

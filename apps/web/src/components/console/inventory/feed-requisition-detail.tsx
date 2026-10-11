@@ -30,6 +30,8 @@ import {
   type FeedLineEdit, type FeedPostedReceipt, type FeedRequisitionLine, type FeedRequisitionOptions, type RequisitionView,
 } from "./feed-requisition-document";
 import { FEED_TYPE_LABEL, labelOf } from "./requisition-labels";
+import { RecordLink, itemHref } from "./feed-requisition-header";
+import { loadingSheetHref } from "./feed-loading-panel";
 
 /** D25: what the farm may still change — mirrors isEditableFeedRequisition in the API. */
 export const isEditable = (v: { status: string; approval_request_id: string | null }) =>
@@ -392,7 +394,9 @@ export function FeedRequisitionDetail({
                       <tr key={row.key} className="align-top border-t" style={{ borderColor: "var(--row-border)" }}>
                         <td className="px-2 py-1">{n}</td>
                         <td className="px-2 py-1">
-                          <div className="font-mono">{row.reqLine?.item_code ?? row.transferLine?.item_code ?? na}</div>
+                          <div className="font-mono">{(row.reqLine?.item_code ?? row.transferLine?.item_code)
+                            ? <RecordLink code={row.reqLine?.item_code ?? row.transferLine?.item_code} href={(row.reqLine?.item_id ?? row.transferLine?.item_id) ? itemHref((row.reqLine?.item_id ?? row.transferLine?.item_id)!) : null} />
+                            : na}</div>
                           <div style={{ color: "var(--text-secondary)" }}>{row.reqLine?.item_description ?? row.transferLine?.item_name ?? na}</div>
                         </td>
                         <td className="px-2 py-1">{labelOf(FEED_TYPE_LABEL, row.reqLine?.feed_type ?? null, t)}</td>
@@ -403,7 +407,7 @@ export function FeedRequisitionDetail({
                         <td className="px-2 py-1 text-right">{kgText(row.outstanding, na)}</td>
                         <td className="px-2 py-1">
                           {row.line.compartment_no ?? na}
-                          {row.line.loading_sheet_no && <div style={{ color: "var(--text-secondary)" }}>{t("w2tLoadingSheet")}: {row.line.loading_sheet_no}</div>}
+                          {row.line.loading_sheet_no && <div style={{ color: "var(--text-secondary)" }}>{t("w2tLoadingSheet")}: <RecordLink code={row.line.loading_sheet_no} href={row.line.loading_sheet_id ? loadingSheetHref(row.line.loading_sheet_id) : null} /></div>}
                         </td>
                         <td className="px-2 py-1 text-right">{row.variance === null ? na : kgText(row.variance, na)}</td>
                       </tr>

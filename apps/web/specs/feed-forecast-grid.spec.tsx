@@ -199,6 +199,22 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(screen.getByText('REQ-GRA100-2026-00001')).toBeTruthy();
   });
 
+  it('W5B: the balance dialog lists an open transfer once, not as both expected and open transfer', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ openTransferKg: 800, openTransferMovementKg: 800 } as any)]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(screen.queryAllByText(/^\+ 800\.00 KG ffExpectedTransferShort/)).toHaveLength(1);
+    expect(screen.queryByText(/ffOpenTransferShort/)).toBeNull();
+  });
+
+  it('W5B (Silo r8, checkpoint 37): the balance dialog says System Balance for opening and closing', () => {
+    const { translations } = require('../src/utils/translations');
+    expect(translations.en.ffBalanceOpening).toMatch(/System Balance/);
+    expect(translations.en.ffClosingBalanceShort).toMatch(/System Balance/);
+    expect(translations.en.ffBalanceOpening).not.toMatch(/opening stock/i);
+    expect(translations.en.ffClosingBalanceShort).not.toMatch(/closing stock/i);
+  });
+
   it('shows planned incoming on the dated closing cell and explains the stock movement when clicked', async () => {
     render(<FeedForecastGrid
       rows={[row()]}

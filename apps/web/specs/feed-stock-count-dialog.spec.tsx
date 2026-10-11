@@ -205,7 +205,7 @@ describe("Monthly Stock Take view", () => {
     const dialog = await screen.findByRole("dialog");
     const box = await within(dialog).findByTestId("stock-take-reconciliation");
     expect(within(box).getByText("JV-0001")).toBeTruthy();
-    expect(within(box).getByText("CLOSED")).toBeTruthy();
+    expect(within(box).getByText("fscPeriodClosed")).toBeTruthy();
     expect(within(box).getByText("fscPeriodStatusAfter")).toBeTruthy();
     expect(within(box).getByText("fscNextProductionStart")).toBeTruthy();
     first.unmount();
@@ -230,5 +230,42 @@ describe("Monthly Stock Take view", () => {
     fireEvent.click(screen.getByRole("button", { name: "fscNew" }));
     await waitFor(() => expect(get.mock.calls.some(([u]) => String(u).startsWith("/feed-stock-count/evidence?")
       && String(u).includes("farmId=mill-1") && String(u).includes("stockTakeType=FEED_MILL"))).toBe(true));
+  });
+});
+
+describe("W5B — the stock take record (Silo r35, r36, r45, r47, r48)", () => {
+  const monthly = {
+    ...row, count_type: "MONTHLY", stock_take_type: "FARM", status: "POSTED", period_code: "2026-09", reporting_period_id: "period-1",
+    farm_id: "farm-1", farm_code: "GRA100", stock_take_date: "2026-09-26", period_status_after: "CLOSED", gl_entry_refs: ["JV-0001", "JV-0002"],
+    production_start_date_next: "2026-10-01",
+    lines: [{
+      count_line_id: "line-1", silo_id: "silo-1", silo_code: "GRA100/SILO-001", item_id: "item-1", item_code: "FEED-001", item_name: "Grower Feed",
+      system_qty_kg: "1000", counted_qty_kg: "950", variance_qty_kg: "-50", variance_pct_absolute: "5", reason_id: "r", reason_name: "Spillage",
+    }],
+  };
+  beforeEach(() => {
+    get.mockImplementation((url: string) => {
+      if (url === "/feed-stock-count/count-1") return Promise.resolve({ data: monthly });
+      return Promise.resolve({ data: [monthly] });
+    });
+  });
+
+  it("links the period in the list", async () => {
+    render(<FeedStockCountPanel />);
+    const link = await screen.findByRole("link", { name: "2026-09" });
+    expect(link.getAttribute("href")).toBe("/master-data/reporting-period?recordId=period-1");
+  });
+
+  it("shows the farm code, linked period, adjustment type, linked journals and the period status in words", async () => {
+    render(<FeedStockCountPanel />);
+    fireEvent.click(await screen.findByText("FSC-00001"));
+    const evidence = await screen.findByTestId("stock-take-reconciliation");
+    expect(within(evidence).getByRole("link", { name: "GRA100" }).getAttribute("href")).toContain("recordId=farm-1");
+    expect(within(evidence).getByRole("link", { name: "2026-09" }).getAttribute("href")).toBe("/master-data/reporting-period?recordId=period-1");
+    expect(within(evidence).getByText("fscAdjNegative")).toBeTruthy();
+    expect(within(evidence).getByRole("link", { name: "JV-0001" }).getAttribute("href")).toBe("/finance/journal");
+    expect(within(evidence).getByRole("link", { name: "JV-0002" })).toBeTruthy();
+    expect(within(evidence).getByText("fscPeriodClosed")).toBeTruthy();
+    expect(within(evidence).queryByText("CLOSED")).toBeNull();
   });
 });
