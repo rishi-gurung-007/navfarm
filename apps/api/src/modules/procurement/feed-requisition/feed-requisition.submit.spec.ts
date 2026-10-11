@@ -467,4 +467,28 @@ describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edi
       .rejects.toThrow(/can no longer be changed/);
     expect(writes()).toEqual([]);
   });
+
+  it('applies an escalated priority inside submit, in the same transaction, and the approval urgency follows it', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [{ ...REQ_ROW, priority: 'WARNING' }], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+      [schema.requisitionLine, [[LINE_6000], []]],
+      [schema.approvalRequest, [[]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { priority: 'CRITICAL' } as any, 'tenant-1', ADMIN));
+    const header = writes().find((e) => e.op === 'update' && e.table === schema.requisition)!;
+    expect(header.set).toMatchObject({ status: 'PENDING_APPROVAL', priority: 'CRITICAL' });
+    expect(header.inTx).toBe(true);
+    expect(writes().find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values).toMatchObject({ urgency: 'HIGH' });
+  });
+
+  it('refuses a lowering priority on submit, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { priority: 'INFO' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow('Priority can only be escalated');
+    expect(writes()).toEqual([]);
+  });
 });

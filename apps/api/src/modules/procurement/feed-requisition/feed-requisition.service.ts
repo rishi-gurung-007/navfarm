@@ -1886,6 +1886,12 @@ export class FeedRequisitionService implements OnModuleInit {
     const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
     await this.forecast.withFarmScope(farmId, companyId, () => withTenantTransaction(this.cls, async () => {
       const row = await this.lockOpen(id, tenantId, farmId, companyId);
+      // Same escalate-only rule as update(), applied in this transaction so the web needs no separate PUT.
+      if (dto.priority !== undefined) {
+        const problem = priorityChangeProblem(row.priority, dto.priority);
+        if (problem) throw new BadRequestException(problem);
+      }
+      const priority = dto.priority ?? row.priority;
       await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
       const lines = await this.linesForCheck(id);
       const remarks = dto.remarks !== undefined ? dto.remarks?.trim() || null : row.remarks?.trim() || null;
@@ -1901,7 +1907,7 @@ export class FeedRequisitionService implements OnModuleInit {
         farmId,
         companyId,
         title: `Feed requisition ${row.req_no}`,
-        urgency: row.priority === 'CRITICAL_FIRST_PRIORITY' || row.priority === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
+        urgency: priority === 'CRITICAL_FIRST_PRIORITY' || priority === 'CRITICAL' ? 'HIGH' : 'MEDIUM',
         itemOrStage: 'Feed',
         requestedQty: totalKg.toLocaleString('en-US', { maximumFractionDigits: 2 }),
         uom: 'KG',
@@ -1911,6 +1917,7 @@ export class FeedRequisitionService implements OnModuleInit {
         status: 'PENDING_APPROVAL',
         approval_request_id: requestId,
         remarks,
+        ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
         updated_by: user?.userId ?? null,
       }).where(eq(schema.requisition.requisition_id, id));
     }));
