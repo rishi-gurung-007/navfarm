@@ -416,10 +416,19 @@ describe('FeedAlertService.raisePlanAvailable — PLAN_AVAILABLE (checkpoint 36)
       insert: jest.fn(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) })),
       update: jest.fn(() => ({ set: jest.fn((v: any) => ({ where: jest.fn(async () => { updates.push(v); }) })) })),
     };
-    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
-    jest.spyOn(service as any, 'loadRules').mockResolvedValue(rules);
-    return { service, inserted, updates, db };
+    const order: string[] = [];
+    const alertRules: any = { ensureDefaultRules: jest.fn(async () => { order.push('ensure'); }) };
+    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, alertRules);
+    jest.spyOn(service as any, 'loadRules').mockImplementation(async () => { order.push('load'); return rules; });
+    return { service, inserted, updates, db, alertRules, order };
   };
+
+  it('ensures the default alert rules exist, before reading them, so a fresh database still notifies', async () => {
+    const { service, alertRules, order } = build([rule]);
+    await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan);
+    expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co-1', 't1');
+    expect(order).toEqual(['ensure', 'load']);
+  });
 
   it('raises one in-app notice per active rule, about the plan, to the rule\'s recipient roles', async () => {
     const { service, inserted } = build([rule, { ...rule, ruleId: 'rule-off', isActive: false }, { ...rule, ruleId: 'rule-other', eventType: 'DIET_CHANGE' }]);

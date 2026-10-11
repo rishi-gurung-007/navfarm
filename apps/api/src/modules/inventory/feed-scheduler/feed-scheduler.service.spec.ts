@@ -26,7 +26,7 @@ function boundValues(cond: any, out: unknown[] = []): unknown[] {
   return out;
 }
 
-function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any; planError?: Error } = {}) {
+function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any; planError?: Error; noCalculation?: boolean } = {}) {
   const logs: any[] = [];
   const updates: any[] = [];
   const db: any = {
@@ -56,6 +56,8 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
         then: (ok: any, err: any) => {
           const rows = table === schema.feedPlan
             ? (opts.existingPlan ? [opts.existingPlan] : [])
+            : table === schema.feedForecastRun
+              ? (opts.noCalculation ? [] : [{ run_id: 'run-1' }])
             : logs.filter((l) => { const bound = boundValues(cond); return bound.length > 0 && bound.every((b) => Object.values(l).includes(b)); });
           return Promise.resolve(rows).then(ok, err);
         },
@@ -172,6 +174,20 @@ describe('FeedSchedulerService — idempotent', () => {
     const tentative = (await h.service.runDue('t1', WED_0900)).find((r) => r.job === 'TENTATIVE_PLAN')!;
     expect(tentative.status).toBe('DONE');
     expect(tentative.summary?.plan).toEqual(expect.objectContaining({ status: 'SKIPPED', reason: expect.stringContaining('Save a feed forecast calculation') }));
+    expect(h.alerts.raisePlanAvailable).not.toHaveBeenCalled();
+  });
+
+  it('a farm with no saved calculation writes no PLAN_LOCK row at all, never calls the generator, and is never counted as a failure', async () => {
+    const h = harness({ noCalculation: true });
+    for (let i = 0; i < 5; i++) {
+      const tentative = (await h.service.runDue('t1', WED_0900 + i * 60_000)).find((r) => r.job === 'TENTATIVE_PLAN')!;
+      expect(['DONE', 'ALREADY_RAN']).toContain(tentative.status);
+    }
+    const r = (await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900))[0];
+    expect(r.summary?.plan).toEqual(expect.objectContaining({ status: 'SKIPPED', reason: expect.stringContaining('Save a feed forecast calculation') }));
+    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
+    expect(h.logs.filter((l) => l.trigger_type === 'PLAN_LOCK')).toHaveLength(0);
+    expect(h.logs.filter((l) => l.status === 'FAILED')).toHaveLength(0);
     expect(h.alerts.raisePlanAvailable).not.toHaveBeenCalled();
   });
 

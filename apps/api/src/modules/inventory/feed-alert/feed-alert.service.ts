@@ -199,6 +199,8 @@ export class FeedAlertService {
     plan: { planId: string; planCode: string; planType: string; productionDate: string },
     nowMs: number = Date.now(),
   ): Promise<{ rules: number; raised: number }> {
+    // The same seeding GET /alert-rule uses: a fresh database has no PLAN_AVAILABLE rule until it runs.
+    await this.alertRules.ensureDefaultRules(companyId, tenantId);
     const rules = (await this.loadRules(companyId, farmId, tenantId))
       .filter((r) => r.isActive && r.eventType === 'PLAN_AVAILABLE' && (r.farmId === null || r.farmId === farmId));
     const now = ts(nowMs);

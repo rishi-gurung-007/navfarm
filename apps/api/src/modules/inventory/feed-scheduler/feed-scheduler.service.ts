@@ -1,6 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -317,6 +317,16 @@ export class FeedSchedulerService {
     };
     const found = await existingPlan();
     if (found) return found;
+
+    // No saved calculation means nothing can be generated: a skip, decided before the week is claimed so no
+    // PLAN_LOCK row (and no failure) is written for it. Same reason the generator gives.
+    const [calculation] = await this.db.select({ run_id: schema.feedForecastRun.run_id }).from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.tenant_id, tenantId), eq(schema.feedForecastRun.company_id, farm.companyId),
+      eq(schema.feedForecastRun.farm_id, farm.farmId), isNull(schema.feedForecastRun.archived_at),
+    )).limit(1);
+    if (!calculation) {
+      return { status: 'SKIPPED', reason: 'Save a feed forecast calculation before generating a feed plan.', planWeek, productionDate };
+    }
 
     // The check above and the generation below must not interleave with another run (a manual "Run now"
     // racing the scheduled one): generating takes a per farm-and-week claim, whoever is running, and a run
