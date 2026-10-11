@@ -1469,15 +1469,8 @@ export const translations = {
 
     // Company Settings → Feed Planning → Silo Feed Setup. Farms group their silo rows;
     // the editable planning values are properties of each physical silo.
-    fpTableLabel: "Silo Feed Setup by farm and silo",
     fpLoading: "Loading farms…",
-    fpLoadFailed: "The farms could not be read.",
-    fpRetry: "Try again",
     fpNoFarms: "No farms to show.",
-    fpColFarm: "Farm",
-    fpUnitKg: "kg",
-    fpSaveAction: "Save",
-    fpSaved: "Saved",
     fpSaveFailed: "The change could not be saved.",
 
     // Feed Planning Settings on the same screen (3 Oct ruling): company values, and a farm's override of them.
@@ -1505,25 +1498,6 @@ export const translations = {
     fsetOverridesLoadFailed: "Farm feed planning overrides could not be loaded.",
 
     // D41 — each farm's physical silos under Silo Feed Setup.
-    fpSiloSection: "Silos of {{farm}}",
-    fpSiloHeading: "{{farm}} — silos",
-    fpSiloTableLabel: "Silos of {{farm}}",
-    fpNoSilos: "{{farm}} has no silo yet.",
-    fpSiloColCode: "Silo Code",
-    fpSiloColName: "Name",
-    fpSiloColSheds: "Linked Shed(s)",
-    fpSiloColFeedType: "Feed Type",
-    fpSiloColFeedItemCode: "Feed Item Code",
-    fpSiloColFeedItemName: "Feed Item Name",
-    fpSiloColCapacity: "Capacity",
-    fpSiloLowCol: "Below Feed Level",
-    fpSiloHighCol: "Above Threshold",
-    fpSiloColStatus: "Status",
-    fpSiloFeedType: "Feed type for {{silo}}",
-    fpSiloLow: "Below feed level in kilograms for {{silo}}",
-    fpSiloHigh: "Above threshold in kilograms for {{silo}}",
-    fpSiloSave: "Save silo feed setup for {{silo}}",
-    fpSiloEmpty: "Empty",
     rqColLine: "Line",
     rqColDestination: "Silo / store",
     rqColItem: "Feed",

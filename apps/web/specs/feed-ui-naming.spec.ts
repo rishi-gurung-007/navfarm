@@ -4,17 +4,6 @@ import { translations } from "@/utils/translations";
 describe("feed forecasting terminology", () => {
   it("uses clear business names for planning and forecast dates", () => {
     expect(translations.en).toMatchObject({
-      fpTableLabel: "Silo Feed Setup by farm and silo",
-      fpSiloColCode: "Silo Code",
-      fpSiloColName: "Name",
-      fpSiloColSheds: "Linked Shed(s)",
-      fpSiloColFeedType: "Feed Type",
-      fpSiloColFeedItemCode: "Feed Item Code",
-      fpSiloColFeedItemName: "Feed Item Name",
-      fpSiloColCapacity: "Capacity",
-      fpSiloLowCol: "Below Feed Level",
-      fpSiloHighCol: "Above Threshold",
-      fpSiloColStatus: "Status",
       ffColBatchNo: "Batch No",
       ffColBatch: "Batch No.",
       ffColHouse: "Shed Code",

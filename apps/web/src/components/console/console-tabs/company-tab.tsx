@@ -21,7 +21,6 @@ import { Dialog } from "../../ui/dialog";
 import { useLanguage } from "@/hooks/useLanguage";
 import { API_ORIGIN } from "@/lib/api-client";
 import { FeedFarmOverrides } from "@/components/console/company/feed-farm-overrides";
-import { FeedPlanningPanel } from "@/components/console/inventory/feed-planning-panel";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -1433,7 +1432,6 @@ export default function CompanyTab({
                           <Button type="submit" disabled={saving} className="text-xs"><Save className="w-4 h-4" /> {saving ? t("saving") : t("saveChanges")}</Button>
                         </div>
                       </form>
-                      <FeedPlanningPanel companyId={targetCompany.company_id} />
                       </div>
                     )
                   )}

@@ -62,8 +62,6 @@ it('loads and saves company feed settings without inserting a client schedule in
   expect((screen.getByLabelText('ctFeedSubmissionTime') as HTMLInputElement).value).toBe('');
   expect(screen.getByLabelText('ctFeedTruckTargetKg').getAttribute('min')).toBe('0.01');
   expect(screen.getByLabelText('ctFeedBulkMultipleKg').getAttribute('min')).toBe('0.01');
-  expect(await screen.findByRole('table', { name: 'fpTableLabel' })).toBeTruthy();
-  expect(get).toHaveBeenCalledWith('/feed-forecast/farm-settings?companyId=co-1');
   fireEvent.change(screen.getByLabelText('ctFeedSubmissionTime'), { target: { value: '12:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
   await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({

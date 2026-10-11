@@ -83,26 +83,3 @@ export class QueryMillCompareDto {
   @IsIn(['DAY', 'WEEK'])
   period?: 'DAY' | 'WEEK';
 }
-
-/**
- * D41, narrowed by Task 4 (3 Oct ruling): a silo's own feed levels, edited
- * from Settings → Inventory Setup → Feed Planning. Only these two now — the
- * forecast does not read silo_reorder_days (engine.ts, Task 3); the column
- * stays on location_master, and Location Master's own generic form still
- * edits it (spec R6). The same bounds the Location form uses, and
- * feed-forecast.service.ts re-checks the level pair against the silo's
- * capacity with the silo form's own rule.
- */
-export class UpdateSiloPlanningDto {
-  @ApiProperty({ description: 'Low feed level in KG — the level a low-feed alert fires at.', required: false, nullable: true })
-  @IsOptional() @IsNumber() @Min(0)
-  low_level_kg?: number | null;
-
-  @ApiProperty({ description: 'High feed level in KG — the over-stock notice level.', required: false, nullable: true })
-  @IsOptional() @IsNumber() @Min(0)
-  high_level_kg?: number | null;
-
-  @ApiProperty({ description: 'Feed Type — BULK or BAGGED. Drives rounding and truck type (Requisition and Loading Sheet row 15); stored as feed_in_bags.', required: false, enum: ['BULK', 'BAGGED'] })
-  @IsOptional() @IsIn(['BULK', 'BAGGED'], { message: 'Feed Type must be BULK or BAGGED.' })
-  feedType?: 'BULK' | 'BAGGED';
-}

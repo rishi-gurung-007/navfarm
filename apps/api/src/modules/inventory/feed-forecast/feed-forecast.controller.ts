@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryMillCompareDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryMillCompareDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -124,40 +124,18 @@ export class FeedForecastController {
   }
 
   /**
-   * Farms with their feed-planning override values and silos, for Company
+   * Farms with their feed-planning override values, for Company
    * Settings → Feed Planning. Read under the report's grant, like 'farms'
    * above. The override values are written through PUT /feed-settings/farm
    * (Task 8: they moved off location_master onto feed_planning_setting).
    */
   @Get('farm-settings')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: "Each farm this caller may open, with its feed planning override values and silos" })
+  @ApiOperation({ summary: "Each farm this caller may open, with its feed planning override values" })
   async farmSettings(@Query('companyId') companyId: string | undefined, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType, companyId);
     return { success: true, message: 'Feed planning settings retrieved successfully.', data };
-  }
-
-  /**
-   * D41: a silo's levels and feed type, from Feed Planning
-   * (low_level_kg, high_level_kg, feedType — UpdateSiloPlanningDto rejects
-   * silo_reorder_days; M1, final whole-branch review). Written under the
-   * location master's own edit right, like the farm settings above — the row
-   * being changed is a silo's master row — and never through the generic
-   * PUT /location, which demands the whole silo form.
-   */
-  @Put('farm-settings/:farmId/silos/:siloId')
-  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
-  @ApiOperation({ summary: "One silo's feed levels and feed type; only those three columns are written (D41)" })
-  async updateSiloSettings(
-    @Param('farmId', ParseUUIDPipe) farmId: string,
-    @Param('siloId', ParseUUIDPipe) siloId: string,
-    @Body() dto: UpdateSiloPlanningDto,
-    @Req() req: any,
-  ) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.updateSiloSettings(farmId, siloId, dto, tenantId, req.user);
-    return { success: true, message: 'Silo feed planning updated.', data };
   }
 
   // Silo dashboard (TDD Engine §4, Master Setup §1): read under the forecast's own grant and farm scope.
