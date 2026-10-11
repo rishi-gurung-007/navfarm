@@ -18,7 +18,7 @@ export const normalizeFeedRecipientRole = (role: string): string =>
   role === 'HEAD_OF_FARM' ? 'OPERATIONAL_ADMIN' : role;
 
 /**
- * The five rules the feed workbook itself seeds per company (0118's own
+ * The rules the feed workbook itself seeds (first five) per company (0118's own
  * INSERT, verbatim): FEED-BELOW-L1 (§4 column F, CRITICAL_FIRST_PRIORITY,
  * escalating after 4h to HEAD_OF_FARM), FEED-ABOVE (checkpoint 13, INFO),
  * DIET-CHANGE (checkpoint 30, 3 days, WARNING), REQ-REMINDER (Q6's Friday
@@ -37,6 +37,13 @@ const DEFAULT_RULES: Array<{
   { notification_code: 'REQ-REMINDER', notification_name: 'Requisition not yet approved', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 1, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'REQ-OVERDUE', notification_name: 'Requisition deadline reached', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['FARM_MANAGER', 'HEAD_OF_FARM'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'PLAN-AVAILABLE', notification_name: 'Feed plan available', event_type: 'PLAN_AVAILABLE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  // W4G1 (11 Oct). The days in threshold_value are the look-ahead window for the two evaluated events; the pushed ones ignore it.
+  { notification_code: 'MILL-DISPATCH', notification_name: 'Feed dispatched from the mill', event_type: 'MILL_DISPATCH', trigger_entity: 'LOADING_SHEET', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'MILL-ADJUSTED', notification_name: 'Mill approved a different quantity', event_type: 'MILL_ADJUSTED', trigger_entity: 'CONSOLIDATION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'RECEIPT-VARIANCE', notification_name: 'Feed receipt short of shipment', event_type: 'RECEIPT_VARIANCE', trigger_entity: 'RECEIPT', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['HEAD_OF_FARM', 'MILL_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'NO-NEXT-FEED-ROW', notification_name: 'No next feed row for a batch', event_type: 'NO_NEXT_FEED_ROW', trigger_entity: 'BATCH', threshold_reference: 'FIXED_VALUE', threshold_value: 7, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'NEXT-DIET-NO-SILO', notification_name: 'No silo for the next diet', event_type: 'NEXT_DIET_NO_SILO', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 7, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'CAPACITY-EXCEEDED', notification_name: 'Approved demand exceeds mill capacity', event_type: 'CAPACITY_EXCEEDED', trigger_entity: 'CONSOLIDATION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['MILL_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
 ];
 
 /**

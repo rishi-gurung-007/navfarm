@@ -11,7 +11,7 @@ describe('alertRuleProblems — Master Setup §4', () => {
     expect(alertRuleProblems(lowRule)).toEqual([]);
   });
   it('refuses an event Plan B does not evaluate yet', () => {
-    expect(alertRuleProblems({ ...lowRule, event_type: 'MILL_DISPATCH' })).toContain('Event type MILL_DISPATCH is not evaluated yet.');
+    expect(alertRuleProblems({ ...lowRule, event_type: 'TRUCK_LATE' })).toContain('Event type TRUCK_LATE is not evaluated yet.');
   });
   it('ties the trigger entity to the event', () => {
     expect(alertRuleProblems({ ...lowRule, trigger_entity: 'REQUISITION' })).toContain('FEED_BELOW_L1 is triggered by SILO, not REQUISITION.');

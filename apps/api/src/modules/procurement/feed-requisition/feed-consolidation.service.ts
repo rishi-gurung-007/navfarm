@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -11,19 +11,56 @@ import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dt
 import { activeBinAssignments } from './feed-bin-assignments.query';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 import { FeedLoadingService, transfersByRequisitionLine } from './feed-loading.service';
-import { MillCapacityService } from '../../inventory/feed-forecast/mill-capacity.service';
+import { MillCapacityService, type CapacityObserver } from '../../inventory/feed-forecast/mill-capacity.service';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import type { DietCapacity } from '../../inventory/feed-forecast/mill-capacity.rules';
 
 type User = { userId?: string; userType?: string };
 
 @Injectable()
 export class FeedConsolidationService {
+  private readonly logger = new Logger(FeedConsolidationService.name);
   constructor(
     private readonly cls: ClsService,
     private readonly forecast: FeedForecastService,
     private readonly loading: FeedLoadingService,
     @Optional() private readonly millCapacity?: MillCapacityService,
+    @Optional() private readonly feedAlerts?: FeedAlertService,
   ) {}
+
+  /**
+   * W4G1 (checkpoint 34): CAPACITY_EXCEEDED follows the capacity check — raised, for each farm asking for the diet on
+   * that day, when approved demand exceeds the Mill Capacity Available, and resolved where the same check now passes.
+   * Alerts never fail the consolidation; the check itself still refuses as before.
+   */
+  /** The trailing arguments of the capacity check: nothing extra when no alerts are wired, so the call is unchanged. */
+  private observerArgs(exclude: string | undefined, observer: CapacityObserver | undefined): [string?, CapacityObserver?] {
+    return observer ? [exclude, observer] : exclude === undefined ? [] : [exclude];
+  }
+
+  private capacityObserver(tenantId: string, companyId: string, lines: Array<{ farmId: string; itemId: string; date: string }>): CapacityObserver | undefined {
+    const alerts = this.feedAlerts;
+    if (!alerts) return undefined;
+    return async ({ checked, breaches }) => {
+      try {
+        const breached = new Set(breaches.map((b) => `${b.itemId}|${b.date}`));
+        for (const b of breaches) {
+          const farms = [...new Set(lines.filter((l) => l.itemId === b.itemId && l.date === b.date).map((l) => l.farmId))];
+          for (const farmId of farms) {
+            const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+            await alerts.raiseEvent({ farmId, companyId, tenantId }, {
+              eventType: 'CAPACITY_EXCEEDED', subjectType: 'DIET_DATE', subjectId: b.itemId, dedupSuffix: `${b.itemId}|${b.date}`, itemId: b.itemId, observedValue: b.demandKg,
+              title: `Mill capacity exceeded: ${b.itemCode} on ${b.date}`,
+              message: `Approved demand for ${b.itemCode} on ${b.date} is ${kg(b.demandKg)} KG, above the ${kg(b.availableKg)} KG the mill can produce. Reduce Mill Approved Qty KG.`,
+            });
+          }
+        }
+        await alerts.resolveEvent({ companyId, tenantId }, 'CAPACITY_EXCEEDED', checked.map((c) => `${c.itemId}|${c.date}`).filter((k) => !breached.has(k)));
+      } catch (error) {
+        this.logger.warn(`CAPACITY_EXCEEDED alerts not updated: ${(error as Error).message}`);
+      }
+    };
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -172,7 +209,7 @@ export class FeedConsolidationService {
       await this.millCapacity?.assertConsolidationWithinCapacity(tenantId, selectedCompanies[0]!, selected.map((line) => ({
         productionDate: this.productionDateOf(line), itemId: line.item_id!, itemCode: line.item_code,
         millApprovedKg: edits.get(line.line_id)!.millApprovedQtyKg ?? requested.get(line.line_id)!,
-      })));
+      })), ...this.observerArgs(undefined, this.capacityObserver(tenantId, selectedCompanies[0]!, selected.map((line) => ({ farmId: line.farm_id!, itemId: line.item_id!, date: this.productionDateOf(line) })))));
     }
     const productionDate = selected.map((line) => line.production_date || line.proposed_delivery_date).find(Boolean) || new Date().toISOString().slice(0, 10);
     const productionWeek = isoProductionWeek(productionDate);
@@ -312,7 +349,7 @@ export class FeedConsolidationService {
       // in-house push, so the sheet is checked again against the mill as it
       // stands now (its setup may have changed since the sheet was created).
       const lines = await this.db.select({
-        item_id: schema.feedConsolidationLine.item_id, item_code: schema.itemMaster.item_code,
+        item_id: schema.feedConsolidationLine.item_id, item_code: schema.itemMaster.item_code, farm_id: schema.feedConsolidationLine.farm_id,
         production_date: schema.feedConsolidationLine.production_date, requested_delivery_date: schema.feedConsolidationLine.requested_delivery_date,
         mill_approved_qty_kg: schema.feedConsolidationLine.mill_approved_qty_kg,
       }).from(schema.feedConsolidationLine)
@@ -321,9 +358,41 @@ export class FeedConsolidationService {
       await this.millCapacity.assertConsolidationWithinCapacity(tenantId, row.company_id, lines.map((line) => ({
         productionDate: this.productionDateOf({ production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date }),
         itemId: line.item_id, itemCode: line.item_code, millApprovedKg: Number(line.mill_approved_qty_kg) || 0,
-      })), consolidationId);
+      })), ...this.observerArgs(consolidationId, this.capacityObserver(tenantId, row.company_id, lines.map((line) => ({
+        farmId: line.farm_id, itemId: line.item_id, date: this.productionDateOf({ production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date }),
+      })))));
     }
     await this.db.update(schema.feedConsolidation).set({ status: 'CONSOLIDATED' }).where(eq(schema.feedConsolidation.consolidation_id, consolidationId));
+    await this.notifyMillAdjusted(consolidationId, row.company_id, row.consolidation_no, tenantId);
     return this.findOne(consolidationId, tenantId, user);
+  }
+
+  /**
+   * W4G1 (Req. row 126): once the sheet is final, each farm whose lines the mill approved at a different KG than it
+   * asked for is told, with the lines and the reason given. A farm whose lines all match hears nothing.
+   */
+  private async notifyMillAdjusted(consolidationId: string, companyId: string, consolidationNo: string, tenantId: string) {
+    if (!this.feedAlerts) return;
+    try {
+      const L = schema.feedConsolidationLine;
+      const lines = await this.db.select({
+        farm_id: L.farm_id, item_code: schema.itemMaster.item_code, requested: L.requested_qty_kg, approved: L.mill_approved_qty_kg, reason: L.adjustment_reason,
+      }).from(L).innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, L.item_id)).where(eq(L.consolidation_id, consolidationId));
+      const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const byFarm = new Map<string, typeof lines>();
+      for (const line of lines) {
+        if (Math.abs(Number(line.approved) - Number(line.requested)) < 1e-6) continue;
+        byFarm.set(line.farm_id, [...(byFarm.get(line.farm_id) ?? []), line]);
+      }
+      for (const [farmId, changed] of byFarm) {
+        await this.feedAlerts.raiseEvent({ farmId, companyId, tenantId }, {
+          eventType: 'MILL_ADJUSTED', subjectType: 'CONSOLIDATION', subjectId: consolidationId, dedupSuffix: `${consolidationId}|${farmId}`,
+          title: `Mill changed your quantity: ${consolidationNo}`,
+          message: `${consolidationNo}: ${changed.map((l) => `${l.item_code} asked ${kg(Number(l.requested))} KG, mill approved ${kg(Number(l.approved))} KG${l.reason ? ` (${l.reason})` : ''}`).join('; ')}.`,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`MILL_ADJUSTED alerts not raised for ${consolidationNo}: ${(error as Error).message}`);
+    }
   }
 }

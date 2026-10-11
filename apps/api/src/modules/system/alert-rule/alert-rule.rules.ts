@@ -4,17 +4,31 @@
  * one list of events and what each may reference.
  */
 /** Row 45. PLAN_AVAILABLE is pushed by the feed scheduler when it generates the tentative Feed Plan (checkpoint 36). */
-export const EVENT_TYPES = ['FEED_BELOW_L1', 'FEED_ABOVE', 'DIET_CHANGE', 'REQ_DEADLINE', 'PLAN_AVAILABLE'] as const;
+/**
+ * W4G1: MILL_DISPATCH (Req. rows 74–76), MILL_ADJUSTED (row 126) and RECEIPT_VARIANCE (checkpoint 26) are pushed by the
+ * loading, consolidation and receipt postings; NO_NEXT_FEED_ROW (checkpoint 8) and NEXT_DIET_NO_SILO (checkpoint 9) are
+ * evaluated from the forecast; CAPACITY_EXCEEDED (checkpoint 34) is pushed by the consolidation capacity check.
+ */
+export const EVENT_TYPES = [
+  'FEED_BELOW_L1', 'FEED_ABOVE', 'DIET_CHANGE', 'REQ_DEADLINE', 'PLAN_AVAILABLE',
+  'MILL_DISPATCH', 'MILL_ADJUSTED', 'RECEIPT_VARIANCE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO', 'CAPACITY_EXCEEDED',
+] as const;
 export type AlertEventType = (typeof EVENT_TYPES)[number];
 
 /** §4 row 46: "SILO or REQUISITION or FEED_PLAN or STOCK_TAKE". */
-export const TRIGGER_ENTITIES = ['SILO', 'REQUISITION', 'FEED_PLAN', 'STOCK_TAKE'] as const;
+export const TRIGGER_ENTITIES = ['SILO', 'REQUISITION', 'FEED_PLAN', 'STOCK_TAKE', 'LOADING_SHEET', 'CONSOLIDATION', 'RECEIPT', 'BATCH'] as const;
 export const TRIGGER_FOR_EVENT: Record<AlertEventType, string> = {
   FEED_BELOW_L1: 'SILO',
   FEED_ABOVE: 'SILO',
   DIET_CHANGE: 'FEED_PLAN',
   REQ_DEADLINE: 'REQUISITION',
   PLAN_AVAILABLE: 'FEED_PLAN',
+  MILL_DISPATCH: 'LOADING_SHEET',
+  MILL_ADJUSTED: 'CONSOLIDATION',
+  RECEIPT_VARIANCE: 'RECEIPT',
+  NO_NEXT_FEED_ROW: 'BATCH',
+  NEXT_DIET_NO_SILO: 'FEED_PLAN',
+  CAPACITY_EXCEEDED: 'CONSOLIDATION',
 };
 
 /** §4 row 48. SILO_BELOW reads location_master.low_level_kg, SILO_ABOVE high_level_kg. */
@@ -25,6 +39,12 @@ const REFERENCES_FOR_EVENT: Record<AlertEventType, string[]> = {
   DIET_CHANGE: ['FIXED_VALUE'],
   REQ_DEADLINE: ['FIXED_VALUE'],
   PLAN_AVAILABLE: ['FIXED_VALUE'],
+  MILL_DISPATCH: ['FIXED_VALUE'],
+  MILL_ADJUSTED: ['FIXED_VALUE'],
+  RECEIPT_VARIANCE: ['FIXED_VALUE'],
+  NO_NEXT_FEED_ROW: ['FIXED_VALUE'],
+  NEXT_DIET_NO_SILO: ['FIXED_VALUE'],
+  CAPACITY_EXCEEDED: ['FIXED_VALUE'],
 };
 
 /** §4 row 49. */

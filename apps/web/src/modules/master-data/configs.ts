@@ -1471,12 +1471,22 @@ const ALERT_EVENT_TYPES = [
   { value: "DIET_CHANGE", label: "Diet change coming" },
   { value: "REQ_DEADLINE", label: "Requisition deadline" },
   { value: "PLAN_AVAILABLE", label: "Feed plan available" },
+  { value: "MILL_DISPATCH", label: "Feed dispatched from the mill" },
+  { value: "MILL_ADJUSTED", label: "Mill approved a different quantity" },
+  { value: "RECEIPT_VARIANCE", label: "Feed receipt short of shipment" },
+  { value: "NO_NEXT_FEED_ROW", label: "No next feed row for a batch" },
+  { value: "NEXT_DIET_NO_SILO", label: "No silo for the next diet" },
+  { value: "CAPACITY_EXCEEDED", label: "Mill capacity exceeded" },
 ];
 const ALERT_TRIGGER_ENTITIES = [
   { value: "SILO", label: "Silo" },
   { value: "REQUISITION", label: "Requisition" },
   { value: "FEED_PLAN", label: "Feed plan" },
   { value: "STOCK_TAKE", label: "Stock take" },
+  { value: "LOADING_SHEET", label: "Loading sheet" },
+  { value: "CONSOLIDATION", label: "Consolidation" },
+  { value: "RECEIPT", label: "Feed receipt" },
+  { value: "BATCH", label: "Batch" },
 ];
 const ALERT_THRESHOLD_REFERENCES = [
   { value: "SILO_BELOW", label: "Silo's low level" },
@@ -1519,7 +1529,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
       options: ALERT_TRIGGER_ENTITIES,
-      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE and PLAN_AVAILABLE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE, PLAN_AVAILABLE and NEXT_DIET_NO_SILO: FEED_PLAN. REQ_DEADLINE: REQUISITION. MILL_DISPATCH: LOADING_SHEET. MILL_ADJUSTED and CAPACITY_EXCEEDED: CONSOLIDATION. RECEIPT_VARIANCE: RECEIPT. NO_NEXT_FEED_ROW: BATCH."
     },
     {
       key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
@@ -1529,7 +1539,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
-      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; 0 for PLAN_AVAILABLE."
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; days ahead to look for NO_NEXT_FEED_ROW and NEXT_DIET_NO_SILO (default 7); 0 for the other events."
     },
     {
       key: "priority_level", label: "Priority Level", type: "select", required: true,

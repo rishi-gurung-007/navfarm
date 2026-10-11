@@ -32,6 +32,18 @@ describe('MillCapacityService', () => {
       expect(existing).toHaveBeenCalledWith('t-1', ['co-1'], ['2026-10-11'], 'cons-1');
     });
 
+    it('W4G1: reports every diet and day checked, and the breaches, to the observer before refusing', async () => {
+      const service = build();
+      jest.spyOn(service, 'consolidatedDemand').mockResolvedValue([{ productionDate: '2026-10-11', itemId: 'd1', millApprovedKg: 15_000 }]);
+      const seen: any[] = [];
+      await expect(service.assertConsolidationWithinCapacity('t-1', 'co-1', [
+        { productionDate: '2026-10-11', itemId: 'd2', itemCode: 'FEED-R2', millApprovedKg: 6_000 },
+        { productionDate: '2026-10-11', itemId: 'd1', itemCode: 'FEED-R1', millApprovedKg: 1_000 },
+      ], undefined, async (report) => { seen.push(report); })).rejects.toThrow(ConflictException);
+      expect(seen[0].checked).toEqual(expect.arrayContaining([{ date: '2026-10-11', itemId: 'd1' }, { date: '2026-10-11', itemId: 'd2' }]));
+      expect(seen[0].breaches).toEqual([{ date: '2026-10-11', itemId: 'd2', itemCode: 'FEED-R2', demandKg: 6_000, availableKg: 4_000 }]);
+    });
+
     it('does not block a diet with no BIN assignment that day; Release already requires one', async () => {
       const service = build();
       jest.spyOn(service, 'consolidatedDemand').mockResolvedValue([]);

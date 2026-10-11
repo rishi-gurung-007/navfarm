@@ -8,9 +8,10 @@ function serviceHarness() {
     postShipment: jest.fn().mockResolvedValue({ shipment_id: 'shipment-1' }),
     postReceipt: jest.fn().mockResolvedValue({ receipt_id: 'receipt-1' }),
   };
+  const feedAlerts = { raiseEventSafely: jest.fn().mockResolvedValue(undefined) };
   const service = new FeedRequisitionService(
     transactionCls(db), forecast as any, { registerDocumentHandler: jest.fn() } as any,
-    {} as any, {} as any, {} as any, {} as any, stockTransfers as any,
+    feedAlerts as any, {} as any, {} as any, {} as any, stockTransfers as any,
   );
   jest.spyOn(service as any, 'resolveOwnFarm').mockResolvedValue({ farmId: 'farm-1', companyId: 'co-1' });
   jest.spyOn(service as any, 'assertMayShip').mockResolvedValue(undefined);
@@ -22,7 +23,7 @@ function serviceHarness() {
       { transfer_line_id: 'tl-2', requisition_line_id: 'rl-2' },
     ],
   });
-  return { service, stockTransfers };
+  return { service, stockTransfers, feedAlerts };
 }
 
 describe('FeedRequisitionService transfer execution', () => {
@@ -77,6 +78,21 @@ describe('FeedRequisitionService transfer execution', () => {
       receipt_id: 'receipt-1', receipt_no: 'RC-2026-0007', transfer_id: 'tr-1', shipment_id: 'shipment-1',
       lines: [expect.objectContaining({ requisition_line_id: 'rl-1', variance_qty: 100, silo_balance_after: 7400 })],
     });
+  });
+
+  it('W4G1: a final receipt that leaves feed short raises RECEIPT_VARIANCE once; a full or interim one raises nothing', async () => {
+    const { service, stockTransfers, feedAlerts } = serviceHarness();
+    jest.spyOn(service as any, 'feedReceiptControls').mockResolvedValue({ bagSizeKg: 50, lines: new Map() });
+    const dto: any = { transfer_id: 'tr-1', shipment_id: 'shipment-1', posting_date: '2026-10-12', lines: [{ requisition_line_id: 'rl-1', quantity: 5900 }] };
+    stockTransfers.postReceipt.mockResolvedValueOnce({ receipt_id: 'receipt-1', receipt_no: 'RC-1', transfer_id: 'tr-1', lines: [{ line_id: 'tl-1', variance_qty: 100 }] });
+    await service.receipt('req-1', dto, 'tenant-1', { userId: 'u-2' });
+    expect(feedAlerts.raiseEventSafely).toHaveBeenCalledTimes(1);
+    expect(feedAlerts.raiseEventSafely.mock.calls[0][0]).toEqual({ farmId: 'farm-1', companyId: 'co-1', tenantId: 'tenant-1' });
+    expect(feedAlerts.raiseEventSafely.mock.calls[0][1]).toMatchObject({ eventType: 'RECEIPT_VARIANCE', subjectType: 'RECEIPT', subjectId: 'receipt-1', observedValue: 100 });
+    feedAlerts.raiseEventSafely.mockClear();
+    stockTransfers.postReceipt.mockResolvedValueOnce({ receipt_id: 'receipt-2', receipt_no: 'RC-2', transfer_id: 'tr-1', lines: [{ line_id: 'tl-1', variance_qty: 0 }, { line_id: 'tl-2', variance_qty: null }] });
+    await service.receipt('req-1', dto, 'tenant-1', { userId: 'u-2' });
+    expect(feedAlerts.raiseEventSafely).not.toHaveBeenCalled();
   });
 
   it('W2T: builds controls from the line feed type, the farm bag size and the loading sheet of this shipment', async () => {

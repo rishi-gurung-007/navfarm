@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
+import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { activeBinAssignments } from './feed-bin-assignments.query';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 import type { UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
@@ -17,7 +18,7 @@ type User = { userId?: string; userType?: string };
 
 @Injectable()
 export class FeedLoadingService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(private readonly cls: ClsService, @Optional() private readonly feedAlerts?: FeedAlertService) {}
 
   private get db(): MySql2Database<typeof schema> {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -130,7 +131,15 @@ export class FeedLoadingService {
       );
     }
     await this.db.update(schema.feedLoadingSheet).set({ status: 'DISPATCHED' }).where(eq(schema.feedLoadingSheet.loading_sheet_id, id));
-    return this.findOne(id, tenantId);
+    const dispatched = await this.findOne(id, tenantId);
+    // W4G1 (Req. rows 74–76): tell the destination farm what left the mill — diet, KG and compartment.
+    const kg = Number(dispatched.kg_loaded).toLocaleString('en-US', { maximumFractionDigits: 2 });
+    await this.feedAlerts?.raiseEventSafely({ farmId: sheet.farm_id, companyId: sheet.company_id, tenantId }, {
+      eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: id, itemId: sheet.item_id, observedValue: Number(dispatched.kg_loaded),
+      title: `Feed dispatched: ${sheet.loading_sheet_no}`,
+      message: `Loading sheet ${sheet.loading_sheet_no} has left the mill for ${dispatched.farm_code ?? 'your farm'}: diet ${dispatched.diet_no ?? dispatched.item_code ?? ''}${dispatched.item_name ? ` (${dispatched.item_name})` : ''}, ${kg} KG, compartment ${sheet.compartment_no}.`.replace(/\s+/g, ' '),
+    });
+    return dispatched;
   }
 
   async linkShipment(requisitionId: string, shipmentId: string, shipmentNo: string, tenantId: string) {

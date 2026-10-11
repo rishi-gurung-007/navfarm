@@ -87,6 +87,17 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     expect(eventField.options!.map((o) => o.label)).not.toContain('FEED_BELOW_L1');
   });
 
+  it('W4G1: offers the six new alert events and their trigger entities, as words', () => {
+    const config = getConfig('alert-rule')!;
+    const event = config.fields.find((f) => f.key === 'event_type')!;
+    const trigger = config.fields.find((f) => f.key === 'trigger_entity')!;
+    const values = event.options!.map((o) => o.value);
+    for (const e of ['MILL_DISPATCH', 'MILL_ADJUSTED', 'RECEIPT_VARIANCE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO', 'CAPACITY_EXCEEDED']) expect(values).toContain(e);
+    for (const t of ['LOADING_SHEET', 'CONSOLIDATION', 'RECEIPT', 'BATCH']) expect(trigger.options!.map((o) => o.value)).toContain(t);
+    expect(formatColumnValue('CAPACITY_EXCEEDED', config.columns!.find((c) => c.key === 'event_type')!)).toBe('Mill capacity exceeded');
+    expect(event.options!.every((o) => o.label !== o.value)).toBe(true);
+  });
+
   it('leaves every other column as it was', () => {
     expect(formatColumnValue('2026-09-26', { format: 'date' })).toBe('26/09/26');
     expect(formatColumnValue('X', undefined)).toBeUndefined();

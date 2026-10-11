@@ -25,6 +25,10 @@ import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/aler
 import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition.rules';
 
 export const SILO_EVENTS: readonly string[] = ['FEED_BELOW_L1', 'FEED_ABOVE'];
+/** W4G1: events read off the diet forecast; they sit out a pass whose forecast failed, with their open alerts. */
+export const FORECAST_EVENTS: readonly string[] = ['DIET_CHANGE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO'];
+/** Look-ahead, in days, when a NO_NEXT_FEED_ROW or NEXT_DIET_NO_SILO rule carries no value (checkpoints 8, 9). */
+export const DEFAULT_LOOKAHEAD_DAYS = 7;
 
 export interface AlertRuleFact {
   ruleId: string;
@@ -62,7 +66,7 @@ export interface ActiveAlertFact {
   alertId: string;
   ruleId: string;
   eventType: string;
-  subjectType: 'SILO' | 'BATCH' | 'REQUISITION' | 'FEED_PLAN';
+  subjectType: 'SILO' | 'BATCH' | 'REQUISITION' | 'FEED_PLAN' | 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE';
   /** The silo, batch or requisition the alert is about. Optional for older callers; without it a SILO alert cannot be told apart from a recovery. */
   subjectId?: string;
   dedupKey: string;
@@ -104,6 +108,15 @@ export interface AlertPlan {
   resolve: { alertId: string; reason: ResolveReason }[];
 }
 
+/** Checkpoint 8: a batch whose current lifecycle feed row ends with no next row (the engine's NO_FEED_ROW flag, with the real batch). */
+export interface FeedRowGapFact {
+  batchId: BatchPk;
+  batchNo: string;
+  stageCode: string;
+  /** The first day with no feed row. */
+  date: string;
+}
+
 export interface PlanAlertsInput {
   today: string;
   nowMs: number;
@@ -111,6 +124,10 @@ export interface PlanAlertsInput {
   rules: AlertRuleFact[];
   silos: SiloLevelFact[];
   dietChanges: DietChange[];
+  /** Checkpoint 8 facts, from the same forecast as dietChanges. */
+  feedRowGaps?: FeedRowGapFact[];
+  /** Checkpoint 9: `${shedCode}|${itemName}` of every shed with silos where no silo holds that item (the engine's NO_SILO_HOLDS_ITEM flags). */
+  noSiloHolds?: string[];
   requisitions: OpenRequisitionFact[];
   active: ActiveAlertFact[];
   levelsOnly: boolean;
@@ -123,6 +140,8 @@ const REASON_BY_EVENT: Record<string, ResolveReason> = {
   FEED_ABOVE: 'RECOVERED',
   DIET_CHANGE: 'PASSED',
   REQ_DEADLINE: 'CLOSED',
+  NO_NEXT_FEED_ROW: 'RECOVERED',
+  NEXT_DIET_NO_SILO: 'RECOVERED',
 };
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -173,6 +192,41 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
         rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.realBatchId, itemId: dc.toItemId,
         title: `Diet change in ${days(left)}: ${dc.batchNo}`,
         message: `${dc.batchNo} in ${dc.shedCode} changes from ${dc.fromItemName} to ${dc.toItemName} on ${dayShort(dc.changeDate)} (${whenDiet}). Next diet silo: ${silo}.`,
+        observedValue: left, thresholdValue: window,
+      });
+    }
+  } else if (rule.eventType === 'NO_NEXT_FEED_ROW') {
+    const window = rule.thresholdValue && rule.thresholdValue > 0 ? rule.thresholdValue : DEFAULT_LOOKAHEAD_DAYS;
+    // One alert per batch and stage, dated by the first day left without a row.
+    const first = new Map<string, FeedRowGapFact>();
+    for (const gap of input.feedRowGaps ?? []) {
+      const left = diffDaysIso(input.today, gap.date);
+      if (left < 0 || left > window) continue;
+      const key = `${gap.batchId}|${gap.stageCode}`;
+      const seen = first.get(key);
+      if (!seen || gap.date < seen.date) first.set(key, gap);
+    }
+    for (const [key, gap] of first) {
+      const left = diffDaysIso(input.today, gap.date);
+      out.push({
+        rule, dedupKey: `${rule.ruleId}|${key}`, subjectType: 'BATCH', subjectId: gap.batchId, itemId: null,
+        title: `No next feed row: ${gap.batchNo}`,
+        message: `${gap.batchNo} has no feed row from ${dayShort(gap.date)} (${left === 0 ? 'today' : `in ${days(left)}`}) in stage ${gap.stageCode}. Add the next feed row to the breed lifecycle.`,
+        observedValue: left, thresholdValue: window,
+      });
+    }
+  } else if (rule.eventType === 'NEXT_DIET_NO_SILO') {
+    const window = rule.thresholdValue && rule.thresholdValue > 0 ? rule.thresholdValue : DEFAULT_LOOKAHEAD_DAYS;
+    for (const dc of input.dietChanges) {
+      const left = diffDaysIso(input.today, dc.changeDate);
+      if (left < 0 || left > window) continue;
+      // NONE: nowhere holds it. STORE is only a gap in a shed that has silos but none holding the item.
+      const noSilo = dc.nextSourceType === 'NONE' || (dc.nextSourceType === 'STORE' && (input.noSiloHolds ?? []).includes(`${dc.shedCode}|${dc.toItemName}`));
+      if (!noSilo) continue;
+      out.push({
+        rule, dedupKey: `${rule.ruleId}|${dc.batchId}|${dc.toItemId}|${dc.changeDate}`, subjectType: 'BATCH', subjectId: dc.realBatchId, itemId: dc.toItemId,
+        title: `No silo for next diet: ${dc.batchNo}`,
+        message: `${dc.batchNo} in ${dc.shedCode} changes to ${dc.toItemName} on ${dayShort(dc.changeDate)} (${left === 0 ? 'today' : `in ${days(left)}`}), but no silo at ${dc.shedCode} holds that feed type.`,
         observedValue: left, thresholdValue: window,
       });
     }

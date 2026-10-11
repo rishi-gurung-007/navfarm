@@ -11,6 +11,12 @@ import {
 const DEAD_FEED_STATUSES = ['REJECTED', 'CANCELLED'];
 const num = (value: unknown): number | null => value === null || value === undefined || value === '' ? null : Number(value);
 
+export interface CapacityReport {
+  checked: Array<{ date: string; itemId: string }>;
+  breaches: Array<{ date: string; itemId: string; itemCode: string; demandKg: number; availableKg: number }>;
+}
+export type CapacityObserver = (report: CapacityReport) => Promise<void>;
+
 /**
  * Reads the masters the mill capacity rule needs — the MILL location's
  * capacity and the day's BIN Diet Assignments — and the approved feed demand,
@@ -152,7 +158,7 @@ export class MillCapacityService {
    * mill-approved KG on consolidation sheets for that production date plus
    * `proposed`. Refuses with the diet, date and both figures.
    */
-  async assertConsolidationWithinCapacity(tenantId: string, companyId: string, proposed: Array<{ productionDate: string; itemId: string; itemCode: string; millApprovedKg: number }>, excludeConsolidationId?: string) {
+  async assertConsolidationWithinCapacity(tenantId: string, companyId: string, proposed: Array<{ productionDate: string; itemId: string; itemCode: string; millApprovedKg: number }>, excludeConsolidationId?: string, observer?: CapacityObserver) {
     const dates = [...new Set(proposed.map((line) => line.productionDate).filter(Boolean))];
     if (!dates.length) return;
     const [mills, { byDate }, existing] = await Promise.all([
@@ -161,6 +167,8 @@ export class MillCapacityService {
       this.consolidatedDemand(tenantId, [companyId], dates, excludeConsolidationId),
     ]);
     const problems: string[] = [];
+    // W4G1: what the caller needs to raise or resolve CAPACITY_EXCEEDED alerts — every diet and date looked at, and which ones breached.
+    const report: CapacityReport = { checked: [], breaches: [] };
     for (const date of dates) {
       const own = proposed.filter((line) => line.productionDate === date);
       const allocation = allocateMillCapacity({
@@ -170,11 +178,14 @@ export class MillCapacityService {
           ...own.map((line) => ({ itemId: line.itemId, demandKg: line.millApprovedKg })),
         ],
       });
+      for (const itemId of new Set(own.map((line) => line.itemId))) report.checked.push({ date, itemId });
       for (const breach of capacityBreaches(allocation, own.map((line) => line.itemId))) {
         const code = own.find((line) => line.itemId === breach.itemId)?.itemCode ?? breach.itemId;
+        report.breaches.push({ date, itemId: breach.itemId, itemCode: code, demandKg: Number(breach.demandKg), availableKg: Number(breach.availableKg) });
         problems.push(`${code} on ${date}: ${breach.demandKg.toLocaleString('en-US')} KG mill approved exceeds ${Number(breach.availableKg).toLocaleString('en-US')} KG Mill Capacity Available`);
       }
     }
+    await observer?.(report);
     if (problems.length) {
       throw new ConflictException(`Mill capacity exceeded — ${problems.join('; ')}. Reduce Mill Approved Qty KG with an adjustment reason before consolidating.`);
     }
