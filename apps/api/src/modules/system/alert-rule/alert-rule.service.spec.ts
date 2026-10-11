@@ -117,9 +117,9 @@ describe('AlertRuleService', () => {
   // atomic, so a concurrent duplicate insert must be a no-op rather than an
   // unhandled ER_DUP_ENTRY.
   describe('ensureDefaultRules — idempotent under concurrency', () => {
-    it('inserts nothing when all five default rules are already present', async () => {
+    it('inserts nothing when all six default rules are already present', async () => {
       selectQueue.push([
-        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' },
+        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' }, { code: 'PLAN-AVAILABLE' },
       ]);
       await service.ensureDefaultRules('co-1', 'tenant-1');
       expect(db.insert).not.toHaveBeenCalled();
@@ -132,8 +132,8 @@ describe('AlertRuleService', () => {
       (db.insert as jest.Mock).mockReturnValueOnce({ values });
       await service.ensureDefaultRules('co-1', 'tenant-1');
       const inserted = values.mock.calls[0][0];
-      expect(inserted).toHaveLength(3);
-      expect(inserted.map((row: any) => row.notification_code).sort()).toEqual(['DIET-CHANGE', 'REQ-OVERDUE', 'REQ-REMINDER']);
+      expect(inserted).toHaveLength(4);
+      expect(inserted.map((row: any) => row.notification_code).sort()).toEqual(['DIET-CHANGE', 'PLAN-AVAILABLE', 'REQ-OVERDUE', 'REQ-REMINDER']);
       expect(onDuplicateKeyUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.any(Object) }));
     });
 
@@ -142,12 +142,12 @@ describe('AlertRuleService', () => {
       const valuesA = jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) });
       (db.insert as jest.Mock).mockReturnValueOnce({ values: valuesA });
       await service.ensureDefaultRules('co-A', 'tenant-1');
-      expect(valuesA.mock.calls[0][0]).toHaveLength(5);
+      expect(valuesA.mock.calls[0][0]).toHaveLength(6);
       expect(valuesA.mock.calls[0][0].every((row: any) => row.company_id === 'co-A')).toBe(true);
 
       selectQueue.push([
-        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' },
-      ]); // company B already has all five
+        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' }, { code: 'PLAN-AVAILABLE' },
+      ]); // company B already has all six
       await service.ensureDefaultRules('co-B', 'tenant-1');
       expect(db.insert).toHaveBeenCalledTimes(1); // only company A's insert ever happened
     });

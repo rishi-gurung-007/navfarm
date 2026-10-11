@@ -36,6 +36,7 @@ const DEFAULT_RULES: Array<{
   { notification_code: 'DIET-CHANGE', notification_name: 'Diet change within 3 days', event_type: 'DIET_CHANGE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 3, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'REQ-REMINDER', notification_name: 'Requisition not yet approved', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 1, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'REQ-OVERDUE', notification_name: 'Requisition deadline reached', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['FARM_MANAGER', 'HEAD_OF_FARM'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'PLAN-AVAILABLE', notification_name: 'Feed plan available', event_type: 'PLAN_AVAILABLE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
 ];
 
 /**

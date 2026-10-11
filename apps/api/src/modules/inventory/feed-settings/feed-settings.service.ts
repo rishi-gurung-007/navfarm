@@ -125,6 +125,8 @@ export class FeedSettingsService {
       reminder_time: dto.reminderTime === undefined ? current.reminderTime : dto.reminderTime,
       physical_count_weekday: dto.physicalCountWeekday === undefined ? current.physicalCountWeekday : dto.physicalCountWeekday,
       physical_count_time: dto.physicalCountTime === undefined ? current.physicalCountTime : dto.physicalCountTime,
+      tentative_plan_weekday: dto.tentativePlanWeekday === undefined ? current.tentativePlanWeekday : dto.tentativePlanWeekday,
+      tentative_plan_time: dto.tentativePlanTime === undefined ? current.tentativePlanTime : dto.tentativePlanTime,
       truck_target_kg: dto.truckTargetKg === undefined ? current.truckTargetKg : dto.truckTargetKg,
       bulk_multiple_kg: dto.bulkMultipleKg === undefined ? current.bulkMultipleKg : dto.bulkMultipleKg,
       safety_stock_kg: dto.safetyStockKg ?? current.safetyStockKg,

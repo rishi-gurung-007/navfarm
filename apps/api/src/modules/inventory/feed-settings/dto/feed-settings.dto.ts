@@ -44,6 +44,12 @@ export class UpdateCompanyFeedSettingsDto {
   @ApiProperty({ required: false, nullable: true }) @IsOptional() @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   physicalCountTime?: string | null;
 
+  @ApiProperty({ required: false, nullable: true, description: 'Engine row 69: weekday of the scheduled tentative Feed Plan run' }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(6)
+  tentativePlanWeekday?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Engine row 69: local time of the scheduled tentative Feed Plan run' }) @IsOptional() @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  tentativePlanTime?: string | null;
+
   @ApiProperty({ required: false, nullable: true }) @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01)
   truckTargetKg?: number | null;
 

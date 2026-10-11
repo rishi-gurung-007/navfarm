@@ -231,3 +231,38 @@ describe('planAlerts — levelsOnly (evaluation after a stock posting)', () => {
     expect(plan.resolve).toEqual([]);
   });
 });
+
+describe('planAlerts — pushed events (brief B)', () => {
+  const planRule: AlertRuleFact = { ...aboveRule, ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0 };
+  const open = active({ alertId: 'p1', ruleId: 'rule-plan', eventType: 'PLAN_AVAILABLE', subjectType: 'FEED_PLAN', subjectId: 'plan-1', dedupKey: 'rule-plan|plan-1', observedValue: null });
+
+  it('keeps an open PLAN_AVAILABLE alert while its rule is on and its plan is still the live one', () => {
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open] }))).toEqual({ raise: [], renotify: [], escalate: [], resolve: [] });
+  });
+
+  it('resolves it RULE_OFF when its rule is turned off or deleted', () => {
+    expect(planAlerts(base({ rules: [lowRule, { ...planRule, isActive: false }], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
+  });
+
+  it('resolves it when its plan became approved or was superseded, and not after a levels-only pass', () => {
+    const closedPlans = { 'plan-1': 'SUPERSEDED' as const };
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans })).resolve).toEqual([{ alertId: 'p1', reason: 'SUPERSEDED' }]);
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans: { 'plan-1': 'APPROVED' } })).resolve).toEqual([{ alertId: 'p1', reason: 'APPROVED' }]);
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans, levelsOnly: true })).resolve).toEqual([]);
+  });
+
+  it('leaves an alert of an unknown event type alone, as before', () => {
+    const other = active({ alertId: 'x1', ruleId: 'gone', eventType: 'SOMETHING_NEW', dedupKey: 'gone|1' });
+    expect(planAlerts(base({ rules: [lowRule], active: [other] })).resolve).toEqual([]);
+  });
+});
+
+describe('planAlerts — a switched-off rule (RULE_OFF)', () => {
+  it('resolves the open alerts of an inactive rule of any event type as RULE_OFF, and keeps those of an active one', () => {
+    const offSilo: AlertRuleFact = { ...aboveRule, isActive: false };
+    const open = active({ alertId: 'o1', ruleId: aboveRule.ruleId, eventType: 'FEED_ABOVE', dedupKey: `${aboveRule.ruleId}|s1` });
+    expect(planAlerts(base({ rules: [lowRule, offSilo], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
+  });
+});

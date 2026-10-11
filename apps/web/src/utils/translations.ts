@@ -788,6 +788,10 @@ export const translations = {
     ctFeedReminderTime: "Critical reminder time",
     ctFeedPhysicalCountWeekday: "Physical-count weekday",
     ctFeedPhysicalCountTime: "Physical-count time",
+    // SCHED (11 Oct)
+    ctFeedTentativePlanWeekday: "Tentative plan run weekday",
+    ctFeedTentativePlanTime: "Tentative plan run time",
+    ctFeedTentativePlanHint: "The scheduler generates each farm's tentative Feed Plan at this local time (company time zone). Leave blank to not schedule it. The Friday reminder and Saturday cutoff use the reminder and submission times above.",
     ctFeedCapacityWarningPct: "Capacity warning (%)",
     ctFeedBagTolerancePct: "Bag tolerance (%)",
     ctFeedFinanceVariancePct: "Finance variance (%)",

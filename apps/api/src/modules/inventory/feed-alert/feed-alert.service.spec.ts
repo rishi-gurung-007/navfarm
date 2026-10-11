@@ -404,3 +404,82 @@ describe('FeedAlertService — DIET_CHANGE for a stage group writes the real bat
     expect(inserted[0].subject_id.length).toBeLessThanOrEqual(36);
   });
 });
+
+describe('FeedAlertService.raisePlanAvailable — PLAN_AVAILABLE (checkpoint 36)', () => {
+  const rule = { ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0,
+    priorityLevel: 'INFO', recipientRoles: ['FARM_MANAGER'], frequency: 'ONCE', escalationAfterHours: null, escalationRole: null, farmId: null, isActive: true };
+  const plan = { planId: 'plan-1', planCode: 'FP-GRS-0927-V1', planType: 'TENTATIVE', productionDate: '2026-09-27' };
+  const build = (rules: any[]) => {
+    const inserted: any[] = [];
+    const updates: any[] = [];
+    const db: any = {
+      insert: jest.fn(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) })),
+      update: jest.fn(() => ({ set: jest.fn((v: any) => ({ where: jest.fn(async () => { updates.push(v); }) })) })),
+    };
+    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+    jest.spyOn(service as any, 'loadRules').mockResolvedValue(rules);
+    return { service, inserted, updates, db };
+  };
+
+  it('raises one in-app notice per active rule, about the plan, to the rule\'s recipient roles', async () => {
+    const { service, inserted } = build([rule, { ...rule, ruleId: 'rule-off', isActive: false }, { ...rule, ruleId: 'rule-other', eventType: 'DIET_CHANGE' }]);
+    expect(await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan, Date.UTC(2026, 8, 23, 7))).toEqual({ rules: 1, raised: 1 });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({
+      rule_id: 'rule-plan', event_type: 'PLAN_AVAILABLE', subject_type: 'FEED_PLAN', subject_id: 'plan-1', dedup_key: 'rule-plan|plan-1', active_key: 'rule-plan|plan-1',
+      status: 'ACTIVE', recipient_roles: ['FARM_MANAGER'], title: 'Feed plan available: FP-GRS-0927-V1', raised_at: '2026-09-23 07:00:00',
+    });
+    expect(inserted[0].message).toContain('Tentative Feed Plan FP-GRS-0927-V1');
+  });
+
+  it('is idempotent: the same plan raised again (duplicate active_key) raises nothing and does not fail', async () => {
+    const { service, db } = build([rule]);
+    db.insert.mockImplementationOnce(() => ({ values: jest.fn(async () => { throw Object.assign(new Error('Failed query'), { cause: { code: 'ER_DUP_ENTRY' } }); }) }));
+    expect(await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan)).toEqual({ rules: 1, raised: 0 });
+  });
+
+  it('supersedes the previous plan\'s open notice, and raises nothing for a company with no PLAN_AVAILABLE rule', async () => {
+    const withRule = build([rule]);
+    await withRule.service.raisePlanAvailable('farm-1', 'co-1', 't1', plan);
+    expect(withRule.updates).toEqual([expect.objectContaining({ status: 'RESOLVED', active_key: null, resolved_reason: 'SUPERSEDED' })]);
+    const none = build([]);
+    expect(await none.service.raisePlanAvailable('farm-1', 'co-1', 't1', plan)).toEqual({ rules: 0, raised: 0 });
+    expect(none.inserted).toEqual([]);
+  });
+});
+
+describe('FeedAlertService.closedPlans — which PLAN_AVAILABLE notices are over', () => {
+  const open = (planId: string) => ({ alertId: `a-${planId}`, eventType: 'PLAN_AVAILABLE', subjectId: planId } as any);
+  const build = (subjects: any[], weeks: any[]) => {
+    let call = 0;
+    const { db } = selectDb(() => (call++ === 0 ? subjects : weeks));
+    return new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+  };
+
+  it('closes a plan that was approved (ACTUAL) or followed by a later version, and keeps the live one', async () => {
+    const service = build(
+      [{ plan_id: 'p-old', plan_week: '202639', version: 1, plan_type: 'TENTATIVE' }, { plan_id: 'p-act', plan_week: '202640', version: 1, plan_type: 'ACTUAL' },
+        { plan_id: 'p-live', plan_week: '202641', version: 2, plan_type: 'TENTATIVE' }],
+      [{ plan_week: '202639', version: 1 }, { plan_week: '202639', version: 2 }, { plan_week: '202640', version: 1 }, { plan_week: '202641', version: 2 }],
+    );
+    expect(await (service as any).closedPlans([open('p-old'), open('p-act'), open('p-live')], 'farm-1', 't1'))
+      .toEqual({ 'p-old': 'SUPERSEDED', 'p-act': 'APPROVED' });
+  });
+
+  it('reads nothing when no PLAN_AVAILABLE notice is open', async () => {
+    const service = build([], []);
+    expect(await (service as any).closedPlans([{ alertId: 'x', eventType: 'FEED_ABOVE', subjectId: 's' } as any], 'farm-1', 't1')).toEqual({});
+  });
+});
+
+describe('FeedAlertService.loadRules — soft-deleted rules', () => {
+  it('asks for rules that are not soft-deleted, and keeps an inactive one as isActive false so its alerts resolve RULE_OFF', async () => {
+    const row = { rule_id: 'r1', notification_code: 'X', event_type: 'FEED_ABOVE', threshold_reference: 'SILO_ABOVE', threshold_value: null, priority_level: 'INFO',
+      recipient_roles: ['A'], frequency: 'ONCE', escalation_after_hours: null, escalation_role: null, farm_id: null, is_active: false, deleted_at: null };
+    const { db, wheres } = selectDb(() => [row]);
+    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+    const rules = await (service as any).loadRules('co-1', 'farm-1', 't1');
+    expect(rules).toEqual([expect.objectContaining({ ruleId: 'r1', isActive: false })]);
+    expect(render(wheres[0]).sql).toContain('`alert_rule`.`deleted_at` is null');
+  });
+});

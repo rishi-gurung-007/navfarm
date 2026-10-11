@@ -3,7 +3,8 @@
  * Master Setup §4). Pure so the form, the service and the evaluator agree on
  * one list of events and what each may reference.
  */
-export const EVENT_TYPES = ['FEED_BELOW_L1', 'FEED_ABOVE', 'DIET_CHANGE', 'REQ_DEADLINE'] as const;
+/** Row 45. PLAN_AVAILABLE is pushed by the feed scheduler when it generates the tentative Feed Plan (checkpoint 36). */
+export const EVENT_TYPES = ['FEED_BELOW_L1', 'FEED_ABOVE', 'DIET_CHANGE', 'REQ_DEADLINE', 'PLAN_AVAILABLE'] as const;
 export type AlertEventType = (typeof EVENT_TYPES)[number];
 
 /** §4 row 46: "SILO or REQUISITION or FEED_PLAN or STOCK_TAKE". */
@@ -13,6 +14,7 @@ export const TRIGGER_FOR_EVENT: Record<AlertEventType, string> = {
   FEED_ABOVE: 'SILO',
   DIET_CHANGE: 'FEED_PLAN',
   REQ_DEADLINE: 'REQUISITION',
+  PLAN_AVAILABLE: 'FEED_PLAN',
 };
 
 /** §4 row 48. SILO_BELOW reads location_master.low_level_kg, SILO_ABOVE high_level_kg. */
@@ -22,6 +24,7 @@ const REFERENCES_FOR_EVENT: Record<AlertEventType, string[]> = {
   FEED_ABOVE: ['SILO_ABOVE', 'FIXED_VALUE'],
   DIET_CHANGE: ['FIXED_VALUE'],
   REQ_DEADLINE: ['FIXED_VALUE'],
+  PLAN_AVAILABLE: ['FIXED_VALUE'],
 };
 
 /** §4 row 49. */

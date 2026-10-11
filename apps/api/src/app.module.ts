@@ -1,6 +1,7 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ClsModule } from 'nestjs-cls';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DatabaseModule } from './core/database/database.module';
 import { TenantModule } from './modules/core/tenant/tenant.module';
 import { CompanyModule } from './modules/core/company/company.module';
@@ -52,6 +53,7 @@ import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inve
 import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
 import { FeedSettingsModule } from './modules/inventory/feed-settings/feed-settings.module';
 import { FeedAlertModule } from './modules/inventory/feed-alert/feed-alert.module';
+import { FeedSchedulerModule } from './modules/inventory/feed-scheduler/feed-scheduler.module';
 import { FeedStockCountModule } from './modules/inventory/feed-stock-count/feed-stock-count.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
@@ -98,6 +100,9 @@ import { SystemController } from './system/system.controller';
 
     // Global Drizzle Database connection pool
     DatabaseModule,
+
+    // Timers for the feed scheduler (brief B). FEED_SCHEDULER_ENABLED=false disables its tick.
+    ScheduleModule.forRoot(),
 
     TenantModule,
     CompanyModule,
@@ -149,6 +154,7 @@ import { SystemController } from './system/system.controller';
     FeedForecastModule,
     FeedSettingsModule,
     FeedAlertModule,
+    FeedSchedulerModule,
     FeedStockCountModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,

@@ -1461,6 +1461,7 @@ const ALERT_EVENT_TYPES = [
   { value: "FEED_ABOVE", label: "Feed at or above high level" },
   { value: "DIET_CHANGE", label: "Diet change coming" },
   { value: "REQ_DEADLINE", label: "Requisition deadline" },
+  { value: "PLAN_AVAILABLE", label: "Feed plan available" },
 ];
 const ALERT_TRIGGER_ENTITIES = [
   { value: "SILO", label: "Silo" },
@@ -1509,7 +1510,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
       options: ALERT_TRIGGER_ENTITIES,
-      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE and PLAN_AVAILABLE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
     },
     {
       key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
@@ -1519,7 +1520,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
-      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE."
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; 0 for PLAN_AVAILABLE."
     },
     {
       key: "priority_level", label: "Priority Level", type: "select", required: true,
