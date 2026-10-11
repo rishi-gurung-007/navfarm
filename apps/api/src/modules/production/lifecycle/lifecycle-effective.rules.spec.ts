@@ -23,3 +23,17 @@ describe('findEffectiveOverlap', () => {
     expect(findEffectiveOverlap(w({ lifecycleId: 'y' }), [w({ lifecycleId: 'x' })])).toBeDefined();
   });
 });
+
+describe('findEffectiveOverlap — farm scope', () => {
+  it('allows a farm override to overlap the default', () => {
+    expect(findEffectiveOverlap(w({ farmId: 'farm-A' }), [w({ lifecycleId: 'd' })])).toBeUndefined();
+    expect(findEffectiveOverlap(w({}), [w({ lifecycleId: 'o', farmId: 'farm-A' })])).toBeUndefined();
+  });
+  it('refuses an overlap within the same farm, and between two defaults', () => {
+    expect(findEffectiveOverlap(w({ farmId: 'farm-A' }), [w({ lifecycleId: 'o', farmId: 'farm-A' })])).toBeDefined();
+    expect(findEffectiveOverlap(w({ farmId: null }), [w({ lifecycleId: 'd' })])).toBeDefined();
+  });
+  it('allows overrides on different farms to overlap', () => {
+    expect(findEffectiveOverlap(w({ farmId: 'farm-A' }), [w({ lifecycleId: 'o', farmId: 'farm-B' })])).toBeUndefined();
+  });
+});

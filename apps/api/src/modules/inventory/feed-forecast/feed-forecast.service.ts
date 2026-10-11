@@ -2133,7 +2133,7 @@ export class FeedForecastService {
 
     // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).
     const { batches, flags, stages } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
-    const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId);
+    const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId, farm.id);
     const calculationHorizon = forecastDemandHorizon({ batches, feedRows }, opts.horizonTo);
 
     // The farm's STORE (D6 fallback). One per farm in every template; if a farm
@@ -2199,6 +2199,7 @@ export class FeedForecastService {
       sourceFeedTypes,
       stageNames,
       input: {
+        farmId: farm.id,
         planningDate,
         from,
         to,
@@ -2547,7 +2548,7 @@ export class FeedForecastService {
   }
 
   /** Active lifecycle rows with a feed item and a positive rate, as stage-day ranges (feed-row-days.ts). */
-  private async loadFeedRows(breedIds: string[], companyId: string, tenantId: string): Promise<FeedRow[]> {
+  private async loadFeedRows(breedIds: string[], companyId: string, tenantId: string, farmId?: string): Promise<FeedRow[]> {
     if (!breedIds.length) return [];
     const rows = await this.db
       .select({
@@ -2562,12 +2563,15 @@ export class FeedForecastService {
         wastage: schema.breedLifecycleStages.feed_wastage_pct,
         effective_from: schema.breedLifecycleStages.effective_from,
         effective_to: schema.breedLifecycleStages.effective_to,
+        farm_id: schema.breedLifecycleStages.farm_id,
       })
       .from(schema.breedLifecycleStages)
       .where(
         and(
           eq(schema.breedLifecycleStages.tenant_id, tenantId),
           or(isNull(schema.breedLifecycleStages.company_id), eq(schema.breedLifecycleStages.company_id, companyId)),
+          // Default rows (no farm) and this farm's overrides only (Master Setup r30/r39).
+          farmId ? or(isNull(schema.breedLifecycleStages.farm_id), eq(schema.breedLifecycleStages.farm_id, farmId)) : isNull(schema.breedLifecycleStages.farm_id),
           inArray(schema.breedLifecycleStages.breed_id, breedIds),
           eq(schema.breedLifecycleStages.is_active, true),
           isNotNull(schema.breedLifecycleStages.feed_item_id),
@@ -2594,6 +2598,7 @@ export class FeedForecastService {
         wastagePct: Number(r.wastage ?? 0),
         effectiveFrom: r.effective_from ?? null,
         effectiveTo: r.effective_to ?? null,
+        farmId: r.farm_id ?? null,
       };
     });
   }

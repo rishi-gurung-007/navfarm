@@ -2419,6 +2419,8 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   // 0170, Master Setup r30/r38: effective-dated feed rows for advance diet-change planning. NULL = always effective.
   effective_from: date('effective_from', { mode: 'string' }),
   effective_to: date('effective_to', { mode: 'string' }),
+  // 0171, Master Setup r30/r39: farm-level override. NULL = the company or breed default row.
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
   std_body_weight_kg: decimal('std_body_weight_kg', { precision: 8, scale: 3 }),
   std_adg_gpd: decimal('std_adg_gpd', { precision: 8, scale: 2 }), // standard Average Daily Gain, grams/day
   std_fcr: decimal('std_fcr', { precision: 5, scale: 3 }),

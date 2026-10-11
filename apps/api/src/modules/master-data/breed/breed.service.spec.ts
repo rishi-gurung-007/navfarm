@@ -323,6 +323,35 @@ describe('BreedService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('refuses a farm override whose farm belongs to another company', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1', company_id: 'co-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ location_id: 'farm-X', company_id: 'co-2', location_type: 'FARM' }]) }) }) });
+
+      await expect(
+        service.createLifecycleStage(
+          { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, farm_id: 'farm-X' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/farm/i);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a farm override that is not a FARM location', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1', company_id: 'co-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ location_id: 'shed-1', company_id: 'co-1', location_type: 'SHED' }]) }) }) });
+
+      await expect(
+        service.createLifecycleStage(
+          { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, farm_id: 'shed-1' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/farm/i);
+    });
+
     it('should create a valid lifecycle stage', async () => {
       mockDbSelect
         .mockReturnValueOnce({

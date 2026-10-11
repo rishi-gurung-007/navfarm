@@ -8,6 +8,8 @@ export interface LifecycleWindow {
   periodTo: number;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
+  /** Master Setup r30/r39: the farm a row overrides for. NULL/absent = the company or breed default. */
+  farmId?: string | null;
 }
 
 /**
@@ -16,6 +18,8 @@ export interface LifecycleWindow {
  * row clashes with any row over the same days; a dated row beside it is a conflict, not an override.
  */
 export function lifecycleWindowsOverlap(a: LifecycleWindow, b: LifecycleWindow): boolean {
+  // A farm override may overlap the default (that is its point); rows only clash within the same farm scope.
+  if ((a.farmId ?? null) !== (b.farmId ?? null)) return false;
   const ra = stageDayRange(a.calcUnit, a.periodFrom, a.periodTo);
   const rb = stageDayRange(b.calcUnit, b.periodFrom, b.periodTo);
   if (ra.fromDay > rb.toDay || rb.fromDay > ra.toDay) return false;

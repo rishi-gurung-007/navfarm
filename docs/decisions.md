@@ -3434,3 +3434,12 @@ Master Setup rows 50 and 54 say recipient and escalation roles come from the Rol
 send to FARM_MANAGER, HEAD_OF_FARM and MILL_MANAGER, which are user types (decisions 1 Oct), not Role Master rows.
 So that the defaults keep working, a recipient or escalation code is valid if it is a Role Master code for the company
 or one of these user types. This is our reading; it awaits Rishi's confirmation.
+
+## 2026-10-11 — Lifecycle feed rows support a farm-level override (workbook Master Setup rows 30 and 39)
+
+Rows 30 and 39 say the lifecycle feed item and rate support a farm-level override. `breed_lifecycle_stages` gets a
+nullable `farm_id` (migration 0171, FK to `location_master`); NULL is the company or breed default row. In the forecast,
+`feedRowFor` prefers a row for the batch's farm that is effective on the date, and otherwise uses the default row, so
+rows with no farm behave exactly as before. The overlap check (breed, stage, day range, effective dates) applies within
+the same farm scope: an override may overlap the default, two rows of one farm may not. `farm_id` must be a FARM location
+of the breed's company. The Breed Lifecycle Stage master has an optional "Farm (override)" picker and list column.

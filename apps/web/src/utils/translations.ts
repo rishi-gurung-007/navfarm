@@ -4636,6 +4636,9 @@ export const translations = {
     ctFeedBagToleranceHint: "Empty bags times bag size is checked against feed consumed on POST Day; a larger difference is flagged. Blank flags any difference.",
     // W4G4 (11 Oct)
     deEmptyBags: "Empty bags",
+    // LFO (11 Oct)
+    lcFarmOverride: "Farm (override)",
+    lcFarmOverrideHelp: "Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

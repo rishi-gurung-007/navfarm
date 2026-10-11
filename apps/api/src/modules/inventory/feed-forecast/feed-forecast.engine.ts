@@ -96,6 +96,8 @@ export function asBatchPk(batchHeaderId: string): BatchPk {
 }
 
 export interface ForecastInput {
+  /** The farm being forecast: its lifecycle farm-override rows (Master Setup r30/r39) win over the default rows. */
+  farmId?: string | null;
   planningDate: string;
   from: string;
   to: string;
@@ -709,7 +711,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
       const dayOfStage = diffDays(segment.start, date) + 1;
       const candidates = feedRowsForBreed.filter((r) => r.stageId === segment.stageId);
-      const result = feedRowFor(candidates, dayOfStage, date);
+      const result = feedRowFor(candidates, dayOfStage, date, input.farmId);
 
       if ('error' in result) {
         // Flags are emitted for the visible window (from..to) and, for NO_FEED_ROW only, for the first

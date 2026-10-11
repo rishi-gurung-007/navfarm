@@ -69,3 +69,26 @@ describe('feedRowFor with effective dates', () => {
     expect(feedRowFor([base], 10, '2030-01-01')).toEqual({ row: base });
   });
 });
+
+describe('feedRowFor with a farm override (Master Setup r30/r39)', () => {
+  const base: FeedRow = { lifecycleId: 'd', breedId: 'b', stageId: 's', itemId: 'default', itemName: null, fromDay: 1, toDay: 60, kgPerHeadPerDay: 2, wastagePct: 0 };
+  const ovr: FeedRow = { ...base, lifecycleId: 'o', itemId: 'override', kgPerHeadPerDay: 3, farmId: 'farm-A' };
+
+  it('picks the override for its farm and the default for other farms', () => {
+    expect(feedRowFor([base, ovr], 10, '2026-10-19', 'farm-A')).toEqual({ row: ovr });
+    expect(feedRowFor([base, ovr], 10, '2026-10-19', 'farm-B')).toEqual({ row: base });
+  });
+  it('ignores overrides when no farm is given, so farmless rows behave as before', () => {
+    expect(feedRowFor([base, ovr], 10, '2026-10-19')).toEqual({ row: base });
+    expect(feedRowFor([ovr], 10, '2026-10-19')).toEqual({ error: 'NONE' });
+  });
+  it('combines farm and date: an override outside its dates falls back to the default', () => {
+    const dated: FeedRow = { ...ovr, effectiveFrom: '2026-10-20' };
+    expect(feedRowFor([base, dated], 10, '2026-10-19', 'farm-A')).toEqual({ row: base });
+    expect(feedRowFor([base, dated], 10, '2026-10-20', 'farm-A')).toEqual({ row: dated });
+    expect(feedRowFor([base, dated], 10, '2026-10-20', 'farm-B')).toEqual({ row: base });
+  });
+  it('still reports OVERLAP when two overrides of the same farm cover the day', () => {
+    expect(feedRowFor([base, ovr, { ...ovr, lifecycleId: 'o2' }], 10, '2026-10-19', 'farm-A')).toEqual({ error: 'OVERLAP' });
+  });
+});

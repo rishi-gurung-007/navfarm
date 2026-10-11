@@ -47,6 +47,8 @@ export interface FeedRow {
   effectiveFrom?: string | null;
   /** Last calendar day (inclusive) this row applies. Absent/null = open-ended. */
   effectiveTo?: string | null;
+  /** Master Setup r30/r39: a row for one farm overrides the default (null/absent) on that farm. */
+  farmId?: string | null;
 }
 
 /** True when `onDate` (YYYY-MM-DD) falls in the row's effective window; a row with no dates is always effective. */
@@ -62,10 +64,13 @@ export function isEffectiveOn(row: Pick<FeedRow, 'effectiveFrom' | 'effectiveTo'
  * than one breed/stage, that mixing is the caller's concern, not something
  * this function detects or guards against.
  */
-export function feedRowFor(rows: FeedRow[], dayOfStage: number, onDate?: string): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
+export function feedRowFor(rows: FeedRow[], dayOfStage: number, onDate?: string, farmId?: string | null): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
   // onDate is the forecast date: with it, only rows effective that day compete (the one place effective dating is applied).
   const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay && (onDate === undefined || isEffectiveOn(r, onDate)));
-  if (matches.length === 0) return { error: 'NONE' };
-  if (matches.length > 1) return { error: 'OVERLAP' };
-  return { row: matches[0] };
+  // Farm override (r30/r39): a row for this farm wins; otherwise the default (no farm). Rows of other farms never compete.
+  const own = farmId ? matches.filter((r) => r.farmId === farmId) : [];
+  const pool = own.length ? own : matches.filter((r) => !r.farmId);
+  if (pool.length === 0) return { error: 'NONE' };
+  if (pool.length > 1) return { error: 'OVERLAP' };
+  return { row: pool[0] };
 }
