@@ -9,7 +9,7 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
     return field.emptyMultipleLabel ?? "All (no restriction)";
   }
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return field?.emptyLabel ?? "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value.join(", ");

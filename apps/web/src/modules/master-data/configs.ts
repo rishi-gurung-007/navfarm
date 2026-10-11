@@ -1,4 +1,4 @@
-import type { MasterDataConfig } from "./types";
+import type { MasterDataConfig, MasterDataField } from "./types";
 
 const STATUS_OPTIONS = [
   { value: "ACTIVE", label: "Active" },
@@ -235,6 +235,21 @@ const location: MasterDataConfig = {
       section: "Identification",
       helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
+    // W4G2 (Master Setup rows 13-20): the silo's feed facts, read from the same
+    // ledger / stock count / forecast the Feed Silo Status screen uses. Computed
+    // by the API on every read; never submitted.
+    ...([
+      { key: "silo_feed_item", label: "Feed in Silo", type: "text", helpText: "The feed item last received into this silo, from its latest posted transfer receipt." },
+      { key: "available_stock_kg", label: "Available Stock KG", type: "number", step: "0.001", helpText: "What the inventory ledger holds of the Feed in Silo item now." },
+      { key: "system_balance_kg", label: "System Balance KG", type: "number", step: "0.001", helpText: "Ledger balance of the Feed in Silo item. A physical count creates a variance for approval; it never resets this." },
+      { key: "last_approved_count_kg", label: "Last Approved Physical Count KG", type: "number", step: "0.001", helpText: "Quantity on the latest posted physical stock count of this silo." },
+      { key: "last_approved_count_at", label: "Last Approved Physical Count Date", type: "date", helpText: "Date of that stock count." },
+      { key: "last_feed_receipt_date", label: "Last Feed Receipt Date", type: "date", helpText: "Date of the last posted transfer receipt into this silo." },
+      { key: "next_diet_change_date", label: "Next Diet Change Date", type: "date", helpText: "The next date a batch fed from this silo changes diet, from the feed forecast." },
+    ] as MasterDataField[]).map((f): MasterDataField => ({
+      ...f, readOnly: true, editOnly: true, hideInTable: true, emptyLabel: "Not available", section: "Identification",
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+    })),
     { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["MILL", "BIN"] }] }, helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // D32: "Silo / Store Name" is gone from the form — it duplicated the
     // required Name field. The storage_name column is kept, and the seeds
@@ -1286,7 +1301,7 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
     // TDD Master Setup row 37: how this stage's feed is supplied.
     {
@@ -1536,8 +1551,10 @@ const alertRule: MasterDataConfig = {
       options: ALERT_PRIORITIES
     },
     {
-      key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
-      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless."
+      key: "recipient_roles", label: "Recipient Role(s)", type: "select-entity", multiple: true, required: true,
+      entityEndpoint: "/alert-rule/role-options", entityValueKey: "role_code", entityLabelKeys: ["role_code", "role_name"],
+      emptyMultipleLabel: "None selected",
+      helpText: "Pick from the Role Master. Tenant, company and operational admins see every alert regardless."
     },
     {
       key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
@@ -1553,7 +1570,9 @@ const alertRule: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
     },
     {
-      key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
+      key: "escalation_role", label: "Escalation Recipient Role", type: "select-entity",
+      entityEndpoint: "/alert-rule/role-options", entityValueKey: "role_code", entityLabelKeys: ["role_code", "role_name"],
+      helpText: "A role from the Role Master.",
       visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
     },
     {
@@ -1645,7 +1664,8 @@ const binDietAssignment: MasterDataConfig = {
     { key: "bin_location_id", label: "BIN", type: "select-entity", required: true, searchable: true,
       entityEndpoint: "/location?locationType=BIN&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"] },
     { key: "feed_item_id", label: "Feed Item", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/item?isActive=true", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+      entityEndpoint: "/item?itemType=FEED&isActive=true", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
+      helpText: "Feed items only (item type FEED BULK or FEED BAGGED)." },
     { key: "production_date", label: "Production Date", type: "date", required: true,
       helpText: "Release requires an active assignment on this exact date." },
     { key: "production_slot_id", label: "Production Slot", type: "select-entity", required: true, searchable: true,

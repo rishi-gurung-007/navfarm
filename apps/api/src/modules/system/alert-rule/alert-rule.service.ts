@@ -161,6 +161,41 @@ export class AlertRuleService {
     if (clash) throw new ConflictException(`Only one low feed rule applies per silo; ${clash.notification_code} already covers these farms.`);
   }
 
+  /**
+   * Rows 50 and 54 (W4G2): recipient and escalation roles are Role Master codes
+   * of the rule's company (every company of the tenant for a tenant-wide rule).
+   * A code the rule already stores is left alone, so a legacy free-text value
+   * that was working keeps working; only a code being added is checked.
+   */
+  async roleOptions(tenantId: string, companyId?: string | null) {
+    const R = schema.roleMaster;
+    const scope = this.cls.get<MasterScope | undefined>('masterScope');
+    const company = companyId ?? (scope?.kind ? scope.companyId : null);
+    const rows = await this.db.select({ role_code: R.role_code, role_name: R.role_name }).from(R)
+      .innerJoin(schema.companyMaster, eq(schema.companyMaster.company_id, R.company_id))
+      .where(and(eq(schema.companyMaster.tenant_id, tenantId), eq(R.is_active, true), ...(company ? [eq(R.company_id, company)] : [])));
+    const byCode = new Map<string, { role_code: string; role_name: string }>();
+    for (const row of rows) if (!byCode.has(row.role_code)) byCode.set(row.role_code, row);
+    return [...byCode.values()].sort((a, b) => a.role_code.localeCompare(b.role_code));
+  }
+
+  private async assertRoles(
+    next: { recipient_roles?: string[] | null; escalation_role?: string | null },
+    stored: { recipient_roles?: string[] | null; escalation_role?: string | null } | null,
+    companyId: string | null | undefined,
+    tenantId: string,
+  ) {
+    const keep = new Set([...(stored?.recipient_roles ?? []), stored?.escalation_role].filter(Boolean).map((c) => String(c).toUpperCase()));
+    const asked = [...(next.recipient_roles ?? []), next.escalation_role].filter(Boolean).map((c) => String(c).toUpperCase());
+    const added = [...new Set(asked.filter((code) => !keep.has(code)))];
+    if (!added.length) return;
+    const known = new Set((await this.roleOptions(tenantId, companyId)).map((r) => r.role_code.toUpperCase()));
+    const unknown = added.filter((code) => !known.has(code));
+    if (unknown.length) {
+      throw new BadRequestException(`Role code ${unknown.join(', ')} is not in the Role Master for this company. Pick the recipient roles from the Role Master.`);
+    }
+  }
+
   private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {
     await this.audit.log({ tenantId: row.tenant_id, companyId: row.company_id || undefined, userId: user?.userId, action, entityName: 'alert_rule', entityId: row.rule_id, oldValues, newValues: row });
     return row;
@@ -171,6 +206,7 @@ export class AlertRuleService {
     this.assertShape({ ...dto, recipient_roles: dto.recipient_roles ?? [] });
     await this.assertSingleLowRule({ event_type: dto.event_type, company_id: dto.company_id ?? null, farm_id: dto.farm_id ?? null, is_active: true }, tenantId);
     await this.assertFarm(dto.farm_id, dto.company_id, tenantId);
+    await this.assertRoles({ recipient_roles: dto.recipient_roles, escalation_role: dto.escalation_role }, null, dto.company_id, tenantId);
     const rule_id = randomUUID();
     await this.db.insert(table).values({
       rule_id, tenant_id: tenantId, company_id: dto.company_id ?? null, notification_code: code,
@@ -204,6 +240,11 @@ export class AlertRuleService {
     this.assertShape(merged);
     await this.assertSingleLowRule({ event_type: merged.event_type, company_id: before.company_id, farm_id: merged.farm_id ?? null, is_active: before.is_active }, tenantId, id);
     await this.assertFarm(merged.farm_id, before.company_id, tenantId);
+    await this.assertRoles(
+      { recipient_roles: dto.recipient_roles, escalation_role: dto.escalation_role },
+      { recipient_roles: before.recipient_roles as string[], escalation_role: before.escalation_role },
+      before.company_id, tenantId,
+    );
     await this.db.update(table).set({
       notification_name: dto.notification_name?.trim() ?? before.notification_name,
       ...merged,

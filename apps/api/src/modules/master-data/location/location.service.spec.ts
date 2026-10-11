@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import {
   LocationService,
   WAREHOUSE_LOCATION_TYPES,
@@ -25,6 +26,7 @@ describe('LocationService canonical hierarchy', () => {
   // LocationService's — these tests only need to know it was asked, and
   // whether it allowed or refused, not the item logic behind that answer.
   const siloFeedService = { assertAttachable: jest.fn(), currentItems: jest.fn() };
+  const forecast = { currentSiloStatuses: jest.fn() };
 
   const makeSelectBuilder = (rows: any[]) => {
     const builder: any = {};
@@ -109,6 +111,7 @@ describe('LocationService canonical hierarchy', () => {
     numberSeries.lockSeries.mockResolvedValue({ series_id: 'series-1', seq_length: 3 });
     siloFeedService.assertAttachable.mockResolvedValue(undefined);
     siloFeedService.currentItems.mockResolvedValue(new Map());
+    forecast.currentSiloStatuses.mockResolvedValue({ planningDate: '2026-10-11', statuses: [] });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -117,6 +120,7 @@ describe('LocationService canonical hierarchy', () => {
         { provide: AuditLogService, useValue: audit },
         { provide: NumberSeriesService, useValue: numberSeries },
         { provide: SiloFeedService, useValue: siloFeedService },
+        { provide: FeedForecastService, useValue: forecast },
       ],
     }).compile();
     service = module.get(LocationService);
@@ -425,6 +429,95 @@ describe('LocationService canonical hierarchy', () => {
     // ...and the edit form gets back the 40 that was typed, not the 40,000
     // stored, or re-saving it untouched would store 40,000 TON.
     expect(result.silo_capacity_kg).toBe('40');
+  });
+
+  // W4G2, Master Setup rows 13-20: the silo record shows the forecast's own silo facts, read-only.
+  describe('silo feed facts on the record', () => {
+    const siloRow = (over: object = {}) => ({
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', farm_id: 'farm-1', parent_location_id: 'farm-1',
+      location_type: 'SILO', location_code: 'FARM-001/SILO-001', status: 'ACTIVE', is_active: true, ...over,
+    });
+
+    it('returns feed item, balances, last count, last receipt and next diet date from the forecast silo status', async () => {
+      selectResults.push([siloRow()], []);
+      forecast.currentSiloStatuses.mockResolvedValueOnce({ planningDate: '2026-10-11', statuses: [{
+        siloId: 'silo-1', feedInSiloItemCode: 'FEED-R1', feedInSiloItemName: 'Weaner R1', systemBalanceKg: 1500,
+        lastApprovedCountKg: 1450, lastApprovedCountAt: '2026-10-05 06:00:00', lastFeedReceiptDate: '2026-10-02', nextDietDate: '2026-10-25',
+      }] });
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(forecast.currentSiloStatuses).toHaveBeenCalledWith('farm-1', 'comp-1', 'tenant-1');
+      expect(r).toMatchObject({
+        silo_feed_item: 'FEED-R1 — Weaner R1', available_stock_kg: 1500, system_balance_kg: 1500,
+        last_approved_count_kg: 1450, last_approved_count_at: '2026-10-05',
+        last_feed_receipt_date: '2026-10-02', next_diet_change_date: '2026-10-25',
+      });
+    });
+
+    it('falls back to the ledger item when the forecast does not plan the silo, leaving the rest null', async () => {
+      selectResults.push([siloRow({ status: 'INACTIVE' })], []);
+      siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+        ['silo-1', { item_id: 'i', item_code: 'FEED-R2', item_description: null, on_hand_qty: 800, uoms: ['KG'] }],
+      ]));
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(r).toMatchObject({ silo_feed_item: 'FEED-R2', available_stock_kg: 800, system_balance_kg: 800,
+        last_approved_count_kg: null, last_feed_receipt_date: null, next_diet_change_date: null });
+    });
+
+    it('leaves every fact null (screens say Not available) when the forecast fails and the silo is empty', async () => {
+      selectResults.push([siloRow()], []);
+      forecast.currentSiloStatuses.mockRejectedValueOnce(new Error('no feed settings'));
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(r.silo_feed_item).toBeNull();
+      expect(r.available_stock_kg).toBeNull();
+      expect(r.next_diet_change_date).toBeNull();
+    });
+  });
+
+  // W4G2, checkpoint 1: a SILO is ACTIVE only with a shed linked.
+  describe('checkpoint 1: silo needs a shed before ACTIVE', () => {
+    const inactiveSilo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00', status: 'INACTIVE', is_active: true,
+      storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+    };
+
+    it('refuses to activate a silo with no linked shed', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }], [] /* no links */);
+      await expect(service.update('silo-1', { status: 'ACTIVE' }, 'tenant-1'))
+        .rejects.toThrow('cannot be ACTIVE until at least one shed is linked');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+
+    it('activates a silo that has a linked shed', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }],
+        [{ shed_id: 'shed-1' }], // linked
+        [shedRow()], [], // attach checks are not reached: no attached_sheds posted
+        [{ ...inactiveSilo, status: 'ACTIVE' }], [{ shed_id: 'shed-1' }]);
+      await service.update('silo-1', { status: 'ACTIVE' }, 'tenant-1');
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts the shed list posted in the same save', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }]);
+      await expect(service.update('silo-1', { status: 'ACTIVE', attached_sheds: [] }, 'tenant-1'))
+        .rejects.toThrow('cannot be ACTIVE');
+    });
+
+    it('creates a silo with no shed INACTIVE, and one with a shed ACTIVE', async () => {
+      selectResults.push([company], [siloType], [farmParent()], [uom], [series], [], [{ location_id: 'silo-1', location_type: 'SILO' }], []);
+      await service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Silo', location_address: 'Farm Road', location_type: 'SILO',
+        low_level_kg: 200, high_level_kg: 1800, capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      }, 'tenant-1');
+      expect(inserted().status).toBe('INACTIVE');
+    });
   });
 
   it('a silo read returns current_feed_item_code and current_feed_item_name from SiloFeedService.currentItems', async () => {
