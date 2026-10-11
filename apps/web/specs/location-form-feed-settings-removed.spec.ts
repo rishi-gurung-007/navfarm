@@ -30,7 +30,10 @@ describe("D32 — the Location form no longer edits per-farm feed settings", () 
       "mill_daily_capacity_ton", "mill_hourly_capacity_ton", "mill_bulk_daily_allocation_ton",
       "mill_bagged_daily_allocation_ton", "bin_capacity_ton", "bin_feed_type", "storage_type",
       "silo_capacity_kg", "silo_capacity_uom", "silo_reorder_days", "low_level_kg", "high_level_kg",
-      "attached_sheds", "downtime_days_required", "gps_latitude", "gps_longitude",
+      "attached_sheds",
+      // W4G2 (11 Oct): silo read-only facts, Master Setup rows 13-20.
+      "silo_feed_item", "available_stock_kg", "system_balance_kg", "last_approved_count_kg", "last_approved_count_at", "last_feed_receipt_date", "next_diet_change_date",
+      "downtime_days_required", "gps_latitude", "gps_longitude",
     ]);
   });
   it.each([...MOVED_TO_FEED_PLANNING, ...REDUNDANT])("has no %s field at all", (key) => {
