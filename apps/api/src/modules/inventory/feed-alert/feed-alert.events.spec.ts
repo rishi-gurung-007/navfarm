@@ -125,4 +125,21 @@ describe('FeedAlertService pushed events — MILL_DISPATCH, MILL_ADJUSTED, RECEI
     await service.resolveEvent({ companyId: 'co-1', tenantId: 't1' }, 'CAPACITY_EXCEEDED', []);
     expect(db.update).toHaveBeenCalledTimes(1);
   });
+
+  it('on an empty rule table, raising MILL_DISPATCH seeds the default rule first and then raises the alert (raiseEvent and raiseEventSafely)', async () => {
+    for (const safe of [false, true]) {
+      const table: AlertRuleFact[] = [];
+      const inserted: any[] = [];
+      const db: any = { insert: jest.fn(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) })) };
+      const alertRules: any = { ensureDefaultRules: jest.fn(async () => { table.push(rule('MILL_DISPATCH', { notificationCode: 'MILL-DISPATCH' })); }) };
+      const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, alertRules);
+      jest.spyOn(service as any, 'loadRules').mockImplementation(async () => [...table]);
+      const args = [ctx, { eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: 'ls-1', title: 'T', message: 'M' }, NOW] as const;
+      if (safe) await service.raiseEventSafely(...(args as any)); else expect(await service.raiseEvent(...(args as any))).toEqual({ rules: 1, raised: 1 });
+      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co-1', 't1');
+      expect(table).toHaveLength(1);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]).toMatchObject({ event_type: 'MILL_DISPATCH', notification_code: 'MILL-DISPATCH', subject_id: 'ls-1', status: 'ACTIVE' });
+    }
+  });
 });
