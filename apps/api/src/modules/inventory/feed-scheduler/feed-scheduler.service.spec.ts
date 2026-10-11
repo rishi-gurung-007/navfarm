@@ -7,6 +7,7 @@ const settings = {
   tentativePlanWeekday: 3, tentativePlanTime: '09:00',
   reminderWeekday: 5, reminderTime: '18:00',
   submissionWeekday: 6, submissionTime: '12:00',
+  sources: { companySetting: 'COMPANY' },
 };
 const farm = { farmId: 'farm-1', companyId: 'co-1', code: 'GRS', name: 'Grace', companyName: 'Triple C' };
 // Africa/Harare is UTC+2 all year.
@@ -16,24 +17,49 @@ const FRI_1800 = at('2026-09-25T16:00:00Z');
 const SAT_1200 = at('2026-09-26T10:00:00Z');
 const THU_1000 = at('2026-09-24T08:00:00Z');
 
+/** The values bound into a drizzle condition (eq(col, value) ...), so the fake can tell which row an update is for. */
+function boundValues(cond: any, out: unknown[] = []): unknown[] {
+  for (const chunk of cond?.queryChunks ?? []) {
+    if (chunk && typeof chunk === 'object' && Array.isArray(chunk.queryChunks)) boundValues(chunk, out);
+    else if (chunk && typeof chunk === 'object' && 'value' in chunk && !Array.isArray(chunk.value)) out.push(chunk.value);
+  }
+  return out;
+}
+
 function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any; planError?: Error } = {}) {
   const logs: any[] = [];
   const updates: any[] = [];
-  const keys = new Set<string>();
   const db: any = {
     insert: jest.fn((table: unknown) => ({
       values: jest.fn(async (v: any) => {
         if (table !== schema.feedScheduleLog) return;
-        if (v.run_key) {
-          if (keys.has(v.run_key)) throw Object.assign(new Error('Failed query'), { cause: { code: 'ER_DUP_ENTRY' } });
-          keys.add(v.run_key);
-        }
-        logs.push(v);
+        if (v.run_key && logs.some((l) => l.run_key === v.run_key)) throw Object.assign(new Error('Failed query'), { cause: { code: 'ER_DUP_ENTRY' } });
+        logs.push({ ...v });
       }),
     })),
-    update: jest.fn(() => ({ set: jest.fn((v: any) => ({ where: jest.fn(async () => { updates.push(v); }) })) })),
+    update: jest.fn((table: unknown) => ({
+      set: jest.fn((v: any) => ({
+        where: jest.fn(async (cond: any) => {
+          updates.push(v);
+          if (table !== schema.feedScheduleLog) return;
+          const bound = boundValues(cond);
+          const row = logs.find((l) => bound.includes(l.run_id));
+          if (row) Object.assign(row, Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined)));
+        }),
+      })),
+    })),
     select: jest.fn(() => {
-      const self: any = { from: () => self, where: () => self, orderBy: () => self, limit: () => self, then: (ok: any, err: any) => Promise.resolve(opts.existingPlan ? [opts.existingPlan] : []).then(ok, err) };
+      let table: unknown;
+      let cond: any;
+      const self: any = {
+        from: (t: unknown) => { table = t; return self; }, where: (c: any) => { cond = c; return self; }, orderBy: () => self, limit: () => self,
+        then: (ok: any, err: any) => {
+          const rows = table === schema.feedPlan
+            ? (opts.existingPlan ? [opts.existingPlan] : [])
+            : logs.filter((l) => l.run_key && boundValues(cond).includes(l.run_key));
+          return Promise.resolve(rows).then(ok, err);
+        },
+      };
       return self;
     }),
   };
@@ -128,8 +154,8 @@ describe('FeedSchedulerService — idempotent', () => {
     expect(second.find((r) => r.job === 'TENTATIVE_PLAN')!.status).toBe('ALREADY_RAN');
     expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(1);
     expect(h.alerts.raisePlanAvailable).toHaveBeenCalledTimes(1);
-    expect(h.logs.filter((l) => l.job_code === 'TENTATIVE_PLAN')).toHaveLength(1);
-    expect(h.logs.find((l) => l.job_code === 'TENTATIVE_PLAN')).toEqual(expect.objectContaining({ run_key: 'TENTATIVE_PLAN|farm-1|2026-09-23', trigger_type: 'SCHEDULED', period_key: '2026-09-23' }));
+    expect(h.logs.filter((l) => l.job_code === 'TENTATIVE_PLAN' && l.trigger_type === 'SCHEDULED')).toHaveLength(1);
+    expect(h.logs.find((l) => l.trigger_type === 'SCHEDULED' && l.job_code === 'TENTATIVE_PLAN')).toEqual(expect.objectContaining({ run_key: 'TENTATIVE_PLAN|farm-1|2026-09-23', trigger_type: 'SCHEDULED', period_key: '2026-09-23' }));
   });
 
   it('never makes a second Feed Plan for a week that has one, and still announces the existing plan once', async () => {
@@ -172,5 +198,102 @@ describe('FeedSchedulerService.runNow — admin test trigger', () => {
     const h = harness();
     expect(await h.service.runNow('DIET_CHANGE', { companyId: 'co-other' }, 't1')).toEqual([]);
     await expect(h.service.runNow('DIET_CHANGE', { farmId: 'nope' }, 't1')).rejects.toThrow('Farm not found.');
+  });
+});
+
+describe('FeedSchedulerService.tick — off by default', () => {
+  const saved = process.env.FEED_SCHEDULER_ENABLED;
+  afterEach(() => { if (saved === undefined) delete process.env.FEED_SCHEDULER_ENABLED; else process.env.FEED_SCHEDULER_ENABLED = saved; });
+  const build = () => {
+    const masterDb: any = { select: jest.fn(() => ({ from: () => ({ where: async () => [{ tenant_id: 't1', tenant_code: 'T1' }] }) })) };
+    const connections: any = { getTenantConnection: jest.fn(async () => { throw new Error('not on NAVFARM_DB_ALLOWLIST'); }) };
+    const cls: any = { get: () => undefined, set: jest.fn(), run: (fn: () => unknown) => fn() };
+    const service = new FeedSchedulerService(cls, masterDb, connections, {} as any, {} as any, {} as any);
+    const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+    return { service, masterDb, connections, warn };
+  };
+
+  it.each([undefined, '', 'false', 'TRUE', '1'])('does nothing when FEED_SCHEDULER_ENABLED is %p', async (value) => {
+    if (value === undefined) delete process.env.FEED_SCHEDULER_ENABLED; else process.env.FEED_SCHEDULER_ENABLED = value;
+    const { service, masterDb } = build();
+    await service.tick();
+    expect(masterDb.select).not.toHaveBeenCalled();
+  });
+
+  it('is read when the tick runs, not when the module loads: setting it later turns the scheduler on', async () => {
+    const { service, masterDb } = build();
+    delete process.env.FEED_SCHEDULER_ENABLED;
+    await service.tick();
+    process.env.FEED_SCHEDULER_ENABLED = 'true';
+    await service.tick();
+    expect(masterDb.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns once per process about a tenant it cannot use (off the allowlist, not migrated), not every five minutes', async () => {
+    process.env.FEED_SCHEDULER_ENABLED = 'true';
+    const { service, connections, warn } = build();
+    await service.tick();
+    await service.tick();
+    await service.tick();
+    expect(connections.getTenantConnection).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('T1'));
+  });
+});
+
+describe('FeedSchedulerService — DIET_CHANGE and ESCALATION wait for saved settings', () => {
+  it('skips them silently, with no log row and no evaluation, for a company with no Feed Planning Settings', async () => {
+    const h = harness({ settings: { sources: { companySetting: 'SYSTEM' } } });
+    expect(await h.service.runDue('t1', THU_1000)).toEqual([]);
+    expect(h.logs).toEqual([]);
+    expect(h.alerts.evaluateFarm).not.toHaveBeenCalled();
+  });
+});
+
+describe('FeedSchedulerService — a failure or a crash never blocks the period', () => {
+  it('releases the run key on FAILED, so the next tick retries and the job can finish', async () => {
+    const h = harness();
+    h.alerts.evaluateFarm.mockRejectedValueOnce(new Error('forecast down'));
+    const first = await h.service.runDue('t1', THU_1000);
+    expect(first.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('FAILED');
+    expect(h.logs.find((l) => l.job_code === 'DIET_CHANGE')).toEqual(expect.objectContaining({ status: 'FAILED', run_key: null }));
+    const second = await h.service.runDue('t1', THU_1000 + 5 * 60_000);
+    expect(second.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('DONE');
+    const third = await h.service.runDue('t1', THU_1000 + 10 * 60_000);
+    expect(third.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('ALREADY_RAN');
+  });
+
+  it('reclaims a RUNNING row older than 30 minutes, but not a fresh one', async () => {
+    const h = harness();
+    // A crashed process left DIET_CHANGE RUNNING at 10:00 local.
+    h.logs.push({ run_id: 'old', run_key: 'DIET_CHANGE|farm-1|2026-09-24', status: 'RUNNING', started_at: '2026-09-24 08:00:00', job_code: 'DIET_CHANGE' });
+    const fresh = await h.service.runDue('t1', at('2026-09-24T08:20:00Z'));
+    expect(fresh.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('ALREADY_RAN');
+    const later = await h.service.runDue('t1', at('2026-09-24T08:31:00Z'));
+    expect(later.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('DONE');
+    expect(h.logs.find((l) => l.run_id === 'old')).toEqual(expect.objectContaining({ status: 'FAILED', run_key: null }));
+  });
+});
+
+describe('FeedSchedulerService — the Wednesday plan is generated once per farm and week', () => {
+  it('a manual run racing a scheduled one claims the same weekly key: only one generates', async () => {
+    const h = harness();
+    const [manual, scheduled] = await Promise.all([
+      h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900),
+      h.service.runDue('t1', WED_0900),
+    ]);
+    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(1);
+    expect(h.logs.filter((l) => l.trigger_type === 'PLAN_LOCK')).toHaveLength(1);
+    const plans = [manual[0], scheduled.find((r) => r.job === 'TENTATIVE_PLAN')!].map((r) => r.summary?.plan?.status);
+    expect(plans.sort()).toEqual(['GENERATED', 'SKIPPED']);
+  });
+
+  it('releases the week when the generator makes nothing, so a retry can still generate', async () => {
+    const { ConflictException } = await import('@nestjs/common');
+    const h = harness({ planError: new ConflictException('Save a feed forecast calculation before generating a feed plan.') });
+    await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900);
+    expect(h.logs.find((l) => l.trigger_type === 'PLAN_LOCK')).toEqual(expect.objectContaining({ status: 'FAILED', run_key: null }));
+    await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900);
+    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(2);
   });
 });

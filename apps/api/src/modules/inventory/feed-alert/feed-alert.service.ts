@@ -137,7 +137,8 @@ export class FeedAlertService {
       }
       let active = await this.loadActive(farmId, tenantId, timeZone);
       if (forecastError) active = active.filter((a) => a.eventType !== 'DIET_CHANGE');
-      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, requisitions, active, levelsOnly });
+      const closedPlans = levelsOnly ? {} : await this.closedPlans(active, farmId, tenantId);
+      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, requisitions, active, levelsOnly, closedPlans });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
       return forecastError ? { ...plan, forecastError } : plan;
     });
@@ -434,6 +435,29 @@ export class FeedAlertService {
         highLevelKg: num(s.high_level_kg),
       };
     });
+  }
+
+  /**
+   * The open PLAN_AVAILABLE alerts whose Feed Plan is no longer the one to act on: approved (ACTUAL) or
+   * followed by a later version of the same week.
+   */
+  private async closedPlans(active: ActiveAlertFact[], farmId: string, tenantId: string): Promise<Record<string, 'SUPERSEDED' | 'APPROVED'>> {
+    const planIds = [...new Set(active.filter((a) => a.eventType === 'PLAN_AVAILABLE' && a.subjectId).map((a) => a.subjectId as string))];
+    if (!planIds.length) return {};
+    const P = schema.feedPlan;
+    const subjects = await this.db.select({ plan_id: P.plan_id, plan_week: P.plan_week, version: P.version, plan_type: P.plan_type })
+      .from(P).where(and(eq(P.tenant_id, tenantId), eq(P.farm_id, farmId), inArray(P.plan_id, planIds)));
+    if (!subjects.length) return {};
+    const weeks = await this.db.select({ plan_week: P.plan_week, version: P.version })
+      .from(P).where(and(eq(P.tenant_id, tenantId), eq(P.farm_id, farmId), inArray(P.plan_week, [...new Set(subjects.map((s) => s.plan_week))])));
+    const latest = new Map<string, number>();
+    for (const w of weeks) latest.set(w.plan_week, Math.max(latest.get(w.plan_week) ?? 0, w.version));
+    const out: Record<string, 'SUPERSEDED' | 'APPROVED'> = {};
+    for (const s of subjects) {
+      if (s.plan_type === 'ACTUAL') out[s.plan_id] = 'APPROVED';
+      else if ((latest.get(s.plan_week) ?? 0) > s.version) out[s.plan_id] = 'SUPERSEDED';
+    }
+    return out;
   }
 
   /** Caller contract (c): unapproved feed requisitions of this farm only. */

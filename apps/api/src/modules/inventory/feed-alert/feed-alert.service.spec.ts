@@ -447,3 +447,27 @@ describe('FeedAlertService.raisePlanAvailable — PLAN_AVAILABLE (checkpoint 36)
     expect(none.inserted).toEqual([]);
   });
 });
+
+describe('FeedAlertService.closedPlans — which PLAN_AVAILABLE notices are over', () => {
+  const open = (planId: string) => ({ alertId: `a-${planId}`, eventType: 'PLAN_AVAILABLE', subjectId: planId } as any);
+  const build = (subjects: any[], weeks: any[]) => {
+    let call = 0;
+    const { db } = selectDb(() => (call++ === 0 ? subjects : weeks));
+    return new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+  };
+
+  it('closes a plan that was approved (ACTUAL) or followed by a later version, and keeps the live one', async () => {
+    const service = build(
+      [{ plan_id: 'p-old', plan_week: '202639', version: 1, plan_type: 'TENTATIVE' }, { plan_id: 'p-act', plan_week: '202640', version: 1, plan_type: 'ACTUAL' },
+        { plan_id: 'p-live', plan_week: '202641', version: 2, plan_type: 'TENTATIVE' }],
+      [{ plan_week: '202639', version: 1 }, { plan_week: '202639', version: 2 }, { plan_week: '202640', version: 1 }, { plan_week: '202641', version: 2 }],
+    );
+    expect(await (service as any).closedPlans([open('p-old'), open('p-act'), open('p-live')], 'farm-1', 't1'))
+      .toEqual({ 'p-old': 'SUPERSEDED', 'p-act': 'APPROVED' });
+  });
+
+  it('reads nothing when no PLAN_AVAILABLE notice is open', async () => {
+    const service = build([], []);
+    expect(await (service as any).closedPlans([{ alertId: 'x', eventType: 'FEED_ABOVE', subjectId: 's' } as any], 'farm-1', 't1')).toEqual({});
+  });
+});

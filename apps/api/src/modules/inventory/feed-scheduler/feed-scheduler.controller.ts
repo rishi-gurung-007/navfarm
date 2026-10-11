@@ -34,6 +34,7 @@ export class FeedSchedulerController {
     if (!isFeedJob(job)) throw new BadRequestException(`Job must be one of ${FEED_JOBS.join(', ')}.`);
     let companyId = dto?.companyId;
     if (user.userType === 'COMPANY_ADMIN') {
+      if (!user.companyId) throw new ForbiddenException('A company administrator must belong to a company to run feed scheduler jobs.');
       if (companyId && companyId !== user.companyId) throw new ForbiddenException('Not authorized for this company.');
       companyId = user.companyId;
     }

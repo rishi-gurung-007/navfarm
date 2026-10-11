@@ -25,6 +25,11 @@ describe('FeedSchedulerController — "Run now" is admin only', () => {
     expect(scheduler.runNow).toHaveBeenCalledWith('DIET_CHANGE', { companyId: 'co-1', farmId: undefined }, 't1', 'u1');
   });
 
+  it('refuses a company admin with no company, instead of running every company', async () => {
+    await expect(controller.run('DIET_CHANGE', {}, req('COMPANY_ADMIN', { companyId: undefined }))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(scheduler.runNow).not.toHaveBeenCalled();
+  });
+
   it('rejects a job name that is not one of the five', async () => {
     await expect(controller.run('SEND_EMAIL', {}, req('TENANT_ADMIN'))).rejects.toBeInstanceOf(BadRequestException);
   });

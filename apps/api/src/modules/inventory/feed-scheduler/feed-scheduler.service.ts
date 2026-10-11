@@ -15,9 +15,12 @@ import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { isoProductionWeek } from '../feed-forecast/feed-plan.rules';
-import { localClock, utcTimestamp, type LocalClock } from '../feed-forecast/feed-forecast.engine';
+import { localClock, parseUtcTimestamp, utcTimestamp, type LocalClock } from '../feed-forecast/feed-forecast.engine';
 import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
 import { FEED_JOBS, FEED_SCHEDULER_ACTOR, FeedJob, ScheduleSettings, duePeriod, runKey } from './feed-scheduler.rules';
+
+/** A RUNNING scheduler row older than this was abandoned (crash, restart) and may be reclaimed. */
+export const STALE_RUN_MS = 30 * 60_000;
 
 type Settings = ScheduleSettings & Awaited<ReturnType<FeedSettingsService['resolveForFeedPlanning']>>;
 
@@ -70,13 +73,21 @@ export interface FarmRunResult {
  * (planAlerts, whose feed_alert rows are the in-app notices) — and add no
  * second calculation. Email is deferred (Rishi, 11 Oct): nothing is mailed.
  *
- * FEED_SCHEDULER_ENABLED=false turns the timer off (scripts, test servers);
- * "Run now" (runNow) works either way.
+ * The timer is OFF unless FEED_SCHEDULER_ENABLED=true; "Run now" (runNow) works either way.
+ * DIET_CHANGE and ESCALATION also wait until the company has saved Feed Planning Settings.
  */
 @Injectable()
 export class FeedSchedulerService {
   private readonly logger = new Logger(FeedSchedulerService.name);
   private ticking = false;
+  private readonly warned = new Set<string>();
+
+  /** A tenant that is off the DB allowlist or not yet migrated would fail every five minutes: say so once per process. */
+  private warnOnce(key: string, message: string): void {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    this.logger.warn(message);
+  }
 
   constructor(
     private readonly cls: ClsService,
@@ -93,8 +104,13 @@ export class FeedSchedulerService {
     return db;
   }
 
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'feed-scheduler', disabled: process.env.FEED_SCHEDULER_ENABLED === 'false' })
+  /**
+   * Off unless FEED_SCHEDULER_ENABLED is exactly 'true'. The flag is read here, at call time: a
+   * decorator option would be read at module load, before ConfigModule has put .env into process.env.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'feed-scheduler' })
   async tick(nowMs: number = Date.now()): Promise<void> {
+    if (process.env.FEED_SCHEDULER_ENABLED !== 'true') return;
     if (this.ticking) return; // a slow tick is still running; the next one picks up what is due
     this.ticking = true;
     try {
@@ -108,7 +124,7 @@ export class FeedSchedulerService {
             await this.runDue(tenant.tenant_id, nowMs);
           });
         } catch (error) {
-          this.logger.warn(`Feed scheduler skipped tenant ${tenant.tenant_code}: ${(error as Error).message}`);
+          this.warnOnce(`tenant:${tenant.tenant_code}`, `Feed scheduler skipped tenant ${tenant.tenant_code}: ${(error as Error).message}`);
         }
       }
     } finally {
@@ -124,12 +140,14 @@ export class FeedSchedulerService {
       try {
         ctx = await this.context(farm, tenantId, nowMs);
       } catch (error) {
-        this.logger.warn(`Feed scheduler skipped farm ${farm.code}: ${(error as Error).message}`);
+        this.warnOnce(`farm:${farm.farmId}`, `Feed scheduler skipped farm ${farm.code}: ${(error as Error).message}`);
         continue;
       }
       for (const job of FEED_JOBS) {
         const period = duePeriod(job, ctx.settings, ctx.clock);
         if (!period) continue;
+        // The always-due jobs wait for the company to opt in by saving Feed Planning Settings: silently, no log row.
+        if ((job === 'DIET_CHANGE' || job === 'ESCALATION') && ctx.settings.sources?.companySetting !== 'COMPANY') continue;
         results.push(await this.runLogged(job, farm, ctx, tenantId, nowMs, { trigger: 'SCHEDULED', period, runKey: runKey(job, farm.farmId, period) }));
       }
     }
@@ -183,17 +201,11 @@ export class FeedSchedulerService {
     run: { trigger: 'SCHEDULED' | 'MANUAL'; period: string; runKey: string | null; actorId?: string },
   ): Promise<FarmRunResult> {
     const base = { farmId: farm.farmId, farmCode: farm.code, companyId: farm.companyId, job, period: run.period };
-    const runId = randomUUID();
-    try {
-      await this.db.insert(schema.feedScheduleLog).values({
-        run_id: runId, tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: job,
-        trigger_type: run.trigger, period_key: run.period, run_key: run.runKey, status: 'RUNNING',
-        started_at: utcTimestamp(nowMs), triggered_by: run.actorId ?? null,
-      });
-    } catch (error) {
-      if (isDuplicateEntry(error)) return { ...base, status: 'ALREADY_RAN' };
-      throw error;
-    }
+    const runId = await this.claim({
+      tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: job,
+      trigger_type: run.trigger, period_key: run.period, triggered_by: run.actorId ?? null,
+    }, run.runKey, nowMs);
+    if (!runId) return { ...base, status: 'ALREADY_RAN' };
     try {
       const summary = await this.execute(job, farm, ctx, tenantId, nowMs);
       await this.db.update(schema.feedScheduleLog)
@@ -204,15 +216,48 @@ export class FeedSchedulerService {
       const message = (error as Error).message;
       this.logger.warn(`Feed scheduler ${job} failed for farm ${farm.code}: ${message}`);
       await this.db.update(schema.feedScheduleLog)
-        .set({ status: 'FAILED', error_message: message, finished_at: utcTimestamp() })
+        // run_key is released so a failure never blocks the job for the rest of the period: the next tick retries.
+        .set({ status: 'FAILED', error_message: message, finished_at: utcTimestamp(), run_key: null })
         .where(eq(schema.feedScheduleLog.run_id, runId));
       return { ...base, status: 'FAILED', error: message };
     }
   }
 
+  /**
+   * Claims feed_schedule_log.run_key (null = a manual run, always granted). Returns the new run_id, or null when
+   * another run holds the key. A FAILED holder, or a RUNNING one older than STALE_RUN_MS (a crashed process),
+   * is released and the claim retried once; the unique key still lets only one racing instance win.
+   */
+  private async claim(
+    values: { tenant_id: string; company_id: string; farm_id: string; job_code: string; trigger_type: string; period_key: string; triggered_by: string | null },
+    runKey: string | null, nowMs: number,
+  ): Promise<string | null> {
+    const attempt = async (): Promise<string | null> => {
+      const runId = randomUUID();
+      try {
+        await this.db.insert(schema.feedScheduleLog).values({ run_id: runId, ...values, run_key: runKey, status: 'RUNNING', started_at: utcTimestamp(nowMs) });
+        return runId;
+      } catch (error) {
+        if (isDuplicateEntry(error)) return null;
+        throw error;
+      }
+    };
+    const first = await attempt();
+    if (first || !runKey) return first;
+    const [holder] = await this.db.select({
+      run_id: schema.feedScheduleLog.run_id, status: schema.feedScheduleLog.status, started_at: schema.feedScheduleLog.started_at,
+    }).from(schema.feedScheduleLog).where(eq(schema.feedScheduleLog.run_key, runKey)).limit(1);
+    const stale = holder?.status === 'RUNNING' && parseUtcTimestamp(holder.started_at) < nowMs - STALE_RUN_MS;
+    if (!holder || !(holder.status === 'FAILED' || stale)) return null;
+    await this.db.update(schema.feedScheduleLog)
+      .set({ status: 'FAILED', run_key: null, finished_at: utcTimestamp(nowMs), error_message: stale ? 'Abandoned while RUNNING; released for a retry.' : undefined })
+      .where(eq(schema.feedScheduleLog.run_id, holder.run_id));
+    return attempt();
+  }
+
   private async execute(job: FeedJob, farm: NoticeFarm, ctx: FarmContext, tenantId: string, nowMs: number): Promise<JobSummary> {
     if (job === 'TENTATIVE_PLAN') {
-      const plan = await this.tentativePlan(farm, ctx, tenantId);
+      const plan = await this.tentativePlan(farm, ctx, tenantId, nowMs);
       const planNotice = plan.status === 'SKIPPED'
         ? undefined
         : await this.alerts.raisePlanAvailable(farm.farmId, farm.companyId, tenantId, plan, nowMs);
@@ -242,27 +287,46 @@ export class FeedSchedulerService {
    * A farm with no saved calculation, or none covering the week, is SKIPPED
    * with the generator's own reason.
    */
-  private async tentativePlan(farm: NoticeFarm, ctx: FarmContext, tenantId: string): Promise<PlanOutcome> {
+  private async tentativePlan(farm: NoticeFarm, ctx: FarmContext, tenantId: string, nowMs: number): Promise<PlanOutcome> {
     const { productionWeekday } = toFarmFeedSettings(ctx.settings);
     const { productionDate } = productionCycle(ctx.clock.date, productionWeekday);
     const planWeek = isoProductionWeek(productionDate);
-    const [existing] = await this.db.select().from(schema.feedPlan).where(and(
-      eq(schema.feedPlan.tenant_id, tenantId), eq(schema.feedPlan.company_id, farm.companyId),
-      eq(schema.feedPlan.farm_id, farm.farmId), eq(schema.feedPlan.plan_week, planWeek),
-    )).orderBy(desc(schema.feedPlan.version)).limit(1);
-    if (existing) {
-      return {
+    const existingPlan = async (): Promise<PlanOutcome | null> => {
+      const [existing] = await this.db.select().from(schema.feedPlan).where(and(
+        eq(schema.feedPlan.tenant_id, tenantId), eq(schema.feedPlan.company_id, farm.companyId),
+        eq(schema.feedPlan.farm_id, farm.farmId), eq(schema.feedPlan.plan_week, planWeek),
+      )).orderBy(desc(schema.feedPlan.version)).limit(1);
+      return existing ? {
         status: 'EXISTS', planId: existing.plan_id, planCode: existing.plan_code, planType: existing.plan_type,
         planWeek, version: existing.version, productionDate: existing.production_date,
-      };
+      } : null;
+    };
+    const found = await existingPlan();
+    if (found) return found;
+
+    // The check above and the generation below must not interleave with another run (a manual "Run now"
+    // racing the scheduled one): generating takes a per farm-and-week claim, whoever is running, and a run
+    // that loses it re-reads the week instead of making a second version.
+    const lockKey = `PLAN_WEEK|${farm.farmId}|${planWeek}`;
+    const lockId = await this.claim({
+      tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: 'TENTATIVE_PLAN',
+      trigger_type: 'PLAN_LOCK', period_key: planWeek, triggered_by: null,
+    }, lockKey, nowMs);
+    if (!lockId) {
+      return (await existingPlan()) ?? { status: 'SKIPPED', reason: 'Another run is generating this week\'s Feed Plan.', planWeek, productionDate };
     }
+    const settle = (status: 'DONE' | 'FAILED', release: boolean, note?: string) => this.db.update(schema.feedScheduleLog)
+      .set({ status, finished_at: utcTimestamp(), error_message: note ?? null, ...(release ? { run_key: null } : {}) })
+      .where(eq(schema.feedScheduleLog.run_id, lockId));
     try {
       const created = await this.cls.run(async () => {
         this.cls.set(FARM_SCOPE_KEY, { farmId: null, companyId: farm.companyId, restricted: false, lobId: null });
         return this.forecast.generateFeedPlanVersion(farm.farmId, productionDate, tenantId, { userId: FEED_SCHEDULER_ACTOR, userType: 'SYSTEM' });
       });
+      await settle('DONE', false); // the week now has its plan; the key stays taken
       return { status: 'GENERATED', ...created, productionDate };
     } catch (error) {
+      await settle('FAILED', true, (error as Error).message); // nothing was made: release the week for a retry
       if (error instanceof ConflictException || error instanceof NotFoundException) {
         return { status: 'SKIPPED', reason: error.message, planWeek, productionDate };
       }

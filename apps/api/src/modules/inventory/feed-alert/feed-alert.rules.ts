@@ -95,7 +95,7 @@ export type AlertCandidate = AlertSubject & {
   thresholdValue: number | null;
 };
 
-export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE';
+export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE' | 'SUPERSEDED' | 'APPROVED';
 
 export interface AlertPlan {
   raise: AlertCandidate[];
@@ -114,6 +114,8 @@ export interface PlanAlertsInput {
   requisitions: OpenRequisitionFact[];
   active: ActiveAlertFact[];
   levelsOnly: boolean;
+  /** PLAN_AVAILABLE subjects (feed_plan ids) whose plan is now approved or superseded, with why. */
+  closedPlans?: Record<string, 'SUPERSEDED' | 'APPROVED'>;
 }
 
 const REASON_BY_EVENT: Record<string, ResolveReason> = {
@@ -235,8 +237,15 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
   const liveSiloIds = new Set(input.silos.map((s) => s.siloId));
   for (const open of input.active) {
     if (wanted.has(open.dedupKey)) continue;
-    // A pushed event (PLAN_AVAILABLE) is raised by the feed scheduler, not by these facts, so its
-    // absence from `wanted` means nothing here: the scheduler resolves it when it is superseded.
+    // A pushed event (PLAN_AVAILABLE) is raised by the feed scheduler, not by these facts, so its absence
+    // from `wanted` means nothing: it closes when its rule goes off or away, or when its plan is approved or superseded.
+    if (open.eventType === 'PLAN_AVAILABLE') {
+      if (input.levelsOnly) continue;
+      const closed = open.subjectId === undefined ? undefined : input.closedPlans?.[open.subjectId];
+      if (!liveRuleIds.has(open.ruleId)) plan.resolve.push({ alertId: open.alertId, reason: 'RULE_OFF' });
+      else if (closed) plan.resolve.push({ alertId: open.alertId, reason: closed });
+      continue;
+    }
     if (!(open.eventType in REASON_BY_EVENT)) continue;
     // After a stock posting only silo facts were loaded; anything else stays as it is until a full evaluation.
     if (input.levelsOnly && open.subjectType !== 'SILO') continue;
