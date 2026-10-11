@@ -724,6 +724,13 @@ export class FeedForecastService {
     return tenantDb;
   }
 
+  /** Checkpoint 15: the configured Maximum Forecast Days (Feed Planning Settings); 45 when unset. */
+  private async maxSpanDays(companyId: string, farmId: string): Promise<number> {
+    const resolved = (await this.feedSettings.resolveForFeedPlanning(companyId, farmId)) as { maxForecastDays?: number | null };
+    const configured = resolved?.maxForecastDays;
+    return typeof configured === 'number' && configured >= 1 ? configured : MAX_SPAN_DAYS;
+  }
+
   /**
    * GET /feed-forecast (Plan R). The view only chooses the range and how the
    * engine's per-date rows are grouped (feed-forecast.view.ts); whatever the
@@ -765,7 +772,7 @@ export class FeedForecastService {
       throw new BadRequestException('periodId applies only to the Reporting Period view.');
     }
     const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
-    const span = spanProblem(from, to, period);
+    const span = spanProblem(from, to, period, await this.maxSpanDays(companyId, farmId));
     if (span) throw new BadRequestException(span);
     // `reach` is the last displayed forecast day (45 days after the planning date). computeForFarm refuses a
     // `to` past it (reachProblem); the engine can search past it for First Shortage Date without adding columns.
@@ -1670,7 +1677,7 @@ export class FeedForecastService {
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
       throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
     }
-    const span = spanProblem(from, to);
+    const span = spanProblem(from, to, null, await this.maxSpanDays(companyId, farmId));
     if (span) throw new BadRequestException(span);
     // A horizon that is sent must be a real day, like the other dates: silently falling back to `to` would hide the
     // run-down the caller asked to see (fix round 1). Only its size is clamped below — that is Q12's rule, not an error.
@@ -1748,7 +1755,7 @@ export class FeedForecastService {
       throw new BadRequestException('periodId applies only to the Reporting Period view.');
     }
     const resolved = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
-    const span = spanProblem(resolved.from, resolved.to, period);
+    const span = spanProblem(resolved.from, resolved.to, period, await this.maxSpanDays(companyId, farmId));
     if (span) throw new BadRequestException(span);
     const sentTo = query.to ?? resolved.to;
 

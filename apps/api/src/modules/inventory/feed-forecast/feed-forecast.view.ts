@@ -64,15 +64,15 @@ export function resolveViewRange(args: {
   }
 }
 /** Why a range cannot be forecast, or null. A reporting period is named, since its dates were not typed by the user. */
-export function spanProblem(from: string, to: string, period?: PeriodRange | null): string | null {
+export function spanProblem(from: string, to: string, period?: PeriodRange | null, maxSpanDays: number = MAX_SPAN_DAYS): string | null {
   if (to < from)
     return 'The end date is before the start date.';
   const span = diffDays(from, to);
-  if (span <= MAX_SPAN_DAYS)
+  if (span <= maxSpanDays)
     return null;
   return period
-    ? `Reporting period ${period.periodCode} runs ${span + 1} days (${dayShort(period.startDate)} to ${dayShort(period.endDate)}); the forecast covers at most ${MAX_SPAN_DAYS + 1}.`
-    : `Choose a range of at most ${MAX_SPAN_DAYS} days.`;
+    ? `Reporting period ${period.periodCode} runs ${span + 1} days (${dayShort(period.startDate)} to ${dayShort(period.endDate)}); the forecast covers at most ${maxSpanDays + 1}.`
+    : `Choose a range of at most ${maxSpanDays} days.`;
 }
 /** One line of the report grid: a single date (Daily, Custom) or a batch + item's days in a week or period. */
 export interface ReportRow {

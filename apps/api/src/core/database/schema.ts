@@ -3170,6 +3170,8 @@ export const batchDailyData = mysqlTable(
     alert_triggered: boolean('alert_triggered').default(false).notNull(),
     alert_note: varchar('alert_note', { length: 500 }),
     remarks: varchar('remarks', { length: 500 }),
+    // Checkpoint 28: empty bags counted for a bagged-feed consumption entry (0169).
+    empty_bags: int('empty_bags'),
     created_by: varchar('created_by', { length: 36 }),
     updated_by: varchar('updated_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })

@@ -156,6 +156,25 @@ describe('SiloFeedService', () => {
     });
   });
 
+  describe('changeoverWarning (checkpoint 5)', () => {
+    const base = { siloId: 'silo-1', siloName: 'SILO1', nextItemId: 'item-R2', companyId: 'comp-1', tenantId: 't-1' };
+    const holding = (item_id: string, on_hand_qty: number) => ({ item_id, item_code: item_id, item_description: null, on_hand_qty, uom: 'KG' });
+
+    it('warns while the silo still holds a balance of the old item', async () => {
+      mockGetStockBalance.mockResolvedValue([holding('item-R1', 1500)]);
+      await expect(service.changeoverWarning(base)).resolves.toMatch(/still holds 1500 of 'item-R1'.*changeover reason/);
+    });
+
+    it('does not warn once a changeover reason is confirmed, the silo is empty, or it already holds the next item', async () => {
+      mockGetStockBalance.mockResolvedValue([holding('item-R1', 1500)]);
+      await expect(service.changeoverWarning({ ...base, changeoverReason: 'Diet change 26 Sep' })).resolves.toBeNull();
+      mockGetStockBalance.mockResolvedValue([]);
+      await expect(service.changeoverWarning(base)).resolves.toBeNull();
+      mockGetStockBalance.mockResolvedValue([holding('item-R2', 400)]);
+      await expect(service.changeoverWarning(base)).resolves.toBeNull();
+    });
+  });
+
   describe('currentItems', () => {
     it("reports the unit of every balance row of the resident item, not only the first", async () => {
       // The ledger groups balances by unit, so one item can come back as a KG

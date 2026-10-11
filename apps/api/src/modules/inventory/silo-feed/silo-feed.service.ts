@@ -81,6 +81,29 @@ export class SiloFeedService {
   }
 
   /**
+   * Workbook checkpoint 5 (Next diet planning): "If no compatible designated
+   * silo exists, generate a changeover task and warn farm before requisition
+   * approval." A WARNING, not a block: returns the text to show while the silo
+   * still holds a balance of an item other than `nextItemId`, or null when the
+   * silo is empty, already holds the next item, or the user has confirmed a
+   * changeover reason. Posting stays guarded separately by `assertCanReceive`,
+   * so mixed items never reach one silo whatever is confirmed here.
+   */
+  async changeoverWarning(params: {
+    siloId: string;
+    siloName: string;
+    nextItemId: string;
+    companyId: string;
+    tenantId: string;
+    changeoverReason?: string | null;
+  }): Promise<string | null> {
+    if (params.changeoverReason?.trim()) return null;
+    const own = (await this.currentItems([params.siloId], params.companyId, params.tenantId)).get(params.siloId) ?? null;
+    if (!own || own.item_id === params.nextItemId || !(Number(own.on_hand_qty) > 0)) return null;
+    return `Silo '${params.siloName}' still holds ${own.on_hand_qty} of '${own.item_code}'. Changing its feed item needs a changeover: empty the silo first, or confirm a changeover reason.`;
+  }
+
+  /**
    * Refuses a posting into `siloId` that would violate D9. Both callers post
    * item movement in KG-agnostic quantities they already validated
    * elsewhere (stock transfer keeps its own capacity/KG check after this

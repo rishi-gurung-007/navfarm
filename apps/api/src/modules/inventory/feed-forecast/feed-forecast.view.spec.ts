@@ -172,6 +172,8 @@ describe('resolveViewRange and spanProblem', () => {
     expect(MAX_SPAN_DAYS).toBe(45);
     expect(spanProblem('2026-09-25', '2026-11-09')).toBeNull();
     expect(spanProblem('2026-09-25', '2026-11-10')).toBe('Choose a range of at most 45 days.');
+    expect(spanProblem('2026-09-25', '2026-10-10', null, 14)).toBe('Choose a range of at most 14 days.');
+    expect(spanProblem('2026-09-25', '2026-10-09', null, 14)).toBeNull();
     expect(spanProblem('2026-09-25', '2026-09-24')).toBe('The end date is before the start date.');
     expect(spanProblem('2026-08-01', '2026-09-19', { ...period, periodCode: '2026-X', startDate: '2026-08-01', endDate: '2026-09-19' }))
       .toBe('Reporting period 2026-X runs 50 days (01/08/26 to 19/09/26); the forecast covers at most 46.');

@@ -143,6 +143,13 @@ describe('FeedForecastService', () => {
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
   });
 
+  it('uses the configured Maximum Forecast Days for the span check, 45 when unset (checkpoint 15)', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, maxForecastDays: 14 } as any);
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-10-10' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow('Choose a range of at most 14 days.');
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-10-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
+  });
+
   it('rejects an impossible calendar day', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-02-27', to: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
@@ -156,7 +163,7 @@ describe('FeedForecastService', () => {
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
     // Task 4 Step 1: the settings stub answers a configured safety stock; it
     // must reach the engine, and the farm's old leadTimeDays key must not.
-    feedSettings.resolveForFeedPlanning.mockResolvedValueOnce({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }], stageBlocks: [] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({
