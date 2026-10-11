@@ -76,4 +76,14 @@ describe("FeedConsolidationsPanel", () => {
   it("deep links into the Mill Consolidation tab", () => {
     expect(consolidationHref("cons-1")).toBe("/inventory/feed-forecast?tab=mill-consolidation&id=cons-1");
   });
+
+  it("W5C r128: a DRAFT sheet can be marked reviewed, then finalized", async () => {
+    (api.post as jest.Mock).mockResolvedValue({ data: { ...detail, status: "REVIEWED" } });
+    render(<FeedConsolidationsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "fcsView" }));
+    fireEvent.click(await screen.findByRole("button", { name: "fcsMarkReviewed" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/feed-requisition/consolidations/cons-1/review", {}));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "fcsMarkReviewed" })).toBeNull());
+    expect(screen.getByRole("button", { name: "fcsFinalize" })).toBeTruthy();
+  });
 });

@@ -107,7 +107,11 @@ export interface ForecastInput {
   horizonTo?: string;
   /** TDD Engine Step 8 / Dashboard row 60: configured safety stock per silo and item. Worked Example: 0. */
   safetyStockKg?: number;
-  sheds: { shedId: string; shedCode: string; siloIds: string[] }[];
+  /**
+   * siloLinks (Master r8) carries the silo_shed_link effective dates: a silo serves the shed from
+   * effectiveFrom to effectiveTo inclusive; a null end is open. Without it every siloId is always linked.
+   */
+  sheds: { shedId: string; shedCode: string; siloIds: string[]; siloLinks?: { siloId: string; effectiveFrom?: string | null; effectiveTo?: string | null }[] }[];
   silos: {
     siloId: string;
     siloCode: string;
@@ -566,13 +570,19 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
   // D9: no shed has two silos holding the same item, so this lookup is safe — at most one match per (shed, item).
   const sourceCache = new Map<string, SourceResolution>();
-  function resolveSource(shedId: string, itemId: string): SourceResolution {
-    const cacheKey = `${shedId}:${itemId}`;
+  function resolveSource(shedId: string, itemId: string, date: string): SourceResolution {
+    const shed = shedById.get(shedId);
+    // The link effective on this date (Master r8); no dates on a link means always.
+    const effectiveSiloIds = shed?.siloLinks
+      ? shed.siloLinks
+        .filter((l) => (!l.effectiveFrom || l.effectiveFrom <= date) && (!l.effectiveTo || l.effectiveTo >= date))
+        .map((l) => l.siloId)
+      : (shed?.siloIds ?? []);
+    const cacheKey = `${shedId}:${itemId}:${effectiveSiloIds.join(',')}`;
     const cached = sourceCache.get(cacheKey);
     if (cached) return cached;
 
-    const shed = shedById.get(shedId);
-    const shedSilos = (shed?.siloIds ?? []).map((id) => siloById.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+    const shedSilos = effectiveSiloIds.map((id) => siloById.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
     const matching = shedSilos.find((s) => s.itemId === itemId);
 
     let resolution: SourceResolution;
@@ -753,7 +763,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const inChangeWindow =
         !!segment.changeWindowStart && date >= segment.changeWindowStart && segment.end !== null && date <= segment.end;
 
-      const resolution = resolveSource(batch.shedId, feedRow.itemId);
+      const resolution = resolveSource(batch.shedId, feedRow.itemId, date);
       if (resolution.noSiloHoldsItem && date <= input.to) flagNoSilo(batch.shedId, feedRow.itemId);
       const sk = sourceKeyFor(resolution, feedRow.itemId);
       keyMeta.set(sk.key, sk);
@@ -925,7 +935,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const item = itemByBatchDate.get(`${batch.batchId}|${date}`);
       if (!item) continue;
       if (lastItem !== null && item !== lastItem) {
-        const next = resolveSource(batch.shedId, item); // cached: already resolved by the demand loop
+        const next = resolveSource(batch.shedId, item, date); // cached: already resolved by the demand loop
         nextDietKeys.add(sourceKeyFor(next, item).key);
         dietChanges.push({
           batchId: batch.batchId,

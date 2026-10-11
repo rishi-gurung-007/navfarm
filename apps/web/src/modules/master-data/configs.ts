@@ -239,12 +239,13 @@ const location: MasterDataConfig = {
     // ledger / stock count / forecast the Feed Silo Status screen uses. Computed
     // by the API on every read; never submitted.
     ...([
-      { key: "silo_feed_item", label: "Feed in Silo", type: "text", helpText: "The feed item last received into this silo, from its latest posted transfer receipt." },
+      { key: "silo_feed_item", label: "Feed in Silo", type: "text", helpText: "The feed item last received into this silo, from its latest posted transfer receipt. Opens the item record." },
       { key: "available_stock_kg", label: "Available Stock KG", type: "number", step: "0.001", helpText: "What the inventory ledger holds of the Feed in Silo item now." },
       { key: "system_balance_kg", label: "System Balance KG", type: "number", step: "0.001", helpText: "Ledger balance of the Feed in Silo item. A physical count creates a variance for approval; it never resets this." },
       { key: "last_approved_count_kg", label: "Last Approved Physical Count KG", type: "number", step: "0.001", helpText: "Quantity on the latest posted physical stock count of this silo." },
       { key: "last_approved_count_at", label: "Last Approved Physical Count Date", type: "date", helpText: "Date of that stock count." },
       { key: "last_feed_receipt_date", label: "Last Feed Receipt Date", type: "date", helpText: "Date of the last posted transfer receipt into this silo." },
+      { key: "first_shortage_date", label: "First Shortage Date", type: "date", helpText: "The first date this silo cannot meet the feed demand drawn from it, from the feed forecast." },
       { key: "next_diet_change_date", label: "Next Diet Change Date", type: "date", helpText: "The next date a batch fed from this silo changes diet, from the feed forecast." },
     ] as MasterDataField[]).map((f): MasterDataField => ({
       ...f, readOnly: true, editOnly: true, hideInTable: true, emptyLabel: "Not available", section: "Identification",

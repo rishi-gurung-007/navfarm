@@ -425,6 +425,7 @@ export class LocationService {
         siloId: locationId,
         farmId: location.farm_id,
         shedIds: dto.attached_sheds,
+        dates: dto.attached_shed_dates,
         tenantId,
         companyId,
         userId: userPayload?.userId || null,
@@ -461,9 +462,21 @@ export class LocationService {
       tenantId: string;
       companyId: string | null;
       userId?: string | null;
+      /** Master r8: shedId -> the dates this silo serves it. A shed with no entry keeps the dates it has. */
+      dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
     },
   ) {
     const { siloId, farmId, tenantId, companyId, userId } = params;
+    const dateOf = (shedId: string) => {
+      const d = params.dates?.[shedId];
+      return d ? { effective_from: d.effective_from || null, effective_to: d.effective_to || null } : null;
+    };
+    for (const shedId of new Set(params.shedIds)) {
+      const d = dateOf(shedId);
+      if (d?.effective_from && d.effective_to && d.effective_to < d.effective_from) {
+        throw new BadRequestException('An attached shed\'s Effective To date cannot be before its Effective From date.');
+      }
+    }
     // The same shed twice in one payload is one attachment, not two.
     const shedIds = [...new Set(params.shedIds)];
 
@@ -540,8 +553,18 @@ export class LocationService {
           company_id: companyId,
           silo_id: siloId,
           shed_id: shedId,
+          ...(dateOf(shedId) ?? {}),
           created_by: userId || null,
         })));
+      }
+      for (const shedId of shedIds.filter((id) => existingShedIds.has(id))) {
+        const d = dateOf(shedId);
+        if (!d) continue;
+        await tx.update(schema.siloShedLink).set(d).where(and(
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          eq(schema.siloShedLink.silo_id, siloId),
+          eq(schema.siloShedLink.shed_id, shedId),
+        ));
       }
     }
   }
@@ -596,12 +619,14 @@ export class LocationService {
     return rows.map((row) => row.shed_id);
   }
 
-  private async attachedSheds(siloId: string, tenantId: string): Promise<Array<{ location_id: string; location_code: string; location_name: string }>> {
+  private async attachedSheds(siloId: string, tenantId: string): Promise<Array<{ location_id: string; location_code: string; location_name: string; effective_from: string | null; effective_to: string | null }>> {
     const rows = await this.db
       .select({
         location_id: schema.locationMaster.location_id,
         location_code: schema.locationMaster.location_code,
         location_name: schema.locationMaster.location_name,
+        effective_from: schema.siloShedLink.effective_from,
+        effective_to: schema.siloShedLink.effective_to,
       })
       .from(schema.siloShedLink)
       .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.shed_id))
@@ -636,7 +661,7 @@ export class LocationService {
       bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
     } as T & {
       attached_sheds?: string[];
-      attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string }>;
+      attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string; effective_from?: string | null; effective_to?: string | null }>;
       attached_silos?: AttachedSilo[];
       current_feed_item_code?: string | null;
       current_feed_item_name?: string | null;
@@ -685,11 +710,13 @@ export class LocationService {
    */
   private async siloFeedFacts(
     row: { location_id: string; farm_id?: string | null; parent_location_id?: string | null; company_id?: string | null },
-    current: { item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null,
+    current: { item_id?: string; item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null,
     tenantId: string,
   ) {
     const none = {
       silo_feed_item: null as string | null,
+      silo_feed_item_id: null as string | null,
+      first_shortage_date: null as string | null,
       available_stock_kg: null as number | null,
       system_balance_kg: null as number | null,
       last_approved_count_kg: null as number | null,
@@ -708,6 +735,8 @@ export class LocationService {
             : null;
           return {
             silo_feed_item: item,
+            silo_feed_item_id: item && current?.item_code === status.feedInSiloItemCode ? (current.item_id ?? null) : null,
+            first_shortage_date: status.firstShortageDate ? String(status.firstShortageDate).slice(0, 10) : null,
             available_stock_kg: item ? status.systemBalanceKg : null,
             system_balance_kg: item ? status.systemBalanceKg : null,
             last_approved_count_kg: status.lastApprovedCountKg,
@@ -725,6 +754,7 @@ export class LocationService {
       return {
         ...none,
         silo_feed_item: `${current.item_code}${current.item_description ? ` — ${current.item_description}` : ''}`,
+        silo_feed_item_id: current.item_id ?? null,
         available_stock_kg: kgOnly ? current.on_hand_qty : null,
         system_balance_kg: kgOnly ? current.on_hand_qty : null,
       };
@@ -1683,6 +1713,7 @@ export class LocationService {
           siloId: id,
           farmId: parent?.location_id || location.farm_id,
           shedIds: dto.attached_sheds,
+          dates: dto.attached_shed_dates,
           tenantId,
           companyId: location.company_id,
           userId: userPayload?.userId || null,

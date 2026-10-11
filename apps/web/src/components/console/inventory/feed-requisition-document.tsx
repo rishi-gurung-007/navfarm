@@ -369,6 +369,13 @@ export function isLineExceptioned(line: FeedRequisitionLine, edit: FeedLineEdit 
   return !!line.required_item_id && !!itemId && itemId !== line.required_item_id;
 }
 
+/** Req r34 "Yes - can escalate": the saved level and every higher one, highest first. The API refuses a lower one (priorityChangeProblem). */
+const PRIORITY_ORDER = ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING", "INFO"];
+export const escalations = (current: string): string[] => {
+  const at = PRIORITY_ORDER.indexOf(current);
+  return at < 0 ? [] : PRIORITY_ORDER.slice(0, at + 1);
+};
+
 export function FeedRequisitionDocument({
   view,
   editable,
@@ -379,6 +386,8 @@ export function FeedRequisitionDocument({
   remarksMissing = false,
   remarksError = null,
   options,
+  priority,
+  onPriorityChange,
 }: {
   view: FeedRequisitionDocumentView;
   editable: boolean;
@@ -395,6 +404,10 @@ export function FeedRequisitionDocument({
    */
   remarksError?: string | null;
   options?: FeedRequisitionOptions | null;
+  /** Req r34: the priority as currently chosen; the saved one when absent. */
+  priority?: string | null;
+  /** Req r34: when given on an editable document, the priority can be escalated (never lowered). */
+  onPriorityChange?: (value: string) => void;
 }) {
   const { t } = useLanguage();
   const lines = Array.isArray(view.lines) ? view.lines : [];
@@ -443,7 +456,14 @@ export function FeedRequisitionDocument({
           supply: labelOf(SUPPLY_LABEL, view.supply_source, t),
           purpose: labelOf(PURPOSE_LABEL, view.purpose, t),
           status: <Badge variant={variantOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view))}>{labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}</Badge>,
-          priority: view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
+          priority: editable && onPriorityChange && view.priority && escalations(view.priority).length > 1
+            ? (
+              <select aria-label={t("rqdPriority")} className="nf-input w-full px-2 py-1" style={inputStyle}
+                value={priority ?? view.priority} onChange={(e) => onPriorityChange(e.target.value)}>
+                {escalations(view.priority).map((p) => <option key={p} value={p}>{labelOf(PRIORITY_LABEL, p, t)}</option>)}
+              </select>
+            )
+            : view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
           deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,
           saved: {
             approvedBy: header?.approved_by_name,

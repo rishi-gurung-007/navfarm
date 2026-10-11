@@ -86,6 +86,14 @@ export class FeedRequisitionController {
     return { success: true, message: 'Feed consolidation sheet retrieved.', data };
   }
 
+  @Post('consolidations/:id/review')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
+  @ApiOperation({ summary: 'Mark a DRAFT consolidation sheet REVIEWED (Req r128)' })
+  async reviewConsolidation(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const data = await this.consolidations!.markReviewed(id, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Feed consolidation sheet marked reviewed.', data };
+  }
+
   @Post('consolidations/:id/finalize')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
   async finalizeConsolidation(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {

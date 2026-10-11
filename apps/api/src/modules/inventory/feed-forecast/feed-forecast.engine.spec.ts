@@ -1009,3 +1009,46 @@ describe('asBatchPk — the only way to mint a persistable batch id (9b fix roun
     expect(() => asBatchPk(`${real}:a1b2c3d4-0000-4000-8000-0000000000ff`)).toThrow('Not a batch_header id');
   });
 });
+
+describe('buildFeedForecast — Master r8: silo_shed_link effective dates', () => {
+  const feedRows: FeedRow[] = [
+    { lifecycleId: 'a', breedId: 'l', stageId: 'grower', itemId: 'r1', itemName: 'Grower Diet', fromDay: 1, toDay: 60, kgPerHeadPerDay: 1.0, wastagePct: 0 },
+  ];
+  const base = (siloLinks?: Array<{ siloId: string; effectiveFrom?: string | null; effectiveTo?: string | null }>): ForecastInput => ({
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-26',
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'], siloLinks }],
+    silos: [
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 },
+      { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: 'r1', balanceKg: 5000 },
+    ],
+    store: null,
+    items: { r1: 'Grower Diet' },
+    batches: [{
+      batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-1', breedId: 'l', shedId: 'h1', heads: 100,
+      segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+    }],
+    feedRows,
+  });
+  const siloOn = (input: ForecastInput) => {
+    const { daily } = buildFeedForecast(input);
+    return Object.fromEntries(daily.map((d: any) => [d.date, d.sourceCode]));
+  };
+
+  it('draws from the silo whose link is effective on each date', () => {
+    const used = siloOn(base([
+      { siloId: 's1', effectiveFrom: null, effectiveTo: '2026-09-24' },
+      { siloId: 's2', effectiveFrom: '2026-09-25', effectiveTo: null },
+    ]));
+    expect(used['2026-09-23']).toBe('GRS/SILO-001');
+    expect(used['2026-09-24']).toBe('GRS/SILO-001');
+    expect(used['2026-09-25']).toBe('GRS/SILO-002');
+    expect(used['2026-09-26']).toBe('GRS/SILO-002');
+  });
+
+  it('treats a link with no dates as always effective', () => {
+    const used = siloOn(base([{ siloId: 's1' }]));
+    expect(new Set(Object.values(used))).toEqual(new Set(['GRS/SILO-001']));
+  });
+});

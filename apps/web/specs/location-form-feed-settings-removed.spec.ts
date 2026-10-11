@@ -32,7 +32,7 @@ describe("D32 — the Location form no longer edits per-farm feed settings", () 
       "silo_capacity_kg", "silo_capacity_uom", "silo_reorder_days", "low_level_kg", "high_level_kg",
       "attached_sheds",
       // W4G2 (11 Oct): silo read-only facts, Master Setup rows 13-20.
-      "silo_feed_item", "available_stock_kg", "system_balance_kg", "last_approved_count_kg", "last_approved_count_at", "last_feed_receipt_date", "next_diet_change_date",
+      "silo_feed_item", "available_stock_kg", "system_balance_kg", "last_approved_count_kg", "last_approved_count_at", "last_feed_receipt_date", "first_shortage_date", "next_diet_change_date",
       "downtime_days_required", "gps_latitude", "gps_longitude",
     ]);
   });

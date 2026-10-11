@@ -1332,6 +1332,9 @@ export const siloShedLink = mysqlTable('silo_shed_link', {
   company_id: varchar('company_id', { length: 36 }),
   silo_id: varchar('silo_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
   shed_id: varchar('shed_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  // Master r8: the dates this silo serves the shed. NULL on both = always.
+  effective_from: date('effective_from', { mode: 'string' }),
+  effective_to: date('effective_to', { mode: 'string' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
