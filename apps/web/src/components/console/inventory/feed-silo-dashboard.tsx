@@ -68,6 +68,10 @@ function FeedSiloDashboardContent() {
     periodId,
     hydrateWindow,
   } = forecast;
+  // The Dashboard starts empty: the shared farm is pre-selected for the
+  // Calculation tab, but here the user picks Farm -> Shed -> Silo one by one.
+  // A farm login has no choice to make, so its farm counts as chosen.
+  const [farmChosen, setFarmChosen] = useState(farm.isFixed);
   const [selection, setSelection] = useState({ farmId, shedId: null as string | null, siloId: null as string | null });
   const [sheds, setSheds] = useState<Option[]>([]);
   const [silos, setSilos] = useState<Option[]>([]);
@@ -88,7 +92,7 @@ function FeedSiloDashboardContent() {
   }, [farmId, selection.farmId]);
 
   const load = useCallback(async () => {
-    if (!farmId || selection.farmId !== farmId) return;
+    if (!farmChosen || !farmId || selection.farmId !== farmId) return;
     const requestId = ++requestIdRef.current;
     const requested = { farmId, shedId: selection.shedId, siloId: selection.siloId };
     const params = new URLSearchParams({ farmId, view });
@@ -112,15 +116,8 @@ function FeedSiloDashboardContent() {
         to: resolved.to,
         periodId: resolved.period?.periodId ?? "",
       });
-      if (!requested.shedId) {
-        const first = resolved.selection.sheds?.[0]?.id ?? null;
-        setSelection({ farmId, shedId: first, siloId: null });
-        setData(null);
-        return;
-      }
-      if (!requested.siloId) {
-        const first = resolved.selection.silos?.[0]?.id ?? null;
-        setSelection({ farmId, shedId: requested.shedId, siloId: first });
+      // No auto-selection: the next filter waits for the user's choice.
+      if (!requested.shedId || !requested.siloId) {
         setData(null);
         return;
       }
@@ -133,12 +130,26 @@ function FeedSiloDashboardContent() {
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [farmId, from, hydrateWindow, periodId, planningDate, reload, selection.farmId, selection.shedId, selection.siloId, to, view]);
+  }, [farmChosen, farmId, from, hydrateWindow, periodId, planningDate, reload, selection.farmId, selection.shedId, selection.siloId, to, view]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const chooseFarm = (id: string) => {
+    if (!id) {
+      requestIdRef.current += 1;
+      setFarmChosen(false);
+      setSelection({ farmId, shedId: null, siloId: null });
+      setSheds([]);
+      setSilos([]);
+      setData(null);
+      setError("");
+      return;
+    }
+    setFarmChosen(true);
+    setFarmId(id);
+  };
   const chooseShed = (shedId: string) => {
     requestIdRef.current += 1;
     setSelection({ farmId, shedId: shedId || null, siloId: null });
@@ -164,7 +175,7 @@ function FeedSiloDashboardContent() {
       : data?.farm ? feedFarmLabel(data.farm) : null
     : undefined;
   const noFarms = !farm.isFixed && farm.loaded && farm.farms.length === 0;
-  const noSheds = farmId && !loading && sheds.length === 0 && selection.shedId === null;
+  const noSheds = farmChosen && farmId && !loading && sheds.length === 0 && selection.shedId === null;
   const noSilos = selection.shedId && !loading && silos.length === 0 && selection.siloId === null;
 
   return (
@@ -174,9 +185,9 @@ function FeedSiloDashboardContent() {
         <p className="mt-0.5 text-xs text-(--text-secondary)">{t("fsdDescription")}</p>
       </div>
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9">
-        <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} fixedLabel={fixedLabel} onChange={setFarmId} />
+        <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmChosen ? farmId : null} fixedLabel={fixedLabel} allLabel={t("fsdSelectFarm")} onChange={chooseFarm} />
         <Field label={t("fsdShed")} htmlFor="sd-shed">
-          <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!sheds.length}>
+          <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!farmChosen || !sheds.length}>
             {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
             {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
           </select>
@@ -214,6 +225,8 @@ function FeedSiloDashboardContent() {
         <LoadingState label={t("fsdLoading")} />
       ) : noFarms || !farmId ? (
         <EmptyState title={t("ffNoFarms")} />
+      ) : !farmChosen || !selection.shedId || !selection.siloId ? (
+        noSheds ? <EmptyState title={t("fsdNoSheds")} /> : noSilos ? <EmptyState title={t("fsdNoLinkedSilos")} /> : <EmptyState title={t("fsdSelectPrompt")} />
       ) : noSheds ? (
         <EmptyState title={t("fsdNoSheds")} />
       ) : noSilos ? (

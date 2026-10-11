@@ -1208,6 +1208,11 @@ export class FeedForecastService {
     return this.runService.archiveRun(runId, tenantId, actor);
   }
 
+  async deleteRunPermanently(runId: string, tenantId: string, actor?: { userId?: string; userType?: string }) {
+    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    return this.runService.deleteRunPermanently(runId, tenantId, actor);
+  }
+
   /**
    * GET /feed-forecast/periods: the periods the Reporting Period view may use,
    * for the caller's farm (D13, D20). Through resolveFarm, so a farm login gets

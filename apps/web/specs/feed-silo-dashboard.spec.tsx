@@ -58,6 +58,16 @@ function route(url: string) {
   return Promise.resolve(response(query.get('shedId'), query.get('siloId')));
 }
 
+/** The Dashboard starts empty: pick Farm, then Shed, then Silo, one at a time. */
+async function pickAll(shed = 'shed-a', silo?: string) {
+  fireEvent.change(screen.getByLabelText('ffFarm'), { target: { value: 'farm-1' } });
+  await waitFor(() => expect(within(screen.getByLabelText('fsdShed')).queryByText(/SHED-001/)).toBeTruthy());
+  fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: shed } });
+  const siloId = silo ?? (shed === 'shed-b' ? 'silo-b' : 'silo-a');
+  await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(new RegExp(siloId === 'silo-b' ? 'SILO-002' : 'SILO-001'))).toBeTruthy());
+  fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: siloId } });
+}
+
 describe('FeedSiloDashboard', () => {
   beforeEach(() => {
     mockSetFarmId.mockReset();
@@ -66,6 +76,7 @@ describe('FeedSiloDashboard', () => {
 
   it('provides a contained vertical scroller for its cards and charts', async () => {
     render(<FeedSiloDashboard />);
+    await pickAll();
 
     await screen.findAllByText('fsdCurrentDietFeedItem');
     const dashboard = screen.getByLabelText('fsdShed').closest('[data-fill-body]');
@@ -74,41 +85,64 @@ describe('FeedSiloDashboard', () => {
     expect(dashboard?.classList.contains('overscroll-contain')).toBe(true);
   });
 
-  it('selects the first valid Shed and Silo by API code order before requesting facts', async () => {
+  it('shows nothing until Farm, Shed and Silo are chosen one by one', async () => {
     render(<FeedSiloDashboard />);
 
-    await screen.findAllByText('fsdCurrentDietFeedItem');
+    expect(screen.getByText('fsdSelectPrompt')).toBeTruthy();
+    expect((screen.getByLabelText('ffFarm') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('fsdShed') as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).disabled).toBe(true);
+    expect(api.get).not.toHaveBeenCalled();
+    expect(screen.queryByRole('table', { name: 'fsdLabel' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('ffFarm'), { target: { value: 'farm-1' } });
+    await waitFor(() => expect((screen.getByLabelText('fsdShed') as HTMLSelectElement).disabled).toBe(false));
+    expect((screen.getByLabelText('fsdShed') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText('fsdSelectPrompt')).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'fsdLabel' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: 'shed-a' } });
+    await waitFor(() => expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).disabled).toBe(false));
+    expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('');
+    expect(screen.getByText('fsdSelectPrompt')).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'fsdLabel' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: 'silo-a' } });
+    expect(await screen.findByRole('table', { name: 'fsdLabel' })).toBeTruthy();
+    expect(screen.queryByText('fsdSelectPrompt')).toBeNull();
     const calls = (api.get as jest.Mock).mock.calls.map(([url]) => String(url));
-    expect(calls).toHaveLength(3);
-    expect(calls[0]).not.toContain('shedId=');
-    expect(calls[1]).toContain('shedId=shed-a');
-    expect(calls[1]).not.toContain('siloId=');
-    expect(calls[2]).toContain('shedId=shed-a');
-    expect(calls[2]).toContain('siloId=silo-a');
-    expect((screen.getByLabelText('fsdShed') as HTMLSelectElement).value).toBe('shed-a');
-    expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('silo-a');
+    expect(calls[calls.length - 1]).toContain('siloId=silo-a');
   });
 
   it('clears the old Silo immediately and selects the first linked Silo after a Shed change', async () => {
     render(<FeedSiloDashboard />);
+    await pickAll();
     await screen.findAllByText('fsdCurrentDietFeedItem');
 
     fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: 'shed-b' } });
     expect(screen.queryByText('GRS/SILO-001')).toBeNull();
-    await waitFor(() => expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('silo-b'));
+    expect(screen.getByText('fsdSelectPrompt')).toBeTruthy();
+    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/SILO-002/)).toBeTruthy());
+    expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: 'silo-b' } });
     expect(await screen.findByText('GRS/SILO-002')).toBeTruthy();
   });
 
   it('ignores an older selected-Silo response after the parent Shed changes', async () => {
     render(<FeedSiloDashboard />);
+    await pickAll();
     await screen.findAllByText('fsdCurrentDietFeedItem');
+    const before = (api.get as jest.Mock).mock.calls.length;
     let resolveOld!: (value: unknown) => void;
     const oldRequest = new Promise((resolve) => { resolveOld = resolve; });
     (api.get as jest.Mock).mockImplementationOnce(() => oldRequest).mockImplementation(route);
 
     fireEvent.change(screen.getByLabelText('fsdPlanningDate'), { target: { value: '2026-10-06' } });
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(before + 1));
     fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: 'shed-b' } });
+    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/SILO-002/)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: 'silo-b' } });
     await screen.findByText('GRS/SILO-002');
     resolveOld(response('shed-a', 'silo-a'));
 
@@ -118,12 +152,14 @@ describe('FeedSiloDashboard', () => {
 
   it('W5B (Silo r9): Days of Feed Remaining is shown to one decimal', async () => {
     render(<FeedSiloDashboard />);
+    await pickAll();
     const table = await screen.findByRole('table', { name: 'fsdLabel' });
     expect(within(table).getAllByText(/^3\.0\b/).length).toBeGreaterThan(0);
   });
 
   it('shows all approved fields, keeps Farm Total explicit, and links Silo and Requisition', async () => {
     render(<FeedSiloDashboard />);
+    await pickAll();
     const table = await screen.findByRole('table', { name: 'fsdLabel' });
     const labels = [
       'fsdCurrentDietFeedItem', 'fsdMillLoadingBin', 'fsdSiloCapacityKg', 'fsdSystemBalanceKg',
@@ -151,6 +187,7 @@ describe('FeedSiloDashboard', () => {
       return Promise.resolve(routed);
     });
     render(<FeedSiloDashboard />);
+    await pickAll();
     const table = await screen.findByRole('table', { name: 'fsdLabel' });
 
     expect(within(table).getByText('fsdFirstShortageDate')).toBeTruthy();
@@ -177,6 +214,7 @@ describe('FeedSiloDashboard', () => {
     });
 
     render(<FeedSiloDashboard />);
+    await pickAll();
 
     expect((await screen.findAllByText('fsdNotAvailable')).length).toBeGreaterThan(0);
     expect(screen.queryByText('NaN')).toBeNull();

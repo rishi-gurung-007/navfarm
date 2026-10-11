@@ -71,6 +71,9 @@ describe('FeedForecastController run persistence boundary', () => {
     expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.archiveRun)).toEqual({
       moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'create',
     });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.deleteRunPermanently)).toEqual({
+      moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'delete',
+    });
   });
 
   it('lists, reads and generates retained feed plan versions through explicit scoped routes', async () => {

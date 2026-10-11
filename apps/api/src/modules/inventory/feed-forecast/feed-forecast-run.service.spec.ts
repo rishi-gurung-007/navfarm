@@ -27,6 +27,9 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
     insert: jest.fn((table: unknown) => ({
       values: jest.fn(async (values: unknown) => log.push({ op: 'insert', table, values, inTx: cls.get('tenantPostingTransaction') === true })),
     })),
+    delete: jest.fn((table: unknown) => ({
+      where: jest.fn(async (condition: unknown) => { log.push({ op: 'delete', table, where: condition, inTx: cls.get('tenantPostingTransaction') === true }); }),
+    })),
     update: jest.fn((table: unknown) => {
       const entry: Entry = { op: 'update', table, inTx: cls?.get('tenantPostingTransaction') === true };
       log.push(entry);
@@ -44,7 +47,8 @@ function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = { farmId: n
     resolve: jest.fn(async () => ({ companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, sources: { companySetting: 'COMPANY' } })),
     resolveForFeedPlanning: jest.fn(async () => ({ companyId: 'company-1', farmId: 'farm-1', maxForecastDays: 45, sources: { companySetting: 'COMPANY' } })),
   };
-  return { service: new FeedForecastRunService(cls, settings as any), log, settings, cls };
+  const audit = { log: jest.fn(async () => ({})) };
+  return { service: new FeedForecastRunService(cls, settings as any, audit as any), log, settings, cls, audit };
 }
 
 /**
@@ -410,6 +414,56 @@ describe('FeedForecastRunService', () => {
     });
     expect(log.find((entry) => entry.op === 'update')).toMatchObject({ table: schema.feedForecastRun, values: { archived_by: 'user-1' } });
     expect(log.some((entry) => entry.op === 'delete')).toBe(false);
+  });
+
+  describe('permanent delete', () => {
+    const run = { run_id: 'run-1', run_code: 'RUN-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', version: 3 };
+    const farm = [{ location_id: 'farm-1', company_id: 'company-1', lob_id: 'lob-piggery' }];
+
+    it('deletes the run lines and then the run in one transaction, and audits it', async () => {
+      const queues = new Map<unknown, unknown[][]>([
+        [schema.feedForecastRun, [[run]]],
+        [schema.locationMaster, [farm]],
+        [schema.requisition, [[]]],
+        [schema.feedPlan, [[]]],
+      ]);
+      const { service, log, audit } = setup(queues);
+      await expect(service.deleteRunPermanently('run-1', 'tenant-1', { userId: 'user-1' })).resolves.toMatchObject({ run_id: 'run-1', deleted: true });
+      const deletes = log.filter((entry) => entry.op === 'delete');
+      expect(deletes.map((entry) => entry.table)).toEqual([schema.feedForecastRunLine, schema.feedForecastRun]);
+      expect(deletes.every((entry) => entry.inTx)).toBe(true);
+      expect(log.some((entry) => entry.op === 'update')).toBe(false);
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'DELETE', entityName: 'feed_forecast_run', entityId: 'run-1', userId: 'user-1' }), expect.anything());
+    });
+
+    it('refuses, naming the requisition, when a requisition uses the run', async () => {
+      const queues = new Map<unknown, unknown[][]>([
+        [schema.feedForecastRun, [[run]]],
+        [schema.locationMaster, [farm]],
+        [schema.requisition, [[{ req_no: 'REQ-0007' }]]],
+        [schema.feedPlan, [[]]],
+      ]);
+      const { service, log } = setup(queues);
+      await expect(service.deleteRunPermanently('run-1', 'tenant-1', { userId: 'user-1' })).rejects.toThrow(/Used by requisition REQ-0007/);
+      expect(log.some((entry) => entry.op === 'delete')).toBe(false);
+    });
+
+    it('refuses, naming the feed plan, when a plan version was generated from the run', async () => {
+      const queues = new Map<unknown, unknown[][]>([
+        [schema.feedForecastRun, [[run]]],
+        [schema.locationMaster, [farm]],
+        [schema.requisition, [[]]],
+        [schema.feedPlan, [[{ plan_code: 'FP-2026-W41-V2' }]]],
+      ]);
+      const { service, log } = setup(queues);
+      await expect(service.deleteRunPermanently('run-1', 'tenant-1', { userId: 'user-1' })).rejects.toBeInstanceOf(ConflictException);
+      expect(log.some((entry) => entry.op === 'delete')).toBe(false);
+    });
+
+    it('404s for a run outside the tenant or scope', async () => {
+      const { service } = setup(new Map<unknown, unknown[][]>([[schema.feedForecastRun, [[]]]]));
+      await expect(service.deleteRunPermanently('run-1', 'tenant-1', { userId: 'user-1' })).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 
   it('enforces tenant/company/LOB/farm scope on detail', async () => {

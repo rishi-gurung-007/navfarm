@@ -506,7 +506,7 @@ function FeedForecastPanelContent() {
               <Button size="sm" variant="outline" onClick={() => setSavedRunReload((n) => n + 1)}>{t("ffRetry")}</Button>
             </InlineAlert>
           ) : <EmptyState title={t("ffCalculatePrompt")} />}
-          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} compact onViewRun={viewHistoricalRun} />}
+          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} compact />}
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}
             runId={currentRun?.run_id ?? currentRun?.runId ?? null}

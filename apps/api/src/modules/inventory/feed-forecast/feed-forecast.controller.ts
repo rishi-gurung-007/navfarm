@@ -123,6 +123,17 @@ export class FeedForecastController {
     return { success: true, message: 'Feed forecast calculation archived.', data };
   }
 
+  // Stricter than archive ('create'): this cannot be undone. Registered after
+  // @Delete('runs/:id'); the literal 'permanent' suffix keeps the paths apart.
+  @Delete('runs/:id/permanent')
+  @RequirePermission('INVENTORY', 'LEDGER', 'delete')
+  @ApiOperation({ summary: 'Permanently delete a saved calculation and its lines; refused while a requisition or feed plan uses it' })
+  async deleteRunPermanently(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.deleteRunPermanently(id, tenantId, req.user);
+    return { success: true, message: 'Feed forecast calculation permanently deleted.', data };
+  }
+
   /**
    * Farms with their feed-planning override values, for Company
    * Settings → Feed Planning. Read under the report's grant, like 'farms'

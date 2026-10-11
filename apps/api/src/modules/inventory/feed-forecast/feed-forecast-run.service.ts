@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
@@ -6,6 +6,7 @@ import { ClsService } from 'nestjs-cls';
 import { farmScope } from '../../../common/farm-scope';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import * as schema from '../../../core/database/schema';
+import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import type { FeedForecastResponse } from './feed-forecast.service';
@@ -39,7 +40,7 @@ type PersistableRunOutput = Pick<FeedForecastResponse, 'farm' | 'planningDate' |
 
 @Injectable()
 export class FeedForecastRunService {
-  constructor(private readonly cls: ClsService, private readonly feedSettings: FeedSettingsService) {}
+  constructor(private readonly cls: ClsService, private readonly feedSettings: FeedSettingsService, @Optional() private readonly audit?: AuditLogService) {}
 
   private get db(): MySql2Database<typeof schema> {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -251,6 +252,55 @@ export class FeedForecastRunService {
       isNull(schema.feedForecastRun.archived_at),
     ));
     return { ...run, archived_at: true, archived_by: actor.userId };
+  }
+
+  /**
+   * Permanent delete (not archive): removes the saved run and its lines in one
+   * transaction. Refused while anything that must outlive the run points at it
+   * (a requisition's forecast-run link, a feed plan version's source run) —
+   * those FKs are RESTRICT, and breaking such a record is worse than keeping
+   * the run. archiveRun above is unchanged for its existing caller.
+   */
+  async deleteRunPermanently(runId: string, tenantId: string, actor?: Actor) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated user is required to delete a forecast run.');
+    return withTenantTransaction(this.cls, async () => {
+      const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+        eq(schema.feedForecastRun.run_id, runId),
+        eq(schema.feedForecastRun.tenant_id, tenantId),
+      )).limit(1).for('update');
+      if (!run) throw new NotFoundException('Feed forecast run not found.');
+      try {
+        await this.loadFarm(run.farm_id, run.company_id, tenantId);
+      } catch (error) {
+        if (error instanceof ForbiddenException || error instanceof NotFoundException) throw new NotFoundException('Feed forecast run not found.');
+        throw error;
+      }
+      const uses: string[] = [];
+      const requisitions = await this.db.select({ req_no: schema.requisition.req_no }).from(schema.requisition)
+        .where(eq(schema.requisition.feed_forecast_run_id, runId));
+      for (const row of requisitions) uses.push(`requisition ${row.req_no}`);
+      const plans = await this.db.select({ plan_code: schema.feedPlan.plan_code }).from(schema.feedPlan)
+        .where(eq(schema.feedPlan.source_run_id, runId));
+      for (const row of plans) uses.push(`feed plan ${row.plan_code}`);
+      if (uses.length > 0) {
+        throw new ConflictException(`Used by ${uses.join(', ')} — cannot delete ${run.run_code}.`);
+      }
+      await this.db.delete(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, runId));
+      await this.db.delete(schema.feedForecastRun).where(and(
+        eq(schema.feedForecastRun.run_id, runId),
+        eq(schema.feedForecastRun.tenant_id, tenantId),
+      ));
+      await this.audit?.log({
+        tenantId,
+        companyId: run.company_id,
+        userId: actor.userId,
+        action: 'DELETE',
+        entityName: 'feed_forecast_run',
+        entityId: runId,
+        oldValues: { run_id: run.run_id, run_code: run.run_code, farm_id: run.farm_id, version: run.version, view: run.view, from_date: run.from_date, to_date: run.to_date, archived_at: run.archived_at },
+      }, this.db);
+      return { run_id: runId, run_code: run.run_code, deleted: true };
+    });
   }
 
   async findOne(runId: string, tenantId: string) {
