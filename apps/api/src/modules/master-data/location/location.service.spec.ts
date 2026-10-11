@@ -272,6 +272,26 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.location_code).toBe('FARM-001');
   });
 
+  // Test server, 11 Oct: Add Location with a typed code failed "Invalid master
+  // code." The type lookup found a series coded NS-FARM and its code was passed
+  // to manualCode() as the master name. A typed code is a LOCATION code, always.
+  it('validates a typed code against the LOCATION master, whatever series the type resolves to', async () => {
+    numberSeries.findDefaultSeriesByMaster.mockResolvedValueOnce({ code: 'NS-FARM' });
+    (numberSeries as any).manualCode = jest.fn().mockResolvedValue('987-ET-8');
+    selectResults.push(
+      [company], [farmType], [uom],
+      [{ location_id: 'loc-1', location_code: '987-ET-8', location_type: 'FARM', location_level: 1 }],
+    );
+
+    await service.create({
+      company_id: 'comp-1', location_code: '987-et-8',
+      location_name: 'rtvby', location_address: 'Farm Road', location_type: 'FARM',
+      max_capacity: 100, capacity_uom: 'HEAD',
+    }, 'tenant-1', { userId: 'user-1' });
+
+    expect((numberSeries as any).manualCode).toHaveBeenCalledWith('LOCATION', '987-et-8', 'tenant-1', 'comp-1', 'FARM');
+  });
+
   it('retries once with a freshly computed sequence when the first insert collides on a duplicate location code', async () => {
     selectResults.push(
       [company], [farmType], [uom], [series],

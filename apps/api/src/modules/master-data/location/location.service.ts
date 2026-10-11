@@ -342,8 +342,11 @@ export class LocationService {
     // executor, so the series row's SELECT ... FOR UPDATE (or, for a child
     // location, the sibling count it guards) stays locked until the insert
     // below commits — two concurrent creates cannot produce the same code.
+    // A typed code is validated as a LOCATION code. seriesCode is a series row's
+    // code (it can be NS-FARM), not a master name — passing it failed "Invalid
+    // master code." on the test server (11 Oct).
     const locationCode = dto.location_code?.trim()
-      ? await this.numberSeriesService.manualCode(seriesCode, dto.location_code, tenantId, companyId, typeCode)
+      ? await this.numberSeriesService.manualCode('LOCATION', dto.location_code, tenantId, companyId, typeCode)
       : await this.generateLocationCode(seriesCode, locationType, tenantId, companyId, parent, tx);
 
     // location_code is varchar(255). A deep hierarchical tree (each level
