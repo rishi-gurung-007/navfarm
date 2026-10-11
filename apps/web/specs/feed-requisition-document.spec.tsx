@@ -492,12 +492,18 @@ describe("FeedRequisitionDocument silo changeover warning (checkpoint 5)", () =>
 describe("FeedRequisitionDocument priority control (Req r34)", () => {
   it("offers only the saved level and higher ones, and reports the choice", () => {
     const onPriorityChange = jest.fn();
-    render(<FeedRequisitionDocument view={{ ...view, priority: "WARNING" }} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} onPriorityChange={onPriorityChange} />);
+    render(<FeedRequisitionDocument view={{ ...view, priority: "WARNING", priority_options: ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING"] }} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} onPriorityChange={onPriorityChange} />);
     const select = screen.getByRole("combobox", { name: en.rqdPriority }) as HTMLSelectElement;
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).toEqual(["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING"]);
     fireEvent.change(select, { target: { value: "CRITICAL" } });
     expect(onPriorityChange).toHaveBeenCalledWith("CRITICAL");
+  });
+
+  it("offers exactly the levels the API lists (no copy of the order in the web)", () => {
+    render(<FeedRequisitionDocument view={{ ...view, priority: "WARNING", priority_options: ["CRITICAL", "WARNING"] }} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} onPriorityChange={jest.fn()} />);
+    const select = screen.getByRole("combobox", { name: en.rqdPriority }) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["CRITICAL", "WARNING"]);
   });
 
   it("stays a plain badge when read-only", () => {

@@ -2,7 +2,7 @@ import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../.
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
-  feedListStatusFilter, isOffBulkMultiple, keepHigherPriority, priorityChangeProblem,
+  feedListStatusFilter, isOffBulkMultiple, keepHigherPriority, priorityChangeProblem, priorityEscalations,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -523,6 +523,14 @@ describe('A1 (10 Oct) — Requisition row 34: the farm may escalate priority, ne
   });
   it('refuses a lower priority', () => {
     expect(priorityChangeProblem('CRITICAL', 'WARNING')).toBe('Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Warning.');
+  });
+});
+
+describe('priorityEscalations lists what priorityChangeProblem accepts', () => {
+  it('the saved level and every higher one, highest first; none for an unknown level', () => {
+    expect(priorityEscalations('WARNING')).toEqual(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING']);
+    expect(priorityEscalations('CRITICAL_FIRST_PRIORITY')).toEqual(['CRITICAL_FIRST_PRIORITY']);
+    expect(priorityEscalations(null)).toEqual([]);
   });
 });
 

@@ -44,7 +44,7 @@ import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
   keepHigherPriority, productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday, wasEdited,
-  feedListStatusFilter, priorityChangeProblem,
+  feedListStatusFilter, priorityChangeProblem, priorityEscalations,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateFeedRequisitionFromRunDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
@@ -2463,6 +2463,7 @@ export class FeedRequisitionService implements OnModuleInit {
       approval_status: approvalStatus,
       document_status: documentStatus,
       fulfilment_status: fulfilmentStatus,
+      priority_options: priorityEscalations(row.req.priority),
       actions: {
         release: { enabled: releaseEnabled, reason: releaseReason },
         shipment: { enabled: shipmentEnabled, reason: shipmentEnabled ? null : documentStatus !== 'RELEASED' && documentStatus !== 'RECEIVED' ? 'Release the requisition before Transfer Shipment.' : 'There is no quantity left to ship.' },

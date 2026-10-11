@@ -392,6 +392,12 @@ export function keepHigherPriority(stored: string | null | undefined, computed: 
   return s < PRIORITY_ORDER.indexOf(computed) ? (stored as Priority) : computed;
 }
 
+/** The levels the farm may choose now: the saved one and every higher one, highest first (what priorityChangeProblem allows). */
+export function priorityEscalations(current: string | null | undefined): Priority[] {
+  const at = PRIORITY_ORDER.indexOf(current as Priority);
+  return at < 0 ? [] : PRIORITY_ORDER.slice(0, at + 1) as Priority[];
+}
+
 /**
  * A1 (10 Oct), Requisition §1 row 34 "Yes - can escalate": the farm may raise
  * the priority the forecast set, never lower it. null when the change is allowed.

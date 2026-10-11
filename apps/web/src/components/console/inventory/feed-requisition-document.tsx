@@ -132,6 +132,8 @@ export interface FeedRequisitionDocumentView {
   supply_source: string | null;
   status: string;
   priority: string | null;
+  /** Req r34: the levels the API will accept now (the saved one and every higher one, highest first). */
+  priority_options?: string[];
   approval_request_id: string | null;
   submission_deadline: string | null;
   remarks: string | null;
@@ -370,13 +372,6 @@ export function isLineExceptioned(line: FeedRequisitionLine, edit: FeedLineEdit 
   return !!line.required_item_id && !!itemId && itemId !== line.required_item_id;
 }
 
-/** Req r34 "Yes - can escalate": the saved level and every higher one, highest first. The API refuses a lower one (priorityChangeProblem). */
-const PRIORITY_ORDER = ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING", "INFO"];
-export const escalations = (current: string): string[] => {
-  const at = PRIORITY_ORDER.indexOf(current);
-  return at < 0 ? [] : PRIORITY_ORDER.slice(0, at + 1);
-};
-
 export function FeedRequisitionDocument({
   view,
   editable,
@@ -457,11 +452,11 @@ export function FeedRequisitionDocument({
           supply: labelOf(SUPPLY_LABEL, view.supply_source, t),
           purpose: labelOf(PURPOSE_LABEL, view.purpose, t),
           status: <Badge variant={variantOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view))}>{labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}</Badge>,
-          priority: editable && onPriorityChange && view.priority && escalations(view.priority).length > 1
+          priority: editable && onPriorityChange && view.priority && (view.priority_options?.length ?? 0) > 1
             ? (
               <select aria-label={t("rqdPriority")} className="nf-input w-full px-2 py-1" style={inputStyle}
                 value={priority ?? view.priority} onChange={(e) => onPriorityChange(e.target.value)}>
-                {escalations(view.priority).map((p) => <option key={p} value={p}>{labelOf(PRIORITY_LABEL, p, t)}</option>)}
+                {(view.priority_options ?? []).map((p) => <option key={p} value={p}>{labelOf(PRIORITY_LABEL, p, t)}</option>)}
               </select>
             )
             : view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
