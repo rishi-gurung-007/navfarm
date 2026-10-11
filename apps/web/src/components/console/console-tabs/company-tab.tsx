@@ -165,7 +165,6 @@ export default function CompanyTab({
     defaultForecastDays: 7 as number | "",
     maxForecastDays: 45 as number | "",
     productionWeekday: "" as number | "",
-    productionShift: "",
     submissionWeekday: "" as number | "",
     submissionTime: "",
     reminderWeekday: "" as number | "",
@@ -348,7 +347,6 @@ export default function CompanyTab({
         defaultForecastDays: data.defaultForecastDays ?? 7,
         maxForecastDays: data.maxForecastDays ?? 45,
         productionWeekday: formValue(data.productionWeekday),
-        productionShift: data.productionShift ?? "",
         submissionWeekday: formValue(data.submissionWeekday),
         submissionTime: data.submissionTime ?? "",
         reminderWeekday: formValue(data.reminderWeekday),
@@ -479,7 +477,6 @@ export default function CompanyTab({
           defaultForecastDays: Number(feedForm.defaultForecastDays),
           maxForecastDays: Number(feedForm.maxForecastDays),
           productionWeekday: numberOrNull(feedForm.productionWeekday),
-          productionShift: feedForm.productionShift || null,
           submissionWeekday: numberOrNull(feedForm.submissionWeekday),
           submissionTime: feedForm.submissionTime || null,
           reminderWeekday: numberOrNull(feedForm.reminderWeekday),
@@ -1417,7 +1414,6 @@ export default function CompanyTab({
                               </Select>
                             </Field>
                           ))}
-                          <Field className="sm:col-span-3" label={t("ctFeedProductionShift")} htmlFor="feed-production-shift"><Input id="feed-production-shift" value={feedForm.productionShift} onChange={(e) => setFeedForm({ ...feedForm, productionShift: e.target.value })} /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedSubmissionTime")} htmlFor="feed-submission-time"><Input id="feed-submission-time" type="time" value={feedForm.submissionTime} onChange={(e) => setFeedForm({ ...feedForm, submissionTime: e.target.value })} /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedReminderTime")} htmlFor="feed-reminder-time"><Input id="feed-reminder-time" type="time" value={feedForm.reminderTime} onChange={(e) => setFeedForm({ ...feedForm, reminderTime: e.target.value })} /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedPhysicalCountTime")} htmlFor="feed-count-time"><Input id="feed-count-time" type="time" value={feedForm.physicalCountTime} onChange={(e) => setFeedForm({ ...feedForm, physicalCountTime: e.target.value })} /></Field>

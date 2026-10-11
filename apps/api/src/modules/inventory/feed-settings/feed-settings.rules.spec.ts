@@ -16,7 +16,6 @@ describe('feed settings rules', () => {
       financeVariancePct: 5,
       financeVarianceAmount: null,
       productionWeekday: null,
-      productionShift: null,
       submissionWeekday: null,
       submissionTime: null,
       reminderWeekday: null,
@@ -40,7 +39,6 @@ describe('feed settings rules', () => {
       default_forecast_days: 7,
       max_forecast_days: 45,
       production_weekday: 0,
-      production_shift: 'AM',
       submission_weekday: 6,
       submission_time: '12:00',
       reminder_weekday: 5,
@@ -52,7 +50,6 @@ describe('feed settings rules', () => {
       finance_variance_amount: null,
     })).toEqual(expect.objectContaining({
       productionWeekday: 0,
-      productionShift: 'AM',
       submissionWeekday: 6,
       submissionTime: '12:00',
       reminderWeekday: 5,

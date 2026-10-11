@@ -28,7 +28,7 @@ describe('FeedSettingsService.resolve', () => {
       [{
         setting_id: 'company-setting', farm_id: null,
         default_forecast_days: 7, max_forecast_days: 45,
-        production_weekday: 0, production_shift: 'AM',
+        production_weekday: 0,
         submission_weekday: 6, submission_time: '12:00',
         reminder_weekday: 5, reminder_time: '18:00',
         physical_count_weekday: 0, physical_count_time: '08:00',
@@ -48,7 +48,7 @@ describe('FeedSettingsService.resolve', () => {
     expect(result).toEqual(expect.objectContaining({
       companyId: 'co-1', farmId: 'farm-1', timezoneId: 'Africa/Harare',
       defaultForecastDays: 7, maxForecastDays: 45,
-      productionWeekday: 4, productionShift: 'AM',
+      productionWeekday: 4,
       submissionWeekday: 5, submissionTime: '16:00',
       reminderWeekday: 5, reminderTime: '18:00',
       physicalCountWeekday: 0, physicalCountTime: '08:00',

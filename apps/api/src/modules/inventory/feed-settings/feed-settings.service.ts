@@ -118,7 +118,6 @@ export class FeedSettingsService {
       default_forecast_days: dto.defaultForecastDays ?? current.defaultForecastDays,
       max_forecast_days: dto.maxForecastDays ?? current.maxForecastDays,
       production_weekday: dto.productionWeekday === undefined ? current.productionWeekday : dto.productionWeekday,
-      production_shift: dto.productionShift === undefined ? current.productionShift : dto.productionShift,
       submission_weekday: dto.submissionWeekday === undefined ? current.submissionWeekday : dto.submissionWeekday,
       submission_time: dto.submissionTime === undefined ? current.submissionTime : dto.submissionTime,
       reminder_weekday: dto.reminderWeekday === undefined ? current.reminderWeekday : dto.reminderWeekday,

@@ -28,7 +28,7 @@ beforeEach(() => {
     });
     if (url === '/feed-settings?companyId=co-1') return Promise.resolve({ data: {
       defaultForecastDays: 7, maxForecastDays: 45,
-      productionWeekday: null, productionShift: null,
+      productionWeekday: null,
       submissionWeekday: null, submissionTime: null,
       reminderWeekday: null, reminderTime: null,
       physicalCountWeekday: null, physicalCountTime: null,

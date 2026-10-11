@@ -4,7 +4,6 @@ type PersistedPlanningSetting = Partial<{
   default_forecast_days: number | null;
   max_forecast_days: number | null;
   production_weekday: number | null;
-  production_shift: string | null;
   submission_weekday: number | null;
   submission_time: string | null;
   reminder_weekday: number | null;
@@ -73,7 +72,6 @@ export function resolvePlanningRules(row: PersistedPlanningSetting | null) {
     defaultForecastDays,
     maxForecastDays,
     productionWeekday: weekday(row?.production_weekday ?? null, 'Production weekday'),
-    productionShift: row?.production_shift ?? null,
     submissionWeekday: weekday(row?.submission_weekday ?? null, 'Submission weekday'),
     submissionTime: time(row?.submission_time ?? null, 'Submission time'),
     reminderWeekday: weekday(row?.reminder_weekday ?? null, 'Reminder weekday'),

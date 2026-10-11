@@ -23,9 +23,6 @@ export class UpdateCompanyFeedSettingsDto {
   @ApiProperty({ required: false, nullable: true }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(6)
   productionWeekday?: number | null;
 
-  @ApiProperty({ required: false, nullable: true }) @IsOptional() @IsString()
-  productionShift?: string | null;
-
   @ApiProperty({ required: false, nullable: true }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(6)
   submissionWeekday?: number | null;
 

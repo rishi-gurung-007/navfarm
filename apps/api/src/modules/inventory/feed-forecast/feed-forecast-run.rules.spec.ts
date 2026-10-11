@@ -10,16 +10,16 @@ describe('feed forecast run snapshot rules', () => {
       farmId: 'farm-1',
       defaultForecastDays: 7,
       maxForecastDays: 45,
-      productionShift: 'DAY',
+      productionWeekday: 4,
       sources: { companySetting: 'COMPANY', leadTime: 'FARM' },
     };
 
     const first = buildConfigSnapshot(settings);
     const second = buildConfigSnapshot({ ...settings, sources: { leadTime: 'FARM', companySetting: 'COMPANY' } });
-    settings.productionShift = 'NIGHT';
+    settings.productionWeekday = 5;
 
     expect(first).toEqual(second);
-    expect(first.values.productionShift).toBe('DAY');
+    expect(first.values.productionWeekday).toBe(4);
     expect(first.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(first.version).toBe(`sha256:${first.hash}`);
   });

@@ -781,7 +781,6 @@ export const translations = {
     ctFeedTruckTargetKg: "Truck target (kg)",
     ctFeedBulkMultipleKg: "Bulk multiple (kg)",
     ctFeedProductionWeekday: "Production weekday",
-    ctFeedProductionShift: "Production shift / slot",
     ctFeedSubmissionWeekday: "Submission weekday",
     ctFeedSubmissionTime: "Submission cutoff time",
     ctFeedReminderWeekday: "Critical reminder weekday",
