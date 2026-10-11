@@ -1110,6 +1110,7 @@ describe('BatchService', () => {
                 entered_value: '40.0000',
                 entered_text: null,
                 lot_no: null,
+                empty_bags: 12,
                 remarks: null,
               },
               {
@@ -1146,6 +1147,7 @@ describe('BatchService', () => {
           line_id: 'line-feed',
           entry_date: '2026-09-11',
           entered_value: 40,
+          empty_bags: 12, // checkpoint 28: the count saved on the draft reaches the post
         }),
         'tenant-123',
         { userId: 'user-1' },

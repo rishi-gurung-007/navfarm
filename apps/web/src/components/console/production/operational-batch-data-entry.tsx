@@ -58,6 +58,7 @@ import AnimalStageTransitionModal from '@/components/console/piggery/animal-stag
 import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
+import { EmptyBagsField } from './entry/empty-bags-field';
 import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
@@ -211,6 +212,10 @@ export default function OperationalBatchDataEntry() {
     {},
   );
   const [dataEntryLotNos, setDataEntryLotNos] = useState<
+    Record<string, string>
+  >({});
+  // Checkpoint 28: empty bags counted for a bagged-feed consumption line, keyed like the values.
+  const [dataEntryEmptyBags, setDataEntryEmptyBags] = useState<
     Record<string, string>
   >({});
   const [dataEntryDestBatches, setDataEntryDestBatches] = useState<
@@ -701,6 +706,7 @@ export default function OperationalBatchDataEntry() {
           setLockInfo({ status: null }); // meaningless for ANIMAL_WISE — locking is per-stage below
 
           const initialLots: Record<string, string> = {};
+          const initialBags: Record<string, string> = {};
           for (const stage of stages) {
             (stage.animals || []).forEach((animal: Row, animalIdx: number) => {
               for (const line of animal.lines || []) {
@@ -710,6 +716,7 @@ export default function OperationalBatchDataEntry() {
                 if (line.already_entered_lot) {
                   initialLots[k] = line.already_entered_lot;
                 }
+                if (line.already_entered_empty_bags != null) initialBags[k] = String(line.already_entered_empty_bags);
                 // The "All animals in this stage" broadcast view has no real
                 // animal of its own to read an already-entered value from —
                 // without this, a value saved via broadcast reappeared blank
@@ -726,11 +733,13 @@ export default function OperationalBatchDataEntry() {
                     initialLots[entryKey(line.line_id, '__ALL__')] =
                       line.already_entered_lot;
                   }
+                  if (line.already_entered_empty_bags != null) initialBags[entryKey(line.line_id, '__ALL__')] = String(line.already_entered_empty_bags);
                 }
               }
             });
           }
           setDataEntryLotNos(initialLots);
+          setDataEntryEmptyBags(initialBags);
 
           // Prefer keeping the current selection if it still has animals AND
           // is not yet locked; otherwise auto-advance to the next active
@@ -799,8 +808,10 @@ export default function OperationalBatchDataEntry() {
             setSelectedStageId(stages[0].stage_id);
           }
           const initialLots: Record<string, string> = {};
+          const initialBags: Record<string, string> = {};
           for (const l of lines) {
             values[entryKey(l.line_id)] = defaultEntryValue(l);
+            if (l.already_entered_empty_bags != null) initialBags[entryKey(l.line_id)] = String(l.already_entered_empty_bags);
             if (l.already_entered_lot) {
               initialLots[entryKey(l.line_id)] = l.already_entered_lot;
             }
@@ -827,6 +838,7 @@ export default function OperationalBatchDataEntry() {
             }
           }
           setDataEntryLotNos(initialLots);
+          setDataEntryEmptyBags(initialBags);
         }
 
         setDataEntryValues(values);
@@ -1028,6 +1040,10 @@ export default function OperationalBatchDataEntry() {
       }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
+      const bags = dataEntryEmptyBags[key];
+      if (line.is_bagged_feed && bags !== undefined && bags !== '' && Number.isInteger(Number(bags)) && Number(bags) >= 0) {
+        payload.empty_bags = Number(bags);
+      }
       return payload;
     };
     const tasks: Promise<any>[] = [];
@@ -1211,6 +1227,7 @@ export default function OperationalBatchDataEntry() {
         setDataEntryValues({});
         setDataEntryTexts({});
         setDataEntryLotNos({});
+        setDataEntryEmptyBags({});
         setDataEntryDestBatches({});
         setSelectedDate(nextDate);
         loadPostedDates();
@@ -1315,6 +1332,7 @@ export default function OperationalBatchDataEntry() {
       setDataEntryValues({});
       setDataEntryTexts({});
       setDataEntryLotNos({});
+      setDataEntryEmptyBags({});
       setDataEntryDestBatches({});
       setSelectedDate(nextDate);
       loadPostedDates();
@@ -1723,6 +1741,15 @@ export default function OperationalBatchDataEntry() {
                 />
               )}
             </div>
+          )}
+          {line.is_bagged_feed && (
+            <EmptyBagsField
+              label={t('deEmptyBags')}
+              value={dataEntryEmptyBags[key] ?? ''}
+              onChange={(val) => setDataEntryEmptyBags((v) => ({ ...v, [key]: val }))}
+              disabled={rowLocked}
+              note={line.already_entered_alert_note ?? null}
+            />
           )}
           {line.line_type === 'TRANSFER' && (
             <div className="mt-1 min-w-[160px]">

@@ -4634,6 +4634,8 @@ export const translations = {
     // W4G3 (11 Oct)
     ctFeedMaxForecastDaysHint: "Longest range a forecast may cover. Blank settings keep 45 days.",
     ctFeedBagToleranceHint: "Empty bags times bag size is checked against feed consumed on POST Day; a larger difference is flagged. Blank flags any difference.",
+    // W4G4 (11 Oct)
+    deEmptyBags: "Empty bags",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

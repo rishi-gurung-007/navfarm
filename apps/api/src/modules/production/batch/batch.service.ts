@@ -3627,6 +3627,7 @@ export class BatchService {
                 entered_text: row.entered_text || undefined,
                 lot_no: row.lot_no || undefined,
                 serial_no: row.serial_no || undefined,
+                empty_bags: row.empty_bags ?? undefined,
                 remarks: row.remarks || undefined,
               } as any,
               tenantId,
@@ -4324,6 +4325,7 @@ export class BatchService {
                   entered_text: row.entered_text || undefined,
                   lot_no: row.lot_no || undefined,
                   serial_no: row.serial_no || undefined,
+                  empty_bags: row.empty_bags ?? undefined,
                   remarks: row.remarks || undefined,
                 } as any,
                 tenantId,
@@ -4572,6 +4574,7 @@ export class BatchService {
           withdrawal_days: number | null;
           is_lot_tracked: boolean;
           is_serial_tracked: boolean;
+          is_bagged_feed: boolean;
           resource_id: string | null;
           uom: string | null;
           occurrence: string;
@@ -4623,6 +4626,22 @@ export class BatchService {
           .from(schema.itemMaster)
           .where(inArray(schema.itemMaster.item_id, itemIds))
       : [];
+    // Checkpoint 28: a feed the lifecycle rows give out in bags asks for an empty-bag count on the entry.
+    const consumptionItemIds = [
+      ...new Set(
+        activePairs
+          .filter(({ line }) => line.line_type === 'CONSUMPTION')
+          .map(({ line }) => line.item_id)
+          .filter((x): x is string => !!x),
+      ),
+    ];
+    const baggedRows = consumptionItemIds.length
+      ? await this.db
+          .select({ item_id: schema.breedLifecycleStages.feed_item_id })
+          .from(schema.breedLifecycleStages)
+          .where(and(inArray(schema.breedLifecycleStages.feed_item_id, consumptionItemIds), eq(schema.breedLifecycleStages.feed_form, 'BAGGED')))
+      : [];
+    const baggedItemIds = new Set((baggedRows ?? []).map((r) => r.item_id));
     const itemLabel = (itemId: string | null) => {
       if (!itemId) return null;
       const it = itemRows.find((x) => x.item_id === itemId);
@@ -4735,6 +4754,7 @@ export class BatchService {
         withdrawal_days: isTracked ? (it?.withdrawal_days ?? null) : null,
         is_lot_tracked: isLot,
         is_serial_tracked: isSerial,
+        is_bagged_feed: line.line_type === 'CONSUMPTION' && !!line.item_id && baggedItemIds.has(line.item_id),
         resource_id: line.resource_id,
         uom,
         occurrence: line.occurrence,
@@ -4750,6 +4770,8 @@ export class BatchService {
         already_entered_qty: alreadyEntered,
         already_entered_lot: enteredEntry?.lot_no || enteredEntry?.serial_no || null,
         already_entered_serial: enteredEntry?.serial_no || null,
+        already_entered_empty_bags: enteredEntry?.empty_bags ?? null,
+        already_entered_alert_note: enteredEntry?.alert_note ?? null,
         std_rate: stdRate,
       };
     });
