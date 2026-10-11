@@ -2343,9 +2343,9 @@ export const translations = {
     // A6 (10 Oct)
     ffUnknownUser: "Unknown user",
     ffRunDelete: "Delete",
-    ffRunDeleteConfirm: "Permanently delete {code}? This cannot be undone.",
+    ffRunDeleteConfirm: "Permanently delete {{code}}? This cannot be undone.",
     ffRunDeleteFailed: "The saved run could not be deleted.",
-    ffRunDeleted: "{code} deleted.",
+    ffRunDeleted: "{{code}} deleted.",
     ffRunViewCalculation: "View calculation",
     ffRunViewFailed: "The saved calculation could not be opened.",
     ffRunHistoryFailed: "The saved run history could not be loaded.",
@@ -4638,7 +4638,7 @@ export const translations = {
     flsNotificationNotSent: "Not sent",
     // FINAL (11 Oct)
     flsColEta: "Estimated Arrival",
-    flsEtaFor: "Estimated arrival (optional) for {no}",
+    flsEtaFor: "Estimated arrival (optional) for {{no}}",
     fscCostCentre: "Cost Centre",
   },
   hi: {
