@@ -155,6 +155,121 @@ describe('FeedStockCountService', () => {
     expect(log.filter((entry) => entry.op === 'insert').length).toBe(2);
   });
 
+  describe('Monthly Stock Take (Brief C)', () => {
+    const period = { period_id: 'period-sep', tenant_id: 'tenant-1', company_id: 'company-1', period_code: '2026-09', stock_take_date: '2026-09-26', end_date: '2026-09-26', period_status: 'OPEN', deleted_at: null };
+    const monthlyDto = { ...createDto, countedAt: '2026-09-26T07:30:00.000Z', scheduleSource: 'ON_DEMAND' as const, countType: 'MONTHLY' as const, reportingPeriodId: 'period-sep' };
+    // feedStockCount reads in order: duplicate-occurrence check, then the highest sequence already issued this year.
+    const monthlyQueues = (p: unknown[], extra: Array<Record<string, unknown>[]> = [[{ n: 2 }]]) => {
+      const q = createQueues();
+      q.set(schema.reportingPeriod, [p]);
+      q.set(schema.feedStockCount, [[], ...extra]);
+      return q;
+    };
+    const mill = { location_id: 'mill-1', company_id: 'company-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery', location_code: 'MILL-001' };
+    const bin = { ...silo, location_id: 'bin-1', farm_id: 'mill-1', parent_location_id: 'mill-1', location_type: 'BIN', location_code: 'BIN-001' };
+    const millDto = { ...monthlyDto, farmId: 'mill-1', stockTakeType: 'FEED_MILL' as const, lines: [{ siloId: 'bin-1', itemId: 'item-1', countedQtyKg: 95, reasonId: 'reason-1' }] };
+    const millScope: FarmScope = { farmId: null, companyId: 'company-1', lobId: null, restricted: false } as FarmScope;
+    const millEvidence = [{ warehouse_id: 'bin-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG', system_qty_kg: 100, unit_cost_base: 4 }];
+    const millSetup = () => {
+      const q = monthlyQueues([period]);
+      q.set(schema.locationMaster, [[mill], [bin]]);
+      const ctx = setup(q, millScope);
+      ctx.ledger.getSiloStockEvidenceAsOf.mockResolvedValue(millEvidence);
+      return ctx;
+    };
+
+    it('refuses a MONTHLY count dated other than the period Stock Take Date (r35), before any write', async () => {
+      const { service, log } = setup(monthlyQueues([period]));
+      await expect(service.create({ ...monthlyDto, countedAt: '2026-09-25T07:30:00.000Z' } as any, 'tenant-1', { userId: 'worker-1' }))
+        .rejects.toThrow(/must be dated 2026-09-26/);
+      expect(log.some((e) => e.op === 'insert')).toBe(false);
+      const endDate = setup(monthlyQueues([{ ...period, stock_take_date: null, end_date: '2026-09-30' }]));
+      await expect(endDate.service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow(/2026-09-30/);
+    });
+
+    it('creates a FEED_MILL take for a MILL: one line per active BIN, numbered ST-MILL-YYYY-NNNNN, mill-aware lookups', async () => {
+      const { service, log, settings } = millSetup();
+      await expect(service.create(millDto as any, 'tenant-1', { userId: 'worker-1' }))
+        .resolves.toMatchObject({ status: 'DRAFT', count_no: 'ST-MILL-2026-00003' });
+      expect(log.find((e) => e.op === 'insert' && e.table === schema.feedStockCount)?.values)
+        .toMatchObject({ farm_id: 'mill-1', count_type: 'MONTHLY', stock_take_type: 'FEED_MILL', reporting_period_id: 'period-sep' });
+      expect(log.find((e) => e.op === 'insert' && e.table === schema.feedStockCountLine)?.values)
+        .toEqual([expect.objectContaining({ silo_id: 'bin-1', system_qty_kg: '100', variance_qty_kg: '-5' })]);
+      expect(settings.resolve).toHaveBeenCalledWith('company-1', 'mill-1', 'MILL');
+    });
+
+    it('refuses a weekly count for a mill, and a FEED_MILL type that does not point at a mill', async () => {
+      const weekly = millSetup();
+      await expect(weekly.service.create({ ...millDto, countType: 'WEEKLY', reportingPeriodId: undefined } as any, 'tenant-1', { userId: 'worker-1' }))
+        .rejects.toThrow(/mill/i);
+      expect(weekly.log.some((e) => e.op === 'insert')).toBe(false);
+      const q = monthlyQueues([period]);
+      q.set(schema.locationMaster, [[]]);
+      const notMill = setup(q, millScope);
+      await expect(notMill.service.create(millDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow(/Mill not found/);
+    });
+
+    it('numbers from the highest sequence already issued and retries when a concurrent take took the number', async () => {
+      const { service, log, db } = setup(monthlyQueues([period], [[{ n: 2 }], [{ n: 3 }]]));
+      let first = true;
+      const real = db.insert.getMockImplementation()!;
+      db.insert.mockImplementation((table: unknown) => {
+        if (table === schema.feedStockCount && first) {
+          first = false;
+          return { values: jest.fn(async () => { throw Object.assign(new Error("Duplicate entry for key 'uq_feed_stock_count_company_no'"), { code: 'ER_DUP_ENTRY' }); }) };
+        }
+        return real(table);
+      });
+      await expect(service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' }))
+        .resolves.toMatchObject({ count_no: 'ST-FARM-001-2026-00004' });
+      expect(log.filter((e) => e.op === 'insert' && e.table === schema.feedStockCount)).toHaveLength(1);
+    });
+
+    it('findOne shows the GL entry reference, period status after reconciliation and next production start', async () => {
+      const count = {
+        count_id: 'count-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', count_no: 'ST-FARM-001-2026-00001',
+        counted_at: '2026-09-26 05:30:00', status: 'POSTED', count_type: 'MONTHLY', stock_take_type: 'FARM', reporting_period_id: 'period-sep',
+      };
+      const q = new Map<unknown, unknown[][]>([
+        [schema.feedStockCount, [[count]]], [schema.locationMaster, [[farm]]], [schema.feedStockCountLine, [[]]],
+        [schema.reportingPeriod, [[{ period_code: '2026-09', period_status: 'CLOSED', stock_take_date: '2026-09-26', production_start_date: '2026-09-27' }]]],
+        [schema.stockAdjustment, [[{ adjustment_no: 'ADJ-1' }]]],
+        [schema.journalHeader, [[{ journal_no: 'JV-0001' }]]],
+      ]);
+      const { service } = setup(q);
+      await expect(service.findOne('count-1', 'tenant-1')).resolves.toMatchObject({
+        period_code: '2026-09', period_status_after: 'CLOSED', production_start_date_next: '2026-09-27',
+        stock_take_date: '2026-09-26', gl_entry_refs: ['JV-0001'],
+      });
+    });
+
+    it('creates a MONTHLY take for the period, with every active silo line, its variance and reason, numbered ST-Farm-YYYY-NNNNN', async () => {
+      const { service, log } = setup(monthlyQueues([period]));
+      await expect(service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' }))
+        .resolves.toMatchObject({ status: 'DRAFT', count_no: 'ST-FARM-001-2026-00003' });
+      const header = log.find((e) => e.op === 'insert' && e.table === schema.feedStockCount)?.values;
+      expect(header).toMatchObject({ count_type: 'MONTHLY', stock_take_type: 'FARM', reporting_period_id: 'period-sep' });
+      const lines = log.find((e) => e.op === 'insert' && e.table === schema.feedStockCountLine)?.values;
+      expect(lines).toEqual([expect.objectContaining({ silo_id: 'silo-1', system_qty_kg: '100', counted_qty_kg: '95', variance_qty_kg: '-5', variance_pct_absolute: '5', reason_id: 'reason-1' })]);
+    });
+
+    it('is refused when the period does not exist (r40) or is closed, before any write', async () => {
+      const missing = setup(monthlyQueues([]));
+      await expect(missing.service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow(/does not exist/);
+      expect(missing.log.some((e) => e.op === 'insert')).toBe(false);
+      const closed = setup(monthlyQueues([{ ...period, period_status: 'CLOSED' }]));
+      await expect(closed.service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow(/closed/);
+      const otherCompany = setup(monthlyQueues([{ ...period, company_id: 'company-2' }]));
+      await expect(otherCompany.service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' })).rejects.toThrow(/does not exist/);
+    });
+
+    it('requires a reason for a nonzero variance on a monthly line too', async () => {
+      const { service } = setup(monthlyQueues([period]));
+      await expect(service.create({ ...monthlyDto, lines: [{ ...monthlyDto.lines[0], reasonId: undefined }] } as any, 'tenant-1', { userId: 'worker-1' }))
+        .rejects.toThrow(/Reason/);
+    });
+  });
+
   it('accepts the configured scheduled occurrence and does not hardcode Sunday 08:00', async () => {
     const { service, settings } = setup(createQueues());
     await service.create(createDto as any, 'tenant-1', { userId: 'worker-1' });

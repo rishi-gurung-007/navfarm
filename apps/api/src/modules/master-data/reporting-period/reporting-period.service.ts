@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -10,6 +10,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { businessYearOf, generateBusinessYear, periodProblems, periodsOverlap } from './reporting-period.rules';
+import { assertPeriodCanClose, reopenPatch } from '../../inventory/feed-stock-count/monthly-stock-take.rules';
 import { CreateReportingPeriodDto, GenerateReportingPeriodsDto, QueryReportingPeriodDto, UpdateReportingPeriodDto } from './reporting-period.dto';
 
 const table = schema.reportingPeriod;
@@ -188,5 +189,45 @@ export class ReportingPeriodService {
       });
     }
     return { created: created.map((p) => p.period_code), skipped };
+  }
+
+  /**
+   * Period Close (workbook Checkpoints r31): allowed only when every active farm
+   * and feed mill of the company has a POSTED monthly stock take for the period.
+   * Once CLOSED, assertPostingPeriodOpen (common/period-close.ts) refuses every
+   * posting dated inside it (r32).
+   */
+  async close(id: string, tenantId: string, user: any) {
+    return withTenantTransaction(this.cls, async () => {
+      const row = await this.findOne(id, tenantId);
+      const L = schema.locationMaster;
+      const locations = await this.db.select({ location_id: L.location_id, code: L.location_code })
+        .from(L).where(and(
+          eq(L.tenant_id, tenantId),
+          ...(row.company_id ? [eq(L.company_id, row.company_id)] : []),
+          inArray(L.location_type, ['FARM', 'MILL']),
+          isNull(L.parent_location_id),
+          eq(L.is_active, true),
+          isNull(L.deleted_at),
+        ));
+      const C = schema.feedStockCount;
+      const takes = await this.db.select({ farm_id: C.farm_id, count_type: C.count_type, reporting_period_id: C.reporting_period_id, status: C.status })
+        .from(C).where(and(eq(C.tenant_id, tenantId), eq(C.reporting_period_id, row.period_id)));
+      assertPeriodCanClose({ ...row, period_status: row.period_status }, locations.map((l) => ({ location_id: l.location_id, code: l.code ?? l.location_id })), takes);
+      await this.db.update(table).set({ period_status: 'CLOSED', closed_by: user?.userId ?? null, closed_at: nowTs(), updated_by: user?.userId, updated_at: nowTs() })
+        .where(and(eq(table.period_id, row.period_id), eq(table.period_status, 'OPEN')));
+      return this.log('PERIOD_CLOSE', await this.findOne(id, tenantId), user, row);
+    });
+  }
+
+  /** Reopen: administrators only, with a reason (kept on the row and in the audit log). */
+  async reopen(id: string, reason: string | undefined, tenantId: string, user: any) {
+    return withTenantTransaction(this.cls, async () => {
+      const row = await this.findOne(id, tenantId);
+      const isAdmin = ['SYSTEM_ADMIN', 'TENANT_ADMIN', 'COMPANY_ADMIN'].includes(user?.userType);
+      const patch = reopenPatch(row, { userId: user?.userId, isAdmin }, reason, nowTs());
+      await this.db.update(table).set({ ...patch, updated_by: user?.userId, updated_at: nowTs() }).where(eq(table.period_id, row.period_id));
+      return this.log('PERIOD_REOPEN', await this.findOne(id, tenantId), user, row);
+    });
   }
 }

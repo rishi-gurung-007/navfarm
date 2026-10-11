@@ -14,6 +14,7 @@ import { lotBalances, serialsInStock } from './lot-balance';
 import { costingMethodOf, explainCosting, type ExplainBookReceipt } from './costing-explanation';
 import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 import { mysqlTimestampFromEpoch } from '../../../common/mysql-utc-instant';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -173,6 +174,8 @@ export class InventoryLedgerService {
         .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
         .for('update');
       if (!original || original.entry_type !== 'NEGATIVE') throw new BadRequestException('Only an existing issue can be reversed here.');
+      // r32: the reversal posts a new entry dated like the issue, so a closed Reporting Period refuses it too.
+      await assertPostingPeriodOpen(this.db, { tenantId, companyId: original.company_id, postingDate: original.posting_date });
       const [reversed] = await this.db.select().from(schema.inventoryLedger)
         .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
       if (reversed) throw new BadRequestException('This issue has already been reversed.');
@@ -261,6 +264,8 @@ export class InventoryLedgerService {
 
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
+    // r32: a closed Reporting Period blocks every posting dated in it (one shared guard).
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
     const [item] = await this.db
       .select()
       .from(schema.itemMaster)
@@ -609,6 +614,7 @@ export class InventoryLedgerService {
     if (params.quantity <= 0) {
       throw new BadRequestException(`Outbound quantity must be positive (got ${params.quantity}).`);
     }
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
 
     const [item] = await this.db
       .select()

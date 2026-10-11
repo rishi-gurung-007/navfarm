@@ -1156,6 +1156,13 @@
       "when": 1792000000033,
       "tag": "0165_transfer_receipt_line_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "5",
+      "when": 1792000000034,
+      "tag": "0166_monthly_stock_take_period_close",
+      "breakpoints": true
     }
   ]
 }

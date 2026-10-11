@@ -439,6 +439,18 @@ export interface MasterDataConfig {
     activatePath: string;
     approvePermission: { moduleCode: string; resource: string };
   };
+  /**
+   * Extra POST commands in a row's action menu (e.g. Reporting Period Close / Reopen).
+   * `reasonPrompt` asks for a reason and sends it as `{ reason }`; the API enforces the rules.
+   */
+  rowCommands?: Array<{
+    key: string;
+    label: string;
+    path: string;
+    visibleWhen?: (row: Record<string, any>) => boolean;
+    reasonPrompt?: string;
+    successMessage: string;
+  }>;
   /** Whether the table row actions render a delete / deactivate trash button. Defaults to true. */
   supportsDelete?: boolean;
   /**

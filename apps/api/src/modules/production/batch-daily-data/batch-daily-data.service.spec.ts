@@ -11,6 +11,10 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
+// The closed-period guard (r32) is its own unit (monthly-stock-take.rules.spec.ts); these
+// tests queue db.select results in order, so the guard's read is stubbed here.
+jest.mock('../../../common/period-close', () => ({ assertPostingPeriodOpen: jest.fn().mockResolvedValue(undefined) }));
+
 describe('BatchDailyDataService', () => {
   let service: BatchDailyDataService;
   let batchService: BatchService;

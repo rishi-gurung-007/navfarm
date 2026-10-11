@@ -1955,6 +1955,22 @@ export function MasterDataTable({
     }
   };
 
+  const handleRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number]) => {
+    let body: Record<string, string> | undefined;
+    if (command.reasonPrompt) {
+      const reason = window.prompt(command.reasonPrompt);
+      if (reason === null) return;
+      body = { reason };
+    }
+    try {
+      await api.post(`${config.apiBase}/${row[config.idKey]}/${command.path}`, body ?? {});
+      showToast.success(command.successMessage);
+      load();
+    } catch (err: any) {
+      showToast.error(err?.message || t("mdFailedToSave"));
+    }
+  };
+
   /** Why a locked field is locked, when its config says (`lockReason`). */
   const lockHint = (f: MasterDataField): string | undefined => {
     if (!editing || !f.lockWhenRowFlag || !f.lockReason || !(editing as Row)[f.lockWhenRowFlag]) return undefined;
@@ -3415,6 +3431,11 @@ export function MasterDataTable({
                                 {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
                               </MenuItem>
                             )}
+                            {!readOnly && (config.rowCommands ?? []).filter((c) => !c.visibleWhen || c.visibleWhen(row)).map((c) => (
+                              <MenuItem key={c.key} onSelect={() => handleRowCommand(row, c)}>
+                                {c.label}
+                              </MenuItem>
+                            ))}
                             {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
                               <MenuItem
                                 onSelect={() => setConfirmDelete(row)}

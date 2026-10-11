@@ -443,7 +443,12 @@ export const feedStockCount = mysqlTable('feed_stock_count', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_by: varchar('updated_by', { length: 36 }),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  // 0167: WEEKLY physical count or MONTHLY stock take (FARM / FEED_MILL) for a Reporting Period.
+  count_type: varchar('count_type', { length: 10 }).default('WEEKLY').notNull(),
+  stock_take_type: varchar('stock_take_type', { length: 20 }),
+  reporting_period_id: varchar('reporting_period_id', { length: 36 }),
 }, (table) => ({
+  periodLocationUnique: uniqueIndex('uq_feed_stock_count_period_location').on(table.farm_id, table.reporting_period_id),
   occurrenceUnique: uniqueIndex('uq_feed_stock_count_occurrence').on(table.farm_id, table.counted_at),
   companyNoUnique: uniqueIndex('uq_feed_stock_count_company_no').on(table.company_id, table.count_no),
   tenantFarmIndex: index('idx_feed_stock_count_tenant_farm').on(table.tenant_id, table.farm_id),
@@ -3587,6 +3592,13 @@ export const reportingPeriod = mysqlTable('reporting_period', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  // 0167: period close (r31/r32), separate from the master-data lifecycle `status`.
+  period_status: varchar('period_status', { length: 10 }).default('OPEN').notNull(), // OPEN, CLOSED
+  closed_by: varchar('closed_by', { length: 36 }),
+  closed_at: timestamp('closed_at', { mode: 'string' }),
+  reopened_by: varchar('reopened_by', { length: 36 }),
+  reopened_at: timestamp('reopened_at', { mode: 'string' }),
+  reopen_reason: varchar('reopen_reason', { length: 500 }),
 }, (table) => ({
   uqCode: uniqueIndex('uq_reporting_period_code').on(table.tenant_id, table.company_id, table.period_code),
   idxDates: index('idx_reporting_period_dates').on(table.tenant_id, table.company_id, table.start_date),

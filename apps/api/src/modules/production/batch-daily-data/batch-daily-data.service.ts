@@ -21,6 +21,7 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
@@ -124,6 +125,8 @@ export class BatchDailyDataService {
         `Line '${dto.line_id}' does not belong to batch '${batchId}'.`,
       );
     }
+    // r32: POST Day is refused for a date inside a CLOSED Reporting Period.
+    await assertPostingPeriodOpen(this.db, { tenantId, companyId: header.company_id, postingDate: dto.entry_date });
     if (line.lot_required && !dto.lot_no && !dto.serial_no) {
       // Only an item tracked by lot or serial has one to name: lines generated before this rule was
       // applied can carry lot_required on an untracked item, which is priced by its costing method alone.

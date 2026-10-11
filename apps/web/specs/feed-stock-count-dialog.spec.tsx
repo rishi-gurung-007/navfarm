@@ -30,6 +30,7 @@ const row = {
 beforeEach(() => {
   jest.clearAllMocks();
   get.mockImplementation((url: string) => {
+    if (url.startsWith("/location?")) return Promise.resolve({ data: [] });
     if (url.startsWith("/feed-stock-count/evidence?")) return Promise.resolve({ data: {
       countedAt: "2026-10-08T18:00:00+05:30",
       pairs: [{ siloId: "silo-1", siloCode: "GRA100/SILO-001", itemId: "item-1", itemCode: "FEED-001", uom: "KG", systemQtyKg: 1000, costAvailable: true }],
@@ -175,5 +176,59 @@ describe("W2D W8: count entry and lines show the silo planning facts", () => {
     expect(within(table).getByText("Grower silo")).toBeTruthy();
     expect(within(table).getByTestId("next-diet-in-silo-1").getAttribute("data-warning")).toBe("false");
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toContain("fscColSystemBalance");
+  });
+});
+
+describe("Monthly Stock Take view", () => {
+  const monthly = {
+    ...row, count_id: "count-9", count_no: "ST-GRA100-2026-00001", status: "POSTED", count_type: "MONTHLY",
+    stock_take_type: "FARM", period_code: "2026-09",
+  };
+
+  it("lists count type, reporting period and stock take number", async () => {
+    get.mockImplementation((url: string) => Promise.resolve({ data: url.startsWith("/location?") ? [] : [monthly] }));
+    render(<FeedStockCountPanel />);
+    expect(await screen.findByText("ST-GRA100-2026-00001")).toBeTruthy();
+    expect(screen.getByText("fscColCountType")).toBeTruthy();
+    expect(screen.getByText("fscColPeriod")).toBeTruthy();
+    expect(screen.getByText("2026-09")).toBeTruthy();
+    expect(screen.getByText("fscCountTypeMonthly")).toBeTruthy();
+  });
+
+  it("shows GL entry, period status after reconciliation and next production start; GL is Not available when none", async () => {
+    const detail = (gl: string[] | null) => (url: string) => Promise.resolve({ data: url === "/feed-stock-count/count-9"
+      ? { ...monthly, lines: [], stock_take_date: "2026-09-26", period_status_after: "CLOSED", production_start_date_next: "2026-09-27", gl_entry_refs: gl }
+      : url.startsWith("/location?") ? [] : [monthly] });
+    get.mockImplementation(detail(["JV-0001"]));
+    const first = render(<FeedStockCountPanel />);
+    fireEvent.click(await screen.findByText("ST-GRA100-2026-00001"));
+    const dialog = await screen.findByRole("dialog");
+    const box = await within(dialog).findByTestId("stock-take-reconciliation");
+    expect(within(box).getByText("JV-0001")).toBeTruthy();
+    expect(within(box).getByText("CLOSED")).toBeTruthy();
+    expect(within(box).getByText("fscPeriodStatusAfter")).toBeTruthy();
+    expect(within(box).getByText("fscNextProductionStart")).toBeTruthy();
+    first.unmount();
+
+    get.mockImplementation(detail(null));
+    render(<FeedStockCountPanel />);
+    fireEvent.click(await screen.findByText("ST-GRA100-2026-00001"));
+    const box2 = await screen.findByTestId("stock-take-reconciliation");
+    expect(within(box2).getAllByText("fsdNotAvailable").length).toBeGreaterThan(0);
+  });
+
+  it("counts a feed mill's bins: picking a mill reads evidence and lists as FEED_MILL", async () => {
+    get.mockImplementation((url: string) => {
+      if (url.startsWith("/location?")) return Promise.resolve({ data: [{ location_id: "mill-1", location_code: "MILL-001", location_name: "Mill" }] });
+      if (url.startsWith("/feed-stock-count/evidence?")) return Promise.resolve({ data: { countedAt: "2026-09-26T07:30:00Z", pairs: [] } });
+      return Promise.resolve({ data: [] });
+    });
+    render(<FeedStockCountPanel />);
+    const picker = await screen.findByLabelText("fscCountAt");
+    fireEvent.change(picker, { target: { value: "mill-1" } });
+    await waitFor(() => expect(get.mock.calls.some(([u]) => String(u).startsWith("/feed-stock-count?") && String(u).includes("farmId=mill-1"))).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "fscNew" }));
+    await waitFor(() => expect(get.mock.calls.some(([u]) => String(u).startsWith("/feed-stock-count/evidence?")
+      && String(u).includes("farmId=mill-1") && String(u).includes("stockTakeType=FEED_MILL"))).toBe(true));
   });
 });
