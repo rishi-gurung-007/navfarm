@@ -542,10 +542,10 @@ describe('InventoryLedgerService transfer legs', () => {
  * found in the requested warehouse, and writeNegativeEntry then re-stamps the
  * outbound row's warehouse with wherever it found them. For a stock-transfer
  * shipment that consumed stock outside the From sub-location and slipped past
- * the From-department check. A transfer shipment now draws only from its From
- * location and refuses instead; every other caller keeps the fallback.
+ * the From-department check. Rishi, 11 Oct: that fallback is wanted, so the
+ * strict From-only draw was removed again.
  */
-describe('applyFifo — a transfer shipment never falls back outside its From location', () => {
+describe('applyFifo — a transfer shipment may take stock from other stores of the company', () => {
   function serialDb() {
     const queries: any[] = [];
     const db: any = {
@@ -567,16 +567,7 @@ describe('applyFifo — a transfer shipment never falls back outside its From lo
   }
   const args = { tenantId: 'tenant', companyId: 'company', itemId: 'item', outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-10-05', serialNo: 'SN1', warehouseId: 'wh-store' };
 
-  it('refuses a transfer whose serial sits in another location, reading only the From location', async () => {
-    const { db, queries } = serialDb();
-    const service = new InventoryLedgerService({ get: () => db } as any);
-    await expect(service.applyFifo({ ...args, strictWarehouse: true }, db))
-      .rejects.toThrow("Item 'item' is not in stock at the From sub-location for the requested lot/serial (short by 1); a transfer ships only from its From sub-location.");
-    expect(queries).toHaveLength(3);
-    expect(db.insert).not.toHaveBeenCalled();
-  });
-
-  it('leaves the company-wide serial fallback of every other caller unchanged', async () => {
+  it('falls back company-wide when the From location lacks the serial, transfers included (Rishi, 11 Oct)', async () => {
     const { db, queries } = serialDb();
     const service = new InventoryLedgerService({ get: () => db } as any);
     const out = await service.applyFifo(args, db);
@@ -584,7 +575,7 @@ describe('applyFifo — a transfer shipment never falls back outside its From lo
     expect(out.appliedWarehouseId).toBe('wh-other');
   });
 
-  it('writeTransferShipment asks FIFO for the strict From-location draw', async () => {
+  it('writeTransferShipment no longer restricts FIFO to the From location', async () => {
     const insert = jest.fn(async () => undefined);
     const db: any = {
       select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ item_id: 'item', item_code: 'item', item_name: 'Item', is_serial_tracked: 1 }] }) }) }),
@@ -596,6 +587,7 @@ describe('applyFifo — a transfer shipment never falls back outside its From lo
     const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 5, averageRate: 5, appliedWarehouseId: 'wh-store' });
     await service.writeTransferShipment({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentNo: 'SH-1', documentLineId: 'line-1',
       postingDate: '2026-10-05', quantity: 1, uom: 'PCS', fromWarehouseId: 'wh-store', serialNo: 'SN1' });
-    expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'wh-store', serialNo: 'SN1', strictWarehouse: true }), db);
+    expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'wh-store', serialNo: 'SN1' }), db);
+    expect((fifo.mock.calls[0][0] as any).strictWarehouse).toBeUndefined();
   });
 });

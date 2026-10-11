@@ -70,8 +70,6 @@ interface WriteNegativeEntryParams {
   warehouseId?: string;
   locationId?: string;
   userId?: string;
-  /** WP4a: draw only from warehouseId, never the company-wide serial fallback (stock-transfer shipments). */
-  strictWarehouse?: boolean;
 }
 
 /** A silo or store's signed stock of one item and unit, summed (Feed Forecast Plan R). */
@@ -351,11 +349,6 @@ export class InventoryLedgerService {
       // layers actually received into that warehouse instead of drawing down
       // whichever warehouse happens to hold the oldest layer tenant-wide.
       warehouseId?: string;
-      // WP4a fix round 1 (coordinator's ruling): a stock-transfer shipment
-      // draws ONLY from its From location. The company-wide serial fallback
-      // below let a transfer consume stock held elsewhere — past the
-      // From-department check — so with this set a shortage is refused.
-      strictWarehouse?: boolean;
     },
     executor: MySql2Database<typeof schema> = this.db
   ): Promise<{ totalCost: number; averageRate: number; appliedWarehouseId?: string; lotExpiry?: Map<string, string | null> }> {
@@ -391,11 +384,6 @@ export class InventoryLedgerService {
     let warehouseId = params.warehouseId;
     if (serials.length > 0) {
       warehouseId = await this.locateSerials(params, serials, executor);
-      if (params.strictWarehouse && params.warehouseId && warehouseId !== params.warehouseId) {
-        throw new BadRequestException(
-          `Item '${params.itemId}' is not in stock at the From sub-location for the requested lot/serial (short by ${params.quantity}); a transfer ships only from its From sub-location.`,
-        );
-      }
     }
 
     const layerConditions = [
@@ -675,7 +663,6 @@ export class InventoryLedgerService {
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,
-          strictWarehouse: params.strictWarehouse,
         },
         tx
       );
@@ -726,7 +713,6 @@ export class InventoryLedgerService {
       documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
       postingDate: params.postingDate, transactionType: 'TRANSFER_SHIPMENT', quantity: params.quantity, uom: params.uom,
       lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.fromWarehouseId, userId: params.userId,
-      strictWarehouse: true,
     });
   }
 
