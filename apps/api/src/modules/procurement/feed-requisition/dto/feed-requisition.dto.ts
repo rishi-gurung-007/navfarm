@@ -124,13 +124,13 @@ export class FeedRequisitionShipmentDto {
  * (assertFeedReceiptLine), not here, because it depends on what shipped.
  */
 export class FeedRequisitionReceiptLineDto extends FeedRequisitionEventLineDto {
-  @ApiPropertyOptional({ description: 'The last receipt for this shipment. Only then is a shortfall a variance that needs a reason' })
+  @ApiPropertyOptional({ description: 'Ignored: a reason is now required on every short receipt' })
   @IsOptional() @IsBoolean() final_receipt?: boolean;
-  @ApiPropertyOptional({ description: 'Mandatory on a final receipt that leaves a shortfall (checkpoint 26)' })
+  @ApiPropertyOptional({ description: 'Mandatory on every short receipt (checkpoint 26)' })
   @IsOptional() @IsString() @MaxLength(500) variance_reason?: string;
   @ApiPropertyOptional({ description: 'Bags physically received; required for BAGGED feed (checkpoint 27)' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) bag_count?: number;
-  @ApiPropertyOptional({ description: 'Mill delivery note no. (Silo TO Receipt row 17)' })
+  @ApiPropertyOptional({ description: 'Mill delivery note no. (optional)' })
   @IsOptional() @IsString() @MaxLength(80) delivery_note_no?: string;
 }
 

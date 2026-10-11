@@ -210,8 +210,8 @@ describe("FeedRequisitionDetail workflow actions", () => {
     const qty = screen.getByLabelText('crqReceiveQtyFor:{"line":1}') as HTMLInputElement;
     expect(qty.max).toBe("500");
     fireEvent.change(qty, { target: { value: "500" } });
-    // W2T, Silo TO Receipt row 17: the delivery note no. is mandatory.
-    expect((screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement).disabled).toBe(true);
+    // Rishi, 11 Oct: the delivery note no. is optional; it is sent when given.
+    expect((screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "MILL-DN-0042" } });
     fireEvent.click(screen.getByRole("button", { name: "crqPostReceipt" }));
 
@@ -274,19 +274,20 @@ describe("FeedRequisitionDetail workflow actions", () => {
       expect(within(table).getByRole("link", { name: "LOAD-REQ-1" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=loading-instructions&id=ls-1");
     });
 
-    it("an interim partial receipt needs no variance reason and hides the field", () => {
+    it("a part receipt with more still to come is short and needs a variance reason; a full one hides the field", () => {
       open(receivingView("BULK"));
       fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "4000" } });
-      fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "DN-1" } });
+      expect((screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByLabelText('w2tVarianceReasonFor:{"line":1}')).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "6000" } });
       expect(screen.queryByLabelText('w2tVarianceReasonFor:{"line":1}')).toBeNull();
       expect((screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement).disabled).toBe(false);
     });
 
-    it("checkpoint 26: a shortfall on the final receipt needs a variance reason before Post receipt is enabled", async () => {
+    it("checkpoint 26: a shortfall needs a variance reason before Post receipt is enabled", async () => {
       open(receivingView("BULK"));
       fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "5900" } });
       fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), { target: { value: "DN-1" } });
-      fireEvent.click(screen.getByLabelText('w2tFinalReceiptFor:{"line":1}'));
       const postButton = screen.getByRole("button", { name: "crqPostReceipt" }) as HTMLButtonElement;
       expect(postButton.disabled).toBe(true);
       expect(screen.getByText("w2tVarianceReasonRequired")).toBeTruthy();
@@ -298,7 +299,7 @@ describe("FeedRequisitionDetail workflow actions", () => {
       } } });
       fireEvent.click(postButton);
       await waitFor(() => expect(post).toHaveBeenCalledWith("/feed-requisition/req-1/receipts", expect.objectContaining({
-        lines: [{ requisition_line_id: "rl-1", quantity: 5900, delivery_note_no: "DN-1", final_receipt: true, variance_reason: "Spillage" }],
+        lines: [{ requisition_line_id: "rl-1", quantity: 5900, delivery_note_no: "DN-1", variance_reason: "Spillage" }],
       })));
       const status = await screen.findByRole("status", { name: "w2tLastReceipt" });
       expect(within(status).getByText('w2tReceiptPosted:{"receipt":"RC-2026-0007"}')).toBeTruthy();

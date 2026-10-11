@@ -268,25 +268,20 @@ export interface FeedReceiptLineCheck {
   feedType: string | null;
   bagSizeKg: number;
   bagCount?: number | null;
-  /** The farm marks this posting as the last for the shipment. Only then is a shortfall a variance that needs a reason. */
-  finalReceipt?: boolean;
   varianceReason?: string | null;
   deliveryNoteNo?: string | null;
 }
 
 /**
- * Refuses a feed receipt line that breaks a control. Returns its variance on a
- * final receipt and null on an interim one: with more still to come, the
- * balance is not a shortfall (controller reading of Rishi's 10 Oct ruling,
- * decisions.md 11 Oct).
+ * Refuses a feed receipt line that breaks a control and returns its variance:
+ * outstanding before this posting minus what is received now. A reason is
+ * required on every short receipt, even if more is still coming (Rishi, 11 Oct).
+ * The delivery note no. is optional.
  */
-export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number | null {
+export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
-  if (!c.deliveryNoteNo?.trim()) {
-    throw new BadRequestException(`${c.label}: enter the delivery note no. for this feed receipt.`);
-  }
   const variance = receiptVariance(c.shipped, c.previouslyReceived, c.quantity);
-  if (c.finalReceipt && variance > 0 && !c.varianceReason?.trim()) {
+  if (variance > 0 && !c.varianceReason?.trim()) {
     throw new BadRequestException(
       `${c.label}: ${fmt(c.shipped)} KG shipped but ${fmt(c.previouslyReceived + c.quantity)} KG received leaves ${fmt(variance)} KG short; enter a variance reason (checkpoint 26).`,
     );
@@ -306,5 +301,5 @@ export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number | null {
       );
     }
   }
-  return c.finalReceipt ? variance : null;
+  return variance;
 }

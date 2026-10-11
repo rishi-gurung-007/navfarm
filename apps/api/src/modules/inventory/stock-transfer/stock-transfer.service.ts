@@ -1400,7 +1400,7 @@ export class StockTransferService {
         const varianceQty = control
           ? assertFeedReceiptLine({
             label: control.label, shipped: alreadyShipped, previouslyReceived: alreadyReceived, quantity: input.quantity,
-            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null, finalReceipt: input.final_receipt === true,
+            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null,
             varianceReason: input.variance_reason ?? null, deliveryNoteNo: input.delivery_note_no ?? null,
           })
           : receiptVariance(alreadyShipped, alreadyReceived, input.quantity);
@@ -1451,7 +1451,7 @@ export class StockTransferService {
           // multi-serial line, the serials this receipt actually carried.
           lot_no: shipmentLine.lot_no,
           serial_no: receivedSerialNo,
-          variance_qty: varianceQty === null ? null : String(varianceQty),
+          variance_qty: String(varianceQty),
           variance_reason: input.variance_reason?.trim() || null,
           bag_count: control?.feedType === 'BAGGED' ? input.bag_count ?? null : null,
           delivery_note_no: input.delivery_note_no?.trim() || null,

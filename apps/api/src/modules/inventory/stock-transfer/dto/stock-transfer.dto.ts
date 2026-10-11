@@ -188,13 +188,13 @@ export class ReceiptLineInput {
 
   // W2T (0165): stored on the receipt line. Required only on a feed receipt
   // (FeedRequisitionService.receipt applies assertFeedReceiptLine).
-  @ApiProperty({ description: 'Why less arrived than shipped (feed: mandatory on a shortfall, checkpoint 26)', required: false })
+  @ApiProperty({ description: 'Why less arrived than shipped (feed: mandatory on every short receipt, checkpoint 26)', required: false })
   @IsString()
   @MaxLength(500)
   @IsOptional()
   variance_reason?: string;
 
-  @ApiProperty({ description: 'Feed: this posting is the last for the shipment; only then a shortfall needs a variance reason', required: false })
+  @ApiProperty({ description: 'Ignored: a reason is now required on every short receipt', required: false })
   @IsBoolean()
   @IsOptional()
   final_receipt?: boolean;
@@ -206,7 +206,7 @@ export class ReceiptLineInput {
   @IsOptional()
   bag_count?: number;
 
-  @ApiProperty({ description: 'Delivery note no. (Silo TO Receipt row 17)', required: false })
+  @ApiProperty({ description: 'Delivery note no. (optional)', required: false })
   @IsString()
   @MaxLength(80)
   @IsOptional()
