@@ -294,6 +294,10 @@ export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
   submission_time: varchar('submission_time', { length: 5 }),
   reminder_weekday: int('reminder_weekday'),
   reminder_time: varchar('reminder_time', { length: 5 }),
+  // Feed Forecast Engine row 69 / Feed Forecast row 8: the scheduled tentative Feed Plan run is tenant
+  // configuration (the Triple C default is Wednesday 09:00), never a constant. Null = not scheduled (0167).
+  tentative_plan_weekday: int('tentative_plan_weekday'),
+  tentative_plan_time: varchar('tentative_plan_time', { length: 5 }),
   physical_count_weekday: int('physical_count_weekday'),
   physical_count_time: varchar('physical_count_time', { length: 5 }),
   truck_target_kg: decimal('truck_target_kg', { precision: 14, scale: 2 }),
@@ -3641,6 +3645,32 @@ export const feedAlert = mysqlTable('feed_alert', {
 }, (table) => ({
   uqActive: uniqueIndex('uq_feed_alert_active_key').on(table.active_key),
   farmStatus: index('idx_feed_alert_farm_status').on(table.farm_id, table.status),
+}));
+
+/**
+ * What the feed scheduler ran (0167). One row per job run; run_key (job|farm|period) is unique for a
+ * SCHEDULED run, so a job runs once per farm and period however many ticks or API instances see it.
+ * A MANUAL ("Run now") run has a NULL run_key and may repeat; the notices it raises are still
+ * deduplicated by feed_alert's own unique active_key.
+ */
+export const feedScheduleLog = mysqlTable('feed_schedule_log', {
+  run_id: varchar('run_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  farm_id: varchar('farm_id', { length: 36 }),
+  job_code: varchar('job_code', { length: 30 }).notNull(),
+  trigger_type: varchar('trigger_type', { length: 20 }).notNull(), // SCHEDULED, MANUAL
+  period_key: varchar('period_key', { length: 20 }).notNull(),
+  run_key: varchar('run_key', { length: 191 }),
+  status: varchar('status', { length: 20 }).default('RUNNING').notNull(), // RUNNING, DONE, FAILED
+  summary: json('summary').$type<Record<string, unknown>>(),
+  error_message: text('error_message'),
+  started_at: timestamp('started_at', { mode: 'string' }).notNull(),
+  finished_at: timestamp('finished_at', { mode: 'string' }),
+  triggered_by: varchar('triggered_by', { length: 36 }),
+}, (table) => ({
+  uqRunKey: uniqueIndex('uq_feed_schedule_log_run_key').on(table.run_key),
+  idxJob: index('idx_feed_schedule_log_job').on(table.tenant_id, table.job_code, table.started_at),
 }));
 
 // ==========================================

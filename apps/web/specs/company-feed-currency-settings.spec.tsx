@@ -89,3 +89,16 @@ it('accepts API-valid whole and decimal feed quantities and submits them', async
     bulkMultipleKg: 2500.25,
   })));
 });
+
+it('shows the scheduler tentative-plan day and time as settings, blank until configured, and saves them', async () => {
+  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="feed" />);
+  const time = await screen.findByLabelText('ctFeedTentativePlanTime') as HTMLInputElement;
+  expect(time.value).toBe('');
+  expect(screen.getByLabelText('ctFeedTentativePlanWeekday')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('ctFeedTentativePlanWeekday'), { target: { value: '3' } });
+  fireEvent.change(time, { target: { value: '09:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({
+    companyId: 'co-1', tentativePlanWeekday: 3, tentativePlanTime: '09:00',
+  })));
+});

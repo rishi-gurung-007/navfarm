@@ -23,7 +23,16 @@ describe('feed settings rules', () => {
       reminderTime: null,
       physicalCountWeekday: null,
       physicalCountTime: null,
+      tentativePlanWeekday: null,
+      tentativePlanTime: null,
     }));
+  });
+
+  it('carries the scheduled tentative Feed Plan run (Engine row 69) as configuration, with no built-in day or time', () => {
+    expect(resolvePlanningRules({ tentative_plan_weekday: 3, tentative_plan_time: '09:00' }))
+      .toEqual(expect.objectContaining({ tentativePlanWeekday: 3, tentativePlanTime: '09:00' }));
+    expect(() => resolvePlanningRules({ tentative_plan_weekday: 7 })).toThrow('Tentative plan weekday must be a weekday from 0 (Sunday) to 6 (Saturday).');
+    expect(() => resolvePlanningRules({ tentative_plan_time: '9:00' })).toThrow('Tentative plan time must use 24-hour HH:mm format.');
   });
 
   it('returns configured Triple C schedule values without making them fallbacks', () => {

@@ -231,3 +231,12 @@ describe('planAlerts — levelsOnly (evaluation after a stock posting)', () => {
     expect(plan.resolve).toEqual([]);
   });
 });
+
+describe('planAlerts — pushed events (brief B)', () => {
+  it('never resolves an open PLAN_AVAILABLE alert: the feed scheduler owns its lifecycle, not the evaluator', () => {
+    const planRule: AlertRuleFact = { ...aboveRule, ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0 };
+    const open = active({ alertId: 'p1', ruleId: 'rule-plan', eventType: 'PLAN_AVAILABLE', subjectType: 'FEED_PLAN', subjectId: 'plan-1', dedupKey: 'rule-plan|plan-1', observedValue: null });
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open] }))).toEqual({ raise: [], renotify: [], escalate: [], resolve: [] });
+    expect(planAlerts(base({ rules: [lowRule, { ...planRule, isActive: false }], active: [open] })).resolve).toEqual([]);
+  });
+});

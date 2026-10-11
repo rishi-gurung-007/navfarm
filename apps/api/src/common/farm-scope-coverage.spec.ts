@@ -120,6 +120,7 @@ const EXEMPT: Record<string, string> = {
   'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
 
   // system — tenant/system administration and reference data
+  'inventory/feed-scheduler/feed-scheduler.controller.ts': 'Admin-only test trigger and run log for the feed scheduler; jobs run each farm as system work, like the timer.',
   'system/alert-rule/alert-rule.controller.ts': 'Company master (Alerts and Notifications Master); a rule\'s farm_id filters where it applies, it is not an access boundary.',
   'system/audit-log/audit-log.controller.ts': 'Tenant-wide audit trail across every module, not a farm record.',
   'system/costing-method/costing-method.controller.ts': 'System-admin-only reference master data, not farm records.',

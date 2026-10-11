@@ -413,10 +413,35 @@ export function isTimeZone(zone: string): boolean {
  * company with no zone on record behaves exactly as before.
  */
 export function todayInZone(zone: string | null | undefined, ms: number = Date.now()): string {
-  if (!zone || !isTimeZone(zone)) return todayLocal(ms);
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ms));
+  return localClock(zone, ms).date;
+}
+
+/** The wall clock in `zone`: calendar day, weekday (0 = Sunday, as Feed Planning Settings store it) and HH:mm. */
+export interface LocalClock {
+  date: string;
+  weekday: number;
+  time: string;
+}
+
+/**
+ * todayInZone's day plus the weekday and time there — what the feed scheduler
+ * compares with the configured weekday/time (decisions 1 Oct: the company's
+ * time zone, Africa/Harare for Triple C). Same fallback: no usable zone means
+ * the server's own clock.
+ */
+export function localClock(zone: string | null | undefined, ms: number = Date.now()): LocalClock {
+  const date = new Date(ms);
+  if (!zone || !isTimeZone(zone)) {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return { date: todayLocal(ms), weekday: date.getDay(), time: `${hh}:${mm}` };
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  const day = `${part('year')}-${part('month')}-${part('day')}`;
+  return { date: day, weekday: new Date(`${day}T00:00:00Z`).getUTCDay(), time: `${part('hour')}:${part('minute')}` };
 }
 
 /**

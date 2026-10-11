@@ -11,6 +11,8 @@ type PersistedPlanningSetting = Partial<{
   reminder_time: string | null;
   physical_count_weekday: number | null;
   physical_count_time: string | null;
+  tentative_plan_weekday: number | null;
+  tentative_plan_time: string | null;
   truck_target_kg: string | number | null;
   bulk_multiple_kg: string | number | null;
   safety_stock_kg: string | number | null;
@@ -78,6 +80,9 @@ export function resolvePlanningRules(row: PersistedPlanningSetting | null) {
     reminderTime: time(row?.reminder_time ?? null, 'Reminder time'),
     physicalCountWeekday: weekday(row?.physical_count_weekday ?? null, 'Physical-count weekday'),
     physicalCountTime: time(row?.physical_count_time ?? null, 'Physical-count time'),
+    // Engine row 69: the scheduled tentative Feed Plan run. Unset means the scheduler does not run it.
+    tentativePlanWeekday: weekday(row?.tentative_plan_weekday ?? null, 'Tentative plan weekday'),
+    tentativePlanTime: time(row?.tentative_plan_time ?? null, 'Tentative plan time'),
     // Requisition rows 27–28, Engine Step 8: 30,000 KG truck target (never a block), 3,000 KG compartment, 50 KG bag.
     truckTargetKg: positive(numberOrNull(row?.truck_target_kg), 30000, 'Truck target'),
     bulkMultipleKg: positive(numberOrNull(row?.bulk_multiple_kg), 3000, 'Bulk multiple'),

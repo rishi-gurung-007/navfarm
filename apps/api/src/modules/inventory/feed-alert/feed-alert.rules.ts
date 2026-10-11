@@ -62,7 +62,7 @@ export interface ActiveAlertFact {
   alertId: string;
   ruleId: string;
   eventType: string;
-  subjectType: 'SILO' | 'BATCH' | 'REQUISITION';
+  subjectType: 'SILO' | 'BATCH' | 'REQUISITION' | 'FEED_PLAN';
   /** The silo, batch or requisition the alert is about. Optional for older callers; without it a SILO alert cannot be told apart from a recovery. */
   subjectId?: string;
   dedupKey: string;
@@ -235,6 +235,9 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
   const liveSiloIds = new Set(input.silos.map((s) => s.siloId));
   for (const open of input.active) {
     if (wanted.has(open.dedupKey)) continue;
+    // A pushed event (PLAN_AVAILABLE) is raised by the feed scheduler, not by these facts, so its
+    // absence from `wanted` means nothing here: the scheduler resolves it when it is superseded.
+    if (!(open.eventType in REASON_BY_EVENT)) continue;
     // After a stock posting only silo facts were loaded; anything else stays as it is until a full evaluation.
     if (input.levelsOnly && open.subjectType !== 'SILO') continue;
     const reason: ResolveReason = open.subjectType === 'SILO' && open.subjectId !== undefined && !liveSiloIds.has(open.subjectId)

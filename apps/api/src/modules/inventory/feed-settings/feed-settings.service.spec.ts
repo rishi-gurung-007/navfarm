@@ -171,6 +171,13 @@ describe('FeedSettingsService company-row persistence', () => {
     expect(rows()[0]).toEqual(expect.objectContaining({ farm_id: null, safety_stock_kg: '250', bag_size_kg: '25' }));
   });
 
+  it('stores the scheduled tentative Feed Plan run on the company row and reads it back (Engine row 69)', async () => {
+    const { db, rows } = databaseWithAtomicStore();
+    const result = await new FeedSettingsService(transactionCls(db)).saveCompany('co-1', { tentativePlanWeekday: 3, tentativePlanTime: '09:00' }, 'tenant-1', 'user-1');
+    expect(rows()[0]).toEqual(expect.objectContaining({ farm_id: null, tentative_plan_weekday: 3, tentative_plan_time: '09:00' }));
+    expect(result).toEqual(expect.objectContaining({ tentativePlanWeekday: 3, tentativePlanTime: '09:00' }));
+  });
+
   it('saves a farm override holding only the values the farm sets; the rest inherit', async () => {
     const { db, rows } = databaseWithAtomicStore();
     const result = await new FeedSettingsService(transactionCls(db)).saveFarm('co-1', 'farm-1', { bulkMultipleKg: 6000 }, 'tenant-1', 'user-1');

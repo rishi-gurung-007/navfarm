@@ -404,3 +404,46 @@ describe('FeedAlertService — DIET_CHANGE for a stage group writes the real bat
     expect(inserted[0].subject_id.length).toBeLessThanOrEqual(36);
   });
 });
+
+describe('FeedAlertService.raisePlanAvailable — PLAN_AVAILABLE (checkpoint 36)', () => {
+  const rule = { ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0,
+    priorityLevel: 'INFO', recipientRoles: ['FARM_MANAGER'], frequency: 'ONCE', escalationAfterHours: null, escalationRole: null, farmId: null, isActive: true };
+  const plan = { planId: 'plan-1', planCode: 'FP-GRS-0927-V1', planType: 'TENTATIVE', productionDate: '2026-09-27' };
+  const build = (rules: any[]) => {
+    const inserted: any[] = [];
+    const updates: any[] = [];
+    const db: any = {
+      insert: jest.fn(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) })),
+      update: jest.fn(() => ({ set: jest.fn((v: any) => ({ where: jest.fn(async () => { updates.push(v); }) })) })),
+    };
+    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+    jest.spyOn(service as any, 'loadRules').mockResolvedValue(rules);
+    return { service, inserted, updates, db };
+  };
+
+  it('raises one in-app notice per active rule, about the plan, to the rule\'s recipient roles', async () => {
+    const { service, inserted } = build([rule, { ...rule, ruleId: 'rule-off', isActive: false }, { ...rule, ruleId: 'rule-other', eventType: 'DIET_CHANGE' }]);
+    expect(await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan, Date.UTC(2026, 8, 23, 7))).toEqual({ rules: 1, raised: 1 });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({
+      rule_id: 'rule-plan', event_type: 'PLAN_AVAILABLE', subject_type: 'FEED_PLAN', subject_id: 'plan-1', dedup_key: 'rule-plan|plan-1', active_key: 'rule-plan|plan-1',
+      status: 'ACTIVE', recipient_roles: ['FARM_MANAGER'], title: 'Feed plan available: FP-GRS-0927-V1', raised_at: '2026-09-23 07:00:00',
+    });
+    expect(inserted[0].message).toContain('Tentative Feed Plan FP-GRS-0927-V1');
+  });
+
+  it('is idempotent: the same plan raised again (duplicate active_key) raises nothing and does not fail', async () => {
+    const { service, db } = build([rule]);
+    db.insert.mockImplementationOnce(() => ({ values: jest.fn(async () => { throw Object.assign(new Error('Failed query'), { cause: { code: 'ER_DUP_ENTRY' } }); }) }));
+    expect(await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan)).toEqual({ rules: 1, raised: 0 });
+  });
+
+  it('supersedes the previous plan\'s open notice, and raises nothing for a company with no PLAN_AVAILABLE rule', async () => {
+    const withRule = build([rule]);
+    await withRule.service.raisePlanAvailable('farm-1', 'co-1', 't1', plan);
+    expect(withRule.updates).toEqual([expect.objectContaining({ status: 'RESOLVED', active_key: null, resolved_reason: 'SUPERSEDED' })]);
+    const none = build([]);
+    expect(await none.service.raisePlanAvailable('farm-1', 'co-1', 't1', plan)).toEqual({ rules: 0, raised: 0 });
+    expect(none.inserted).toEqual([]);
+  });
+});

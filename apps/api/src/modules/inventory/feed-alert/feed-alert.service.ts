@@ -10,7 +10,7 @@ import { isDuplicateEntry } from '../../../common/filters/http-exception.filter'
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { AlertRuleService, normalizeFeedRecipientRole } from '../../system/alert-rule/alert-rule.service';
-import { addDays, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
+import { addDays, dayShort, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
   ActiveAlertFact, AlertPlan, AlertRuleFact, OpenRequisitionFact, SiloLevelFact, planAlerts,
@@ -183,6 +183,50 @@ export class FeedAlertService {
     } catch (error) {
       this.logger.warn(`Feed level alerts not evaluated: ${(error as Error).message}`);
     }
+  }
+
+  /**
+   * PLAN_AVAILABLE (Master Setup row 45, "plan available") is pushed, not
+   * evaluated: the feed scheduler raises it for the farm's Feed Plan of the
+   * week (brief B). One open alert per active PLAN_AVAILABLE rule and plan,
+   * through the same unique active_key as every other alert; the rule's
+   * previous plan notice for this farm resolves as SUPERSEDED. A company with
+   * no PLAN_AVAILABLE rule gets no notice — no recipients are assumed.
+   */
+  async raisePlanAvailable(
+    farmId: string, companyId: string, tenantId: string,
+    plan: { planId: string; planCode: string; planType: string; productionDate: string },
+    nowMs: number = Date.now(),
+  ): Promise<{ rules: number; raised: number }> {
+    const rules = (await this.loadRules(companyId, farmId, tenantId))
+      .filter((r) => r.isActive && r.eventType === 'PLAN_AVAILABLE' && (r.farmId === null || r.farmId === farmId));
+    const now = ts(nowMs);
+    let raised = 0;
+    for (const rule of rules) {
+      const dedupKey = `${rule.ruleId}|${plan.planId}`;
+      await this.db.update(schema.feedAlert)
+        .set({ status: 'RESOLVED', active_key: null, resolved_at: now, resolved_reason: 'SUPERSEDED' })
+        .where(and(
+          eq(schema.feedAlert.tenant_id, tenantId), eq(schema.feedAlert.farm_id, farmId), eq(schema.feedAlert.rule_id, rule.ruleId),
+          eq(schema.feedAlert.status, 'ACTIVE'), sql`${schema.feedAlert.dedup_key} <> ${dedupKey}`,
+        ));
+      const kind = plan.planType === 'ACTUAL' ? 'Actual' : 'Tentative';
+      try {
+        await this.db.insert(schema.feedAlert).values({
+          alert_id: randomUUID(), tenant_id: tenantId, company_id: companyId, farm_id: farmId,
+          rule_id: rule.ruleId, notification_code: rule.notificationCode, event_type: rule.eventType, priority_level: rule.priorityLevel,
+          subject_type: 'FEED_PLAN', subject_id: plan.planId, item_id: null, dedup_key: dedupKey, active_key: dedupKey, status: 'ACTIVE',
+          title: `Feed plan available: ${plan.planCode}`.slice(0, 200),
+          message: `${kind} Feed Plan ${plan.planCode} for production on ${dayShort(plan.productionDate)} is ready to review.`,
+          observed_value: null, threshold_value: rule.thresholdValue == null ? null : String(rule.thresholdValue),
+          recipient_roles: rule.recipientRoles, raised_at: now, last_notified_at: now, notify_count: 1,
+        });
+        raised += 1;
+      } catch (error) {
+        if (!isDuplicateEntry(error)) throw error; // already raised for this plan
+      }
+    }
+    return { rules: rules.length, raised };
   }
 
   async list(query: { farmId?: string; status?: 'ACTIVE' | 'RESOLVED' | 'ALL' }, tenantId: string, user: AlertUser) {
