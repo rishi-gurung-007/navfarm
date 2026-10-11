@@ -3407,3 +3407,17 @@ and store `variance_qty` as NULL; a final receipt stores it. Nothing else change
 never closed short, and over-receipt stays refused (10 Oct).
 
 ## 2026-10-11 — The workbook's House is the Shed; screens say Shed (Rishi). The email channel is deferred until later (Rishi).
+
+## 2026-10-11 — Period close needs counts only where something can be counted (controller reading of Checkpoints r31; awaiting Rishi)
+
+Checkpoints r31 says the period cannot close without a posted stock take for all farms and the mill. In the dev data four
+farms (FARM-002 to FARM-005) have silos that no count can use (the silo's farm link is empty and there is no stock), so
+no take can ever be created for them and the period could never close. **Interpretation, awaiting Rishi:** Period Close
+requires a posted monthly take only from a farm or mill with at least one active countable location (an active SILO of
+the farm, an active BIN of the mill, belonging to it as the count screen requires). A farm with none is reported as
+"nothing to count", not as missing: the close response lists it in `nothing_to_count`, and a refusal names it. Farms and
+mills that do have something to count are unchanged.
+
+Also noted, no change: the stock-adjustment journal does not carry a cost centre. The journal lines support one, but
+the posting path (`postInventoryLedgerEntry`) never passes it, and a farm has no cost centre of its own (only a shared
+DEPARTMENT cost centre in `location_master.department_id`). Needs a ruling on which cost centre is the "Farm Cost Centre".

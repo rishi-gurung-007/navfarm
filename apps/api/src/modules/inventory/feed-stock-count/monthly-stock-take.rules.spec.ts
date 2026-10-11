@@ -1,5 +1,5 @@
 import {
-  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, periodCloseBlockers, reopenPatch, stockTakeNo,
+  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, nothingToCount, periodCloseBlockers, reopenPatch, stockTakeNo,
 } from './monthly-stock-take.rules';
 import { approvalRoute, assertVarianceReason, varianceFact } from './feed-stock-count.rules';
 import { assertPeriodWindowOpen, assertPostingPeriodOpen, closedPeriodFor } from '../../../common/period-close';
@@ -57,6 +57,20 @@ describe('Period close (r31)', () => {
 
   it('is allowed when every location has one', () => {
     expect(() => assertPeriodCanClose(period, locations, [posted('F01'), posted('F02'), posted('MILL')])).not.toThrow();
+  });
+
+  it('does not require a take from a location with nothing countable, and lists it as nothing to count', () => {
+    const withEmpty = [...locations, { location_id: 'F03', code: 'F03', countable: false }];
+    const takes = [posted('F01'), posted('F02'), posted('MILL')];
+    expect(periodCloseBlockers('P-SEP', withEmpty, takes)).toEqual([]);
+    expect(() => assertPeriodCanClose(period, withEmpty, takes)).not.toThrow();
+    expect(nothingToCount(withEmpty).map((l) => l.code)).toEqual(['F03']);
+  });
+
+  it('still names a countable location that lacks a take, and mentions the nothing-to-count ones', () => {
+    const withEmpty = [...locations, { location_id: 'F03', code: 'F03', countable: false }];
+    expect(() => assertPeriodCanClose(period, withEmpty, [posted('F01'), posted('MILL')]))
+      .toThrow(/cannot close: no posted monthly stock take for F02\. Nothing to count \(not required\): F03/);
   });
 });
 

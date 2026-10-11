@@ -10,7 +10,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { businessYearOf, generateBusinessYear, periodProblems, periodsOverlap } from './reporting-period.rules';
-import { assertPeriodCanClose, reopenPatch } from '../../inventory/feed-stock-count/monthly-stock-take.rules';
+import { assertPeriodCanClose, nothingToCount, reopenPatch } from '../../inventory/feed-stock-count/monthly-stock-take.rules';
 import { CreateReportingPeriodDto, GenerateReportingPeriodsDto, QueryReportingPeriodDto, UpdateReportingPeriodDto } from './reporting-period.dto';
 
 const table = schema.reportingPeriod;
@@ -201,7 +201,7 @@ export class ReportingPeriodService {
     return withTenantTransaction(this.cls, async () => {
       const row = await this.findOne(id, tenantId);
       const L = schema.locationMaster;
-      const locations = await this.db.select({ location_id: L.location_id, code: L.location_code })
+      const locations = await this.db.select({ location_id: L.location_id, code: L.location_code, type: L.location_type })
         .from(L).where(and(
           eq(L.tenant_id, tenantId),
           ...(row.company_id ? [eq(L.company_id, row.company_id)] : []),
@@ -210,13 +210,30 @@ export class ReportingPeriodService {
           eq(L.is_active, true),
           isNull(L.deleted_at),
         ));
+      // Controller reading of r31: only a location with something a count can use (an active SILO of a farm,
+      // an active BIN of a mill — the same rows loadActiveSilos accepts) owes a take; the rest are listed.
+      const childOf = new Map<string, string>(locations.map((l) => [l.location_id, l.type === 'MILL' ? 'BIN' : 'SILO']));
+      const children = locations.length ? await this.db.select({ parent_location_id: L.parent_location_id, farm_id: L.farm_id, location_type: L.location_type })
+        .from(L).where(and(
+          eq(L.tenant_id, tenantId),
+          inArray(L.parent_location_id, locations.map((l) => l.location_id)),
+          inArray(L.location_type, ['SILO', 'BIN']),
+          eq(L.is_active, true),
+          isNull(L.deleted_at),
+        )) : [];
+      const countable = new Set<string>();
+      for (const c of (children as Array<{ parent_location_id?: string | null; farm_id?: string | null; location_type?: string }>)) {
+        if (c.parent_location_id && c.farm_id === c.parent_location_id && (c.location_type === undefined || c.location_type === childOf.get(c.parent_location_id))) countable.add(c.parent_location_id);
+      }
+      const closeLocations = locations.map((l) => ({ location_id: l.location_id, code: l.code ?? l.location_id, countable: countable.has(l.location_id) }));
       const C = schema.feedStockCount;
       const takes = await this.db.select({ farm_id: C.farm_id, count_type: C.count_type, reporting_period_id: C.reporting_period_id, status: C.status })
         .from(C).where(and(eq(C.tenant_id, tenantId), eq(C.reporting_period_id, row.period_id)));
-      assertPeriodCanClose({ ...row, period_status: row.period_status }, locations.map((l) => ({ location_id: l.location_id, code: l.code ?? l.location_id })), takes);
+      assertPeriodCanClose({ ...row, period_status: row.period_status }, closeLocations, takes);
       await this.db.update(table).set({ period_status: 'CLOSED', closed_by: user?.userId ?? null, closed_at: nowTs(), updated_by: user?.userId, updated_at: nowTs() })
         .where(and(eq(table.period_id, row.period_id), eq(table.period_status, 'OPEN')));
-      return this.log('PERIOD_CLOSE', await this.findOne(id, tenantId), user, row);
+      const closed = await this.log('PERIOD_CLOSE', await this.findOne(id, tenantId), user, row);
+      return { ...closed, nothing_to_count: nothingToCount(closeLocations).map((l) => l.code) };
     });
   }
 

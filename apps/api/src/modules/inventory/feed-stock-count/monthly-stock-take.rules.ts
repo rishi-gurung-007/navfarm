@@ -54,15 +54,21 @@ export function assertStockTakeDate(
   }
 }
 
-export interface CloseLocation { location_id: string; code: string }
+/** `countable` = has at least one active SILO (farm) or BIN (mill) a count can use; omitted means countable. */
+export interface CloseLocation { location_id: string; code: string; countable?: boolean }
 export interface CloseTake { farm_id: string; count_type: string; reporting_period_id: string | null; status: string }
 
-/** r31: every farm and mill in the company needs a POSTED monthly stock take for the period. */
+/** Controller reading of r31 (awaiting Rishi): a farm or mill with nothing to count owes no take. */
+export function nothingToCount(locations: CloseLocation[]): CloseLocation[] {
+  return locations.filter((l) => l.countable === false);
+}
+
+/** r31: every farm and mill that has something to count needs a POSTED monthly stock take for the period. */
 export function periodCloseBlockers(periodId: string, locations: CloseLocation[], takes: CloseTake[]): CloseLocation[] {
   const posted = new Set(
     takes.filter((t) => t.count_type === 'MONTHLY' && t.reporting_period_id === periodId && t.status === 'POSTED').map((t) => t.farm_id),
   );
-  return locations.filter((l) => !posted.has(l.location_id));
+  return locations.filter((l) => l.countable !== false && !posted.has(l.location_id));
 }
 
 export function assertPeriodCanClose(
@@ -72,9 +78,11 @@ export function assertPeriodCanClose(
 ): void {
   if (period.period_status === 'CLOSED') throw new BadRequestException(`Reporting period ${period.period_code} is already closed.`);
   const missing = periodCloseBlockers(period.period_id, locations, takes);
+  const empty = nothingToCount(locations);
   if (missing.length) {
     throw new BadRequestException(
-      `Reporting period ${period.period_code} cannot close: no posted monthly stock take for ${missing.map((m) => m.code).join(', ')}.`,
+      `Reporting period ${period.period_code} cannot close: no posted monthly stock take for ${missing.map((m) => m.code).join(', ')}.`
+      + (empty.length ? ` Nothing to count (not required): ${empty.map((m) => m.code).join(', ')}.` : ''),
     );
   }
 }

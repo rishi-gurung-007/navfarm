@@ -200,20 +200,38 @@ describe('ReportingPeriodService', () => {
   describe('close (r31) for a tenant with a feed mill', () => {
     const sep = { period_id: 'p-sep', company_id: 'co-1', period_code: '2026-09', period_status: 'OPEN', stock_take_date: '2026-09-26', start_date: '2026-08-30', end_date: '2026-09-26' };
     const farmAndMill = [{ location_id: 'farm-1', code: 'FARM-1' }, { location_id: 'mill-1', code: 'MILL-1' }];
+    // Rows of the active SILO/BIN query: parent = the farm or mill, farm_id = the same (what a count can use).
+    const countable = (...ids: string[]) => ids.map((id) => ({ parent_location_id: id, farm_id: id }));
     const take = (farm_id: string, status = 'POSTED') => ({ farm_id, count_type: 'MONTHLY', reporting_period_id: 'p-sep', status });
 
     it('is satisfiable once the farm AND the mill each have a POSTED monthly stock take', async () => {
-      selectQueue.push([sep], farmAndMill, [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
       await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).resolves.toBeDefined();
       expect(set).toHaveBeenCalledWith(expect.objectContaining({ period_status: 'CLOSED' }));
     });
 
     it('is refused, naming the mill, while the mill take is missing or not yet posted', async () => {
-      selectQueue.push([sep], farmAndMill, [take('farm-1')]);
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1')]);
       await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
       selectQueue.length = 0;
-      selectQueue.push([sep], farmAndMill, [take('farm-1'), take('mill-1', 'APPROVED')]);
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1'), take('mill-1', 'APPROVED')]);
       await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
+    });
+
+    it('does not demand a take from a farm with no active silo, and reports it as nothing to count', async () => {
+      const three = [...farmAndMill, { location_id: 'farm-2', code: 'FARM-2' }];
+      // farm-2 has a silo row whose farm_id is NULL: a count cannot use it, so it is not countable.
+      selectQueue.push([sep], three, [...countable('farm-1', 'mill-1'), { parent_location_id: 'farm-2', farm_id: null }],
+        [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
+      const closed: any = await service.close('p-sep', 'tenant-1', { userId: 'u' });
+      expect(closed.nothing_to_count).toEqual(['FARM-2']);
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ period_status: 'CLOSED' }));
+    });
+
+    it('still refuses while a farm that has a silo lacks its take', async () => {
+      const three = [...farmAndMill, { location_id: 'farm-2', code: 'FARM-2' }];
+      selectQueue.push([sep], three, countable('farm-1', 'mill-1', 'farm-2'), [take('farm-1'), take('mill-1')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/FARM-2/);
     });
   });
 });
