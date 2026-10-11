@@ -12,6 +12,11 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { unwrap } from "./feed-format";
 import type { RequisitionView } from "./feed-requisition-document";
 
+/** Cell styles matching the Requisition list (requisitions-hub). */
+const RUN_TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
+const RUN_TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const RUN_TD_TEXT = "min-w-[12rem] px-3 py-1.5 text-xs text-[var(--text-primary)]";
+
 interface PreviewLine {
   destination_location_id: string;
   destination_code: string;
@@ -133,17 +138,17 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
         <>
           <ScrollTable label={t("rqFromRunLines")}>
             <thead><tr>
-              <th>{t("rqdColSilo")}</th><th>{t("rqdColItemNo")}</th><th>{t("rqdColItemDesc")}</th>
-              <th>{t("rqdColRecommended")}</th><th>{t("rqdColRequested")}</th><th>{t("rqdColDelivery")}</th>
+              <th scope="col" className={RUN_TH}>{t("rqdColSilo")}</th><th scope="col" className={RUN_TH}>{t("rqdColItemNo")}</th><th scope="col" className={RUN_TH}>{t("rqdColItemDesc")}</th>
+              <th scope="col" className={`${RUN_TH} text-right`}>{t("rqdColRecommended")}</th><th scope="col" className={`${RUN_TH} text-right`}>{t("rqdColRequested")}</th><th scope="col" className={RUN_TH}>{t("rqdColDelivery")}</th>
             </tr></thead>
             <tbody>{lines.map((line, index) => (
               <tr key={`${line.destination_location_id}:${line.item_id}`}>
-                <td>{line.destination_code}</td>
-                <td>{line.item_code}</td>
-                <td>{line.item_name}</td>
-                <td className="text-right tabular-nums">{Number(line.recommended_qty_kg).toLocaleString("en-US")}</td>
-                <td><input aria-label={t("rqNewKg", { line: index + 1 })} type="number" min="0.001" step="0.001" className="nf-input-sm w-32 text-right" style={inputStyle} value={line.quantity_kg} onChange={(event) => updateLine(index, { quantity_kg: Number(event.target.value) })} /></td>
-                <td><input aria-label={t("rqNewDate", { line: index + 1 })} type="date" className="nf-input-sm" style={inputStyle} value={line.proposed_delivery_date} onChange={(event) => updateLine(index, { proposed_delivery_date: event.target.value })} /></td>
+                <td className={RUN_TD}>{line.destination_code}</td>
+                <td className={RUN_TD}>{line.item_code}</td>
+                <td className={RUN_TD_TEXT}>{line.item_name}</td>
+                <td className={`${RUN_TD} text-right tabular-nums`}>{Number(line.recommended_qty_kg).toLocaleString("en-US")}</td>
+                <td className={`${RUN_TD} text-right`}><input aria-label={t("rqNewKg", { line: index + 1 })} type="number" min="0.001" step="0.001" className="nf-input-sm w-32 text-right" style={inputStyle} value={line.quantity_kg} onChange={(event) => updateLine(index, { quantity_kg: Number(event.target.value) })} /></td>
+                <td className={RUN_TD}><input aria-label={t("rqNewDate", { line: index + 1 })} type="date" className="nf-input-sm" style={inputStyle} value={line.proposed_delivery_date} onChange={(event) => updateLine(index, { proposed_delivery_date: event.target.value })} /></td>
               </tr>
             ))}</tbody>
           </ScrollTable>

@@ -16,6 +16,13 @@ import { useFeedForecastContext } from "./feed-forecast-context";
 import { MillCapacityBadge, millCapacityText, formatKg, type DietCapacity } from "./mill-capacity-view";
 import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 
+/** Cell styles for the plan table, matching the Requisition list (requisitions-hub). */
+const PLAN_TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
+const PLAN_TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const PLAN_TD_NUM = `${PLAN_TD} text-right tabular-nums`;
+const PLAN_TD_TEXT = "min-w-[12rem] px-3 py-1.5 text-xs text-[var(--text-primary)]";
+const PLAN_NUMERIC = new Set(["feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance"]);
+
 interface FeedPlanRow {
   farm: { id: string; code: string; name: string };
   period: string;
@@ -171,17 +178,17 @@ export default function FeedPlanPanel() {
       ) : (
         <ScrollTable label={t("feedPlanTableLabel")}>
           <thead><tr>
-            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity", "feedPlanColCapacityStatus"] as const).map((key) => <th key={key}>{t(key)}</th>)}
+            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity", "feedPlanColCapacityStatus"] as const).map((key) => <th key={key} scope="col" className={PLAN_NUMERIC.has(key) ? `${PLAN_TH} text-right` : PLAN_TH}>{t(key)}</th>)}
           </tr></thead>
           <tbody>{rows.map((row) => (
             <tr key={`${row.period}:${row.item.id}`}>
-              <td><RecordLink code={row.farm.code} href={row.farm.id ? locationHref(row.farm.id) : null} /></td><td>{formatDateShort(row.period)}</td>
-              <td><RecordLink code={row.item.code} href={row.item.id ? itemHref(row.item.id) : null} /></td><td>{row.item.name}</td>
-              <td>{kg(row.tentativeKg, t("feedPlanUnavailable"))}</td><td>{kg(row.approvedRequisitionKg, t("feedPlanUnavailable"))}</td>
-              <td>{kg(row.shippedKg, t("feedPlanUnavailable"))}</td><td>{kg(row.receivedKg, t("feedPlanUnavailable"))}</td>
-              <td>{kg(row.remainingKg, t("feedPlanUnavailable"))}</td><td>{kg(row.varianceKg, t("feedPlanUnavailable"))}</td>
-              <td>{millCapacityText(row.capacity?.state ?? "NOT_CONFIGURED", row.capacity?.availableKg ?? null, t)}</td>
-              <td>
+              <td className={PLAN_TD}><RecordLink code={row.farm.code} href={row.farm.id ? locationHref(row.farm.id) : null} /></td><td className={PLAN_TD}>{formatDateShort(row.period)}</td>
+              <td className={PLAN_TD}><RecordLink code={row.item.code} href={row.item.id ? itemHref(row.item.id) : null} /></td><td className={PLAN_TD_TEXT}>{row.item.name}</td>
+              <td className={PLAN_TD_NUM}>{kg(row.tentativeKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.approvedRequisitionKg, t("feedPlanUnavailable"))}</td>
+              <td className={PLAN_TD_NUM}>{kg(row.shippedKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.receivedKg, t("feedPlanUnavailable"))}</td>
+              <td className={PLAN_TD_NUM}>{kg(row.remainingKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.varianceKg, t("feedPlanUnavailable"))}</td>
+              <td className={PLAN_TD}>{millCapacityText(row.capacity?.state ?? "NOT_CONFIGURED", row.capacity?.availableKg ?? null, t)}</td>
+              <td className={PLAN_TD}>
                 <MillCapacityBadge
                   status={row.capacity?.status}
                   t={t}
