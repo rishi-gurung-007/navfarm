@@ -1163,6 +1163,13 @@
       "when": 1792000000034,
       "tag": "0166_monthly_stock_take_period_close",
       "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "5",
+      "when": 1792000000036,
+      "tag": "0168_location_cost_centre",
+      "breakpoints": true
     }
   ]
 }

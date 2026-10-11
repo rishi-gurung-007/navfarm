@@ -24,6 +24,12 @@ export class CreateLocationDto {
   @IsOptional()
   department_id?: string;
 
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  @IsOptional()
+  cost_center_id?: string | null;
+
   /** @deprecated Compatibility input for legacy callers. New records use parent_location_id. */
   @IsUUID()
   @IsOptional()
@@ -238,6 +244,12 @@ export class UpdateLocationDto {
   @IsUUID()
   @IsOptional()
   department_id?: string;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  @IsOptional()
+  cost_center_id?: string | null;
 
   /** @deprecated Compatibility input; canonical hierarchy uses parent_location_id. */
   @IsUUID()

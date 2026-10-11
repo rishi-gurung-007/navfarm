@@ -98,6 +98,15 @@ const location: MasterDataConfig = {
       helpText: "Optional owning department for stores or department-allocated locations (Cost Center of type DEPARTMENT).",
       section: "Identification",
     },
+    // CC (11 Oct): each farm / mill has its own cost centre; inventory journals take it from here.
+    {
+      key: "cost_center_id", label: "Cost Centre", type: "select-entity",
+      entityEndpoint: "/cost-center?isActive=true", entityValueKey: "cost_center_id",
+      entityLabelKeys: ["cost_center_code", "cost_center_name"],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
+      helpText: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
+      section: "Identification",
+    },
     // Hidden for SILO (2026-09-24, client request) — a silo is a sealed vessel
     // sized by what it holds, not by the ground it covers. There is no floor
     // area to walk, stock or apportion, so Area Size and Area UOM were left

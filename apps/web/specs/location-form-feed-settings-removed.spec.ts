@@ -26,7 +26,7 @@ describe("D32 — the Location form no longer edits per-farm feed settings", () 
   it("preserves the complete approved Location field set while settings move", () => {
     expect(locationConfig.fields.map((field) => field.key)).toEqual([
       "nob_id", "lob_id", "company_id", "location_code", "location_type", "location_name", "location_address", "parent_location_id",
-      "location_level", "department_id", "area_size", "area_unit", "max_capacity", "capacity_uom",
+      "location_level", "department_id", "cost_center_id", "area_size", "area_unit", "max_capacity", "capacity_uom",
       "mill_daily_capacity_ton", "mill_hourly_capacity_ton", "mill_bulk_daily_allocation_ton",
       "mill_bagged_daily_allocation_ton", "bin_capacity_ton", "bin_feed_type", "storage_type",
       "silo_capacity_kg", "silo_capacity_uom", "silo_reorder_days", "low_level_kg", "high_level_kg",
