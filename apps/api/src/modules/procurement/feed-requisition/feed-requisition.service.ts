@@ -2274,6 +2274,7 @@ export class FeedRequisitionService implements OnModuleInit {
         item_name: schema.itemMaster.item_name,
         destination_code: destination.location_code,
         destination_name: destination.location_name,
+        destination_type: destination.location_type,
         required_item_id: lifecycle.feed_item_id,
         reason_code: schema.reasonMaster.reason_code,
         reason_name: schema.reasonMaster.reason_name,
@@ -2356,6 +2357,25 @@ export class FeedRequisitionService implements OnModuleInit {
     const binAssignments = row.req.company_id
       ? await this.activeBinAssignments(row.req.company_id, row.req.production_date ?? null, lineItemIds, tenantId)
       : [];
+    // Checkpoint 5: before approval, each line into a SILO that still holds a different item says so. A warning, never a block.
+    const changeoverWarnings = new Map<string, string>();
+    if (row.req.company_id && (approvalStatus === 'OPEN' || approvalStatus === 'PENDING_APPROVAL')) {
+      for (const l of lines) {
+        if (l.destination_type !== 'SILO' || !l.line.destination_location_id || !l.line.item_id) continue;
+        try {
+          const text = await this.siloFeed.changeoverWarning({
+            siloId: l.line.destination_location_id,
+            siloName: l.destination_code ?? l.destination_name ?? l.line.destination_location_id,
+            nextItemId: l.line.item_id,
+            companyId: row.req.company_id,
+            tenantId,
+          });
+          if (text) changeoverWarnings.set(l.line.line_id, text);
+        } catch {
+          // A warning that cannot be computed never stops the document opening.
+        }
+      }
+    }
     const hasShipBalance = transfers.some((transfer) => transfer.lines.some((line) => line.balance_to_ship > 0));
     const hasReceiptBalance = transfers.some((transfer) => transfer.open_shipments.length > 0);
     let releaseReason: string | null = null;
@@ -2450,6 +2470,7 @@ export class FeedRequisitionService implements OnModuleInit {
           ? null : Number(consolidationLineByReqLine.get(l.line.line_id)!.mill_approved_qty_kg),
         adjustment_reason: consolidationLineByReqLine.get(l.line.line_id)?.adjustment_reason ?? null,
         lifecycle_ref_label: lifecycleRefLabel(l),
+        changeover_warning: changeoverWarnings.get(l.line.line_id) ?? null,
         reason_id: l.line.reason_id ?? null,
         reason_code: l.reason_code ?? null,
         reason_name: l.reason_name ?? null,

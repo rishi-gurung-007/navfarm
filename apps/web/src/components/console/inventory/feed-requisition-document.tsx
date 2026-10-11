@@ -79,6 +79,8 @@ export interface FeedRequisitionLine {
   proposed_delivery_date: string | null;
   exceeds_silo_capacity: boolean;
   needs_silo_changeover?: boolean;
+  /** Checkpoint 5: the server's text when the destination silo holds a different item with a balance. A warning, never a block. */
+  changeover_warning?: string | null;
   reason_id?: string | null;
   reason_code?: string | null;
   reason_name?: string | null;
@@ -520,6 +522,9 @@ export function FeedRequisitionDocument({
                           : t("rqNotYetAvailable")
                       )}
                       {line.needs_silo_changeover && <div className={MUTED}>{t("rqChangeover")}</div>}
+                      {line.changeover_warning && (
+                        <div role="note" data-testid="rqd-changeover-warning" className="mt-1 text-xs" style={{ color: "var(--warning)" }}>{line.changeover_warning}</div>
+                      )}
                     </td>
                     <td className={TD}>
                       {canEdit && items.length ? (

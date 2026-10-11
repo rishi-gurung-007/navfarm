@@ -475,3 +475,16 @@ describe("FeedRequisitionDocument — W2R requester, Mill Loading Bin and record
     expect(valueOf(en.rqdLinkedTransfer)).toBe("TO-0099");
   });
 });
+
+describe("FeedRequisitionDocument silo changeover warning (checkpoint 5)", () => {
+  it("shows the server's warning inline under the line's silo, and nothing when there is none", () => {
+    const warned: FeedRequisitionDocumentView = {
+      ...view,
+      lines: [{ ...view.lines[0], changeover_warning: "Silo 'GRS/SILO-001' still holds 500 of 'R0'." }, view.lines[1]],
+    };
+    render(<FeedRequisitionDocument view={warned} editable={false} />);
+    const notes = screen.getAllByTestId("rqd-changeover-warning");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toContain("still holds 500 of 'R0'");
+  });
+});
