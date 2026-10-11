@@ -79,6 +79,12 @@ export class FeedConsolidationService {
     return [...allowed];
   }
 
+  /** A sheet is acted on only by someone whose scope reaches its company; a sheet of another company reads as not found. */
+  private async assertCompanyAccess(companyId: string | null, tenantId: string, user: User): Promise<void> {
+    const farms = await this.forecast.listFarms(tenantId, user.userType);
+    if (!companyId || !farms.some((farm) => farm.companyId === companyId)) throw new NotFoundException('Consolidation sheet not found.');
+  }
+
   private eligibleConditions(tenantId: string, farmIds: string[], query: FeedConsolidationQueryDto) {
     const R = schema.requisition;
     const conditions = [
@@ -344,6 +350,7 @@ export class FeedConsolidationService {
   async markReviewed(consolidationId: string, tenantId: string, user: User) {
     const [row] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId))).limit(1).for('update');
     if (!row) throw new NotFoundException('Consolidation sheet not found.');
+    await this.assertCompanyAccess(row.company_id, tenantId, user);
     if (row.status !== 'DRAFT') throw new ConflictException(`Consolidation ${row.consolidation_no} cannot be marked reviewed from ${row.status}.`);
     await this.db.update(schema.feedConsolidation).set({ status: 'REVIEWED' }).where(eq(schema.feedConsolidation.consolidation_id, consolidationId));
     return this.findOne(consolidationId, tenantId, user);
@@ -352,6 +359,7 @@ export class FeedConsolidationService {
   async finalize(consolidationId: string, tenantId: string, user: User) {
     const [row] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId))).limit(1).for('update');
     if (!row) throw new NotFoundException('Consolidation sheet not found.');
+    await this.assertCompanyAccess(row.company_id, tenantId, user);
     if (!['DRAFT', 'REVIEWED'].includes(row.status)) throw new ConflictException(`Consolidation ${row.consolidation_no} cannot be finalized from ${row.status}.`);
     if (this.millCapacity) {
       // Checkpoint 42: "Cannot push infeasible plan" — finalizing is the

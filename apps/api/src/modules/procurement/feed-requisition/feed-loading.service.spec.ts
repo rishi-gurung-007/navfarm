@@ -1,3 +1,4 @@
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FeedLoadingService } from './feed-loading.service';
 
@@ -7,9 +8,10 @@ import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 
 describe('FeedLoadingService', () => {
   const queue: unknown[][] = [];
+  const wheres: unknown[] = [];
   const chain = (rows: unknown[]) => {
     const self: any = {
-      from: () => self, innerJoin: () => self, leftJoin: () => self, where: () => self, orderBy: () => self, limit: () => self, for: () => self,
+      from: () => self, innerJoin: () => self, leftJoin: () => self, where: (condition: unknown) => { wheres.push(condition); return self; }, orderBy: () => self, limit: () => self, for: () => self,
       then: (resolve: (value: unknown[]) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve(rows).then(resolve, reject),
     };
     return self;
@@ -109,6 +111,17 @@ describe('FeedLoadingService', () => {
     queue.push([sheet]);
     decorateReads();
     expect(await service.findOne('ls-1', 't-1')).toMatchObject({ dispatch_notification_status: 'NOT_SENT', dispatch_notification_message: null, dispatch_notification_at: null });
+  });
+
+  it('reads the dispatch notification inside the sheets\' tenant and company', async () => {
+    wheres.length = 0;
+    queue.push([sheet]);
+    decorateReads();
+    await service.findOne('ls-1', 't-1');
+    const alertQuery = wheres.map((w) => new MySqlDialect().sqlToQuery(w as any)).find((q) => q.sql.includes('`feed_alert`'))!;
+    expect(alertQuery.sql).toContain('`feed_alert`.`tenant_id`');
+    expect(alertQuery.sql).toContain('`feed_alert`.`company_id`');
+    expect(alertQuery.params).toEqual(expect.arrayContaining(['t-1', 'co-1']));
   });
 
   it('shows a typed Loaded By name as written', async () => {

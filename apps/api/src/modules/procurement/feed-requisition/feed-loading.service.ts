@@ -194,6 +194,8 @@ export class FeedLoadingService {
     const alerts = await this.db.select({ subject_id: schema.feedAlert.subject_id, message: schema.feedAlert.message, raised_at: schema.feedAlert.raised_at })
       .from(schema.feedAlert).where(and(
         eq(schema.feedAlert.event_type, 'MILL_DISPATCH'), eq(schema.feedAlert.subject_type, 'LOADING_SHEET'),
+        inArray(schema.feedAlert.tenant_id, [...new Set(rows.map((row) => row.tenant_id))]),
+        inArray(schema.feedAlert.company_id, [...new Set(rows.map((row) => row.company_id))]),
         inArray(schema.feedAlert.subject_id, sheetIds),
       )).orderBy(desc(schema.feedAlert.raised_at));
     const alertBySheet = new Map<string, { message: string; raised_at: string }>();

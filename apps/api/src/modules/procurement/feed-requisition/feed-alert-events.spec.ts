@@ -44,11 +44,13 @@ describe('MILL_DISPATCH on dispatch', () => {
   });
 });
 
+const FORECAST = { listFarms: jest.fn(async () => [{ farmId: 'farm-1', companyId: 'co-1' }]) };
+
 describe('MILL_ADJUSTED on finalize', () => {
   const header = { consolidation_id: 'cons-1', consolidation_no: 'CONS-1', status: 'DRAFT', company_id: 'co-1' };
   const finalizeWith = async (lines: unknown[]) => {
     const a = alerts();
-    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines])), {} as any, {} as any, undefined, a as any);
+    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines])), FORECAST as any, {} as any, undefined, a as any);
     jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
     await service.finalize('cons-1', 't-1', {});
     return a;
@@ -75,7 +77,7 @@ describe('CAPACITY_EXCEEDED on the capacity check', () => {
   const run = async (report: { checked: any[]; breaches: any[] }) => {
     const a = alerts();
     const millCapacity = { assertConsolidationWithinCapacity: jest.fn(async (...args: any[]) => { await args[4](report); }) };
-    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines, []])), {} as any, {} as any, millCapacity as any, a as any);
+    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines, []])), FORECAST as any, {} as any, millCapacity as any, a as any);
     jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
     await service.finalize('cons-1', 't-1', {});
     return a;
@@ -97,7 +99,7 @@ describe('CAPACITY_EXCEEDED on the capacity check', () => {
     const a = alerts();
     a.resolveEvent.mockRejectedValueOnce(new Error('db down'));
     const millCapacity = { assertConsolidationWithinCapacity: jest.fn(async (...args: any[]) => { await args[4]({ checked: [{ date: 'd', itemId: 'i' }], breaches: [] }); throw new ConflictException('Mill capacity exceeded'); }) };
-    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines])), {} as any, {} as any, millCapacity as any, a as any);
+    const service = new FeedConsolidationService(transactionCls(makeDb([[header], lines])), FORECAST as any, {} as any, millCapacity as any, a as any);
     jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
     await expect(service.finalize('cons-1', 't-1', {})).rejects.toThrow('Mill capacity exceeded');
   });
