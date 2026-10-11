@@ -1,3 +1,4 @@
+import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, Optional, UnauthorizedException,
 } from '@nestjs/common';
@@ -190,7 +191,7 @@ export class FeedStockCountService implements OnModuleInit {
         silo_id: schema.siloShedLink.silo_id, shed_id: Shed.location_id, shed_code: Shed.location_code, shed_name: Shed.location_name,
       }).from(schema.siloShedLink)
         .innerJoin(Shed, eq(Shed.location_id, schema.siloShedLink.shed_id))
-        .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.silo_id, siloIds), isNull(Shed.deleted_at)))
+        .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.silo_id, siloIds), siloShedLinkEffectiveOn(todayIso()), isNull(Shed.deleted_at)))
         .orderBy(Shed.location_code);
       for (const link of links) {
         houses.set(link.silo_id, [...(houses.get(link.silo_id) ?? []), { id: link.shed_id, code: link.shed_code, name: link.shed_name }]);

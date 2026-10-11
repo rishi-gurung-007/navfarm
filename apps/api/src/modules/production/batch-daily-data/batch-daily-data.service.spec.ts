@@ -1044,6 +1044,10 @@ describe('BatchDailyDataService', () => {
       expect(text).toContain('`location_master`.`is_active` = ?');
       expect(text).toContain('`location_master`.`deleted_at` is null');
       expect(params).toContain('tenant-123');
+      // Master r8: only the links effective on the entry date count (the shared helper).
+      expect(text).toContain('`silo_shed_link`.`effective_from`');
+      expect(text).toContain('`silo_shed_link`.`effective_to`');
+      expect(params).toContain('2026-09-08');
     });
 
     it('refuses the entry when no attached silo holds the item and there is no store', async () => {

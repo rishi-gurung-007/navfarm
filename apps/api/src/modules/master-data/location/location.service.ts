@@ -1,3 +1,4 @@
+import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 import { assertDepartmentIdentity } from '../../../common/department-identity';
@@ -587,6 +588,7 @@ export class LocationService {
       .where(and(
         eq(schema.siloShedLink.tenant_id, tenantId),
         eq(schema.siloShedLink.shed_id, shedId),
+        siloShedLinkEffectiveOn(todayIso()),
         isNull(schema.locationMaster.deleted_at),
       ));
     if (!rows.length) return [];

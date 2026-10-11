@@ -1,3 +1,4 @@
+import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import {
   Injectable,
   NotFoundException,
@@ -361,6 +362,7 @@ export class BatchDailyDataService {
               batchRow?.farm_id ?? null,
               header.company_id,
               tenantId,
+              dto.entry_date,
             );
           }
         }
@@ -1100,6 +1102,8 @@ export class BatchDailyDataService {
     batchFarmId: string | null,
     companyId: string,
     tenantId: string,
+    /** The entry's date: only the silo links effective that day are drawn from. Defaults to today. */
+    onDate: string = todayIso(),
   ): Promise<string> {
     const columns = {
       location_id: schema.locationMaster.location_id,
@@ -1154,6 +1158,7 @@ export class BatchDailyDataService {
         and(
           eq(schema.siloShedLink.tenant_id, tenantId),
           eq(schema.siloShedLink.shed_id, shed.location_id),
+          siloShedLinkEffectiveOn(onDate),
           eq(schema.locationMaster.is_active, true),
           isNull(schema.locationMaster.deleted_at),
         ),

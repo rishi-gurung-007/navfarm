@@ -55,6 +55,7 @@
  *    saved transfers — but not that day's feeding, which is the forecast's
  *    own demand, so a posted daily entry is never subtracted twice.
  */
+import { linksEffectiveOn } from '../../../common/silo-shed-links';
 import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
 /**
@@ -574,9 +575,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const shed = shedById.get(shedId);
     // The link effective on this date (Master r8); no dates on a link means always.
     const effectiveSiloIds = shed?.siloLinks
-      ? shed.siloLinks
-        .filter((l) => (!l.effectiveFrom || l.effectiveFrom <= date) && (!l.effectiveTo || l.effectiveTo >= date))
-        .map((l) => l.siloId)
+      ? linksEffectiveOn(shed.siloLinks, date).map((l) => l.siloId)
       : (shed?.siloIds ?? []);
     const cacheKey = `${shedId}:${itemId}:${effectiveSiloIds.join(',')}`;
     const cached = sourceCache.get(cacheKey);
