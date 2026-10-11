@@ -31,6 +31,7 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
       isNull(schema.requisition.deleted_at),
     ));
   let linked = commonLinked;
+  let isFeed = false;
   let linkedTransferIds = [transferId];
 
   if (!linked) {
@@ -47,6 +48,7 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
       ));
     linked = feedLinked;
     if (!linked) return;
+    isFeed = true;
 
     const transferLinks = await db
       .select({ transfer_id: schema.feedRequisitionTransfer.transfer_id })
@@ -122,5 +124,8 @@ export async function syncRequisitionFulfilment(db: MySql2Database<typeof schema
     await db.update(schema.requisitionLine).set({ qty_shipped: String(qtyShipped), qty_received: String(qtyReceived), ...(mill_approved ?? {}) }).where(eq(schema.requisitionLine.line_id, line.line_id));
     updated.push({ ...own, ...(mill_approved ?? {}), qty_shipped: qtyShipped, qty_received: qtyReceived });
   }
-  await db.update(schema.requisition).set({ fulfilment_status: fulfilmentStatusOf(updated) }).where(eq(schema.requisition.requisition_id, linked.requisition_id));
+  const fulfilmentStatus = fulfilmentStatusOf(updated);
+  // Rishi, 11 Oct: a fully received feed requisition's document Status becomes RECEIVED (feed only;
+  // the common requisition's document status vocabulary is unchanged).
+  await db.update(schema.requisition).set({ fulfilment_status: fulfilmentStatus, ...(isFeed && fulfilmentStatus === 'RECEIVED' ? { document_status: 'RECEIVED' } : {}) }).where(eq(schema.requisition.requisition_id, linked.requisition_id));
 }

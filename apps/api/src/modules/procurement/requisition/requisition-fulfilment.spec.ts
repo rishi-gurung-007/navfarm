@@ -53,6 +53,18 @@ describe('syncRequisitionFulfilment', () => {
     expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'PARTIALLY_RECEIVED' });
   });
 
+  it('leaves a common requisition document status alone when it is fully received (feed only)', async () => {
+    const { db: d, sets } = db([
+      [{ requisition_id: 'req-1' }],
+      [{ requisition_line_id: 'l1' }],
+      [{ requisition_line_id: 'l1', qty: '10' }],
+      [{ requisition_line_id: 'l1', qty: '10' }],
+      [{ line_id: 'l1', quantity: '10', qty_to_ship: '10', qty_to_receive: '10' }],
+    ]);
+    await syncRequisitionFulfilment(d, 'tr-1');
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
+  });
+
   /**
    * Ownership guard (the task's required addition, not in the original
    * brief): stock_transfer_line.requisition_line_id is a bare varchar with no
@@ -156,7 +168,8 @@ describe('syncRequisitionFulfilment', () => {
 
     await syncRequisitionFulfilment(d, 'tr-2');
 
-    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
+    // Rishi, 11 Oct: a fully received feed requisition's document Status becomes RECEIVED.
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED', document_status: 'RECEIVED' });
   });
   /**
    * 2026-10-10 ruling (decisions.md, "Feed fulfilment measures against the
@@ -178,7 +191,7 @@ describe('syncRequisitionFulfilment', () => {
 
     await syncRequisitionFulfilment(d, 'tr-1');
 
-    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED' });
+    expect(sets.find((s) => s.table === schema.requisition)!.values).toEqual({ fulfilment_status: 'RECEIVED', document_status: 'RECEIVED' });
     // No phantom 50 KG: the line's stored to-ship/to-receive are the mill-approved quantity,
     // so every line view (feed read model, common lineBalances) shows a zero balance.
     expect(sets.filter((s) => s.table === schema.requisitionLine).map((s) => s.values)).toEqual([

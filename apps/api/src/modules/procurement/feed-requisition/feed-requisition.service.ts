@@ -2458,8 +2458,8 @@ export class FeedRequisitionService implements OnModuleInit {
       fulfilment_status: fulfilmentStatus,
       actions: {
         release: { enabled: releaseEnabled, reason: releaseReason },
-        shipment: { enabled: shipmentEnabled, reason: shipmentEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Shipment.' : 'There is no quantity left to ship.' },
-        receipt: { enabled: receiptEnabled, reason: receiptEnabled ? null : documentStatus !== 'RELEASED' ? 'Release the requisition before Transfer Receipt.' : 'There is no shipped quantity waiting for receipt.' },
+        shipment: { enabled: shipmentEnabled, reason: shipmentEnabled ? null : documentStatus !== 'RELEASED' && documentStatus !== 'RECEIVED' ? 'Release the requisition before Transfer Shipment.' : 'There is no quantity left to ship.' },
+        receipt: { enabled: receiptEnabled, reason: receiptEnabled ? null : documentStatus !== 'RELEASED' && documentStatus !== 'RECEIVED' ? 'Release the requisition before Transfer Receipt.' : 'There is no shipped quantity waiting for receipt.' },
       },
       transfers,
       farm_code: row.farm_code,
@@ -2476,7 +2476,7 @@ export class FeedRequisitionService implements OnModuleInit {
         consolidation_no: consolidation?.consolidation_no ?? null,
         consolidation_status: consolidation?.status ?? null,
         consolidation_next_action: consolidation?.status === 'CONSOLIDATED'
-          ? (documentStatus === 'RELEASED' ? 'TRANSFER_SHIPMENT' : 'RELEASE')
+          ? (documentStatus === 'RELEASED' || documentStatus === 'RECEIVED' ? 'TRANSFER_SHIPMENT' : 'RELEASE')
           : consolidation ? 'FINALIZE_CONSOLIDATION' : null,
         // Req. §1 row 6: written since Task 9; a requisition from before carries its creation day.
         requisition_date: row.req.requisition_date ?? (row.req.created_at ? String(row.req.created_at).slice(0, 10) : null),

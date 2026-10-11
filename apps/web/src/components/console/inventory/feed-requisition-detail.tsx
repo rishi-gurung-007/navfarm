@@ -171,7 +171,7 @@ export function FeedRequisitionDetail({
     shipment: { enabled: false, reason: t("rqActionUnavailable") },
     receipt: { enabled: false, reason: t("rqActionUnavailable") },
   };
-  const releaseComplete = view.document_status === "RELEASED" || actions.release.reason?.toLowerCase().includes("already released");
+  const releaseComplete = view.document_status === "RELEASED" || view.document_status === "RECEIVED" || actions.release.reason?.toLowerCase().includes("already released");
   const workflowBlocker = releaseComplete
     ? (!actions.shipment.enabled && actions.shipment.reason
       ? `Release completed. Transfer Shipment is unavailable: ${actions.shipment.reason}`
