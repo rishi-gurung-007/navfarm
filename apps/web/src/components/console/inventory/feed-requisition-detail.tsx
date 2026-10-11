@@ -338,7 +338,7 @@ export function FeedRequisitionDetail({
         />
       </div>
       {/* Rishi, 11 Oct: Transfer Shipment opens in its own dialog stacked on the requisition. */}
-      <Dialog open={panel === "ship" && actions.shipment.enabled} onClose={() => setPanel(null)} title={t("crqShip")}
+      <Dialog open={panel === "ship" && actions.shipment.enabled} onClose={() => setPanel(null)} title={t("crqShip")} presentation="compact" maxWidth="xl"
         footer={<Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
         <div className="flex flex-wrap items-end gap-3">
           {dateField}
@@ -354,7 +354,7 @@ export function FeedRequisitionDetail({
           })}
         </div>
       </Dialog>
-      <Dialog open={panel === "receive" && actions.receipt.enabled} onClose={() => setPanel(null)} title={t("crqReceive")}
+      <Dialog open={panel === "receive" && actions.receipt.enabled} onClose={() => setPanel(null)} title={t("crqReceive")} presentation="compact" maxWidth="xl"
         footer={<Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>}>
         <div className="flex flex-wrap items-end gap-3">
           {dateField}

@@ -247,7 +247,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
             workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
         {/* Rishi, 11 Oct: Ship and Receive open in their own dialog stacked on the requisition. */}
-        <Dialog open={panel === "ship" && actions.includes("ship")} onClose={() => setPanel(null)} title={t("crqShip")}
+        <Dialog open={panel === "ship" && actions.includes("ship")} onClose={() => setPanel(null)} title={t("crqShip")} presentation="compact" maxWidth="xl"
           footer={<Button size="sm" onClick={ship} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
@@ -264,7 +264,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           </div>
         </Dialog>
 
-        <Dialog open={panel === "receive" && actions.includes("receive")} onClose={() => setPanel(null)} title={t("crqReceive")}
+        <Dialog open={panel === "receive" && actions.includes("receive")} onClose={() => setPanel(null)} title={t("crqReceive")} presentation="compact" maxWidth="xl"
           footer={<Button size="sm" onClick={receive} disabled={busy || !recvValid}>{t("crqPostReceipt")}</Button>}>
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
