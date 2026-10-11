@@ -52,10 +52,17 @@ describe('AlertRuleService', () => {
         .rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('lists the Role Master codes once each, in code order', async () => {
-      selectQueue.push([{ role_code: 'OPERATOR', role_name: 'Operator' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MANAGER', role_name: 'Manager' }]);
+    it('lists the Role Master codes and the default rules\' user types once each, in code order', async () => {
+      selectQueue.push([{ role_code: 'OPERATOR', role_name: 'Operator' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MILL_MANAGER', role_name: 'Mill Manager (Role Master)' }]);
       const rows = await service.roleOptions('tenant-1', 'co-1');
-      expect(rows.map((r) => r.role_code)).toEqual(['MANAGER', 'OPERATOR']);
+      expect(rows.map((r) => r.role_code)).toEqual(['FARM_MANAGER', 'HEAD_OF_FARM', 'MANAGER', 'MILL_MANAGER', 'OPERATOR']);
+      expect(rows.find((r) => r.role_code === 'MILL_MANAGER')?.role_name).toBe('Mill Manager (Role Master)'); // the Role Master row wins
+    });
+
+    it('accepts the user types the default rules use without a Role Master row (decisions 11 Oct)', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]);
+      await expect(service.create(dto({ recipient_roles: ['FARM_MANAGER', 'MILL_MANAGER'], frequency: 'ESCALATING', escalation_after_hours: 4, escalation_role: 'HEAD_OF_FARM' }), 'tenant-1', { userId: 'u' }))
+        .rejects.not.toThrow(/is not in the Role Master/);
     });
   });
 

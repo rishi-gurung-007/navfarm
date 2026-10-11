@@ -46,6 +46,9 @@ const DEFAULT_RULES: Array<{
   { notification_code: 'CAPACITY-EXCEEDED', notification_name: 'Approved demand exceeds mill capacity', event_type: 'CAPACITY_EXCEEDED', trigger_entity: 'CONSOLIDATION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['MILL_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
 ];
 
+/** The recipient and escalation codes the default rules use: user types, not Role Master rows (decisions 11 Oct). */
+const DEFAULT_RULE_USER_TYPES: string[] = [...new Set(DEFAULT_RULES.flatMap((r) => [...r.recipient_roles, ...(r.escalation_role ? [r.escalation_role] : [])]))];
+
 /**
  * Alerts and Notifications Master CRUD (Master Setup §4). Scoped like every
  * other master (master-data-scope.ts). A rule is never deleted: deactivating
@@ -183,6 +186,8 @@ export class AlertRuleService {
       .where(and(eq(schema.companyMaster.tenant_id, tenantId), eq(R.is_active, true), ...(company ? [eq(R.company_id, company)] : [])));
     const byCode = new Map<string, { role_code: string; role_name: string }>();
     for (const row of rows) if (!byCode.has(row.role_code)) byCode.set(row.role_code, row);
+    // Decisions 11 Oct: the user types the default rules send to are valid recipients too; a Role Master row of the same code wins.
+    for (const code of DEFAULT_RULE_USER_TYPES) if (!byCode.has(code)) byCode.set(code, { role_code: code, role_name: code.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join(' ') });
     return [...byCode.values()].sort((a, b) => a.role_code.localeCompare(b.role_code));
   }
 
