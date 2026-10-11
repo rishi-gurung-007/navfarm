@@ -4656,6 +4656,9 @@ export const translations = {
     flsColNotification: "Dispatch Notification",
     flsNotificationSent: "Sent",
     flsNotificationNotSent: "Not sent",
+    // FINAL (11 Oct)
+    flsColEta: "Estimated Arrival",
+    flsEtaFor: "Estimated arrival (optional) for {no}",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

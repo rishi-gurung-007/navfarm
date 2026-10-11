@@ -47,6 +47,24 @@ describe("FeedLoadingPanel", () => {
     expect(within(notSentRow).getByText("flsNotificationNotSent")).toBeTruthy();
   });
 
+  it("Row 76: dispatch sends the typed estimated arrival, and the list shows the stored value", async () => {
+    (api.post as jest.Mock).mockResolvedValue({ data: notified });
+    (api.get as jest.Mock).mockResolvedValue({ data: [sheet, { ...notified, loading_sheet_id: "ls-3", loading_sheet_no: "LOAD-DONE", estimated_arrival_at: "2026-10-12 14:30:00" }] });
+    render(<FeedLoadingPanel />);
+    expect(await screen.findByText("flsColEta")).toBeTruthy();
+    expect(within(screen.getByText("LOAD-DONE").closest("tr")!).getByText("12/10/26 14:30")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(`flsEtaFor:${sheet.loading_sheet_no}`), { target: { value: "2026-10-12T16:45" } });
+    fireEvent.click(screen.getByRole("button", { name: "flsDispatch" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/feed-requisition/loading-sheets/ls-1/dispatch", { estimatedArrivalAt: "2026-10-12T16:45" }));
+  });
+
+  it("Row 76: dispatch without an estimated arrival sends none", async () => {
+    (api.post as jest.Mock).mockResolvedValue({ data: notified });
+    render(<FeedLoadingPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "flsDispatch" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/feed-requisition/loading-sheets/ls-1/dispatch", {}));
+  });
+
   it("shows Delivery Date, Diet No., Loaded By and Loading Date Time (rows 64, 65, 72, 73)", async () => {
     render(<FeedLoadingPanel />);
     const row = (await screen.findByText(sheet.loading_sheet_no)).closest("tr")!;

@@ -36,6 +36,25 @@ describe('MILL_DISPATCH on dispatch', () => {
     expect(input.message).toContain('6,000 KG');
     expect(input.message).toContain('compartment C2');
   });
+  it('Row 76: stores the typed estimated arrival and names it in the notice as ETA dd/mm/yy HH:mm', async () => {
+    const a = alerts();
+    const sets: any[] = [];
+    const db = makeDb(reads());
+    db.update = jest.fn(() => ({ set: (v: unknown) => { sets.push(v); return { where: async () => undefined }; } }));
+    const service = new FeedLoadingService(transactionCls(db), a as any);
+    await service.dispatch('ls-1', 't-1', { estimatedArrivalAt: '2026-10-12T14:30' });
+    expect(sets[0]).toMatchObject({ status: 'DISPATCHED', estimated_arrival_at: '2026-10-12 14:30:00' });
+    expect((a.raiseEventSafely.mock.calls[0] as any[])[1].message).toContain('ETA 12/10/26 14:30');
+  });
+  it('Row 76: leaves the ETA out when none is entered', async () => {
+    const a = alerts();
+    const sets: any[] = [];
+    const db = makeDb(reads());
+    db.update = jest.fn(() => ({ set: (v: unknown) => { sets.push(v); return { where: async () => undefined }; } }));
+    await new FeedLoadingService(transactionCls(db), a as any).dispatch('ls-1', 't-1');
+    expect(sets[0]).not.toHaveProperty('estimated_arrival_at');
+    expect((a.raiseEventSafely.mock.calls[0] as any[])[1].message).not.toContain('ETA');
+  });
   it('raises nothing for a sheet already dispatched (dedupe at the source)', async () => {
     const a = alerts();
     const service = new FeedLoadingService(transactionCls(makeDb([[{ ...sheet, status: 'DISPATCHED' }], ...reads().slice(1)])), a as any);

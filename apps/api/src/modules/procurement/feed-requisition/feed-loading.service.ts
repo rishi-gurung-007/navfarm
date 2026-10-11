@@ -7,7 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { activeBinAssignments } from './feed-bin-assignments.query';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
-import type { UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
+import type { DispatchFeedLoadingSheetDto, UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
 
 /** Row 60: LOAD-<Req No>-<Line No>. */
 export const loadingSheetNo = (reqNo: string, lineSeq: number) => `LOAD-${reqNo}-${lineSeq}`;
@@ -120,7 +120,7 @@ export class FeedLoadingService {
     return this.findOne(id, tenantId);
   }
 
-  async dispatch(id: string, tenantId: string) {
+  async dispatch(id: string, tenantId: string, dto: DispatchFeedLoadingSheetDto = {}) {
     const [sheet] = await this.db.select().from(schema.feedLoadingSheet).where(and(eq(schema.feedLoadingSheet.loading_sheet_id, id), eq(schema.feedLoadingSheet.tenant_id, tenantId))).limit(1);
     if (!sheet) throw new NotFoundException('Loading instruction sheet not found.');
     if (sheet.status === 'DISPATCHED') return this.findOne(id, tenantId);
@@ -130,14 +130,16 @@ export class FeedLoadingService {
         `Dispatch is blocked for ${sheet.loading_sheet_no}: post the shared Stock Transfer shipment for the released requisition first, then return here to dispatch this loading sheet.`,
       );
     }
-    await this.db.update(schema.feedLoadingSheet).set({ status: 'DISPATCHED' }).where(eq(schema.feedLoadingSheet.loading_sheet_id, id));
+    // Row 76 (11 Oct): the optional typed estimated arrival, stored as 'YYYY-MM-DD HH:mm:00' and shown as dd/mm/yy HH:mm.
+    const eta = dto.estimatedArrivalAt?.trim() ? dto.estimatedArrivalAt.trim().replace('T', ' ').slice(0, 16) : null;
+    await this.db.update(schema.feedLoadingSheet).set({ status: 'DISPATCHED', ...(eta ? { estimated_arrival_at: `${eta}:00` } : {}) }).where(eq(schema.feedLoadingSheet.loading_sheet_id, id));
     const dispatched = await this.findOne(id, tenantId);
     // W4G1 (Req. rows 74–76): tell the destination farm what left the mill — diet, KG and compartment.
     const kg = Number(dispatched.kg_loaded).toLocaleString('en-US', { maximumFractionDigits: 2 });
     await this.feedAlerts?.raiseEventSafely({ farmId: sheet.farm_id, companyId: sheet.company_id, tenantId }, {
       eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: id, itemId: sheet.item_id, observedValue: Number(dispatched.kg_loaded),
       title: `Feed dispatched: ${sheet.loading_sheet_no}`,
-      message: `Loading sheet ${sheet.loading_sheet_no} has left the mill for ${dispatched.farm_code ?? 'your farm'}: diet ${dispatched.diet_no ?? dispatched.item_code ?? ''}${dispatched.item_name ? ` (${dispatched.item_name})` : ''}, ${kg} KG, compartment ${sheet.compartment_no}.`.replace(/\s+/g, ' '),
+      message: `Loading sheet ${sheet.loading_sheet_no} has left the mill for ${dispatched.farm_code ?? 'your farm'}: diet ${dispatched.diet_no ?? dispatched.item_code ?? ''}${dispatched.item_name ? ` (${dispatched.item_name})` : ''}, ${kg} KG, compartment ${sheet.compartment_no}.${eta ? ` ETA ${eta.slice(8, 10)}/${eta.slice(5, 7)}/${eta.slice(2, 4)} ${eta.slice(11, 16)}.` : ''}`.replace(/\s+/g, ' '),
     });
     return dispatched;
   }

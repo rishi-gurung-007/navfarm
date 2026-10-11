@@ -23,7 +23,7 @@ type LoadingSheet = {
   mill_loading_bin_id: string | null; mill_loading_bin_code: string | null; mill_loading_bin_name: string | null;
   adjustment_reason: string | null; requested_delivery_date: string | null;
   loaded_by_name: string | null; loaded_at: string | null; transfer_id: string | null; transfer_no: string | null;
-  dispatch_notification_status?: "SENT" | "NOT_SENT"; dispatch_notification_message?: string | null; dispatch_notification_at?: string | null;
+  dispatch_notification_status?: "SENT" | "NOT_SENT"; dispatch_notification_message?: string | null; dispatch_notification_at?: string | null; estimated_arrival_at?: string | null;
 };
 type Draft = { compartmentNo: string; kgLoaded: string; loadedBy: string };
 const quantity = (value: string | number | null, na: string) => value == null ? na : `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })} KG`;
@@ -55,6 +55,7 @@ export function FeedLoadingPanel() {
   const na = t("fcsNotAvailable");
   const [rows, setRows] = useState<LoadingSheet[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
+  const [eta, setEta] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<Record<string, Draft>>({});
   const [openId] = useState(() => deepLinkIdFor("loading-instructions"));
   const openRow = useRef<HTMLTableRowElement | null>(null);
@@ -64,7 +65,7 @@ export function FeedLoadingPanel() {
   // Opened by link: ?tab=loading-instructions&id=<loading sheet> (or /inventory/feed-loading?id=).
   useEffect(() => { if (openId && rows.some((row) => row.loading_sheet_id === openId)) openRow.current?.scrollIntoView?.({ block: "center" }); }, [openId, rows]);
   const save = async (row: LoadingSheet) => { const values = valuesOf(row); setSaving(row.loading_sheet_id); try { await api.put(`/feed-requisition/loading-sheets/${row.loading_sheet_id}`, { compartmentNo: values.compartmentNo, kgLoaded: values.kgLoaded === "" ? undefined : Number(values.kgLoaded), loadedBy: values.loadedBy.trim() || undefined }); showToast.success(t("flsSaved")); await load(); } catch (err: any) { showToast.error(err?.message || t("flsSaveFailed")); } finally { setSaving(null); } };
-  const dispatch = async (row: LoadingSheet) => { setSaving(row.loading_sheet_id); try { await api.post(`/feed-requisition/loading-sheets/${row.loading_sheet_id}/dispatch`, {}); showToast.success(t("flsDispatched")); await load(); } catch (err: any) { showToast.error(err?.message || t("flsDispatchFailed")); } finally { setSaving(null); } };
+  const dispatch = async (row: LoadingSheet) => { setSaving(row.loading_sheet_id); try { await api.post(`/feed-requisition/loading-sheets/${row.loading_sheet_id}/dispatch`, eta[row.loading_sheet_id] ? { estimatedArrivalAt: eta[row.loading_sheet_id] } : {}); showToast.success(t("flsDispatched")); await load(); } catch (err: any) { showToast.error(err?.message || t("flsDispatchFailed")); } finally { setSaving(null); } };
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
       <div className="shrink-0">
@@ -77,7 +78,7 @@ export function FeedLoadingPanel() {
         <div className="mt-4 max-h-[65vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
           <table aria-label={t("flsListLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
             <thead><tr>
-              {([["flsColSheet", "min-w-40"], ["flsColRequisition", ""], ["flsColFarm", "min-w-44"], ["flsColDeliveryDate", ""], ["flsColItem", "min-w-52"], ["flsColRequested", "text-right"], ["flsColApproved", "text-right"], ["flsColReason", "min-w-44"], ["flsColCompartment", "min-w-40"], ["flsColLoaded", "min-w-36"], ["flsColLoadedBy", "min-w-44"], ["flsColLoadedAt", ""], ["flsColStatus", ""], ["flsColNotification", "min-w-56"], ["flsColActions", "min-w-44"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
+              {([["flsColSheet", "min-w-40"], ["flsColRequisition", ""], ["flsColFarm", "min-w-44"], ["flsColDeliveryDate", ""], ["flsColItem", "min-w-52"], ["flsColRequested", "text-right"], ["flsColApproved", "text-right"], ["flsColReason", "min-w-44"], ["flsColCompartment", "min-w-40"], ["flsColLoaded", "min-w-36"], ["flsColLoadedBy", "min-w-44"], ["flsColLoadedAt", ""], ["flsColStatus", ""], ["flsColEta", "whitespace-nowrap"], ["flsColNotification", "min-w-56"], ["flsColActions", "min-w-44"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
             </tr></thead>
             <tbody>
               {rows.map((row) => {
@@ -119,6 +120,7 @@ export function FeedLoadingPanel() {
                         {labelOf(LOADING_STATUS_LABEL, row.status, t)}
                       </span>
                     </td>
+                    <td className={`${TD} whitespace-nowrap`}>{row.estimated_arrival_at ? formatStampShort(row.estimated_arrival_at) : na}</td>
                     <td className={`${TD} whitespace-normal break-words`}>
                       <div className="text-xs font-medium">{row.dispatch_notification_status === "SENT" ? t("flsNotificationSent") : t("flsNotificationNotSent")}{row.dispatch_notification_at ? <span className="ml-1 font-normal text-(--text-secondary)">{formatStampShort(row.dispatch_notification_at, true)}</span> : null}</div>
                       {row.dispatch_notification_message ? <div className="max-w-64 text-xs text-(--text-secondary)">{row.dispatch_notification_message}</div> : null}
@@ -126,6 +128,7 @@ export function FeedLoadingPanel() {
                     <td className={TD}>
                       <div className="flex flex-wrap gap-2">
                         {!locked && <Button size="sm" onClick={() => save(row)} disabled={saving === row.loading_sheet_id}>{t("flsSave")}</Button>}
+                        {row.status === "LOADED" && <input type="datetime-local" aria-label={t("flsEtaFor", { no: row.loading_sheet_no })} className="nf-input-sm h-9 w-48" value={eta[row.loading_sheet_id] || ""} onChange={(event) => setEta({ ...eta, [row.loading_sheet_id]: event.target.value })} />}
                         {row.status === "LOADED" && <Button size="sm" onClick={() => dispatch(row)} disabled={saving === row.loading_sheet_id}>{t("flsDispatch")}</Button>}
                       </div>
                     </td>

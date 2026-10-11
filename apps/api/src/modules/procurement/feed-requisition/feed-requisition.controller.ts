@@ -8,7 +8,7 @@ import { FeedRequisitionService } from './feed-requisition.service';
 import {
   AutoDraftFeedRequisitionDto, CreateManualFeedRequisitionDto, QueryFeedRequisitionDto, UpdateFeedRequisitionDto,
   CreateFeedRequisitionFromRunDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
-  CreateFeedConsolidationDto, FeedConsolidationQueryDto, UpdateFeedLoadingSheetDto,
+  CreateFeedConsolidationDto, FeedConsolidationQueryDto, UpdateFeedLoadingSheetDto, DispatchFeedLoadingSheetDto,
 } from './dto/feed-requisition.dto';
 import { FeedConsolidationService } from './feed-consolidation.service';
 import { FeedLoadingService } from './feed-loading.service';
@@ -132,8 +132,8 @@ export class FeedRequisitionController {
   @Post('loading-sheets/:id/dispatch')
   @HttpCode(200)
   @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
-  async dispatchLoadingSheet(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
-    const data = await this.loading!.dispatch(id, req.user?.tenantId || req['tenantId']);
+  async dispatchLoadingSheet(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DispatchFeedLoadingSheetDto, @Req() req: any) {
+    const data = await this.loading!.dispatch(id, req.user?.tenantId || req['tenantId'], dto);
     return { success: true, message: 'Feed loading sheet marked dispatched.', data };
   }
 

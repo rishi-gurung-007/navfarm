@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Matches, Min, ValidateNested } from 'class-validator';
 
 export class QueryFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
@@ -35,6 +35,11 @@ export class UpdateFeedLoadingSheetDto {
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) kgLoaded?: number;
   /** Row 72: the mill staff name confirming loading (stored in feed_loading_sheet.loaded_by, 36 characters). */
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(36, { message: 'Loaded By can be at most 36 characters.' }) loadedBy?: string;
+}
+
+/** Row 76: dispatch may carry the mill's typed estimated arrival (local date and time, YYYY-MM-DDTHH:mm). */
+export class DispatchFeedLoadingSheetDto {
+  @ApiPropertyOptional() @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/, { message: 'Estimated arrival must be a date and time.' }) estimatedArrivalAt?: string;
 }
 
 export class AutoDraftFeedRequisitionDto {
