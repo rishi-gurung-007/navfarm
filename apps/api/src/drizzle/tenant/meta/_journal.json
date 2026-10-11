@@ -1177,6 +1177,13 @@
       "when": 1792000000036,
       "tag": "0168_location_cost_centre",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "5",
+      "when": 1792000000037,
+      "tag": "0169_batch_daily_empty_bags",
+      "breakpoints": true
     }
   ]
 }

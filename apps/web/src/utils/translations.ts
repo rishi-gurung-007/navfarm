@@ -4631,6 +4631,9 @@ export const translations = {
     // CC (11 Oct)
     locCostCentre: "Cost Centre",
     locCostCentreHelp: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
+    // W4G3 (11 Oct)
+    ctFeedMaxForecastDaysHint: "Longest range a forecast may cover. Blank settings keep 45 days.",
+    ctFeedBagToleranceHint: "Empty bags times bag size is checked against feed consumed on POST Day; a larger difference is flagged. Blank flags any difference.",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

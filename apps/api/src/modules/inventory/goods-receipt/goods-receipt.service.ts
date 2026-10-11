@@ -11,6 +11,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { hasSerial } from '../inventory-ledger/serial-utils';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { itemKindOf } from '../../../common/item-kinds';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -87,6 +88,29 @@ export class GoodsReceiptService {
       .where(eq(schema.locationMaster.location_id, receipt.warehouse_id))
       .limit(1);
     if (!destination || destination.location_type !== 'SILO') return;
+
+    // Workbook checkpoint 47: feed reaches a silo only through the Transfer
+    // Order receipt. A GRN of a FEED item straight into a silo is refused;
+    // other items and other locations are unchanged.
+    const itemIds = [...new Set(lines.map((l) => l.item_id))];
+    const itemTypes = itemIds.length === 0 ? [] : await this.db
+      .select({
+        item_code: schema.itemMaster.item_code,
+        type_code: schema.itemMaster.item_type,
+        type_name: schema.itemTypeMaster.type_name,
+      })
+      .from(schema.itemMaster)
+      .leftJoin(schema.itemTypeMaster, and(
+        eq(schema.itemTypeMaster.type_code, schema.itemMaster.item_type),
+        eq(schema.itemTypeMaster.tenant_id, tenantId),
+      ))
+      .where(inArray(schema.itemMaster.item_id, itemIds));
+    const feed = itemTypes.find((i) => itemKindOf(i.type_code, i.type_name) === 'FEED');
+    if (feed) {
+      throw new BadRequestException(
+        `Cannot post this GRN — '${feed.item_code}' is a feed item and silo '${destination.location_name || destination.location_id}' is a silo. Feed reaches a silo only through the Transfer Order receipt; receive the feed into a store and transfer it.`,
+      );
+    }
 
     await this.siloFeedService.assertCanReceive({
       siloId: destination.location_id,

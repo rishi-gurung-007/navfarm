@@ -1103,4 +1103,31 @@ describe('BatchDailyDataService', () => {
       );
     });
   });
+  // Workbook checkpoint 28: empty bags x bag size vs posted consumption on POST Day. A flag, never a refusal.
+  describe('empty-bag reconciliation (checkpoint 28)', () => {
+    const settings = (rows: unknown[]) =>
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) });
+    const group = (empty_bags?: number) =>
+      [{ dto: { empty_bags }, header, tenantId: 'tenant-123', batchId: 'batch-1', line: { line_id: 'line-1', activity_name: 'Feeding' }, farmId: null }] as any;
+    const alertValues = jest.fn().mockResolvedValue({});
+
+    beforeEach(() => {
+      alertValues.mockClear();
+      mockDbInsert.mockReturnValue({ values: alertValues });
+    });
+
+    it('flags 98 bags of 50 KG against 5,000 KG posted when the tolerance is 1%, and logs an alert', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '1.00' }]);
+      const warning = await (service as any).reconcileEmptyBags(group(98), 5000);
+      expect(warning).toBe('98 empty bags imply 4,900 KG versus 5,000 KG posted use; review tolerance (1%).');
+      expect(alertValues).toHaveBeenCalledWith(expect.objectContaining({ alert_type: 'BAG_RECONCILIATION', severity: 'WARNING' }));
+    });
+
+    it('allows the same count inside a 2% tolerance, and does nothing when no count was entered', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '2.00' }]);
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
+      await expect((service as any).reconcileEmptyBags(group(undefined), 5000)).resolves.toBeNull();
+      expect(alertValues).not.toHaveBeenCalled();
+    });
+  });
 });

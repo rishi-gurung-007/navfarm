@@ -1391,7 +1391,7 @@ export default function CompanyTab({
                           <Field className="sm:col-span-3" label={t("ctFeedDefaultForecastDays")} htmlFor="feed-default-days" required>
                             <Input id="feed-default-days" type="number" min={1} max={45} value={feedForm.defaultForecastDays} onChange={(e) => setFeedForm({ ...feedForm, defaultForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedMaxForecastDays")} htmlFor="feed-max-days" required>
+                          <Field className="sm:col-span-3" label={t("ctFeedMaxForecastDays")} htmlFor="feed-max-days" hint={t("ctFeedMaxForecastDaysHint")} required>
                             <Input id="feed-max-days" type="number" min={1} max={45} value={feedForm.maxForecastDays} onChange={(e) => setFeedForm({ ...feedForm, maxForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
                           </Field>
                           <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target">
@@ -1426,7 +1426,7 @@ export default function CompanyTab({
 
                         <FieldGroup title={t("ctFeedThresholdGroup")}>
                           <Field className="sm:col-span-3" label={t("ctFeedCapacityWarningPct")} htmlFor="feed-capacity-warning" required><Input id="feed-capacity-warning" type="number" min={0} max={100} step="0.01" value={feedForm.capacityWarningPct} onChange={(e) => setFeedForm({ ...feedForm, capacityWarningPct: e.target.value === "" ? "" : Number(e.target.value) })} required /></Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedBagTolerancePct")} htmlFor="feed-bag-tolerance"><Input id="feed-bag-tolerance" type="number" min={0} step="0.01" value={feedForm.bagTolerancePct} onChange={(e) => setFeedForm({ ...feedForm, bagTolerancePct: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
+                          <Field className="sm:col-span-3" label={t("ctFeedBagTolerancePct")} htmlFor="feed-bag-tolerance" hint={t("ctFeedBagToleranceHint")}><Input id="feed-bag-tolerance" type="number" min={0} step="0.01" value={feedForm.bagTolerancePct} onChange={(e) => setFeedForm({ ...feedForm, bagTolerancePct: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedFinanceVariancePct")} htmlFor="feed-finance-pct" required><Input id="feed-finance-pct" type="number" min={0} step="0.01" value={feedForm.financeVariancePct} onChange={(e) => setFeedForm({ ...feedForm, financeVariancePct: e.target.value === "" ? "" : Number(e.target.value) })} required /></Field>
                           <Field className="sm:col-span-3" label={t("ctFeedFinanceVarianceAmount")} htmlFor="feed-finance-amount"><Input id="feed-finance-amount" type="number" min={0} step="0.01" value={feedForm.financeVarianceAmount} onChange={(e) => setFeedForm({ ...feedForm, financeVarianceAmount: e.target.value === "" ? "" : Number(e.target.value) })} /></Field>
                         </FieldGroup>
