@@ -2192,6 +2192,13 @@ export const translations = {
     fcsSheetTitle: "Consolidation Sheet",
     fcsClose: "Close",
     fcsFinalize: "Finalize consolidation",
+    // W5C (11 Oct)
+    fcsMarkReviewed: "Mark reviewed",
+    fcsMarkedReviewed: "Consolidation sheet marked reviewed.",
+    fcsMarkReviewedFailed: "Unable to mark the consolidation sheet reviewed.",
+    mdShedEffectiveFrom: "Serves from",
+    mdShedEffectiveTo: "Serves until",
+    mdShedAlways: "always",
     fcsListLabel: "Consolidation sheets",
     fcsLinesLabel: "Consolidation sheet lines",
     fcsColRequisition: "Requisition",

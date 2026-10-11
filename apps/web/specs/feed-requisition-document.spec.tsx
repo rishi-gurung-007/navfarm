@@ -487,3 +487,21 @@ describe("FeedRequisitionDocument silo changeover warning (checkpoint 5)", () =>
     expect(notes[0].textContent).toContain("still holds 500 of 'R0'");
   });
 });
+
+// W5C, Req r34: the priority can be escalated from the document, never lowered.
+describe("FeedRequisitionDocument priority control (Req r34)", () => {
+  it("offers only the saved level and higher ones, and reports the choice", () => {
+    const onPriorityChange = jest.fn();
+    render(<FeedRequisitionDocument view={{ ...view, priority: "WARNING" }} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} onPriorityChange={onPriorityChange} />);
+    const select = screen.getByRole("combobox", { name: en.rqdPriority }) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING"]);
+    fireEvent.change(select, { target: { value: "CRITICAL" } });
+    expect(onPriorityChange).toHaveBeenCalledWith("CRITICAL");
+  });
+
+  it("stays a plain badge when read-only", () => {
+    render(<FeedRequisitionDocument view={{ ...view, priority: "WARNING" }} editable={false} />);
+    expect(screen.queryByRole("combobox", { name: en.rqdPriority })).toBeNull();
+  });
+});

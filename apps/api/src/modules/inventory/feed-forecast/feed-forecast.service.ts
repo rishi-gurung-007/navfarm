@@ -2120,16 +2120,23 @@ export class FeedForecastService {
     const shedIds = shedRows.map((s) => s.location_id);
     const links = shedIds.length
       ? await this.db
-        .select({ silo_id: schema.siloShedLink.silo_id, shed_id: schema.siloShedLink.shed_id })
+        .select({
+          silo_id: schema.siloShedLink.silo_id,
+          shed_id: schema.siloShedLink.shed_id,
+          effective_from: schema.siloShedLink.effective_from,
+          effective_to: schema.siloShedLink.effective_to,
+        })
         .from(schema.siloShedLink)
         .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.shed_id, shedIds)))
       : [];
     const siloIdsByShed = new Map<string, string[]>();
+    const siloLinksByShed = new Map<string, Array<{ siloId: string; effectiveFrom: string | null; effectiveTo: string | null }>>();
     for (const link of links) {
       if (!activeSiloIds.has(link.silo_id)) continue; // a link to a retired silo feeds nothing
+      siloLinksByShed.set(link.shed_id, [...(siloLinksByShed.get(link.shed_id) ?? []), { siloId: link.silo_id, effectiveFrom: link.effective_from ?? null, effectiveTo: link.effective_to ?? null }]);
       siloIdsByShed.set(link.shed_id, [...(siloIdsByShed.get(link.shed_id) ?? []), link.silo_id]);
     }
-    const sheds = shedRows.map((s) => ({ shedId: s.location_id, shedCode: s.location_code, siloIds: siloIdsByShed.get(s.location_id) ?? [] }));
+    const sheds = shedRows.map((s) => ({ shedId: s.location_id, shedCode: s.location_code, siloIds: siloIdsByShed.get(s.location_id) ?? [], siloLinks: siloLinksByShed.get(s.location_id) ?? [] }));
     const linkedSiloIds = [...new Set(links.map((l) => l.silo_id).filter((id) => activeSiloIds.has(id)))];
 
     // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).

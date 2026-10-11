@@ -442,8 +442,11 @@ describe('LocationService canonical hierarchy', () => {
       selectResults.push([siloRow()], []);
       forecast.currentSiloStatuses.mockResolvedValueOnce({ planningDate: '2026-10-11', statuses: [{
         siloId: 'silo-1', feedInSiloItemCode: 'FEED-R1', feedInSiloItemName: 'Weaner R1', systemBalanceKg: 1500,
-        lastApprovedCountKg: 1450, lastApprovedCountAt: '2026-10-05 06:00:00', lastFeedReceiptDate: '2026-10-02', nextDietDate: '2026-10-25',
+        lastApprovedCountKg: 1450, lastApprovedCountAt: '2026-10-05 06:00:00', lastFeedReceiptDate: '2026-10-02', nextDietDate: '2026-10-25', firstShortageDate: '2026-10-18',
       }] });
+      siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+        ['silo-1', { item_id: 'item-r1', item_code: 'FEED-R1', item_description: 'Weaner R1', on_hand_qty: 1500, uoms: ['KG'] }],
+      ]));
 
       const r: any = await service.findOne('silo-1', 'tenant-1');
 
@@ -452,6 +455,7 @@ describe('LocationService canonical hierarchy', () => {
         silo_feed_item: 'FEED-R1 — Weaner R1', available_stock_kg: 1500, system_balance_kg: 1500,
         last_approved_count_kg: 1450, last_approved_count_at: '2026-10-05',
         last_feed_receipt_date: '2026-10-02', next_diet_change_date: '2026-10-25',
+        first_shortage_date: '2026-10-18', silo_feed_item_id: 'item-r1',
       });
     });
 
@@ -645,6 +649,38 @@ describe('LocationService canonical hierarchy', () => {
     expect(txInsert).toHaveBeenCalledTimes(2); // the location row, then the silo_shed_link row
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(result.attached_sheds).toEqual(['shed-1']);
+  });
+
+  it('Master r8: writes the effective dates on the new link row', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [], [shedRow()], [],
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }],
+    );
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+      attached_shed_dates: { 'shed-1': { effective_from: '2026-10-20', effective_to: null } },
+    }, 'tenant-1');
+    const linkRows = (txInsert.mock.results[1].value.values as jest.Mock).mock.calls[0][0];
+    expect(linkRows[0]).toMatchObject({ shed_id: 'shed-1', effective_from: '2026-10-20', effective_to: null });
+  });
+
+  it('Master r8: refuses an Effective To before the Effective From', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [], [shedRow()],
+    );
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+      attached_shed_dates: { 'shed-1': { effective_from: '2026-10-20', effective_to: '2026-10-01' } },
+    }, 'tenant-1')).rejects.toThrow('Effective To');
   });
 
   it('allows attaching a shed to a second silo — a shed may now draw from several silos, one per feed item (D7)', async () => {

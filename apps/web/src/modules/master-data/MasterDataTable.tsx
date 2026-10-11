@@ -1491,6 +1491,12 @@ export function MasterDataTable({
     const initial: Row = {};
     // MySQL tinyint reaches here as 1 as readily as true, and both mean set.
     const columnIsOn = (key: string) => row[key] === true || row[key] === 1;
+    if (config.key === "location" && Array.isArray(row.attached_shed_details)) {
+      initial.attached_shed_dates = Object.fromEntries((row.attached_shed_details as Row[]).map((d) => [
+        String(d.location_id),
+        { effective_from: d.effective_from ? String(d.effective_from).slice(0, 10) : null, effective_to: d.effective_to ? String(d.effective_to).slice(0, 10) : null },
+      ]));
+    }
     formFields.forEach((f) => {
       // A form-only control has no column of its own, so its state has to be
       // read back out of the columns it stands for — otherwise an item that is
@@ -1833,6 +1839,12 @@ export function MasterDataTable({
       // "" here for every other location type would overwrite a correct null
       // with a stored empty string on the next unrelated edit.
       if (config.key === "location" && form.storage_type) payload.storage_type = form.storage_type;
+      // Master r8: the dates travel with the attached sheds they belong to, for a SILO only.
+      if (config.key === "location" && form.location_type === "SILO" && Array.isArray(payload.attached_sheds) && form.attached_shed_dates) {
+        payload.attached_shed_dates = Object.fromEntries(
+          (payload.attached_sheds as string[]).filter((id) => form.attached_shed_dates[id]).map((id) => [id, form.attached_shed_dates[id]]),
+        );
+      }
 
       if (editing) {
         if (config.key === "animal") {
@@ -2679,7 +2691,7 @@ export function MasterDataTable({
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
-        return (
+        const picker = (
           <EntityLookupField
             id={accessibility.id}
             label={accessibility["aria-label"]}
@@ -2694,6 +2706,30 @@ export function MasterDataTable({
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? openRelatedCreator : undefined}
           />
+        );
+        if (!(config.key === "location" && f.key === "attached_sheds" && selected.length)) return picker;
+        // Master r8: each attached shed carries the dates this silo serves it; no dates means always.
+        const dates = (form.attached_shed_dates ?? {}) as Record<string, { effective_from?: string | null; effective_to?: string | null }>;
+        const setDate = (shedId: string, key: "effective_from" | "effective_to", value: string) =>
+          setField("attached_shed_dates", { ...dates, [shedId]: { ...dates[shedId], [key]: value || null } });
+        return (
+          <div className="flex flex-col gap-2">
+            {picker}
+            {selected.map((shedId) => {
+              const shed = options.find((o) => String(o[f.entityValueKey || "id"]) === shedId);
+              return (
+                <div key={shedId} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
+                  <span className="min-w-[8rem] flex-1 text-sm">{shed ? entityLabel(shed, f) : shedId}</span>
+                  <Field label={t("mdShedEffectiveFrom")} htmlFor={`attached-shed-from-${shedId}`}>
+                    <input id={`attached-shed-from-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_from ?? ""} onChange={(e) => setDate(shedId, "effective_from", e.target.value)} />
+                  </Field>
+                  <Field label={t("mdShedEffectiveTo")} htmlFor={`attached-shed-to-${shedId}`}>
+                    <input id={`attached-shed-to-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_to ?? ""} onChange={(e) => setDate(shedId, "effective_to", e.target.value)} />
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
         );
       }
       const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));

@@ -340,6 +340,15 @@ export class FeedConsolidationService {
     }) };
   }
 
+  /** Req r128: DRAFT to REVIEWED, the mill manager's check before the sheet is consolidated. */
+  async markReviewed(consolidationId: string, tenantId: string, user: User) {
+    const [row] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId))).limit(1).for('update');
+    if (!row) throw new NotFoundException('Consolidation sheet not found.');
+    if (row.status !== 'DRAFT') throw new ConflictException(`Consolidation ${row.consolidation_no} cannot be marked reviewed from ${row.status}.`);
+    await this.db.update(schema.feedConsolidation).set({ status: 'REVIEWED' }).where(eq(schema.feedConsolidation.consolidation_id, consolidationId));
+    return this.findOne(consolidationId, tenantId, user);
+  }
+
   async finalize(consolidationId: string, tenantId: string, user: User) {
     const [row] = await this.db.select().from(schema.feedConsolidation).where(and(eq(schema.feedConsolidation.consolidation_id, consolidationId), eq(schema.feedConsolidation.tenant_id, tenantId))).limit(1).for('update');
     if (!row) throw new NotFoundException('Consolidation sheet not found.');

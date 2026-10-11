@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, ValidateIf, IsIn, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, ValidateIf, IsIn, IsArray, IsObject } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -152,6 +152,11 @@ export class CreateLocationDto {
   @IsArray()
   @IsUUID('4', { each: true })
   attached_sheds?: string[];
+
+  @ApiProperty({ description: 'Master r8: per attached shed UUID, the dates this silo serves it ({ effective_from, effective_to }, YYYY-MM-DD, either may be null). No dates = always.', required: false })
+  @IsOptional()
+  @IsObject()
+  attached_shed_dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
 
   @ApiProperty({ description: 'Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.', required: false })
   @IsInt()
@@ -356,6 +361,11 @@ export class UpdateLocationDto {
   @IsArray()
   @IsUUID('4', { each: true })
   attached_sheds?: string[];
+
+  @ApiProperty({ description: 'Master r8: per attached shed UUID, the dates this silo serves it ({ effective_from, effective_to }, YYYY-MM-DD, either may be null). No dates = always.', required: false })
+  @IsOptional()
+  @IsObject()
+  attached_shed_dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
 
   @ApiProperty({ required: false })
   @IsInt()
