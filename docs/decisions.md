@@ -3427,3 +3427,10 @@ DEPARTMENT cost centre in `location_master.department_id`). Needs a ruling on wh
 Rishi, 11 Oct, on Silo Balance row 47 ("Farm Cost Centre"): **give each farm a cost centre.** The farm record in
 Location Master gets a Cost Centre field, chosen from the Cost Centre Master. Every inventory journal line for that
 farm carries it, including stock-take adjustments. Mill journals carry the mill's cost centre, if one is set.
+
+## 2026-10-11 — Alert recipients accept Role Master codes and the user types the defaults use (controller reading)
+
+Master Setup rows 50 and 54 say recipient and escalation roles come from the Role Master. NAVFarm's default alert rules
+send to FARM_MANAGER, HEAD_OF_FARM and MILL_MANAGER, which are user types (decisions 1 Oct), not Role Master rows.
+So that the defaults keep working, a recipient or escalation code is valid if it is a Role Master code for the company
+or one of these user types. This is our reading; it awaits Rishi's confirmation.
