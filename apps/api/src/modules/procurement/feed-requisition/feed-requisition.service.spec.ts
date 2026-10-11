@@ -24,7 +24,7 @@ describe('FeedRequisitionService.createManual', () => {
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
   const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn(), raiseEventSafely: jest.fn(), resolveEvent: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   it('refuses a destination that is not an active silo or store of the farm', async () => {
     selectQueue.push(
@@ -53,7 +53,7 @@ describe('FeedRequisitionService.createManual', () => {
     selectQueue.push([{ location_code: 'GRS' }], [silo], [{ item_id: 'r2', item_name: 'Grower R2' }]);
     const fc = { ...forecast, computeForFarm: jest.fn(async () => ({ sources: [{ locationId: 'silo-1', itemId: 'r1' }] })) };
     const siloFeed = { currentItems: jest.fn(async () => new Map()) };
-    const svc = new FeedRequisitionService(transactionCls(db), fc, {} as any, { evaluateFarmSafely: jest.fn() } as any, siloFeed as any, {} as any, feedSettingsStub);
+    const svc = new FeedRequisitionService(transactionCls(db), fc, {} as any, { evaluateFarmSafely: jest.fn(), raiseEventSafely: jest.fn(), resolveEvent: jest.fn() } as any, siloFeed as any, {} as any, feedSettingsStub);
     const line = { destination_location_id: 'silo-1', item_id: 'r2', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };
     await expect(svc.createManual({ lines: [line] } as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' }))
       .rejects.toThrow('Line 1: Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).');
@@ -180,6 +180,7 @@ function setup(sources: ForecastSource[], queues: Map<unknown, unknown[][]>, dai
     }),
   };
   const alerts: any = {
+    raiseEventSafely: jest.fn(), resolveEvent: jest.fn(),
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
   };
   // Ruling I4: the ledger now. By default silo-1 holds the source's item at the source's own balance.
@@ -896,7 +897,7 @@ describe('WP1e — the feed requisition list scopes restricted users by the farm
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-grs', restricted: true, companyId: 'co-1', lobId: 'lob-pig' } as any);
     const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn() };
-    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn(), raiseEventSafely: jest.fn(), resolveEvent: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
     await service.findAll({} as any, 'tenant-1', { userId: 'u', userType: 'FARM_MANAGER' });
     const q = new MySqlDialect().sqlToQuery(whereCalls[0] as any);
     expect(q.sql).toContain('`farm_id` IS NULL');
@@ -916,7 +917,7 @@ describe('WP1e — the feed requisition list scopes restricted users by the farm
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-grs', restricted: false, companyId: 'co-1', lobId: null } as any);
     const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn() };
-    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn(), raiseEventSafely: jest.fn(), resolveEvent: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
     await service.findAll({} as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' });
     expect(new MySqlDialect().sqlToQuery(whereCalls[0] as any).sql).not.toContain('lob_id');
   });
@@ -1415,7 +1416,7 @@ describe('A1 (10 Oct) — the list filters RELEASED / SHIPPED / RECEIVED on the 
     const forecast: any = { resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })) };
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-grs', restricted: false, companyId: 'co-1', lobId: null } as any);
-    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, { resolveForFeedPlanning: jest.fn() } as any);
+    const service = new FeedRequisitionService(cls, forecast, {} as any, { evaluateFarmSafely: jest.fn(), raiseEventSafely: jest.fn(), resolveEvent: jest.fn() } as any, {} as any, {} as any, { resolveForFeedPlanning: jest.fn() } as any);
     await service.findAll({ farmId: 'farm-grs', status } as any, 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' });
     return new MySqlDialect().sqlToQuery(whereCalls[0] as any);
   };

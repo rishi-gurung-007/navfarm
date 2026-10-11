@@ -11,7 +11,7 @@
  */
 import type { LocalClock } from '../feed-forecast/feed-forecast.engine';
 
-export const FEED_JOBS = ['TENTATIVE_PLAN', 'REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION'] as const;
+export const FEED_JOBS = ['TENTATIVE_PLAN', 'REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE'] as const;
 export type FeedJob = (typeof FEED_JOBS)[number];
 export const isFeedJob = (value: unknown): value is FeedJob => typeof value === 'string' && (FEED_JOBS as readonly string[]).includes(value);
 
@@ -36,7 +36,7 @@ export type JobCadence =
  * TENTATIVE_PLAN, REQ_REMINDER and REQ_CUTOFF are weekly at their configured
  * day and time; null when either is unset. DIET_CHANGE is daily (checkpoint 30's
  * "within N days" is a whole-day window, so the first tick of the farm's day
- * is enough). ESCALATION is hourly, because Escalation After Hours (row 53)
+ * is enough). STOCK_TAKE_DUE (Master Setup row 45) is daily too: its window is whole days before a period's stock take date. ESCALATION is hourly, because Escalation After Hours (row 53)
  * is counted in hours.
  */
 export function cadenceOf(job: FeedJob, s: ScheduleSettings): JobCadence | null {
@@ -47,6 +47,7 @@ export function cadenceOf(job: FeedJob, s: ScheduleSettings): JobCadence | null 
     case 'REQ_REMINDER': return weekly(s.reminderWeekday, s.reminderTime);
     case 'REQ_CUTOFF': return weekly(s.submissionWeekday, s.submissionTime);
     case 'DIET_CHANGE': return { kind: 'DAILY' };
+    case 'STOCK_TAKE_DUE': return { kind: 'DAILY' };
     case 'ESCALATION': return { kind: 'HOURLY' };
   }
 }

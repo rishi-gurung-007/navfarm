@@ -46,6 +46,8 @@ export type PlanOutcome =
 export interface JobSummary {
   plan?: PlanOutcome;
   planNotice?: { rules: number; raised: number };
+  /** STOCK_TAKE_DUE: notices raised, and period/location pairs checked as taken or closed (their alerts closed). */
+  stockTake?: { raised: number; resolved: number };
   /** What the one alert evaluator did: the in-app notices are feed_alert rows, raised once per rule and document. */
   evaluated?: {
     raised: number; renotified: number; escalated: number; resolved: number;
@@ -151,7 +153,7 @@ export class FeedSchedulerService {
         const period = duePeriod(job, ctx.settings, ctx.clock);
         if (!period) continue;
         // The always-due jobs wait for the company to opt in by saving Feed Planning Settings: silently, no log row.
-        if ((job === 'DIET_CHANGE' || job === 'ESCALATION') && ctx.settings.sources?.companySetting !== 'COMPANY') continue;
+        if ((job === 'DIET_CHANGE' || job === 'ESCALATION' || job === 'STOCK_TAKE_DUE') && ctx.settings.sources?.companySetting !== 'COMPANY') continue;
         results.push(await this.runLogged(job, farm, ctx, tenantId, nowMs, { trigger: 'SCHEDULED', period, runKey: runKey(job, farm.farmId, period) }));
       }
     }
@@ -276,6 +278,9 @@ export class FeedSchedulerService {
         ? undefined
         : await this.alerts.raisePlanAvailable(farm.farmId, farm.companyId, tenantId, plan, nowMs);
       return { plan, planNotice };
+    }
+    if (job === 'STOCK_TAKE_DUE') {
+      return { stockTake: await this.alerts.evaluateStockTakeDue({ farmId: farm.farmId, companyId: farm.companyId, tenantId }, nowMs) };
     }
     // The date-driven notices (REQ_DEADLINE reminder and cutoff, DIET_CHANGE) and escalation are decided
     // by the one evaluator; the job brings it up to date at its configured time. Each notice is a

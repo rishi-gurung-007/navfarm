@@ -885,6 +885,16 @@ export class FeedRequisitionService implements OnModuleInit {
     const requisition = outcome.requisitionId
       ? await this.forecast.withFarmScope(farmId, companyId, () => this.readView(outcome.requisitionId!, tenantId))
       : null;
+    // Requisition row 80 (W5A): tell the Farm Manager a draft was created or refreshed. One open notice per requisition,
+    // so a rerun that only refreshes the same draft raises nothing new; it closes when the draft is submitted.
+    if (outcome.requisitionId && outcome.linesDrafted > 0) {
+      const reqNo = (requisition as any)?.req_no ?? 'A feed requisition';
+      await this.feedAlerts.raiseEventSafely({ farmId, companyId, tenantId }, {
+        eventType: 'AUTO_DRAFTED', subjectType: 'REQUISITION', subjectId: outcome.requisitionId, observedValue: outcome.linesDrafted,
+        title: `Requisition auto-drafted: ${reqNo}`,
+        message: `${reqNo} was ${outcome.created ? 'drafted' : 'updated'} from the feed forecast with ${outcome.linesDrafted} line${outcome.linesDrafted === 1 ? '' : 's'}. Review and submit it before the submission deadline.`,
+      });
+    }
     return { ...outcome, requisition };
   }
 
@@ -1905,7 +1915,32 @@ export class FeedRequisitionService implements OnModuleInit {
       }).where(eq(schema.requisition.requisition_id, id));
     }));
     await this.feedAlerts.evaluateFarmSafely(farmId, companyId, tenantId);
-    return this.forecast.withFarmScope(farmId, companyId, () => this.readView(id, tenantId));
+    const view = await this.forecast.withFarmScope(farmId, companyId, () => this.readView(id, tenantId));
+    await this.afterSubmitAlerts(view, id, { farmId, companyId, tenantId });
+    return view;
+  }
+
+  /**
+   * After a submit: the draft notice (AUTO_DRAFTED) closes, and every line into a silo that still holds a different
+   * item raises a CHANGEOVER task for the farm (checkpoint 5) — one per requisition and silo, closed by the
+   * evaluator once the silo no longer holds the old item. Never fails the submit.
+   */
+  private async afterSubmitAlerts(view: any, id: string, ctx: { farmId: string; companyId: string; tenantId: string }): Promise<void> {
+    try {
+      await this.feedAlerts.resolveEvent({ companyId: ctx.companyId, tenantId: ctx.tenantId }, 'AUTO_DRAFTED', [id], 'CLOSED');
+    } catch (error) {
+      this.logger.warn(`AUTO_DRAFTED alert not closed: ${(error as Error).message}`);
+    }
+    const reqNo = view?.req_no ?? 'the requisition';
+    for (const line of view?.lines ?? []) {
+      if (!line.changeover_warning || !line.destination_location_id) continue;
+      await this.feedAlerts.raiseEventSafely(ctx, {
+        eventType: 'CHANGEOVER', subjectType: 'REQUISITION', subjectId: id, dedupSuffix: `${id}|${line.destination_location_id}`,
+        itemId: line.item_id ?? null,
+        title: `Silo changeover needed: ${line.destination_code ?? 'silo'}`,
+        message: `${reqNo}: ${line.changeover_warning}`,
+      });
+    }
   }
 
   /**

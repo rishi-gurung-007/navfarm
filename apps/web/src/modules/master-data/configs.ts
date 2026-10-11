@@ -1501,6 +1501,12 @@ const ALERT_EVENT_TYPES = [
   { value: "NO_NEXT_FEED_ROW", label: "No next feed row for a batch" },
   { value: "NEXT_DIET_NO_SILO", label: "No silo for the next diet" },
   { value: "CAPACITY_EXCEEDED", label: "Mill capacity exceeded" },
+  { value: "SHORTFALL", label: "Projected shortfall in a silo" },
+  { value: "NOT_DRAFTED", label: "Shortfall with no requisition drafted" },
+  { value: "TRUCK_TARGET", label: "Farm order below the truck target" },
+  { value: "AUTO_DRAFTED", label: "Requisition auto-drafted" },
+  { value: "STOCK_TAKE_DUE", label: "Monthly stock take due" },
+  { value: "CHANGEOVER", label: "Silo changeover needed" },
 ];
 const ALERT_TRIGGER_ENTITIES = [
   { value: "SILO", label: "Silo" },
@@ -1553,7 +1559,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
       options: ALERT_TRIGGER_ENTITIES,
-      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE, PLAN_AVAILABLE and NEXT_DIET_NO_SILO: FEED_PLAN. REQ_DEADLINE: REQUISITION. MILL_DISPATCH: LOADING_SHEET. MILL_ADJUSTED and CAPACITY_EXCEEDED: CONSOLIDATION. RECEIPT_VARIANCE: RECEIPT. NO_NEXT_FEED_ROW: BATCH."
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE, PLAN_AVAILABLE and NEXT_DIET_NO_SILO: FEED_PLAN. REQ_DEADLINE: REQUISITION. MILL_DISPATCH: LOADING_SHEET. MILL_ADJUSTED and CAPACITY_EXCEEDED: CONSOLIDATION. RECEIPT_VARIANCE: RECEIPT. NO_NEXT_FEED_ROW: BATCH. SHORTFALL and NOT_DRAFTED: SILO. TRUCK_TARGET: FEED_PLAN. AUTO_DRAFTED and CHANGEOVER: REQUISITION. STOCK_TAKE_DUE: STOCK_TAKE."
     },
     {
       key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
@@ -1563,7 +1569,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
-      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; days ahead to look for NO_NEXT_FEED_ROW and NEXT_DIET_NO_SILO (default 7); 0 for the other events."
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; days ahead to look for NO_NEXT_FEED_ROW and NEXT_DIET_NO_SILO (default 7); days before the stock take date for STOCK_TAKE_DUE (default 3); KG the shortfall must exceed for SHORTFALL and NOT_DRAFTED (0 = any); 0 for the other events."
     },
     {
       key: "priority_level", label: "Priority Level", type: "select", required: true,

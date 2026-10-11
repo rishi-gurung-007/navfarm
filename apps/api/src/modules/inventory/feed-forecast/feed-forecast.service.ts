@@ -1851,14 +1851,15 @@ export class FeedForecastService {
    * W2D A7 (Engine §1 rows 8–17): the farm's silo statuses as of the farm's today over the standard seven-day
    * window — what the Physical Count shows beside each silo (projected shortfall, next diet, next item).
    */
-  async currentSiloStatuses(farmId: string, companyId: string, tenantId: string): Promise<{ planningDate: string; statuses: SiloStatusRow[] }> {
+  async currentSiloStatuses(farmId: string, companyId: string, tenantId: string): Promise<{ planningDate: string; statuses: SiloStatusRow[]; truckTargetKg: number }> {
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = clock.today;
     return this.withFarmScope(farmId, companyId, async () => {
       const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
       const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
       const forecast = await this.computeForFarm(farmId, companyId, tenantId, draftForecastRange(planningDate), clock);
-      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings) };
+      // truckTargetKg: the farm's truck target (Engine row 62), for the TRUCK_TARGET alert.
+      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings), truckTargetKg: settings.truckTargetKg };
     });
   }
 

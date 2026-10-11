@@ -79,6 +79,7 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
   const alerts: any = {
     evaluateFarm: jest.fn(async () => evaluation()),
     raisePlanAvailable: jest.fn(async () => ({ rules: 1, raised: 1 })),
+    evaluateStockTakeDue: jest.fn(async () => ({ raised: 0, resolved: 0 })),
   };
   const service = new FeedSchedulerService(cls, {} as any, {} as any, forecast, feedSettings, alerts);
   jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
@@ -130,8 +131,16 @@ describe('FeedSchedulerService.runDue — what is due at the company wall clock'
       escalate: [{ alertId: 'a1', role: 'HEAD_OF_FARM' }],
     }));
     const results = await h.service.runDue('t1', THU_1000);
-    expect(results.map((r) => r.job).sort()).toEqual(['DIET_CHANGE', 'ESCALATION']);
+    expect(results.map((r) => r.job).sort()).toEqual(['DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE']);
     expect(results.find((r) => r.job === 'DIET_CHANGE')!.summary?.evaluated).toEqual(expect.objectContaining({ raised: 1, escalated: 1 }));
+  });
+
+  it('runs the stock take due check daily (Master Setup row 45) through the alert service, for the farm', async () => {
+    const h = harness();
+    h.alerts.evaluateStockTakeDue.mockResolvedValue({ raised: 2, resolved: 1 });
+    const results = await h.service.runDue('t1', THU_1000);
+    expect(results.find((r) => r.job === 'STOCK_TAKE_DUE')!.summary?.stockTake).toEqual({ raised: 2, resolved: 1 });
+    expect(h.alerts.evaluateStockTakeDue).toHaveBeenCalledWith({ farmId: 'farm-1', companyId: 'co-1', tenantId: 't1' }, THU_1000);
   });
 
   it('days and times are configuration: a tenant with the cutoff on Thursday 15:30 gets it then, and not on Saturday', async () => {
@@ -143,7 +152,7 @@ describe('FeedSchedulerService.runDue — what is due at the company wall clock'
   it('does not schedule the weekly jobs of a tenant that configured nothing', async () => {
     const h = harness({ settings: { tentativePlanWeekday: null as any, tentativePlanTime: null as any, reminderWeekday: null as any, reminderTime: null as any, submissionWeekday: null as any, submissionTime: null as any } });
     const results = await h.service.runDue('t1', WED_0900);
-    expect(results.map((r) => r.job).sort()).toEqual(['DIET_CHANGE', 'ESCALATION']);
+    expect(results.map((r) => r.job).sort()).toEqual(['DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE']);
   });
 });
 
@@ -195,7 +204,7 @@ describe('FeedSchedulerService — idempotent', () => {
     const h = harness();
     h.alerts.evaluateFarm.mockRejectedValueOnce(new Error('forecast down'));
     const results = await h.service.runDue('t1', THU_1000);
-    expect(results.map((r) => `${r.job}:${r.status}`).sort()).toEqual(['DIET_CHANGE:FAILED', 'ESCALATION:DONE']);
+    expect(results.map((r) => `${r.job}:${r.status}`).sort()).toEqual(['DIET_CHANGE:FAILED', 'ESCALATION:DONE', 'STOCK_TAKE_DUE:DONE']);
     expect(h.updates).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'FAILED', error_message: 'forecast down' })]));
   });
 });

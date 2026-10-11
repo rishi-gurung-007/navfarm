@@ -92,7 +92,7 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     const event = config.fields.find((f) => f.key === 'event_type')!;
     const trigger = config.fields.find((f) => f.key === 'trigger_entity')!;
     const values = event.options!.map((o) => o.value);
-    for (const e of ['MILL_DISPATCH', 'MILL_ADJUSTED', 'RECEIPT_VARIANCE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO', 'CAPACITY_EXCEEDED']) expect(values).toContain(e);
+    for (const e of ['MILL_DISPATCH', 'MILL_ADJUSTED', 'RECEIPT_VARIANCE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO', 'CAPACITY_EXCEEDED', 'SHORTFALL', 'NOT_DRAFTED', 'TRUCK_TARGET', 'AUTO_DRAFTED', 'STOCK_TAKE_DUE', 'CHANGEOVER']) expect(values).toContain(e);
     for (const t of ['LOADING_SHEET', 'CONSOLIDATION', 'RECEIPT', 'BATCH']) expect(trigger.options!.map((o) => o.value)).toContain(t);
     expect(formatColumnValue('CAPACITY_EXCEEDED', config.columns!.find((c) => c.key === 'event_type')!)).toBe('Mill capacity exceeded');
     expect(event.options!.every((o) => o.label !== o.value)).toBe(true);

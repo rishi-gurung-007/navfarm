@@ -152,9 +152,10 @@ describe('AlertRuleService', () => {
   // atomic, so a concurrent duplicate insert must be a no-op rather than an
   // unhandled ER_DUP_ENTRY.
   const ALL_CODES = ['FEED-BELOW-L1', 'FEED-ABOVE', 'DIET-CHANGE', 'REQ-REMINDER', 'REQ-OVERDUE', 'PLAN-AVAILABLE',
-    'MILL-DISPATCH', 'MILL-ADJUSTED', 'RECEIPT-VARIANCE', 'NO-NEXT-FEED-ROW', 'NEXT-DIET-NO-SILO', 'CAPACITY-EXCEEDED'];
+    'MILL-DISPATCH', 'MILL-ADJUSTED', 'RECEIPT-VARIANCE', 'NO-NEXT-FEED-ROW', 'NEXT-DIET-NO-SILO', 'CAPACITY-EXCEEDED',
+    'SHORTFALL', 'NOT-DRAFTED', 'TRUCK-TARGET', 'AUTO-DRAFTED', 'STOCK-TAKE-DUE', 'CHANGEOVER'];
   describe('ensureDefaultRules — idempotent under concurrency', () => {
-    it('inserts nothing when all twelve default rules are already present', async () => {
+    it('inserts nothing when all eighteen default rules are already present', async () => {
       selectQueue.push(ALL_CODES.map((code) => ({ code })));
       await service.ensureDefaultRules('co-1', 'tenant-1');
       expect(db.insert).not.toHaveBeenCalled();
@@ -167,7 +168,7 @@ describe('AlertRuleService', () => {
       (db.insert as jest.Mock).mockReturnValueOnce({ values });
       await service.ensureDefaultRules('co-1', 'tenant-1');
       const inserted = values.mock.calls[0][0];
-      expect(inserted).toHaveLength(10);
+      expect(inserted).toHaveLength(16);
       expect(inserted.map((row: any) => row.notification_code).sort()).toEqual(ALL_CODES.filter((c) => c !== 'FEED-BELOW-L1' && c !== 'FEED-ABOVE').sort());
       expect(onDuplicateKeyUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.any(Object) }));
     });
@@ -177,10 +178,10 @@ describe('AlertRuleService', () => {
       const valuesA = jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) });
       (db.insert as jest.Mock).mockReturnValueOnce({ values: valuesA });
       await service.ensureDefaultRules('co-A', 'tenant-1');
-      expect(valuesA.mock.calls[0][0]).toHaveLength(12);
+      expect(valuesA.mock.calls[0][0]).toHaveLength(18);
       expect(valuesA.mock.calls[0][0].every((row: any) => row.company_id === 'co-A')).toBe(true);
 
-      selectQueue.push(ALL_CODES.map((code) => ({ code }))); // company B already has all twelve
+      selectQueue.push(ALL_CODES.map((code) => ({ code }))); // company B already has all eighteen
       await service.ensureDefaultRules('co-B', 'tenant-1');
       expect(db.insert).toHaveBeenCalledTimes(1); // only company A's insert ever happened
     });

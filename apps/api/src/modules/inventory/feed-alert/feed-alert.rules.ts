@@ -27,6 +27,11 @@ import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition
 export const SILO_EVENTS: readonly string[] = ['FEED_BELOW_L1', 'FEED_ABOVE'];
 /** W4G1: events read off the diet forecast; they sit out a pass whose forecast failed, with their open alerts. */
 export const FORECAST_EVENTS: readonly string[] = ['DIET_CHANGE', 'NO_NEXT_FEED_ROW', 'NEXT_DIET_NO_SILO'];
+/**
+ * W5A: the three events read off the silo statuses (Engine rows 60-62). Like the forecast events they sit out a pass
+ * whose statuses could not be computed, with their open alerts, and out of a levels-only pass.
+ */
+export const ORDER_EVENTS: readonly string[] = ['SHORTFALL', 'NOT_DRAFTED', 'TRUCK_TARGET'];
 /** Look-ahead, in days, when a NO_NEXT_FEED_ROW or NEXT_DIET_NO_SILO rule carries no value (checkpoints 8, 9). */
 export const DEFAULT_LOOKAHEAD_DAYS = 7;
 
@@ -55,6 +60,25 @@ export interface SiloLevelFact {
   highLevelKg: number | null;
 }
 
+/** One silo's order facts from the silo statuses (Engine rows 60-61). */
+export interface SiloOrderFact {
+  siloId: string;
+  siloCode: string;
+  itemId: string | null;
+  itemName: string | null;
+  projectedShortfallKg: number;
+  recommendedOrderKg: number;
+  /** Status of the farm's requisition covering this silo for the cycle; null = none drafted. */
+  requisitionStatus: string | null;
+}
+
+export interface OrderFacts {
+  silos: SiloOrderFact[];
+  /** Sum of the recommended order across the farm's silos this cycle (Engine row 62). */
+  farmTotalOrderKg: number;
+  truckTargetKg: number;
+}
+
 export interface OpenRequisitionFact {
   requisitionId: string;
   reqNo: string;
@@ -66,7 +90,7 @@ export interface ActiveAlertFact {
   alertId: string;
   ruleId: string;
   eventType: string;
-  subjectType: 'SILO' | 'BATCH' | 'REQUISITION' | 'FEED_PLAN' | 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE';
+  subjectType: 'SILO' | 'BATCH' | 'REQUISITION' | 'FARM' | 'STOCK_TAKE' | 'FEED_PLAN' | 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE';
   /** The silo, batch or requisition the alert is about. Optional for older callers; without it a SILO alert cannot be told apart from a recovery. */
   subjectId?: string;
   dedupKey: string;
@@ -87,7 +111,8 @@ export interface ActiveAlertFact {
 export type AlertSubject =
   | { subjectType: 'SILO'; subjectId: string }
   | { subjectType: 'BATCH'; subjectId: BatchPk }
-  | { subjectType: 'REQUISITION'; subjectId: string };
+  | { subjectType: 'REQUISITION'; subjectId: string }
+  | { subjectType: 'FARM'; subjectId: string };
 
 export type AlertCandidate = AlertSubject & {
   rule: AlertRuleFact;
@@ -129,6 +154,8 @@ export interface PlanAlertsInput {
   /** Checkpoint 9: `${shedCode}|${itemName}` of every shed with silos where no silo holds that item (the engine's NO_SILO_HOLDS_ITEM flags). */
   noSiloHolds?: string[];
   requisitions: OpenRequisitionFact[];
+  /** W5A: Engine rows 60-62 facts. Undefined = not computed this pass (levels-only, or the statuses failed): those alerts stay as they are. */
+  orderFacts?: OrderFacts;
   active: ActiveAlertFact[];
   levelsOnly: boolean;
   /** PLAN_AVAILABLE subjects (feed_plan ids) whose plan is now approved or superseded, with why. */
@@ -142,6 +169,9 @@ const REASON_BY_EVENT: Record<string, ResolveReason> = {
   REQ_DEADLINE: 'CLOSED',
   NO_NEXT_FEED_ROW: 'RECOVERED',
   NEXT_DIET_NO_SILO: 'RECOVERED',
+  SHORTFALL: 'RECOVERED',
+  NOT_DRAFTED: 'RECOVERED',
+  TRUCK_TARGET: 'RECOVERED',
 };
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -230,6 +260,34 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
         observedValue: left, thresholdValue: window,
       });
     }
+  } else if (rule.eventType === 'SHORTFALL' || rule.eventType === 'NOT_DRAFTED') {
+    // Engine row 60: notify when the projected shortfall is greater than the rule's kg (0 = any). Row 61: and no requisition covers the silo yet.
+    const above = rule.thresholdValue ?? 0;
+    for (const silo of input.orderFacts?.silos ?? []) {
+      if (!(silo.projectedShortfallKg > above)) continue;
+      const missing = rule.eventType === 'NOT_DRAFTED';
+      if (missing && silo.requisitionStatus !== null) continue;
+      out.push({
+        rule, dedupKey: `${rule.ruleId}|${silo.siloId}`, subjectType: 'SILO', subjectId: silo.siloId, itemId: silo.itemId,
+        title: missing ? `No requisition drafted: ${silo.siloCode}` : `Projected shortfall: ${silo.siloCode}`,
+        message: missing
+          ? `${silo.siloCode} is projected ${kg(silo.projectedShortfallKg)} kg short${silo.itemName ? ` of ${silo.itemName}` : ''} and no feed requisition covers it yet. Recommended order ${kg(silo.recommendedOrderKg)} kg.`
+          : `${silo.siloCode} is projected ${kg(silo.projectedShortfallKg)} kg short${silo.itemName ? ` of ${silo.itemName}` : ''}. Recommended order ${kg(silo.recommendedOrderKg)} kg.`,
+        observedValue: silo.projectedShortfallKg, thresholdValue: above,
+      });
+    }
+  } else if (rule.eventType === 'TRUCK_TARGET') {
+    // Engine row 62 reads against the 30-ton truck target (checkpoint 17: a target, never a cap). A farm order that is
+    // above 0 and short of it would send a part-load truck, so the farm is told; at or over the target the notice closes.
+    const facts = input.orderFacts;
+    if (facts && facts.farmTotalOrderKg > 0 && facts.truckTargetKg > 0 && facts.farmTotalOrderKg < facts.truckTargetKg) {
+      out.push({
+        rule, dedupKey: `${rule.ruleId}|${input.farmId}`, subjectType: 'FARM', subjectId: input.farmId, itemId: null,
+        title: 'Farm order below the truck target',
+        message: `The recommended order this cycle is ${kg(facts.farmTotalOrderKg)} kg, below the ${kg(facts.truckTargetKg)} kg truck target. Check whether to order more or wait for a full truck.`,
+        observedValue: facts.farmTotalOrderKg, thresholdValue: facts.truckTargetKg,
+      });
+    }
   } else if (rule.eventType === 'REQ_DEADLINE') {
     // The reminder window (thresholdValue > 0) means "N days before": it fires strictly ahead of the
     // deadline and steps aside once the deadline day arrives, so the overdue rule (thresholdValue 0,
@@ -301,6 +359,8 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
       continue;
     }
     if (!(open.eventType in REASON_BY_EVENT)) continue;
+    // W5A: no order facts this pass (levels-only, or the statuses failed): SHORTFALL, NOT_DRAFTED and TRUCK_TARGET stay as they are.
+    if (ORDER_EVENTS.includes(open.eventType) && !input.orderFacts) continue;
     // After a stock posting only silo facts were loaded; anything else stays as it is until a full evaluation.
     if (input.levelsOnly && open.subjectType !== 'SILO') continue;
     const reason: ResolveReason = open.subjectType === 'SILO' && open.subjectId !== undefined && !liveSiloIds.has(open.subjectId)

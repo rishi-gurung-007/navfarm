@@ -10,15 +10,17 @@ import { isDuplicateEntry } from '../../../common/filters/http-exception.filter'
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { AlertRuleService, normalizeFeedRecipientRole } from '../../system/alert-rule/alert-rule.service';
+import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition.rules';
 import { addDays, asBatchPk, dayShort, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
-  ActiveAlertFact, AlertPlan, AlertRuleFact, DEFAULT_LOOKAHEAD_DAYS, FORECAST_EVENTS, FeedRowGapFact, OpenRequisitionFact, SiloLevelFact, planAlerts,
+  ActiveAlertFact, AlertPlan, AlertRuleFact, DEFAULT_LOOKAHEAD_DAYS, FORECAST_EVENTS, FeedRowGapFact, ORDER_EVENTS, OpenRequisitionFact, OrderFacts, SiloLevelFact, planAlerts,
 } from './feed-alert.rules';
 
 // Every feed_alert timestamp is written and read in the one Plan B convention (UTC, see utcTimestamp in the engine).
 const ts = utcTimestamp;
 const parseTs = parseUtcTimestamp;
+const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 const num = (v: string | null) => (v == null ? null : Number(v));
 
 /** Feed requisitions not yet approved — the statuses a REQ_DEADLINE reminder is about (checkpoint 20). */
@@ -26,8 +28,8 @@ const OPEN_FEED_REQ_STATUSES = ['AUTO_DRAFT', 'DRAFT', 'PENDING_APPROVAL'];
 /** Q1: admins see every alert of a farm in their scope; everyone else by role code. */
 const SEES_ALL = [...ADMIN_USER_TYPES, 'OPERATIONAL_ADMIN'];
 
-export type PushedEventType = 'MILL_DISPATCH' | 'MILL_ADJUSTED' | 'RECEIPT_VARIANCE' | 'CAPACITY_EXCEEDED';
-export type PushedSubjectType = 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE';
+export type PushedEventType = 'MILL_DISPATCH' | 'MILL_ADJUSTED' | 'RECEIPT_VARIANCE' | 'CAPACITY_EXCEEDED' | 'AUTO_DRAFTED' | 'STOCK_TAKE_DUE' | 'CHANGEOVER';
+export type PushedSubjectType = 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE' | 'REQUISITION' | 'STOCK_TAKE';
 
 type AlertUser = { userId?: string; userType?: string };
 
@@ -154,12 +156,32 @@ export class FeedAlertService {
       if (!levelsOnly) {
         requisitions = await this.loadOpenRequisitions(farmId, companyId, tenantId);
       }
+      // W5A (Engine rows 60-62): the silo statuses. A pass that cannot compute them sits those three events out, with their open alerts.
+      let orderFacts: OrderFacts | undefined;
+      let orderError: string | undefined;
+      if (!levelsOnly && rules.some((r) => r.isActive && ORDER_EVENTS.includes(r.eventType) && (r.farmId === null || r.farmId === farmId))) {
+        try {
+          orderFacts = await this.loadOrderFacts(farmId, companyId, tenantId);
+        } catch (error) {
+          orderError = (error as Error).message;
+          this.logger.warn(`Shortfall alerts not evaluated for farm ${farmId}: ${(error as Error).message}`);
+        }
+      }
+      if (!levelsOnly && !orderFacts) rules = rules.filter((r) => !ORDER_EVENTS.includes(r.eventType));
       let active = await this.loadActive(farmId, tenantId, timeZone);
       if (forecastError) active = active.filter((a) => !FORECAST_EVENTS.includes(a.eventType));
       const closedPlans = levelsOnly ? {} : await this.closedPlans(active, farmId, tenantId);
-      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, feedRowGaps, noSiloHolds, requisitions, active, levelsOnly, closedPlans });
+      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, feedRowGaps, noSiloHolds, requisitions, orderFacts, active, levelsOnly, closedPlans });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
-      return forecastError ? { ...plan, forecastError } : plan;
+      if (!levelsOnly) {
+        try {
+          await this.resolveClearedChangeovers(farmId, companyId, tenantId, nowMs);
+        } catch (error) {
+          this.logger.warn(`Changeover alerts not re-checked for farm ${farmId}: ${(error as Error).message}`);
+        }
+      }
+      const failure = forecastError ?? orderError;
+      return failure ? { ...plan, forecastError: failure } : plan;
     });
   }
 
@@ -315,6 +337,108 @@ export class FeedAlertService {
         eq(A.tenant_id, ctx.tenantId), eq(A.company_id, ctx.companyId), eq(A.event_type, eventType), eq(A.status, 'ACTIVE'),
         or(...suffixes.map((suffix) => like(A.dedup_key, `%|${suffix.replace(/[\\%_]/g, '\\$&')}`)))!,
       ));
+  }
+
+  /** W5A (Engine rows 60-62): the silo statuses over the standard window, reduced to what the three order events read. */
+  private async loadOrderFacts(farmId: string, companyId: string, tenantId: string): Promise<OrderFacts> {
+    const { statuses, truckTargetKg } = await this.forecast.currentSiloStatuses(farmId, companyId, tenantId);
+    return {
+      silos: statuses.map((s) => ({
+        siloId: s.siloId, siloCode: s.siloCode, itemId: s.currentDietItemId ?? s.feedInSiloItemId,
+        itemName: s.feedInSiloItemName, projectedShortfallKg: s.projectedShortfallKg, recommendedOrderKg: s.recommendedOrderKg,
+        requisitionStatus: s.requisitionStatus,
+      })),
+      farmTotalOrderKg: Math.round(statuses.reduce((sum, s) => sum + s.recommendedOrderKg, 0) * 1000) / 1000,
+      truckTargetKg,
+    };
+  }
+
+  /**
+   * Checkpoint 5: a CHANGEOVER alert (raised when a requisition with a changeover warning is submitted) closes once its
+   * silo no longer holds the old item (empty, or already the next item), or its requisition was rejected or cancelled.
+   * Its dedup key is `ruleId|requisitionId|siloId`; item_id is the item the requisition delivers.
+   */
+  private async resolveClearedChangeovers(farmId: string, companyId: string, tenantId: string, nowMs: number): Promise<void> {
+    const A = schema.feedAlert;
+    const open = await this.db.select().from(A).where(and(
+      eq(A.tenant_id, tenantId), eq(A.farm_id, farmId), eq(A.event_type, 'CHANGEOVER'), eq(A.status, 'ACTIVE'),
+    ));
+    for (const alert of open) {
+      const siloId = alert.dedup_key.split('|')[2];
+      let reason: 'RECOVERED' | 'CLOSED' | null = null;
+      try {
+        const [req] = alert.subject_id
+          ? await this.db.select({ status: schema.requisition.status }).from(schema.requisition).where(eq(schema.requisition.requisition_id, alert.subject_id)).limit(1)
+          : [];
+        if (!req || ['REJECTED', 'CANCELLED'].includes(req.status)) reason = 'CLOSED';
+        else if (siloId && alert.item_id) {
+          const own = (await this.siloFeed.currentItems([siloId], companyId, tenantId)).get(siloId) ?? null;
+          if (!own || own.item_id === alert.item_id || !(Number(own.on_hand_qty) > 0)) reason = 'RECOVERED';
+        }
+      } catch (error) {
+        this.logger.warn(`Changeover alert ${alert.alert_id} not re-checked: ${(error as Error).message}`);
+      }
+      if (reason) {
+        await this.db.update(A).set({ status: 'RESOLVED', active_key: null, resolved_at: ts(nowMs), resolved_reason: reason })
+          .where(and(eq(A.alert_id, alert.alert_id), eq(A.status, 'ACTIVE')));
+      }
+    }
+  }
+
+  /**
+   * Master Setup row 45, STOCK_TAKE_DUE: for a farm and its company's mills, each open Reporting Period whose stock
+   * take date is within the rule's days (default 3; overdue counts) and which has no POSTED monthly take for the
+   * location raises one alert (location + period). A period that is closed, or whose take has since posted, closes it.
+   * Run daily by the feed scheduler; the alert is addressed to the rule's roles.
+   */
+  async evaluateStockTakeDue(
+    ctx: { farmId: string; companyId: string; tenantId: string }, nowMs: number = Date.now(),
+  ): Promise<{ raised: number; resolved: number }> {
+    await this.alertRules.ensureDefaultRules(ctx.companyId, ctx.tenantId);
+    const rules = (await this.loadRules(ctx.companyId, ctx.farmId, ctx.tenantId))
+      .filter((r) => r.isActive && r.eventType === 'STOCK_TAKE_DUE' && (r.farmId === null || r.farmId === ctx.farmId));
+    const { today } = await this.forecast.farmToday(ctx.companyId, ctx.tenantId, nowMs);
+    const window = Math.max(0, ...rules.map((r) => r.thresholdValue ?? 3));
+    const P = schema.reportingPeriod;
+    const periods = await this.db.select().from(P).where(and(
+      eq(P.tenant_id, ctx.tenantId), or(eq(P.company_id, ctx.companyId), isNull(P.company_id)), isNull(P.deleted_at),
+      sql`${P.stock_take_date} >= DATE_SUB(${today}, INTERVAL 62 DAY)`,
+    ));
+    const L = schema.locationMaster;
+    const mills = await this.db.select({ id: L.location_id, code: L.location_code }).from(L).where(and(
+      eq(L.tenant_id, ctx.tenantId), eq(L.company_id, ctx.companyId), eq(L.location_type, 'MILL'), isNull(L.parent_location_id), eq(L.is_active, true), isNull(L.deleted_at),
+    ));
+    const [farm] = await this.db.select({ code: L.location_code }).from(L).where(eq(L.location_id, ctx.farmId)).limit(1);
+    const places = [{ id: ctx.farmId, code: farm?.code ?? 'farm', kind: 'farm' }, ...mills.map((m) => ({ id: m.id, code: m.code, kind: 'mill' }))];
+    const C = schema.feedStockCount;
+    let raised = 0;
+    let resolved = 0;
+    for (const place of places) {
+      const posted = periods.length ? await this.db.select({ period_id: C.reporting_period_id }).from(C).where(and(
+        eq(C.tenant_id, ctx.tenantId), eq(C.farm_id, place.id), eq(C.count_type, 'MONTHLY'), eq(C.status, 'POSTED'),
+        inArray(C.reporting_period_id, periods.map((p) => p.period_id)),
+      )) : [];
+      const taken = new Set(posted.map((r) => r.period_id));
+      const closing: string[] = [];
+      for (const period of periods) {
+        const suffix = `${period.period_id}|${place.id}`;
+        const left = diffDaysIso(today, period.stock_take_date);
+        if (taken.has(period.period_id) || period.period_status === 'CLOSED') { closing.push(suffix); continue; }
+        if (left > window) continue;
+        const when = left === 0 ? 'today' : left > 0 ? `in ${days(left)}` : `${days(-left)} ago`;
+        const out = await this.raiseEvent({ farmId: place.id, companyId: ctx.companyId, tenantId: ctx.tenantId }, {
+          eventType: 'STOCK_TAKE_DUE', subjectType: 'STOCK_TAKE', subjectId: period.period_id, dedupSuffix: suffix, observedValue: left,
+          title: `Stock take due: ${place.code}`,
+          message: `The monthly stock take for ${place.kind} ${place.code} in period ${period.period_code} is due ${dayShort(period.stock_take_date)} (${when}) and none is posted yet.`,
+        }, nowMs);
+        raised += out.raised;
+      }
+      if (closing.length) {
+        await this.resolveEvent({ companyId: ctx.companyId, tenantId: ctx.tenantId }, 'STOCK_TAKE_DUE', closing, 'RECOVERED', nowMs);
+        resolved += closing.length;
+      }
+    }
+    return { raised, resolved };
   }
 
   async list(query: { farmId?: string; status?: 'ACTIVE' | 'RESOLVED' | 'ALL' }, tenantId: string, user: AlertUser) {
