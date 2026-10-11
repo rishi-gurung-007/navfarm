@@ -804,6 +804,64 @@ describe('LocationService canonical hierarchy', () => {
     }, 'tenant-1')).rejects.toThrow('Only a SILO can have attached sheds');
   });
 
+  describe('silo Feed Type (Requisition r15)', () => {
+    const feedSilo = (over: object = {}) => ({
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1', status: 'INACTIVE',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
+      storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7, feed_in_bags: true, ...over,
+    });
+    const created = (feedType?: 'BULK' | 'BAGGED') => {
+      selectResults.push([company], [siloType], [farmParent()], [uom], [series], [], [feedSilo()], []);
+      return service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1',
+        location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+        low_level_kg: 200, high_level_kg: 1800,
+        capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+        ...(feedType ? { silo_feed_type: feedType } : {}),
+      }, 'tenant-1');
+    };
+    const insertedRow = () => (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+
+    it('create writes feed_in_bags from the chosen Feed Type and returns it', async () => {
+      const result = await created('BAGGED');
+      expect(insertedRow().feed_in_bags).toBe(true);
+      expect(result.silo_feed_type).toBe('BAGGED');
+    });
+
+    it('create with BULK writes false; with nothing sent it stays null, which readers treat as BULK', async () => {
+      await created('BULK');
+      expect(insertedRow().feed_in_bags).toBe(false);
+      txInsert.mockClear();
+      await created();
+      expect(insertedRow().feed_in_bags).toBeNull();
+    });
+
+    it('update changes feed_in_bags when Feed Type is sent', async () => {
+      const silo = feedSilo({ feed_in_bags: false });
+      selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }], [silo], []);
+      await service.update('silo-1', { silo_feed_type: 'BAGGED' }, 'tenant-1', { userId: 'user-1' });
+      const set = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(set.feed_in_bags).toBe(true);
+    });
+
+    it('update does not overwrite a stored Feed Type when the field is not sent', async () => {
+      const silo = feedSilo();
+      selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }], [silo], []);
+      await service.update('silo-1', { low_level_kg: 250 }, 'tenant-1', { userId: 'user-1' });
+      const set = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(set).not.toHaveProperty('feed_in_bags');
+    });
+
+    it('refuses a Feed Type on anything that is not a SILO', async () => {
+      selectResults.push([company], [farmType]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD', silo_feed_type: 'BULK',
+      }, 'tenant-1')).rejects.toThrow('Only a SILO has a Feed Type');
+    });
+  });
+
   it('refuses to re-parent a SILO under a SHED, so an edit cannot undo what create refused', async () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',

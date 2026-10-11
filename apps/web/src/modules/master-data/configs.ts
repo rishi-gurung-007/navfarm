@@ -201,6 +201,13 @@ const location: MasterDataConfig = {
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
       helpText: "Over-stock notice when the System Balance is at or above this. Usually 90% of capacity."
     },
+    // Requisition r15: Feed Type is read from the silo record (stored as feed_in_bags).
+    {
+      key: "silo_feed_type", label: "Feed Type", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Bulk or Bagged. Requisitions and the loading sheet take their truck type and rounding from this."
+    },
     // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
     // time, bulk order multiple, bag size, truck target, production weekday —
     // are NOT edited here. They are columns on the farm's row, which is the

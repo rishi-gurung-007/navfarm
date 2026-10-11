@@ -224,6 +224,11 @@ export class CreateLocationDto {
   @IsOptional()
   bin_feed_type?: 'BULK' | 'BAGGED';
 
+  @ApiProperty({ description: 'Feed Type of a SILO (Requisition r15): BULK or BAGGED. Stored as feed_in_bags; SILO only.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  silo_feed_type?: 'BULK' | 'BAGGED';
+
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
   extension_config?: any;
@@ -432,6 +437,11 @@ export class UpdateLocationDto {
   @IsIn(['BULK', 'BAGGED'])
   @IsOptional()
   bin_feed_type?: 'BULK' | 'BAGGED';
+
+  @ApiProperty({ description: 'Feed Type of a SILO (Requisition r15): BULK or BAGGED. Stored as feed_in_bags; SILO only.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  silo_feed_type?: 'BULK' | 'BAGGED';
 
   @ApiProperty({ required: false })
   @IsBoolean()

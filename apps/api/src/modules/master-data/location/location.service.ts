@@ -407,7 +407,8 @@ export class LocationService {
       storage_name: dto.storage_name ?? null,
       department_id: dto.department_id || null,
       cost_center_id: dto.cost_center_id || null,
-      feed_in_bags: null,
+      // Feed Type (Requisition r15): only set when the silo form sends it; unset stays null, which readers treat as BULK.
+      feed_in_bags: typeCode === 'SILO' && dto.silo_feed_type ? dto.silo_feed_type === 'BAGGED' : null,
       // The feed-era farm columns (refill buffer, lead time, bulk multiple, bag
       // size, truck target, production weekday) are no longer written here
       // (TDD Master Setup §1-3); they keep their column defaults on create.
@@ -665,6 +666,7 @@ export class LocationService {
       mill_bagged_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bagged_daily_allocation_kg),
       bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
     } as T & {
+      silo_feed_type?: 'BULK' | 'BAGGED';
       attached_sheds?: string[];
       attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string; effective_from?: string | null; effective_to?: string | null }>;
       attached_silos?: AttachedSilo[];
@@ -679,6 +681,7 @@ export class LocationService {
       shaped.attached_silos = await this.attachedSilos(row.location_id, row.company_id, tenantId);
     }
     if (row.location_type === 'SILO') {
+      shaped.silo_feed_type = (row as any).feed_in_bags === true ? 'BAGGED' : 'BULK';
       shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
       shaped.attached_shed_details = await this.attachedSheds(row.location_id, tenantId);
       // company_id is required to create a SILO (create() enforces it), so a
@@ -1191,6 +1194,9 @@ export class LocationService {
     if (dto.attached_sheds?.length && typeCode !== 'SILO') {
       throw new BadRequestException('Only a SILO can have attached sheds.');
     }
+    if (dto.silo_feed_type !== undefined && typeCode !== 'SILO') {
+      throw new BadRequestException('Only a SILO has a Feed Type.');
+    }
 
     // 5. area_unit / capacity_uom must resolve to a real UOM
     await this.assertUomExists(dto.area_unit, tenantId, dto.company_id);
@@ -1418,6 +1424,7 @@ export class LocationService {
         bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
         ...(row.location_type === 'SILO'
           ? {
+              silo_feed_type: (row as any).feed_in_bags === true ? 'BAGGED' : 'BULK',
               attached_sheds: attachedBySilo.get(row.location_id) || [],
               current_feed_item_code: currentItemBySilo.get(row.location_id)?.item_code ?? null,
               current_feed_item_name: currentItemBySilo.get(row.location_id)?.item_description ?? null,
@@ -1547,6 +1554,10 @@ export class LocationService {
     // attached_sheds is the silo's own field; see create().
     if (dto.attached_sheds !== undefined && effectiveLocationType !== 'SILO') {
       throw new BadRequestException('Only a SILO can have attached sheds.');
+    }
+
+    if (dto.silo_feed_type !== undefined && effectiveLocationType !== 'SILO') {
+      throw new BadRequestException('Only a SILO has a Feed Type.');
     }
 
     // Checkpoint 1: becoming ACTIVE, or being emptied of sheds while ACTIVE, needs a shed.
@@ -1692,6 +1703,8 @@ export class LocationService {
     if (dto.mill_bagged_daily_allocation_ton !== undefined) updates.mill_bagged_daily_allocation_kg = capacityTonToKg(dto.mill_bagged_daily_allocation_ton);
     if (dto.bin_capacity_ton !== undefined) updates.bin_capacity_kg = capacityTonToKg(dto.bin_capacity_ton);
     if (dto.bin_feed_type !== undefined) updates.bin_feed_type = dto.bin_feed_type;
+    // Written only when sent; an update that omits it leaves the stored Feed Type alone.
+    if (dto.silo_feed_type !== undefined) updates.feed_in_bags = dto.silo_feed_type === 'BAGGED';
     if (effectiveLocationType !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;
