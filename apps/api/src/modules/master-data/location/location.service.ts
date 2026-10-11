@@ -1,7 +1,7 @@
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 import { assertDepartmentIdentity } from '../../../common/department-identity';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
 import { eq, ne, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
@@ -14,6 +14,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { segmentFields } from '../../system/number-series/code-format.util';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
@@ -144,6 +145,8 @@ export class LocationService {
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
     private readonly siloFeedService: SiloFeedService,
+    // W4G2: the forecast's own silo facts (Master Setup rows 13-20); absent in unit tests and never fatal.
+    @Optional() private readonly forecast?: FeedForecastService,
   ) {}
 
   /** The Cost Centre field lives on a FARM or MILL only (decisions, 11 Oct). */
@@ -405,7 +408,8 @@ export class LocationService {
       // size, truck target, production weekday) are no longer written here
       // (TDD Master Setup §1-3); they keep their column defaults on create.
       is_active: true,
-      status: 'ACTIVE',
+      // Checkpoint 1: a silo with no shed linked is saved INACTIVE.
+      status: typeCode === 'SILO' && !(dto.attached_sheds?.length) ? 'INACTIVE' : 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
@@ -655,8 +659,77 @@ export class LocationService {
         : null;
       shaped.current_feed_item_code = current?.item_code ?? null;
       shaped.current_feed_item_name = current?.item_description ?? null;
+      Object.assign(shaped, await this.siloFeedFacts(row as any, current ?? null, tenantId));
     }
     return shaped;
+  }
+
+  /**
+   * Checkpoint 1 (W4G2): a SILO is made ACTIVE only with at least one shed
+   * linked through silo_shed_link. `shedCount` is the set the silo will have
+   * after this save (the posted list, or what is linked now).
+   */
+  private assertSiloHasShed(shedCount: number) {
+    if (shedCount < 1) {
+      throw new ConflictException('A silo cannot be ACTIVE until at least one shed is linked to it. Attach a shed to the silo first.');
+    }
+  }
+
+  /**
+   * Master Setup rows 13-20, read-only on the SILO record. Every figure is the
+   * forecast's own silo status (ledger balance, latest posted stock count, last
+   * posted receipt, next diet date) — no second balance formula. A silo the
+   * forecast does not plan (INACTIVE, no settings) falls back to what the
+   * ledger holds now; anything still unknown stays null and the screen says
+   * "Not available".
+   */
+  private async siloFeedFacts(
+    row: { location_id: string; farm_id?: string | null; parent_location_id?: string | null; company_id?: string | null },
+    current: { item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null,
+    tenantId: string,
+  ) {
+    const none = {
+      silo_feed_item: null as string | null,
+      available_stock_kg: null as number | null,
+      system_balance_kg: null as number | null,
+      last_approved_count_kg: null as number | null,
+      last_approved_count_at: null as string | null,
+      last_feed_receipt_date: null as string | null,
+      next_diet_change_date: null as string | null,
+    };
+    const farmId = row.farm_id || row.parent_location_id;
+    if (this.forecast && farmId && row.company_id) {
+      try {
+        const { statuses } = await this.forecast.currentSiloStatuses(farmId, row.company_id, tenantId);
+        const status = statuses.find((s) => s.siloId === row.location_id);
+        if (status) {
+          const item = status.feedInSiloItemCode
+            ? `${status.feedInSiloItemCode}${status.feedInSiloItemName ? ` — ${status.feedInSiloItemName}` : ''}`
+            : null;
+          return {
+            silo_feed_item: item,
+            available_stock_kg: item ? status.systemBalanceKg : null,
+            system_balance_kg: item ? status.systemBalanceKg : null,
+            last_approved_count_kg: status.lastApprovedCountKg,
+            last_approved_count_at: status.lastApprovedCountAt ? String(status.lastApprovedCountAt).slice(0, 10) : null,
+            last_feed_receipt_date: status.lastFeedReceiptDate ? String(status.lastFeedReceiptDate).slice(0, 10) : null,
+            next_diet_change_date: status.nextDietDate,
+          };
+        }
+      } catch {
+        // A farm whose forecast cannot run still has a silo record to read.
+      }
+    }
+    if (current) {
+      const kgOnly = (current.uoms ?? ['KG']).every((u) => u === 'KG');
+      return {
+        ...none,
+        silo_feed_item: `${current.item_code}${current.item_description ? ` — ${current.item_description}` : ''}`,
+        available_stock_kg: kgOnly ? current.on_hand_qty : null,
+        system_balance_kg: kgOnly ? current.on_hand_qty : null,
+      };
+    }
+    return none;
   }
 
   private async assertNoHierarchyCycle(id: string, parentId: string, tenantId: string) {
@@ -1441,6 +1514,19 @@ export class LocationService {
       throw new BadRequestException('Only a SILO can have attached sheds.');
     }
 
+    // Checkpoint 1: becoming ACTIVE, or being emptied of sheds while ACTIVE, needs a shed.
+    if (effectiveLocationType === 'SILO') {
+      const wasActive = location.status === 'ACTIVE' && location.is_active !== false;
+      const willBeActive = (dto.status !== undefined ? dto.status : location.status) === 'ACTIVE'
+        && (dto.is_active !== undefined ? dto.is_active : location.is_active) !== false;
+      if (willBeActive && (!wasActive || dto.attached_sheds !== undefined)) {
+        const shedCount = dto.attached_sheds !== undefined
+          ? new Set(dto.attached_sheds).size
+          : (await this.attachedShedIds(id, tenantId)).length;
+        this.assertSiloHasShed(shedCount);
+      }
+    }
+
     if (dto.area_unit !== undefined) {
       await this.assertUomExists(dto.area_unit, tenantId, dto.company_id !== undefined ? dto.company_id : location.company_id);
     }
@@ -1677,6 +1763,7 @@ export class LocationService {
       return location;
     }
 
+    if (location.location_type === 'SILO') this.assertSiloHasShed((await this.attachedShedIds(id, tenantId)).length);
     const updates = {
         is_active: true,
         status: 'ACTIVE',

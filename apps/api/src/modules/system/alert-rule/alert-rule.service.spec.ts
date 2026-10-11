@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { AlertRuleService, normalizeFeedRecipientRole } from './alert-rule.service';
@@ -10,7 +10,7 @@ describe('AlertRuleService', () => {
   const selectQueue: unknown[][] = [];
   const chain = (rows: unknown[]) => {
     const self: any = {
-      from: () => self,
+      from: () => self, innerJoin: () => self,
       where: (cond: unknown) => { capturedWhere = cond; return self; },
       orderBy: () => self, offset: () => self, limit: async () => rows,
       then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej),
@@ -29,6 +29,34 @@ describe('AlertRuleService', () => {
 
   it('maps legacy HEAD_OF_FARM recipients to the existing OPERATIONAL_ADMIN user type', () => {
     expect(normalizeFeedRecipientRole('HEAD_OF_FARM')).toBe('OPERATIONAL_ADMIN');
+  });
+
+  // W4G2 rows 50 and 54: recipient and escalation roles come from the Role Master.
+  describe('recipient roles are Role Master codes', () => {
+    const dto = (over: object = {}) => ({
+      company_id: 'co-1', notification_code: 'ROLE-T', notification_name: 'Role test',
+      event_type: 'DIET_CHANGE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 3,
+      priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', ...over,
+    }) as any;
+
+    it('refuses a recipient role the company does not have', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]); // role lookup
+      await expect(service.create(dto({ recipient_roles: ['NOT_A_ROLE'] }), 'tenant-1', { userId: 'u' }))
+        .rejects.toThrow(/NOT_A_ROLE is not in the Role Master/);
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses an escalation role the company does not have', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]);
+      await expect(service.create(dto({ recipient_roles: ['MANAGER'], frequency: 'ESCALATING', escalation_after_hours: 4, escalation_role: 'GHOST' }), 'tenant-1', { userId: 'u' }))
+        .rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('lists the Role Master codes once each, in code order', async () => {
+      selectQueue.push([{ role_code: 'OPERATOR', role_name: 'Operator' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MANAGER', role_name: 'Manager' }]);
+      const rows = await service.roleOptions('tenant-1', 'co-1');
+      expect(rows.map((r) => r.role_code)).toEqual(['MANAGER', 'OPERATOR']);
+    });
   });
 
   it('refuses a second active FEED_BELOW_L1 rule for the same company and farm filter', async () => {

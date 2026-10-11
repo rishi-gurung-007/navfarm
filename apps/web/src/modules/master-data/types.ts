@@ -74,6 +74,8 @@ export interface MasterDataField {
    * everywhere.
    */
   emptyMultipleLabel?: string;
+  /** What a read-only record view shows when the value is empty, instead of a dash (e.g. "Not available"). */
+  emptyLabel?: string;
   /**
    * For type "select-entity": key(s) of other field(s) in this form whose value this dropdown
    * depends on (e.g. lob_id depending on nob_id). Disabled until every parent has a value;

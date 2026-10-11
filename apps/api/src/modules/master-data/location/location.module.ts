@@ -3,9 +3,10 @@ import { LocationService } from './location.service';
 import { LocationController } from './location.controller';
 import { NumberSeriesModule } from '../../system/number-series/number-series.module';
 import { SiloFeedModule } from '../../inventory/silo-feed/silo-feed.module';
+import { FeedForecastModule } from '../../inventory/feed-forecast/feed-forecast.module';
 
 @Module({
-  imports: [NumberSeriesModule, SiloFeedModule],
+  imports: [NumberSeriesModule, SiloFeedModule, FeedForecastModule],
   controllers: [LocationController],
   providers: [LocationService],
   exports: [LocationService],
