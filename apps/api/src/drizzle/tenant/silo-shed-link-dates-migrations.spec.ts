@@ -10,12 +10,12 @@ const statements = (tag: string) =>
 const journal = () => JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
 
 describe('Tenant migration 0173 — silo_shed_link effective dates (additive)', () => {
-  it('is journalled at idx 172, when 1792000000041', () => {
-    expect(journal().find((e) => e.idx === 172)).toEqual({ idx: 172, version: '5', when: 1792000000041, tag: '0173_silo_shed_link_dates', breakpoints: true });
+  it('is journalled at idx 171, when 1792000000040', () => {
+    expect(journal().find((e) => e.idx === 171)).toEqual({ idx: 171, version: '5', when: 1792000000040, tag: '0172_silo_shed_link_dates', breakpoints: true });
   });
 
   it('only adds two nullable date columns', () => {
-    expect(statements('0173_silo_shed_link_dates')).toEqual([
+    expect(statements('0172_silo_shed_link_dates')).toEqual([
       'ALTER TABLE `silo_shed_link` ADD `effective_from` date;',
       'ALTER TABLE `silo_shed_link` ADD `effective_to` date;',
     ]);
