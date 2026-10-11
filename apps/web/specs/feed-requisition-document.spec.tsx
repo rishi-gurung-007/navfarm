@@ -464,10 +464,9 @@ describe("FeedRequisitionDocument — W2R requester, Mill Loading Bin and record
     expect(screen.getByRole("link", { name: "TO-0002" }).getAttribute("href")).toBe("/inventory/transfers?id=tr-2");
   });
 
-  it("keeps the consolidation no. as plain text: the Mill Consolidation tab does not open a sheet by ?id=", () => {
+  it("W5B: links the consolidation no. to the Mill Consolidation tab, which opens a sheet by ?id=", () => {
     render(<FeedRequisitionDocument view={linked} editable={false} />);
-    expect(screen.queryByRole("link", { name: "MCS-0007" })).toBeNull();
-    expect(valueOf(en.rqdConsolidationSheet)).toBe("MCS-0007");
+    expect(screen.getByRole("link", { name: "MCS-0007" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=mill-consolidation&id=cons-1");
   });
 
   it("falls back to the old single transfer no. when the API sends no list", () => {

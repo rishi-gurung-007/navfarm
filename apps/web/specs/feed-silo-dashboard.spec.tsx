@@ -116,6 +116,12 @@ describe('FeedSiloDashboard', () => {
     expect(screen.queryByText('GRS/SILO-001')).toBeNull();
   });
 
+  it('W5B (Silo r9): Days of Feed Remaining is shown to one decimal', async () => {
+    render(<FeedSiloDashboard />);
+    const table = await screen.findByRole('table', { name: 'fsdLabel' });
+    expect(within(table).getAllByText(/^3\.0\b/).length).toBeGreaterThan(0);
+  });
+
   it('shows all approved fields, keeps Farm Total explicit, and links Silo and Requisition', async () => {
     render(<FeedSiloDashboard />);
     const table = await screen.findByRole('table', { name: 'fsdLabel' });

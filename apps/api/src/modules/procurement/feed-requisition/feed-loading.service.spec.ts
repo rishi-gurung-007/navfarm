@@ -33,7 +33,7 @@ describe('FeedLoadingService', () => {
     created_at: '2026-10-10 00:00:00', updated_at: '2026-10-10 00:00:00',
   };
   /** decorate's reads, in order: locations, items, requisitions, consolidation lines, users, transfers. */
-  const decorateReads = (overrides: { users?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[] } = {}) => queue.push(
+  const decorateReads = (overrides: { users?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[]; alerts?: unknown[] } = {}) => queue.push(
     overrides.locations ?? [
       { id: 'farm-1', code: 'MUL100', name: 'Mulberry' },
       { id: 'silo-1', code: 'MUL100/SILO-01', name: 'Silo 1' },
@@ -44,6 +44,7 @@ describe('FeedLoadingService', () => {
     [{ id: 'cl-1', adjustmentReason: 'Mill capacity' }],
     overrides.users ?? [{ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'Mill Loader One' }],
     overrides.transfers ?? [{ requisition_line_id: 'rl-1', transfer_id: 'tr-1', transfer_no: 'TO-0001' }],
+    overrides.alerts ?? [],
   );
 
   beforeEach(() => { queue.length = 0; inserted.length = 0; updated.length = 0; jest.clearAllMocks(); });
@@ -97,6 +98,17 @@ describe('FeedLoadingService', () => {
       adjustment_reason: 'Mill capacity',
     });
     expect(row).not.toHaveProperty('loaded_by');
+  });
+
+  it('W5B (Req r75, r76): reports the dispatch notification as Sent with its content, or Not sent when none was raised', async () => {
+    queue.push([sheet]);
+    decorateReads({ alerts: [{ subject_id: 'ls-1', message: 'Loading sheet X has left the mill', raised_at: '2026-10-11 10:00:00' }] });
+    expect(await service.findOne('ls-1', 't-1')).toMatchObject({
+      dispatch_notification_status: 'SENT', dispatch_notification_message: 'Loading sheet X has left the mill', dispatch_notification_at: '2026-10-11 10:00:00',
+    });
+    queue.push([sheet]);
+    decorateReads();
+    expect(await service.findOne('ls-1', 't-1')).toMatchObject({ dispatch_notification_status: 'NOT_SENT', dispatch_notification_message: null, dispatch_notification_at: null });
   });
 
   it('shows a typed Loaded By name as written', async () => {

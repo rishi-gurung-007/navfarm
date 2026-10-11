@@ -61,6 +61,9 @@ const number = (value: number | null | undefined, unavailable: string) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? unavailable
     : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+/** Silo r9: Days of Feed Remaining is shown to one decimal. */
+const oneDecimal = (value: number | null | undefined, unavailable: string) =>
+  value === null || value === undefined || !Number.isFinite(value) ? unavailable : value.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 type Tone = "danger" | "warning" | "success";
 const DOT: Record<Tone, string> = { danger: "bg-(--danger)", warning: "bg-(--warning)", success: "bg-(--success)" };
 function StatusDot({ tone, label }: { tone: Tone; label: string }) {
@@ -123,7 +126,7 @@ export function FeedSiloDashboardCards({
   const firstShortage = date(silo.firstShortageDate, t("fsdNoShortage"));
   const daysRemaining = silo.daysRemaining === null || !Number.isFinite(silo.daysRemaining)
     ? unavailable
-    : silo.firstShortageDate ? `${number(silo.daysRemaining, unavailable)} · ${formatDateShort(silo.firstShortageDate)}` : number(silo.daysRemaining, unavailable);
+    : silo.firstShortageDate ? `${oneDecimal(silo.daysRemaining, unavailable)} · ${formatDateShort(silo.firstShortageDate)}` : oneDecimal(silo.daysRemaining, unavailable);
   const projectedNeed = silo.nextProjectedNeedKg > 0
     ? `${number(silo.projectedNeedKg, unavailable)} (${number(silo.currentProjectedNeedKg, unavailable)} + ${number(silo.nextProjectedNeedKg, unavailable)})`
     : number(silo.projectedNeedKg, unavailable);
@@ -169,7 +172,7 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdDailyRequirementKg")} value={number(silo.dailyRequirementKg, unavailable)} unit="kg" />
-        <StatCard label={t("fsdDaysFeedRemaining")} value={number(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status || silo.firstShortageDate ? <span className="inline-flex flex-wrap items-center gap-2">{status && <StatusDot tone={status.tone} label={status.label} />}{silo.firstShortageDate && <span className="text-xs text-(--text-secondary)">{t("fsdFirstShortageDate")}: {formatDateShort(silo.firstShortageDate)}</span>}</span> : undefined} />
+        <StatCard label={t("fsdDaysFeedRemaining")} value={oneDecimal(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status || silo.firstShortageDate ? <span className="inline-flex flex-wrap items-center gap-2">{status && <StatusDot tone={status.tone} label={status.label} />}{silo.firstShortageDate && <span className="text-xs text-(--text-secondary)">{t("fsdFirstShortageDate")}: {formatDateShort(silo.firstShortageDate)}</span>}</span> : undefined} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
 

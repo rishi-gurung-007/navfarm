@@ -23,6 +23,7 @@ const sheet = {
   requested_delivery_date: "2026-10-12", compartment_no: "C1", kg_loaded: "6000", loaded_by_name: "Mill Loader 01",
   loaded_at: "2026-10-11 09:30:00", status: "LOADED", shipment_no: "TS-0001", transfer_id: "tr-1", transfer_no: "TO-0001",
 };
+const notified = { ...sheet, status: "DISPATCHED", dispatch_notification_status: "SENT", dispatch_notification_message: "Loading sheet X has left the mill", dispatch_notification_at: "2026-10-11 10:00:00" };
 const other = { ...sheet, loading_sheet_id: "ls-2", loading_sheet_no: "LOAD-REQ-GRS-2026-00001-10000", status: "DRAFT", loaded_by_name: null, loaded_at: null };
 
 const hrefOf = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
@@ -33,6 +34,17 @@ describe("FeedLoadingPanel", () => {
     window.history.replaceState({}, "", "/inventory/feed-forecast?tab=loading-instructions");
     (api.get as jest.Mock).mockResolvedValue({ data: [sheet, other] });
     (api.put as jest.Mock).mockResolvedValue({ data: sheet });
+  });
+
+  it("W5B (Req r75, r76): shows the dispatch notification as Sent with its content, or Not sent", async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [notified, { ...other, dispatch_notification_status: "NOT_SENT", dispatch_notification_message: null }] });
+    render(<FeedLoadingPanel />);
+    const sentRow = (await screen.findByText(sheet.loading_sheet_no)).closest("tr")!;
+    expect(screen.getByText("flsColNotification")).toBeTruthy();
+    expect(within(sentRow).getByText("flsNotificationSent")).toBeTruthy();
+    expect(within(sentRow).getByText("Loading sheet X has left the mill")).toBeTruthy();
+    const notSentRow = screen.getByText(other.loading_sheet_no).closest("tr")!;
+    expect(within(notSentRow).getByText("flsNotificationNotSent")).toBeTruthy();
   });
 
   it("shows Delivery Date, Diet No., Loaded By and Loading Date Time (rows 64, 65, 72, 73)", async () => {

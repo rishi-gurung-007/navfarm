@@ -23,6 +23,7 @@ type LoadingSheet = {
   mill_loading_bin_id: string | null; mill_loading_bin_code: string | null; mill_loading_bin_name: string | null;
   adjustment_reason: string | null; requested_delivery_date: string | null;
   loaded_by_name: string | null; loaded_at: string | null; transfer_id: string | null; transfer_no: string | null;
+  dispatch_notification_status?: "SENT" | "NOT_SENT"; dispatch_notification_message?: string | null; dispatch_notification_at?: string | null;
 };
 type Draft = { compartmentNo: string; kgLoaded: string; loadedBy: string };
 const quantity = (value: string | number | null, na: string) => value == null ? na : `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })} KG`;
@@ -76,7 +77,7 @@ export function FeedLoadingPanel() {
         <div className="mt-4 max-h-[65vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
           <table aria-label={t("flsListLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
             <thead><tr>
-              {([["flsColSheet", "min-w-40"], ["flsColRequisition", ""], ["flsColFarm", "min-w-44"], ["flsColDeliveryDate", ""], ["flsColItem", "min-w-52"], ["flsColRequested", "text-right"], ["flsColApproved", "text-right"], ["flsColReason", "min-w-44"], ["flsColCompartment", "min-w-40"], ["flsColLoaded", "min-w-36"], ["flsColLoadedBy", "min-w-44"], ["flsColLoadedAt", ""], ["flsColStatus", ""], ["flsColActions", "min-w-44"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
+              {([["flsColSheet", "min-w-40"], ["flsColRequisition", ""], ["flsColFarm", "min-w-44"], ["flsColDeliveryDate", ""], ["flsColItem", "min-w-52"], ["flsColRequested", "text-right"], ["flsColApproved", "text-right"], ["flsColReason", "min-w-44"], ["flsColCompartment", "min-w-40"], ["flsColLoaded", "min-w-36"], ["flsColLoadedBy", "min-w-44"], ["flsColLoadedAt", ""], ["flsColStatus", ""], ["flsColNotification", "min-w-56"], ["flsColActions", "min-w-44"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
             </tr></thead>
             <tbody>
               {rows.map((row) => {
@@ -117,6 +118,10 @@ export function FeedLoadingPanel() {
                         <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[row.status] ?? "bg-(--text-muted)"}`} />
                         {labelOf(LOADING_STATUS_LABEL, row.status, t)}
                       </span>
+                    </td>
+                    <td className={`${TD} whitespace-normal break-words`}>
+                      <div className="text-xs font-medium">{row.dispatch_notification_status === "SENT" ? t("flsNotificationSent") : t("flsNotificationNotSent")}{row.dispatch_notification_at ? <span className="ml-1 font-normal text-(--text-secondary)">{formatStampShort(row.dispatch_notification_at, true)}</span> : null}</div>
+                      {row.dispatch_notification_message ? <div className="max-w-64 text-xs text-(--text-secondary)">{row.dispatch_notification_message}</div> : null}
                     </td>
                     <td className={TD}>
                       <div className="flex flex-wrap gap-2">

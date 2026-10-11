@@ -13,6 +13,7 @@
  * false nothing here is an input. "Current Silo Feed Item No." is not shown —
  * the workbook removed it (rows 12, 44).
  */
+import { consolidationHref } from "./feed-consolidations-panel";
 import { FeedRequisitionHeaderFields, RecordLink, batchHref, bulkTotalAndTrips, forecastRunHref, itemHref, lifecycleHref, locationHref, transferHref } from "./feed-requisition-header";
 import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -458,8 +459,8 @@ export function FeedRequisitionDocument({
         }} />
         {(header?.consolidation_no || header?.consolidation_status) && (
           <FieldGroup title={t("rqdConsolidationTitle")} className="sm:col-span-12">
-            {/* W2R: plain text on purpose — FeedConsolidationsPanel does not open a sheet from `?id=` yet, so a link would land on the list. */}
-            <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationSheet")} value={header.consolidation_no} mono appearance="control" emptyText={notAvailable} />
+            <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationSheet")}
+              value={header.consolidation_no ? <RecordLink code={header.consolidation_no} href={header.consolidation_id ? consolidationHref(header.consolidation_id) : null} /> : null} mono appearance="control" emptyText={notAvailable} />
             <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationStatus")}
               value={header.consolidation_status ? labelOf(CONSOLIDATION_STATUS_LABEL, header.consolidation_status, t) : null} appearance="control" emptyText={notAvailable} />
             <ReadField className="sm:col-span-6 lg:col-span-4" label={t("rqdConsolidationNextAction")}

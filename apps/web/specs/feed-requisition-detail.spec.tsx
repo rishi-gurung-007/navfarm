@@ -267,6 +267,13 @@ describe("FeedRequisitionDetail workflow actions", () => {
       expect(screen.getByText('w2tOpenShipment:{"no":"SH-00001"}').getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
     });
 
+    it("W5B (Req r139, Silo r18, r20): the item and the loading sheet in the receipt table are links", () => {
+      open(receivingView("BULK"));
+      const table = screen.getByRole("table", { name: "w2tReceiptLines" });
+      expect(within(table).getByRole("link", { name: "FEED-R1" }).getAttribute("href")).toBe("/master-data/item?recordId=feed-1");
+      expect(within(table).getByRole("link", { name: "LOAD-REQ-1" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=loading-instructions&id=ls-1");
+    });
+
     it("an interim partial receipt needs no variance reason and hides the field", () => {
       open(receivingView("BULK"));
       fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), { target: { value: "4000" } });

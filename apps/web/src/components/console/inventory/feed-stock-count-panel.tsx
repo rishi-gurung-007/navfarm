@@ -50,6 +50,8 @@ interface CountRow {
   count_type?: string;
   stock_take_type?: string | null;
   period_code?: string | null;
+  reporting_period_id?: string | null;
+  farm_id?: string | null;
 }
 
 /** W2D A7 (Engine §1 rows 9–17): what the API adds beside a silo's count line; absent on older responses. */
@@ -180,6 +182,18 @@ const sourceLabel = (source: string, t: (key: any) => string): string =>
   source === "SCHEDULED" ? t("fscSourceScheduled") : t("fscSourceOnDemand");
 
 type T = (key: any, vars?: any) => string;
+
+/** W5B (Silo r36): a Reporting Period opens in its master record. */
+const periodHref = (id: string) => `/master-data/reporting-period?recordId=${encodeURIComponent(id)}`;
+/** W5B (Silo r47): the journals the posting created are listed in the Finance journal. */
+const JOURNAL_ROUTE = "/finance/journal";
+
+/** W5B (Silo r45): Positive / Negative Adjustment, derived from the sign of each line's variance; null when nothing varies. */
+function adjustmentTypeKey(lines: Array<{ variance_qty_kg: string }>): "fscAdjPositive" | "fscAdjNegative" | "fscAdjBoth" | null {
+  const up = lines.some((line) => Number(line.variance_qty_kg) > 0);
+  const down = lines.some((line) => Number(line.variance_qty_kg) < 0);
+  return up && down ? "fscAdjBoth" : up ? "fscAdjPositive" : down ? "fscAdjNegative" : null;
+}
 
 /** Silo code, name, house(s), item and diet description, capacity — linked, never an id. */
 function SiloCells({ siloId, siloCode, siloName, houses, itemId, itemCode, itemName, capacityKg, t, unavailable }: SiloPlanning & {
@@ -484,7 +498,7 @@ export default function FeedStockCountPanel() {
               <tr key={row.count_id} className="cursor-pointer hover:bg-(--surface-raised)" onClick={() => void openCount(row.count_id)}>
                 <td className={cn(TD, "font-medium")}>{row.count_no}</td>
                 <td className={TD}>{countTypeLabel(row, t)}</td>
-                <td className={TD}>{row.period_code ?? unavailable}</td>
+                <td className={TD}>{row.period_code ? <RecordLink code={row.period_code} href={row.reporting_period_id ? periodHref(row.reporting_period_id) : null} /> : unavailable}</td>
                 <td className={TD}>{shortTimestamp(row.counted_at, unavailable)}</td>
                 <td className={TD}>{sourceLabel(row.schedule_source, t)}</td>
                 <td className={TD}>
@@ -632,9 +646,16 @@ export default function FeedStockCountPanel() {
               </div>
               {selected.count_type === "MONTHLY" && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="stock-take-reconciliation">
+                  <ReadField label={t("fscFarmOrMillCode")} value={selected.farm_code ? <RecordLink code={selected.farm_code} href={selected.farm_id ? locationHref(selected.farm_id) : null} /> : unavailable} appearance="control" />
+                  <ReadField label={t("fscColPeriod")} value={selected.period_code ? <RecordLink code={selected.period_code} href={selected.reporting_period_id ? periodHref(selected.reporting_period_id) : null} /> : unavailable} appearance="control" />
                   <ReadField label={t("fscStockTakeDate")} value={selected.stock_take_date ? formatDateShort(String(selected.stock_take_date).slice(0, 10)) : unavailable} appearance="control" />
-                  <ReadField label={t("fscGlEntry")} value={selected.gl_entry_refs?.length ? selected.gl_entry_refs.join(", ") : unavailable} appearance="control" />
-                  <ReadField label={t("fscPeriodStatusAfter")} value={selected.period_status_after ?? unavailable} appearance="control" />
+                  <ReadField label={t("fscAdjustmentType")} value={adjustmentTypeKey(lines) ? t(adjustmentTypeKey(lines)!) : t("fscAdjNone")} appearance="control" />
+                  <ReadField label={t("fscGlEntry")} value={selected.gl_entry_refs?.length
+                    ? selected.gl_entry_refs.map((ref, index) => <span key={ref}>{index > 0 && ", "}<RecordLink code={ref} href={JOURNAL_ROUTE} /></span>)
+                    : unavailable} appearance="control" />
+                  <ReadField label={t("fscPeriodStatusAfter")} value={selected.period_status_after
+                    ? (selected.period_status_after === "CLOSED" ? t("fscPeriodClosed") : selected.period_status_after === "OPEN" ? t("fscPeriodOpen") : selected.period_status_after)
+                    : unavailable} appearance="control" />
                   <ReadField label={t("fscNextProductionStart")} value={selected.production_start_date_next ? formatDateShort(String(selected.production_start_date_next).slice(0, 10)) : unavailable} appearance="control" />
                 </div>
               )}
