@@ -3443,3 +3443,21 @@ nullable `farm_id` (migration 0171, FK to `location_master`); NULL is the compan
 rows with no farm behave exactly as before. The overlap check (breed, stage, day range, effective dates) applies within
 the same farm scope: an override may overlap the default, two rows of one farm may not. `farm_id` must be a FARM location
 of the breed's company. The Breed Lifecycle Stage master has an optional "Farm (override)" picker and list column.
+
+## 2026-10-11 — Rishi's answers on the open interpretations
+
+Confirmed as built: Total All Farms counts the farms on the sheet; Loaded By is a typed name; Period Close needs
+counts only where something can be counted; alert recipients accept Role Master roles or the user types Farm Manager,
+Head of Farms and Mill Manager; with no bag tolerance set, any empty-bag difference is flagged (flag only); the
+truck-target alert fires on a part load (order > 0 and < target); after release, the sending department assigns
+lot/serial; serial-tracked lines ship whole (partial serial shipments stay refused).
+
+Changed by Rishi:
+1. The delivery note no. on feed TO receipts is **optional**.
+2. A shortfall reason is required on **every short receipt**: any receipt where the quantity received now is less than
+   the quantity still outstanding on the shipment line, even if more is still coming. This replaces the
+   "final receipt only" reading. Over-receipt stays blocked.
+3. Direct Transfer has **no department check**. Anyone with the Direct Transfer right may use it.
+4. A transfer may **take stock from other stores** of the company when its From location lacks the lot/serial (the
+   original fallback). This replaces the "From location only" reading.
+5. A feed requisition's **Status becomes Received** when it is fully received.
