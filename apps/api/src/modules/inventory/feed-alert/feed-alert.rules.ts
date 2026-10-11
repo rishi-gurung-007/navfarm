@@ -267,6 +267,9 @@ function candidatesFor(rule: AlertRuleFact, input: PlanAlertsInput): AlertCandid
       if (!(silo.projectedShortfallKg > above)) continue;
       const missing = rule.eventType === 'NOT_DRAFTED';
       if (missing && silo.requisitionStatus !== null) continue;
+      // With no requisition on the silo, NOT_DRAFTED is the alert; SHORTFALL speaks only when a requisition exists
+      // and still leaves a shortfall (unless there is no live NOT_DRAFTED rule to say it).
+      if (!missing && silo.requisitionStatus === null && input.rules.some((r) => r.eventType === 'NOT_DRAFTED' && r.isActive)) continue;
       out.push({
         rule, dedupKey: `${rule.ruleId}|${silo.siloId}`, subjectType: 'SILO', subjectId: silo.siloId, itemId: silo.itemId,
         title: missing ? `No requisition drafted: ${silo.siloCode}` : `Projected shortfall: ${silo.siloCode}`,

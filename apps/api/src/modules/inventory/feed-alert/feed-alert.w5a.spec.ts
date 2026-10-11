@@ -30,6 +30,13 @@ describe('SHORTFALL (Engine row 60)', () => {
     expect(plan.raise[0]).toMatchObject({ dedupKey: key, subjectType: 'SILO', subjectId: 's1', observedValue: 4500, itemId: 'i1' });
     expect(plan.raise[0].message).toContain('4,500 kg short');
   });
+  it('does not double-alert: with no requisition and a live NOT_DRAFTED rule only NOT_DRAFTED raises; with a requisition SHORTFALL raises', () => {
+    const nd = rule('NOT_DRAFTED');
+    const none = planAlerts(base({ rules: [r, nd], orderFacts: facts() }));
+    expect(none.raise.map((a) => a.rule.eventType)).toEqual(['NOT_DRAFTED']);
+    const covered = planAlerts(base({ rules: [r, nd], orderFacts: facts({ silos: [silo('s1', 4500, 'DRAFT')] }) }));
+    expect(covered.raise.map((a) => a.rule.eventType)).toEqual(['SHORTFALL']);
+  });
   it('dedupes while open and resolves when the shortfall clears', () => {
     expect(planAlerts(base({ rules: [r], orderFacts: facts(), active: [open(r, key)] }))).toEqual({ raise: [], renotify: [], escalate: [], resolve: [] });
     expect(planAlerts(base({ rules: [r], orderFacts: facts({ silos: [silo('s1', 0)] }), active: [open(r, key)] })).resolve).toEqual([{ alertId: 'a1', reason: 'RECOVERED' }]);
