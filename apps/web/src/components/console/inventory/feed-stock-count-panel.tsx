@@ -47,6 +47,9 @@ interface CountRow {
   status: string;
   approval_request_id: string | null;
   stock_adjustment_id: string | null;
+  count_type?: string;
+  stock_take_type?: string | null;
+  period_code?: string | null;
 }
 
 interface CountLine {
@@ -66,6 +69,12 @@ interface CountLine {
 
 interface CountView extends CountRow {
   lines: CountLine[];
+  /** Monthly Stock Take reconciliation evidence (workbook r35, r47-r49). */
+  stock_take_date?: string | null;
+  period_status_after?: string | null;
+  production_start_date_next?: string | null;
+  gl_entry_refs?: string[] | null;
+  farm_code?: string | null;
 }
 
 interface EvidencePair {
@@ -84,7 +93,7 @@ interface EvidenceResponse {
 }
 
 const STATUS_FILTER = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "POSTED", "REJECTED"];
-const LIST_COLUMNS = ["fscColCountNo", "fscColCountedAt", "fscColSource", "fscColStatus"] as const;
+const LIST_COLUMNS = ["fscColCountNo", "fscColCountType", "fscColPeriod", "fscColCountedAt", "fscColSource", "fscColStatus"] as const;
 const LINE_COLUMNS = ["fscColSilo", "fscColItem", "fscColItemName", "fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColReason"] as const;
 const RIGHT = new Set<string>(["fscColSystem", "fscColCounted", "fscColVariance", "fscColVariancePct"]);
 
@@ -126,6 +135,11 @@ function shortTimestamp(value: string | null | undefined, unavailable: string): 
   return `${formatDateShort(parsed.toISOString().slice(0, 10))} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
+const countTypeLabel = (row: { count_type?: string; stock_take_type?: string | null }, t: (key: any) => string): string =>
+  row.count_type === "MONTHLY"
+    ? `${t("fscCountTypeMonthly")}${row.stock_take_type === "FEED_MILL" ? ` (${t("fscCountAtMill")})` : ""}`
+    : t("fscCountTypeWeekly");
+
 const sourceLabel = (source: string, t: (key: any) => string): string =>
   source === "SCHEDULED" ? t("fscSourceScheduled") : t("fscSourceOnDemand");
 
@@ -144,6 +158,12 @@ export default function FeedStockCountPanel() {
   const [entryScheduled, setEntryScheduled] = useState(false);
   // Monthly Stock Take (Brief C): the same count, typed MONTHLY and tied to a Reporting Period.
   const [countType, setCountType] = useState<"WEEKLY" | "MONTHLY">("WEEKLY");
+  // A feed mill is counted monthly only; picking one switches the whole screen to that mill's bins.
+  const [millId, setMillId] = useState("");
+  const [mills, setMills] = useState<Array<{ location_id: string; location_code: string; location_name?: string | null }>>([]);
+  const isMill = Boolean(millId);
+  const placeId = millId || farmId;
+  const effCountType: "WEEKLY" | "MONTHLY" = isMill ? "MONTHLY" : countType;
   const [periodId, setPeriodId] = useState("");
   const [periods, setPeriods] = useState<Array<{ period_id: string; period_code: string; stock_take_date: string; period_status?: string }>>([]);
   const [counted, setCounted] = useState<Record<string, string>>({});
@@ -152,13 +172,13 @@ export default function FeedStockCountPanel() {
   const [busy, setBusy] = useState(false);
 
   const loadList = useCallback(async () => {
-    if (!farmId || !companyId) {
+    if (!placeId || !companyId) {
       setRows([]);
       return;
     }
     setLoading(true);
     try {
-      const params = new URLSearchParams({ companyId, farmId });
+      const params = new URLSearchParams({ companyId, farmId: placeId });
       if (status) params.set("status", status);
       const list = unwrap<CountRow[]>(await api.get(`/feed-stock-count?${params.toString()}`));
       setRows(Array.isArray(list) ? list : []);
@@ -167,7 +187,7 @@ export default function FeedStockCountPanel() {
     } finally {
       setLoading(false);
     }
-  }, [farmId, companyId, status, t]);
+  }, [placeId, companyId, status, t]);
 
   useEffect(() => {
     setSelected(null);
@@ -176,14 +196,26 @@ export default function FeedStockCountPanel() {
   }, [loadList]);
 
   useEffect(() => {
-    if (countType !== "MONTHLY" || periods.length) return;
+    setMillId("");
+    setMills([]);
+    if (!companyId) return;
+    api.get(`/location?locationType=MILL&rootOnly=true&isActive=true&companyId=${companyId}`)
+      .then((res) => {
+        const list = unwrap<Array<{ location_id: string; location_code: string; location_name?: string | null }>>(res);
+        setMills(Array.isArray(list) ? list : []);
+      })
+      .catch(() => setMills([]));
+  }, [companyId]);
+
+  useEffect(() => {
+    if (effCountType !== "MONTHLY" || periods.length) return;
     api.get("/reporting-period")
       .then((res) => {
         const list = unwrap<Array<{ period_id: string; period_code: string; stock_take_date: string; period_status?: string; status?: string }>>(res);
         setPeriods((Array.isArray(list) ? list : []).filter((p) => p.status === "ACTIVE" && p.period_status !== "CLOSED"));
       })
       .catch((err: any) => showToast.error(err?.message || t("fscLoadFailed")));
-  }, [countType, periods.length, t]);
+  }, [effCountType, periods.length, t]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -203,8 +235,9 @@ export default function FeedStockCountPanel() {
 
   const loadEvidence = () =>
     run(async () => {
-      if (!farmId || !companyId) return;
-      const params = new URLSearchParams({ companyId, farmId, countedAt: inputToInstant(entryAt) });
+      if (!placeId || !companyId) return;
+      const params = new URLSearchParams({ companyId, farmId: placeId, countedAt: inputToInstant(entryAt) });
+      if (isMill) params.set("stockTakeType", "FEED_MILL");
       setEntry(unwrap<EvidenceResponse>(await api.get(`/feed-stock-count/evidence?${params.toString()}`)));
       setCounted({});
       setReasonIds({});
@@ -212,7 +245,7 @@ export default function FeedStockCountPanel() {
 
   const createCount = () =>
     run(async () => {
-      if (!entry || !farmId || !companyId) return;
+      if (!entry || !placeId || !companyId) return;
       const lines = entry.pairs.map((pair) => {
         const value = counted[`${pair.siloId}:${pair.itemId}`];
         if (value === undefined || value === "") throw new Error(t("fscCountedMissing"));
@@ -226,10 +259,11 @@ export default function FeedStockCountPanel() {
       const created = unwrap<{ count_id: string; count_no: string }>(
         await api.post("/feed-stock-count", {
           companyId,
-          farmId,
+          farmId: placeId,
           countedAt: inputToInstant(entryAt),
-          scheduleSource: countType === "MONTHLY" ? "ON_DEMAND" : entryScheduled ? "SCHEDULED" : "ON_DEMAND",
-          ...(countType === "MONTHLY" ? { countType, reportingPeriodId: periodId || undefined } : {}),
+          scheduleSource: effCountType === "MONTHLY" ? "ON_DEMAND" : entryScheduled ? "SCHEDULED" : "ON_DEMAND",
+          ...(effCountType === "MONTHLY" ? { countType: effCountType, reportingPeriodId: periodId || undefined } : {}),
+          ...(isMill ? { stockTakeType: "FEED_MILL" } : {}),
           lines,
         }),
       );
@@ -303,6 +337,22 @@ export default function FeedStockCountPanel() {
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           {farmPicker}
+          {mills.length > 0 && (
+            <Field label={t("fscCountAt")} htmlFor="sc-place">
+              <select
+                id="sc-place"
+                className="nf-input-sm nf-select"
+                style={inputStyle}
+                value={millId}
+                onChange={(e) => { setMillId(e.target.value); setSelected(null); setEntry(null); }}
+              >
+                <option value="">{t("fscCountAtFarm")}</option>
+                {mills.map((m) => (
+                  <option key={m.location_id} value={m.location_id}>{`${m.location_code}${m.location_name ? ` — ${m.location_name}` : ""}`}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label={t("fscShow")} htmlFor="sc-status">
             <select
               id="sc-status"
@@ -321,7 +371,7 @@ export default function FeedStockCountPanel() {
           </Field>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => void loadEvidence()} disabled={!farmId || busy}>
+          <Button size="sm" onClick={() => void loadEvidence()} disabled={!placeId || busy}>
             {t("fscNew")}
           </Button>
         </div>
@@ -339,7 +389,7 @@ export default function FeedStockCountPanel() {
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
           <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("fscLoading")}
         </div>
-      ) : noFarms || !farmId || !companyId ? (
+      ) : noFarms || !placeId || !companyId ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffNoFarms")}</div>
       ) : loading ? (
         <div className="p-10 text-center text-xs" style={{ color: "var(--text-secondary)" }}>
@@ -364,6 +414,8 @@ export default function FeedStockCountPanel() {
             {rows.map((row) => (
               <tr key={row.count_id} className="cursor-pointer" onClick={() => void openCount(row.count_id)}>
                 <td className={cn(TD, "font-medium")}>{row.count_no}</td>
+                <td className={TD}>{countTypeLabel(row, t)}</td>
+                <td className={TD}>{row.period_code ?? unavailable}</td>
                 <td className={TD}>{shortTimestamp(row.counted_at, unavailable)}</td>
                 <td className={TD}>{sourceLabel(row.schedule_source, t)}</td>
                 <td className={TD}>
@@ -399,7 +451,11 @@ export default function FeedStockCountPanel() {
           {entry ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <ReadField label={t("ffFarm")} value={dialogFarmLabel} appearance="control" />
+                <ReadField
+                  label={isMill ? t("fscCountAtMill") : t("ffFarm")}
+                  value={isMill ? mills.find((m) => m.location_id === millId)?.location_code ?? "" : dialogFarmLabel}
+                  appearance="control"
+                />
                 <Field label={t("fscCountedAt")} htmlFor="sc-counted-at">
                   <input
                     id="sc-counted-at"
@@ -415,14 +471,15 @@ export default function FeedStockCountPanel() {
                     id="sc-count-type"
                     className="nf-input-sm nf-select"
                     style={inputStyle}
-                    value={countType}
+                    value={effCountType}
+                    disabled={isMill}
                     onChange={(e) => setCountType(e.target.value === "MONTHLY" ? "MONTHLY" : "WEEKLY")}
                   >
                     <option value="WEEKLY">{t("fscCountTypeWeekly")}</option>
                     <option value="MONTHLY">{t("fscCountTypeMonthly")}</option>
                   </select>
                 </Field>
-                {countType === "MONTHLY" && (
+                {effCountType === "MONTHLY" && (
                   <Field label={t("fscReportingPeriod")} htmlFor="sc-period">
                     <select
                       id="sc-period"
@@ -502,6 +559,14 @@ export default function FeedStockCountPanel() {
                 {selected.status === "PENDING_APPROVAL" && <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{t("fscWaiting")}</span>}
                 {href && <a href={href} className="text-xs font-semibold underline underline-offset-2" style={{ color: "var(--accent)" }}>{t("fscOpenApproval")}</a>}
               </div>
+              {selected.count_type === "MONTHLY" && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="stock-take-reconciliation">
+                  <ReadField label={t("fscStockTakeDate")} value={selected.stock_take_date ? formatDateShort(String(selected.stock_take_date).slice(0, 10)) : unavailable} appearance="control" />
+                  <ReadField label={t("fscGlEntry")} value={selected.gl_entry_refs?.length ? selected.gl_entry_refs.join(", ") : unavailable} appearance="control" />
+                  <ReadField label={t("fscPeriodStatusAfter")} value={selected.period_status_after ?? unavailable} appearance="control" />
+                  <ReadField label={t("fscNextProductionStart")} value={selected.production_start_date_next ? formatDateShort(String(selected.production_start_date_next).slice(0, 10)) : unavailable} appearance="control" />
+                </div>
+              )}
               <ScrollTable label={t("fscLinesLabel")}>
                 <thead><tr>{LINE_COLUMNS.map((column) => (
                   <th key={column} scope="col" className={cn(TH, RIGHT.has(column) && "text-right")}>{t(column)}</th>
