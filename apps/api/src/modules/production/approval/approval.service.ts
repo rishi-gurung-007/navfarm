@@ -546,7 +546,7 @@ export class ApprovalService {
             eq(schema.locationMaster.location_id, doc.farmId),
             eq(schema.locationMaster.company_id, doc.companyId),
             eq(schema.locationMaster.tenant_id, tenantId),
-            eq(schema.locationMaster.location_type, 'FARM'),
+            inArray(schema.locationMaster.location_type, ['FARM', 'MILL']), // a feed mill's monthly stock take is a farm-level document too
             isNull(schema.locationMaster.deleted_at),
           ))
           .limit(1);

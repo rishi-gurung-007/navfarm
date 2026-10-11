@@ -54,6 +54,11 @@ export class CreateFeedStockCountDto {
   @IsEnum(['WEEKLY', 'MONTHLY'])
   countType?: 'WEEKLY' | 'MONTHLY';
 
+  @ApiPropertyOptional({ enum: ['FARM', 'FEED_MILL'], description: 'FEED_MILL counts the active BINs of the MILL named by farmId (MONTHLY only); default FARM' })
+  @IsOptional()
+  @IsEnum(['FARM', 'FEED_MILL'])
+  stockTakeType?: 'FARM' | 'FEED_MILL';
+
   @ApiPropertyOptional({ description: 'Required for a MONTHLY stock take (workbook Checkpoints r40)' })
   @IsOptional()
   @IsUUID()
@@ -117,6 +122,11 @@ export class QueryFeedStockCountEvidenceDto {
   @ApiProperty()
   @IsUUID()
   farmId!: string;
+
+  @ApiPropertyOptional({ enum: ['FARM', 'FEED_MILL'], description: 'FEED_MILL reads the active BINs of the MILL named by farmId' })
+  @IsOptional()
+  @IsEnum(['FARM', 'FEED_MILL'])
+  stockTakeType?: 'FARM' | 'FEED_MILL';
 
   @ApiPropertyOptional({ description: 'ISO observation instant; defaults to now for an on-demand count' })
   @IsOptional()

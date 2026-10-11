@@ -174,6 +174,8 @@ export class InventoryLedgerService {
         .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
         .for('update');
       if (!original || original.entry_type !== 'NEGATIVE') throw new BadRequestException('Only an existing issue can be reversed here.');
+      // r32: the reversal posts a new entry dated like the issue, so a closed Reporting Period refuses it too.
+      await assertPostingPeriodOpen(this.db, { tenantId, companyId: original.company_id, postingDate: original.posting_date });
       const [reversed] = await this.db.select().from(schema.inventoryLedger)
         .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
       if (reversed) throw new BadRequestException('This issue has already been reversed.');

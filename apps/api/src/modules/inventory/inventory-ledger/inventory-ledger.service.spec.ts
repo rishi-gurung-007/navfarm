@@ -15,7 +15,7 @@ import * as schema from '../../../core/database/schema';
  */
 describe('InventoryLedgerService reverseEntry — created_at', () => {
   const original = {
-    ledger_id: 'ledger-1', tenant_id: 'tenant-1', entry_type: 'NEGATIVE',
+    ledger_id: 'ledger-1', tenant_id: 'tenant-1', company_id: 'co-1', posting_date: '2026-09-10', entry_type: 'NEGATIVE',
     quantity: '0', amount: '0', created_at: '2026-09-14 08:00:00',
   };
 
@@ -24,6 +24,7 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
     const db: any = {
       select: jest.fn()
         .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) }) // original, locked
+        .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // the period guard: no closed period covers it
         .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) // not already reversed
         .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no FIFO applications to unwind
         .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no ledger lines to give back
@@ -43,6 +44,27 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
     // spread either — that would silently backdate the reversal to look as if
     // it were written when the original entry was.
     expect(insertedValues[0].created_at).not.toBe('2026-09-14 08:00:00');
+  });
+});
+
+describe('InventoryLedgerService reverseEntry — closed period guard (r32)', () => {
+  it('refuses to reverse an issue dated inside a CLOSED reporting period, before any write', async () => {
+    const original = {
+      ledger_id: 'ledger-1', tenant_id: 'tenant-1', company_id: 'co-1', entry_type: 'NEGATIVE',
+      quantity: '-5', amount: '-10', posting_date: '2026-09-10',
+    };
+    const closed = { period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26', period_status: 'CLOSED' };
+    const db: any = {
+      select: jest.fn()
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) })
+        .mockReturnValueOnce({ from: () => ({ where: async () => [closed] }) }), // the shared period guard
+      insert: jest.fn(),
+      update: jest.fn(),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+    await expect(service.reverseEntry('ledger-1', 'tenant-1', 'user-1')).rejects.toThrow(/closed/);
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
   });
 });
 

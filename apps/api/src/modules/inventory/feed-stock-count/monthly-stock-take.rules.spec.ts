@@ -1,5 +1,5 @@
 import {
-  assertPeriodCanClose, assertPostableOnce, assertStockTakePeriod, buildMonthlyLines, periodCloseBlockers, reopenPatch, stockTakeNo,
+  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, periodCloseBlockers, reopenPatch, stockTakeNo,
 } from './monthly-stock-take.rules';
 import { approvalRoute, assertVarianceReason, varianceFact } from './feed-stock-count.rules';
 import { assertPeriodWindowOpen, assertPostingPeriodOpen, closedPeriodFor } from '../../../common/period-close';
@@ -13,22 +13,12 @@ describe('Monthly stock take — creation', () => {
     expect(stockTakeNo('FEED_MILL', 'IGNORED', 2026, 12)).toBe('ST-MILL-2026-00012');
   });
 
-  it('creates a line for EVERY active silo and bin with its system balance at the date, 0 when none', () => {
-    const bins = [
-      { location_id: 'SILO-1', item_id: 'GROWER', is_active: true },
-      { location_id: 'SILO-2', item_id: 'FINISHER', is_active: true },
-      { location_id: 'BIN-1', item_id: 'STARTER', is_active: true },
-      { location_id: 'SILO-OLD', item_id: 'GROWER', is_active: false },
-      { location_id: 'SILO-EMPTY', item_id: null, is_active: true },
-    ];
-    const balances: Record<string, number> = { 'SILO-1|GROWER': 1200, 'BIN-1|STARTER': 40.5 };
-    const { lines, skipped } = buildMonthlyLines(bins, (l, i) => balances[`${l}|${i}`] ?? 0);
-    expect(lines).toEqual([
-      { silo_id: 'SILO-1', item_id: 'GROWER', system_qty_kg: 1200, counted_qty_kg: null },
-      { silo_id: 'SILO-2', item_id: 'FINISHER', system_qty_kg: 0, counted_qty_kg: null },
-      { silo_id: 'BIN-1', item_id: 'STARTER', system_qty_kg: 40.5, counted_qty_kg: null },
-    ]);
-    expect(skipped).toEqual(['SILO-EMPTY']);
+  it('dates a monthly take on the period Stock Take Date, or its end date when that is null (r35)', () => {
+    expect(() => assertStockTakeDate(period, '2026-09-26')).not.toThrow();
+    expect(() => assertStockTakeDate(period, '2026-09-25')).toThrow(/must be dated 2026-09-26/);
+    const noDate = { period_code: '2026-09', stock_take_date: null, end_date: '2026-09-30' };
+    expect(() => assertStockTakeDate(noDate, '2026-09-30')).not.toThrow();
+    expect(() => assertStockTakeDate(noDate, '2026-09-26')).toThrow(/2026-09-30/);
   });
 
   it('is refused when the period does not exist (r40) or is closed', () => {
@@ -51,15 +41,6 @@ describe('Monthly stock take — variance and reason (reuses the weekly count ru
   it('escalates to Finance at >= 5% with no monetary threshold (decisions 1 Oct)', () => {
     expect(approvalRoute([{ variancePctAbsolute: 5, varianceValueBase: null }], { percentageThreshold: 5, amountThreshold: null })).toBe('FINANCE');
     expect(approvalRoute([{ variancePctAbsolute: 4.99, varianceValueBase: null }], { percentageThreshold: 5, amountThreshold: null })).toBe('FARM_MANAGER');
-  });
-});
-
-describe('Monthly stock take — posting happens exactly once', () => {
-  it('posts an approved take and refuses a second posting or an unapproved one', () => {
-    expect(() => assertPostableOnce({ status: 'APPROVED', stock_adjustment_id: null })).not.toThrow();
-    expect(() => assertPostableOnce({ status: 'POSTED', stock_adjustment_id: 'ADJ-1' })).toThrow(/already been posted/);
-    expect(() => assertPostableOnce({ status: 'APPROVED', stock_adjustment_id: 'ADJ-1' })).toThrow(/already been posted/);
-    expect(() => assertPostableOnce({ status: 'PENDING_APPROVAL', stock_adjustment_id: null })).toThrow(/Only an approved/);
   });
 });
 

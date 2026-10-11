@@ -21,6 +21,7 @@ export interface StockTakePeriod {
   period_id: string;
   period_code: string;
   stock_take_date: string;
+  end_date?: string | null;
   period_status: string;
   is_active?: boolean;
   deleted_at?: string | null;
@@ -37,44 +38,19 @@ export function assertStockTakePeriod(period: StockTakePeriod | null | undefined
   return period;
 }
 
-export interface CountBin {
-  location_id: string;
-  item_id: string | null;
-  is_active: boolean;
-}
-
-export interface MonthlyLineDraft {
-  silo_id: string;
-  item_id: string;
-  system_qty_kg: number;
-  counted_qty_kg: number | null;
-}
-
 /**
- * Lines for ALL active silos/bins of the farm or mill, each with the system
- * balance at the stock-take date (r37). A bin with no ledger balance gets 0, not
- * a missing line. A bin with no feed item cannot be counted and is reported.
+ * r35: a MONTHLY count is dated on the period's Stock Take Date (the period end
+ * when that is not set). `countedDate` is the farm-local calendar day of counted_at.
  */
-export function buildMonthlyLines(
-  bins: CountBin[],
-  balanceAt: (locationId: string, itemId: string) => number,
-): { lines: MonthlyLineDraft[]; skipped: string[] } {
-  const lines: MonthlyLineDraft[] = [];
-  const skipped: string[] = [];
-  for (const bin of bins.filter((b) => b.is_active)) {
-    if (!bin.item_id) { skipped.push(bin.location_id); continue; }
-    lines.push({ silo_id: bin.location_id, item_id: bin.item_id, system_qty_kg: Number(balanceAt(bin.location_id, bin.item_id) ?? 0), counted_qty_kg: null });
-  }
-  return { lines, skipped };
-}
-
-/** r45: the approved adjustment is posted exactly once. */
-export function assertPostableOnce(count: { status: string; stock_adjustment_id: string | null }): void {
-  if (count.status === 'POSTED' || count.stock_adjustment_id) {
-    throw new BadRequestException('This stock take has already been posted; its adjustment cannot be posted twice.');
-  }
-  if (count.status !== 'APPROVED') {
-    throw new BadRequestException(`Only an approved stock take can be posted (current status ${count.status}).`);
+export function assertStockTakeDate(
+  period: { period_code: string; stock_take_date?: string | null; end_date?: string | null },
+  countedDate: string,
+): void {
+  const expected = String(period.stock_take_date ?? period.end_date ?? '').slice(0, 10);
+  if (expected && expected !== countedDate) {
+    throw new BadRequestException(
+      `A monthly stock take for period ${period.period_code} must be dated ${expected} (the Stock Take Date); this count is dated ${countedDate}.`,
+    );
   }
 }
 

@@ -1,7 +1,7 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNull, like, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { randomUUID } from 'node:crypto';
 import { ClsService } from 'nestjs-cls';
@@ -22,7 +22,7 @@ import {
   CreateFeedStockCountDto, QueryFeedStockCountDto, UpdateFeedStockCountDto,
 } from './dto/feed-stock-count.dto';
 import { approvalRoute, assertVarianceReason, RateEvidence, varianceFact, VarianceFact } from './feed-stock-count.rules';
-import { assertStockTakePeriod, stockTakeNo } from './monthly-stock-take.rules';
+import { assertStockTakeDate, assertStockTakePeriod, stockTakeNo } from './monthly-stock-take.rules';
 
 /** The approval_request.doc_type the count module registers with the engine. */
 export const FEED_STOCK_COUNT_APPROVAL_DOC_TYPE = 'FEED_STOCK_VARIANCE';
@@ -50,6 +50,12 @@ const routeEvidence = (line: { variance_pct_absolute: string | number; variance_
     ? null
     : Number(line.variance_value_base),
 });
+
+/** A weekly count is always a FARM's silos; a FEED_MILL monthly take counts a MILL's bins. */
+type LocKind = 'FARM' | 'MILL';
+const kindOfCount = (count: { stock_take_type: string | null }): LocKind => (count.stock_take_type === 'FEED_MILL' ? 'MILL' : 'FARM');
+const COUNTED_CHILD: Record<LocKind, 'SILO' | 'BIN'> = { FARM: 'SILO', MILL: 'BIN' };
+const NO_UNIQUE_KEY = 'uq_feed_stock_count_company_no';
 
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
@@ -86,7 +92,8 @@ export class FeedStockCountService implements OnModuleInit {
     if (scope.farmId && scope.farmId !== farmId) throw new ForbiddenException('Not authorized for this farm.');
   }
 
-  private async loadFarm(farmId: string, companyId: string, tenantId: string, lock = false) {
+  /** The farm, or (kind MILL) the feed mill, that a count is taken at. EITHER is for read-only listing. */
+  private async loadFarm(farmId: string, companyId: string, tenantId: string, lock = false, kind: LocKind | 'EITHER' = 'FARM') {
     this.assertRequestedScope(companyId, farmId);
     const scope = farmScope(this.cls);
     const query = this.db.select({
@@ -99,7 +106,7 @@ export class FeedStockCountService implements OnModuleInit {
       eq(schema.locationMaster.location_id, farmId),
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, companyId),
-      eq(schema.locationMaster.location_type, 'FARM'),
+      kind === 'EITHER' ? inArray(schema.locationMaster.location_type, ['FARM', 'MILL']) : eq(schema.locationMaster.location_type, kind),
       isNull(schema.locationMaster.parent_location_id),
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
@@ -107,13 +114,15 @@ export class FeedStockCountService implements OnModuleInit {
     )).limit(1);
     const [farm] = lock ? await query.for('update') : await query;
     if (!farm || farm.company_id !== companyId || (scope.restricted && scope.lobId && farm.lob_id !== scope.lobId)) {
-      throw new NotFoundException('Farm not found.');
+      throw new NotFoundException(kind === 'MILL' ? 'Mill not found.' : 'Farm not found.');
     }
     return farm;
   }
 
-  private async loadActiveSilos(farmId: string, companyId: string, tenantId: string) {
+  private async loadActiveSilos(farmId: string, companyId: string, tenantId: string, kind: LocKind = 'FARM') {
     const scope = farmScope(this.cls);
+    const childType = COUNTED_CHILD[kind];
+    const place = kind === 'MILL' ? 'mill' : 'farm';
     const silos = await this.db.select({
       location_id: schema.locationMaster.location_id,
       company_id: schema.locationMaster.company_id,
@@ -129,16 +138,16 @@ export class FeedStockCountService implements OnModuleInit {
       eq(schema.locationMaster.company_id, companyId),
       eq(schema.locationMaster.farm_id, farmId),
       eq(schema.locationMaster.parent_location_id, farmId),
-      eq(schema.locationMaster.location_type, 'SILO'),
+      eq(schema.locationMaster.location_type, childType),
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
       ...(scope.restricted && scope.lobId ? [eq(schema.locationMaster.lob_id, scope.lobId)] : []),
     ));
-    if (!silos.length) throw new BadRequestException('The authorized farm has no active SILO locations to count.');
+    if (!silos.length) throw new BadRequestException(`The authorized ${place} has no active ${childType} locations to count.`);
     if (silos.some((silo) => silo.company_id !== companyId || silo.farm_id !== farmId || silo.parent_location_id !== farmId
-      || silo.location_type !== 'SILO' || !silo.is_active || silo.deleted_at
+      || silo.location_type !== childType || !silo.is_active || silo.deleted_at
       || (scope.restricted && scope.lobId && silo.lob_id !== scope.lobId))) {
-      throw new BadRequestException('Physical counts may use only active SILOs belonging to the authorized farm.');
+      throw new BadRequestException(`Physical counts may use only active ${childType}s belonging to the authorized ${place}.`);
     }
     return silos;
   }
@@ -207,6 +216,10 @@ export class FeedStockCountService implements OnModuleInit {
     return `${get('year')}-${get('month')}-${get('day')}`;
   }
 
+  private resolveSettings(companyId: string, locationId: string, kind: LocKind) {
+    return kind === 'MILL' ? this.settings.resolve(companyId, locationId, 'MILL') : this.settings.resolve(companyId, locationId);
+  }
+
   private countNo(farmId: string, countedAtEpochSeconds: number): string {
     return `FSC-${farmId}-${countedAtEpochSeconds}`;
   }
@@ -217,14 +230,15 @@ export class FeedStockCountService implements OnModuleInit {
    * the transaction then rejects. Read-only — it creates nothing.
    */
   async evidence(
-    query: { companyId: string; farmId: string; countedAt?: string },
+    query: { companyId: string; farmId: string; countedAt?: string; stockTakeType?: 'FARM' | 'FEED_MILL' },
     tenantId: string,
   ) {
+    const kind: LocKind = query.stockTakeType === 'FEED_MILL' ? 'MILL' : 'FARM';
     const instant = parseOffsetInstant(query.countedAt ?? new Date(Math.floor(Date.now() / 1000) * 1000).toISOString());
-    await this.loadFarm(query.farmId, query.companyId, tenantId);
-    const effective = await this.settings.resolve(query.companyId, query.farmId);
+    await this.loadFarm(query.farmId, query.companyId, tenantId, false, kind);
+    const effective = await this.resolveSettings(query.companyId, query.farmId, kind);
     const postingDate = this.postingDate(new Date(instant.utcIso), effective.timezoneId);
-    const silos = await this.loadActiveSilos(query.farmId, query.companyId, tenantId);
+    const silos = await this.loadActiveSilos(query.farmId, query.companyId, tenantId, kind);
     const rows = await this.ledger.getSiloStockEvidenceAsOf({
       companyId: query.companyId,
       siloIds: silos.map((silo) => silo.location_id),
@@ -262,12 +276,16 @@ export class FeedStockCountService implements OnModuleInit {
       if (duplicateKeys.has(key)) throw new ConflictException('A silo/item may appear only once in a physical count.');
       duplicateKeys.add(key);
     }
-    const effective = await this.settings.resolve(dto.companyId, dto.farmId);
+    const kind: LocKind = dto.stockTakeType === 'FEED_MILL' ? 'MILL' : 'FARM';
+    if (kind === 'MILL' && dto.countType !== 'MONTHLY') {
+      throw new BadRequestException('A feed mill is counted only by the Monthly Stock Take; choose count type MONTHLY.');
+    }
+    const effective = await this.resolveSettings(dto.companyId, dto.farmId, kind);
     if (dto.scheduleSource === 'SCHEDULED') this.assertScheduledOccurrence(dto.countedAt, effective);
     const postingDate = this.postingDate(new Date(instant.utcIso), effective.timezoneId);
 
     return withTenantTransaction(this.cls, async () => {
-      const farm = await this.loadFarm(dto.farmId, dto.companyId, tenantId, true);
+      const farm = await this.loadFarm(dto.farmId, dto.companyId, tenantId, true, kind);
       const [duplicate] = await this.db.select({ count_id: schema.feedStockCount.count_id })
         .from(schema.feedStockCount).where(and(
           eq(schema.feedStockCount.tenant_id, tenantId),
@@ -287,9 +305,10 @@ export class FeedStockCountService implements OnModuleInit {
         )).limit(1) : [];
         if (period?.company_id && period.company_id !== dto.companyId) period = undefined;
         assertStockTakePeriod(period);
+        assertStockTakeDate(period!, postingDate); // r35
       }
 
-      const silos = await this.loadActiveSilos(dto.farmId, dto.companyId, tenantId);
+      const silos = await this.loadActiveSilos(dto.farmId, dto.companyId, tenantId, kind);
       const evidence = await this.ledger.getSiloStockEvidenceAsOf({
         companyId: dto.companyId,
         siloIds: silos.map((silo) => silo.location_id),
@@ -324,23 +343,39 @@ export class FeedStockCountService implements OnModuleInit {
         });
       }
 
+      const year = monthly ? Number(String(period!.stock_take_date ?? period!.end_date).slice(0, 4)) : 0;
+      const prefix = monthly
+        ? `ST-${kind === 'MILL' ? 'MILL' : (farm as { location_code?: string }).location_code ?? dto.farmId}-${year}-`
+        : '';
       let count_no = this.countNo(dto.farmId, instant.epochSeconds);
-      if (monthly) {
-        const year = Number(String(period!.stock_take_date).slice(0, 4));
-        const [{ n }] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.feedStockCount).where(and(
-          eq(schema.feedStockCount.company_id, dto.companyId),
-          eq(schema.feedStockCount.farm_id, dto.farmId),
-          eq(schema.feedStockCount.count_type, 'MONTHLY'),
-          sql`YEAR(${schema.feedStockCount.counted_at}) = ${year}`,
-        ));
-        count_no = stockTakeNo('FARM', (farm as { location_code?: string }).location_code ?? dto.farmId, year, Number(n) + 1);
+      for (let attempt = 1; ; attempt += 1) {
+        if (monthly) {
+          // MAX of the sequence already issued under this prefix, not COUNT(*)+1: a deleted or concurrent take must not
+          // hand out a number twice. The company-wide unique key on count_no is the backstop; a clash retries.
+          const [{ n }] = await this.db.select({ n: sql<number | null>`MAX(CAST(SUBSTRING_INDEX(${schema.feedStockCount.count_no}, '-', -1) AS UNSIGNED))` })
+            .from(schema.feedStockCount).where(and(
+              eq(schema.feedStockCount.tenant_id, tenantId),
+              eq(schema.feedStockCount.company_id, dto.companyId),
+              eq(schema.feedStockCount.count_type, 'MONTHLY'),
+              like(schema.feedStockCount.count_no, `${prefix}%`),
+            ));
+          count_no = stockTakeNo(kind === 'MILL' ? 'FEED_MILL' : 'FARM', (farm as { location_code?: string }).location_code ?? dto.farmId, year, Number(n ?? 0) + 1);
+        }
+        try {
+          await this.db.insert(schema.feedStockCount).values({
+            count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
+            counted_at: countedAt, schedule_source: dto.scheduleSource, status: 'DRAFT', created_by: creatorId,
+            ...(monthly ? { count_type: 'MONTHLY', stock_take_type: kind === 'MILL' ? 'FEED_MILL' : 'FARM', reporting_period_id: period!.period_id } : {}),
+          });
+          break;
+        } catch (error) {
+          const clash = (error as { code?: string })?.code === 'ER_DUP_ENTRY';
+          if (clash && monthly && attempt < 5 && String((error as { message?: string }).message).includes(NO_UNIQUE_KEY)) continue;
+          if (clash) throw new ConflictException('A physical count already exists for this farm occurrence.');
+          throw error;
+        }
       }
       try {
-        await this.db.insert(schema.feedStockCount).values({
-          count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
-          counted_at: countedAt, schedule_source: dto.scheduleSource, status: 'DRAFT', created_by: creatorId,
-          ...(monthly ? { count_type: 'MONTHLY', stock_take_type: 'FARM', reporting_period_id: period!.period_id } : {}),
-        });
         await this.db.insert(schema.feedStockCountLine).values(lineValues);
       } catch (error) {
         if ((error as { code?: string })?.code === 'ER_DUP_ENTRY') {
@@ -353,13 +388,17 @@ export class FeedStockCountService implements OnModuleInit {
   }
 
   async list(query: QueryFeedStockCountDto, tenantId: string) {
-    await this.loadFarm(query.farmId, query.companyId, tenantId);
+    await this.loadFarm(query.farmId, query.companyId, tenantId, false, 'EITHER');
     const conditions = [
       eq(schema.feedStockCount.tenant_id, tenantId), eq(schema.feedStockCount.company_id, query.companyId),
       eq(schema.feedStockCount.farm_id, query.farmId),
     ];
     if (query.status) conditions.push(eq(schema.feedStockCount.status, query.status));
-    return this.db.select().from(schema.feedStockCount).where(and(...conditions)).orderBy(desc(schema.feedStockCount.counted_at));
+    // count_type, stock_take_type and count_no are on the row itself; the period code comes from the Reporting Period.
+    return this.db.select({ ...getTableColumns(schema.feedStockCount), period_code: schema.reportingPeriod.period_code })
+      .from(schema.feedStockCount)
+      .leftJoin(schema.reportingPeriod, eq(schema.reportingPeriod.period_id, schema.feedStockCount.reporting_period_id))
+      .where(and(...conditions)).orderBy(desc(schema.feedStockCount.counted_at));
   }
 
   async findOne(countId: string, tenantId: string) {
@@ -367,7 +406,7 @@ export class FeedStockCountService implements OnModuleInit {
       eq(schema.feedStockCount.count_id, countId), eq(schema.feedStockCount.tenant_id, tenantId),
     )).limit(1);
     if (!count) throw new NotFoundException('Feed stock count not found.');
-    await this.loadFarm(count.farm_id, count.company_id, tenantId);
+    const place = await this.loadFarm(count.farm_id, count.company_id, tenantId, false, kindOfCount(count));
     const lines = await this.db.select({
       ...getTableColumns(schema.feedStockCountLine),
       silo_code: schema.locationMaster.location_code,
@@ -380,7 +419,48 @@ export class FeedStockCountService implements OnModuleInit {
       .leftJoin(schema.reasonMaster, eq(schema.reasonMaster.reason_id, schema.feedStockCountLine.reason_id))
       .where(eq(schema.feedStockCountLine.count_id, countId))
       .orderBy(schema.feedStockCountLine.silo_id, schema.feedStockCountLine.item_id);
-    return { ...count, lines };
+    return { ...count, ...(await this.reconciliationEvidence(count)), farm_code: place.location_code, lines };
+  }
+
+  /**
+   * Workbook r35, r47-r49: the Stock Take Date and the period it reconciles, the period's status after
+   * reconciliation, the next production start, and the journal(s) the posting created. The count keeps only
+   * its first adjustment id, so the journals are found the way the adjustments are named: by the count's
+   * remarks on each stock adjustment, then by the adjustment number each journal was posted for.
+   */
+  private async reconciliationEvidence(count: typeof schema.feedStockCount.$inferSelect) {
+    let periodFacts: Record<string, string | null> = {};
+    if (count.reporting_period_id) {
+      const [period] = await this.db.select({
+        period_code: schema.reportingPeriod.period_code, period_status: schema.reportingPeriod.period_status,
+        stock_take_date: schema.reportingPeriod.stock_take_date, production_start_date: schema.reportingPeriod.production_start_date,
+      }).from(schema.reportingPeriod).where(eq(schema.reportingPeriod.period_id, count.reporting_period_id)).limit(1);
+      if (period) {
+        periodFacts = {
+          period_code: period.period_code, period_status_after: period.period_status,
+          stock_take_date: period.stock_take_date, production_start_date_next: period.production_start_date,
+        };
+      }
+    }
+    let glRefs: string[] | null = null;
+    if (count.status === 'POSTED') {
+      const adjustments = await this.db.select({ adjustment_no: schema.stockAdjustment.adjustment_no })
+        .from(schema.stockAdjustment).where(and(
+          eq(schema.stockAdjustment.tenant_id, count.tenant_id),
+          eq(schema.stockAdjustment.company_id, count.company_id),
+          like(schema.stockAdjustment.remarks, `Physical count ${count.count_no} (${count.count_id})%`),
+        ));
+      if (adjustments.length) {
+        const journals = await this.db.select({ journal_no: schema.journalHeader.journal_no })
+          .from(schema.journalHeader).where(and(
+            eq(schema.journalHeader.tenant_id, count.tenant_id),
+            eq(schema.journalHeader.source_document_type, 'STOCK_ADJUSTMENT'),
+            inArray(schema.journalHeader.source_document_no, adjustments.map((a) => a.adjustment_no)),
+          ));
+        glRefs = [...new Set(journals.map((j) => j.journal_no))];
+      }
+    }
+    return { ...periodFacts, gl_entry_refs: glRefs && glRefs.length ? glRefs : null };
   }
 
   private async mutableCount(countId: string, tenantId: string) {
@@ -388,7 +468,7 @@ export class FeedStockCountService implements OnModuleInit {
       eq(schema.feedStockCount.count_id, countId), eq(schema.feedStockCount.tenant_id, tenantId),
     )).limit(1).for('update');
     if (!count) throw new NotFoundException('Feed stock count not found.');
-    const farm = await this.loadFarm(count.farm_id, count.company_id, tenantId);
+    const farm = await this.loadFarm(count.farm_id, count.company_id, tenantId, false, kindOfCount(count));
     if (!EDITABLE_STATUSES.includes(count.status as EditableStatus)) {
       throw new BadRequestException('Only a draft or rejected physical count may be corrected or submitted.');
     }
@@ -458,7 +538,7 @@ export class FeedStockCountService implements OnModuleInit {
           throw new BadRequestException('Zero variance must not carry a reason.');
         }
       }
-      const effective = await this.settings.resolve(count.company_id, count.farm_id);
+      const effective = await this.resolveSettings(count.company_id, count.farm_id, kindOfCount(count));
       // Surfaces whether Finance escalation is even evaluable *before* the count
       // reaches an approver, rather than leaving the decision to fail later.
       approvalRoute(lines.map((line) => routeEvidence(line)), {
@@ -491,7 +571,7 @@ export class FeedStockCountService implements OnModuleInit {
   private async routeFor(count: typeof schema.feedStockCount.$inferSelect, tenantId: string): Promise<'FINANCE' | 'FARM_MANAGER'> {
     const lines = await this.db.select().from(schema.feedStockCountLine)
       .where(eq(schema.feedStockCountLine.count_id, count.count_id));
-    const effective = await this.settings.resolve(count.company_id, count.farm_id);
+    const effective = await this.resolveSettings(count.company_id, count.farm_id, kindOfCount(count));
     return approvalRoute(lines.map((line) => routeEvidence(line)), {
       percentageThreshold: effective.financeVariancePct,
       amountThreshold: effective.financeVarianceAmount,
@@ -581,12 +661,12 @@ export class FeedStockCountService implements OnModuleInit {
         eq(schema.feedStockCount.count_id, countId), eq(schema.feedStockCount.tenant_id, tenantId),
       )).limit(1).for('update');
       if (!count) throw new NotFoundException('Feed stock count not found.');
-      await this.loadFarm(count.farm_id, count.company_id, tenantId);
+      await this.loadFarm(count.farm_id, count.company_id, tenantId, false, kindOfCount(count));
       if (count.status === 'POSTED') {
         return {
           count_id: count.count_id, status: 'POSTED' as const, already_posted: true,
           stock_adjustment_id: count.stock_adjustment_id, stock_adjustment_ids: [] as string[],
-          farm_id: count.farm_id, company_id: count.company_id,
+          farm_id: count.farm_id, company_id: count.company_id, kind: kindOfCount(count),
         };
       }
       if (count.status !== 'APPROVED') {
@@ -603,7 +683,7 @@ export class FeedStockCountService implements OnModuleInit {
           );
         }
       }
-      const effective = await this.settings.resolve(count.company_id, count.farm_id);
+      const effective = await this.resolveSettings(count.company_id, count.farm_id, kindOfCount(count));
       const postingDate = this.postingDate(utcInstant(count.counted_at), effective.timezoneId);
       const bySilo = new Map<string, typeof variance>();
       for (const line of variance) {
@@ -643,14 +723,14 @@ export class FeedStockCountService implements OnModuleInit {
       return {
         count_id: count.count_id, status: 'POSTED' as const, already_posted: false,
         stock_adjustment_id: created[0] ?? null, stock_adjustment_ids: created,
-        farm_id: count.farm_id, company_id: count.company_id,
+        farm_id: count.farm_id, company_id: count.company_id, kind: kindOfCount(count),
       };
     });
     // After the transaction commits, and never able to fail it: the posted
     // variance changed silo stock, so the feed alerts and any forecast the
     // farm is looking at must be re-read. Existing runs stay immutable — the
     // farm raises a new run version rather than us rewriting one.
-    if (!result.already_posted) {
+    if (!result.already_posted && result.kind === 'FARM') {
       await this.feedAlerts.evaluateFarmSafely(result.farm_id, result.company_id, tenantId);
     }
     return result;

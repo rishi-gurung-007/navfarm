@@ -39,7 +39,8 @@ export class FeedSettingsService {
     });
   }
 
-  async resolve(companyId: string, farmId?: string) {
+  /** `locationType` is MILL only for a feed-mill monthly stock take; every other caller names a FARM. */
+  async resolve(companyId: string, farmId?: string, locationType: 'FARM' | 'MILL' = 'FARM') {
     const scope = farmScope(this.cls);
     if (scope.companyId && scope.companyId !== companyId) throw new ForbiddenException('Not authorized for this company.');
     if (scope.farmId && farmId && scope.farmId !== farmId) throw new ForbiddenException('Not authorized for this farm.');
@@ -65,7 +66,7 @@ export class FeedSettingsService {
         lob_id: schema.locationMaster.lob_id,
       }).from(schema.locationMaster).where(and(
         eq(schema.locationMaster.location_id, effectiveFarmId),
-        eq(schema.locationMaster.location_type, 'FARM'),
+        eq(schema.locationMaster.location_type, locationType),
       )).limit(1);
       if (!farm || farm.company_id !== companyId) throw new NotFoundException(`Farm '${effectiveFarmId}' is not part of company '${companyId}'.`);
       assertLobInScope(scope, farm.lob_id);

@@ -196,4 +196,24 @@ describe('ReportingPeriodService', () => {
       { period_code: '2026-09', reason: 'overlaps SEP-26' },
     ]));
   });
+
+  describe('close (r31) for a tenant with a feed mill', () => {
+    const sep = { period_id: 'p-sep', company_id: 'co-1', period_code: '2026-09', period_status: 'OPEN', stock_take_date: '2026-09-26', start_date: '2026-08-30', end_date: '2026-09-26' };
+    const farmAndMill = [{ location_id: 'farm-1', code: 'FARM-1' }, { location_id: 'mill-1', code: 'MILL-1' }];
+    const take = (farm_id: string, status = 'POSTED') => ({ farm_id, count_type: 'MONTHLY', reporting_period_id: 'p-sep', status });
+
+    it('is satisfiable once the farm AND the mill each have a POSTED monthly stock take', async () => {
+      selectQueue.push([sep], farmAndMill, [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).resolves.toBeDefined();
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ period_status: 'CLOSED' }));
+    });
+
+    it('is refused, naming the mill, while the mill take is missing or not yet posted', async () => {
+      selectQueue.push([sep], farmAndMill, [take('farm-1')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
+      selectQueue.length = 0;
+      selectQueue.push([sep], farmAndMill, [take('farm-1'), take('mill-1', 'APPROVED')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
+    });
+  });
 });
