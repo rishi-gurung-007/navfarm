@@ -16,7 +16,7 @@ describe('UserService user-type hierarchy', () => {
   const set = jest.fn();
   const values = jest.fn();
   const selectChain: any = {};
-  for (const m of ['from', 'where', 'limit', 'innerJoin', 'offset']) selectChain[m] = () => selectChain;
+  for (const m of ['from', 'where', 'limit', 'innerJoin', 'offset', 'orderBy']) selectChain[m] = () => selectChain;
   selectChain.then = (resolve: any, reject: any) => Promise.resolve(selectResults.shift() ?? []).then(resolve, reject);
   const writeChain: any = {
     set: (v: unknown) => { set(v); return writeChain; },
@@ -292,6 +292,20 @@ describe('UserService user-type hierarchy', () => {
       queueUser(target('COMPANY_ADMIN', 'requester-1'));
       await service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN'));
       expect(set).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
+    });
+  });
+
+  describe('team directory — department name from department_id', () => {
+    it('lists the department name joined from the cost centre, null when there is no id', async () => {
+      const rows = [
+        { ...target('STANDARD_USER', 'u-1'), department: 'legacy text', department_id: 'cc-1' },
+        { ...target('STANDARD_USER', 'u-2'), department: 'Legacy only', department_id: null },
+      ];
+      // users, then enrich(): companies, areas, roles, departments (no farm_id, so no farms read)
+      selectResults.push(rows, [], [], [], [{ cost_center_id: 'cc-1', cost_center_name: 'Stores' }]);
+      const list = await service.findAll({} as any);
+      expect(list[0]).toEqual(expect.objectContaining({ department_id: 'cc-1', department_name: 'Stores', department: 'legacy text' }));
+      expect(list[1]).toEqual(expect.objectContaining({ department_id: null, department_name: null, department: 'Legacy only' }));
     });
   });
 

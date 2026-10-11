@@ -66,4 +66,11 @@ describe("Team Management — the user's department is a Cost Center, not free t
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     expect(api.put.mock.calls[0][1]).toMatchObject({ department_id: "cc-stores" });
   });
+
+  it("pre-selects the user's saved department when editing", async () => {
+    open({ member: { ...member, department_id: "cc-farmops", department_name: "Farm Ops" } });
+    const picker = (await screen.findByLabelText("tmFieldDepartment")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.querySelectorAll("option").length).toBeGreaterThan(2));
+    expect(picker.value).toBe("cc-farmops");
+  });
 });

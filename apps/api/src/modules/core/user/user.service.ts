@@ -260,11 +260,12 @@ export class UserService {
   }
 
   /** Company, farm, operational areas and roles for a page of users, in four queries rather than per user. */
-  private async enrich<T extends { user_id: string; company_id: string | null; farm_id?: string | null }>(users: T[]) {
+  private async enrich<T extends { user_id: string; company_id: string | null; farm_id?: string | null; department_id?: string | null }>(users: T[]) {
     if (users.length === 0) return [];
     const userIds = users.map((u) => u.user_id);
     const companyIds = [...new Set(users.map((u) => u.company_id).filter((id): id is string => Boolean(id)))];
     const farmIds = [...new Set(users.map((u) => u.farm_id).filter((id): id is string => Boolean(id)))];
+    const departmentIds = [...new Set(users.map((u) => u.department_id).filter((id): id is string => Boolean(id)))];
 
     // Each branch below is either a Drizzle query or a plain array, so the
     // inferred element type is a union that collapses to `{}`. The four row
@@ -274,7 +275,7 @@ export class UserService {
     type AreaRow = { user_id: string; area_id: string; area_code: string; area_name: string; is_primary: boolean | null };
     type RoleRow = { user_id: string; assign_id: string; role_id: string; role_code: string; role_name: string };
 
-    const [companies, farms, areas, roles] = await Promise.all([
+    const [companies, farms, areas, roles, departments] = await Promise.all([
       companyIds.length
         ? this.db.select({ company_id: schema.companyMaster.company_id, company_code: schema.companyMaster.company_code, company_name: schema.companyMaster.company_name })
             .from(schema.companyMaster).where(inArray(schema.companyMaster.company_id, companyIds))
@@ -305,9 +306,15 @@ export class UserService {
         .from(schema.userRoleAssignment)
         .innerJoin(schema.roleMaster, eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id))
         .where(and(inArray(schema.userRoleAssignment.user_id, userIds), eq(schema.userRoleAssignment.is_active, true))),
+      // The department is a Cost Center of type DEPARTMENT (department_id); its name is what the directory shows.
+      departmentIds.length
+        ? this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
+            .from(schema.costCenterMaster).where(inArray(schema.costCenterMaster.cost_center_id, departmentIds))
+        : Promise.resolve([] as { cost_center_id: string; cost_center_name: string }[]),
     ]);
 
     const companyById = new Map((companies as CompanyRow[]).map((c) => [c.company_id, c] as const));
+    const departmentById = new Map((departments as { cost_center_id: string; cost_center_name: string }[]).map((d) => [d.cost_center_id, d.cost_center_name] as const));
     const farmById = new Map((farms as FarmRow[]).map((f) => [f.location_id, f] as const));
     const areaRows = areas as AreaRow[];
     const roleRows = roles as RoleRow[];
@@ -318,6 +325,7 @@ export class UserService {
       company_name: user.company_id ? companyById.get(user.company_id)?.company_name ?? null : null,
       farm_code: user.farm_id ? farmById.get(user.farm_id)?.location_code ?? null : null,
       farm_name: user.farm_id ? farmById.get(user.farm_id)?.location_name ?? null : null,
+      department_name: user.department_id ? departmentById.get(user.department_id) ?? null : null,
       operational_areas: areaRows.filter((a) => a.user_id === user.user_id).map(({ user_id: _u, ...a }) => a),
       roles: roleRows.filter((r) => r.user_id === user.user_id).map(({ user_id: _u, ...r }) => r),
     }));

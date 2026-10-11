@@ -18,6 +18,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { ConsolePage } from "../../../components/ui/console-page";
 import { MemberDialog } from "../../../components/console/team/member-dialog";
 import { UserTypeBadge, AccountStatusBadge } from "../../../components/console/team/user-badges";
+import { departmentLabel } from "../../../components/console/team/department-label";
 import { assignableUserTypes, isTenantLevelUserType, outranks } from "../../../components/console/team/user-access";
 
 type Row = Record<string, any>;
@@ -114,7 +115,7 @@ export default function TeamPage() {
         && !(u.roles || []).some((r: Row) => r.role_id === roleFilter)) return false;
       if (!q) return true;
       const haystack = [
-        u.full_name, u.email, u.employee_id, u.designation, u.department,
+        u.full_name, u.email, u.employee_id, u.designation, departmentLabel(u),
         u.user_type, u.company_code, u.company_name, u.farm_code, u.farm_name,
         ...(u.roles || []).map((r: Row) => `${r.role_code} ${r.role_name}`),
         ...(u.operational_areas || []).map((a: Row) => `${a.area_code} ${a.area_name}`),
@@ -307,9 +308,9 @@ export default function TeamPage() {
                               {row.full_name}
                               {row.user_id === me?.userId && <span className="ml-2 text-[11px] font-normal text-(--text-muted)">({t("tmYou")})</span>}
                             </span>
-                            {(row.designation || row.department || row.employee_id) && (
+                            {(row.designation || departmentLabel(row) || row.employee_id) && (
                               <span className="block text-[10px] text-(--text-muted)">
-                                {[row.designation, row.department, row.employee_id].filter(Boolean).join(" · ")}
+                                {[row.designation, departmentLabel(row), row.employee_id].filter(Boolean).join(" · ")}
                               </span>
                             )}
                           </span>
