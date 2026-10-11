@@ -347,4 +347,69 @@ describe("FeedRequisitionDetail workflow actions", () => {
     await waitFor(() => expect(showToast.error).toHaveBeenCalledWith("Sender department does not match the mill bin."));
     expect(qty.value).toBe("250");
   });
+
+  describe("stacked posting dialogs and the workflow notice (Rishi, 11 Oct)", () => {
+    const releasedView = (over: Partial<RequisitionView> = {}) => base({
+      document_status: "RELEASED",
+      actions: { release: action(false), shipment: action(true), receipt: action(true) },
+      transfers: [transfer({ open_shipments: [] })],
+      ...over,
+    });
+
+    it("Transfer Shipment opens a second dialog over the requisition, which stays mounted", () => {
+      renderDetail(releasedView());
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "crqShip" }));
+      const dialogs = screen.getAllByRole("dialog");
+      expect(dialogs).toHaveLength(2);
+      expect(within(dialogs[0]).queryByRole("button", { name: "crqPostShipment" })).toBeNull();
+      expect(within(dialogs[1]).getByRole("button", { name: "crqPostShipment" })).toBeTruthy();
+      expect(within(dialogs[1]).getByLabelText("rqTransfer")).toBeTruthy();
+      expect(within(dialogs[0]).getByRole("button", { name: "crqRelease" })).toBeTruthy();
+    });
+
+    it("Escape closes only the top dialog; the requisition remains", () => {
+      renderDetail(releasedView());
+      fireEvent.click(screen.getByRole("button", { name: "crqShip" }));
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "crqShip" })).toBeTruthy();
+    });
+
+    it("a successful post closes the top dialog and refreshes the requisition", async () => {
+      const refreshed = releasedView({ fulfilment_status: "SHIPPED" as any });
+      post.mockResolvedValue({ data: refreshed });
+      const onView = renderDetail(releasedView());
+      fireEvent.click(screen.getByRole("button", { name: "crqShip" }));
+      fireEvent.change(screen.getByLabelText("rqTransfer"), { target: { value: "tr-1" } });
+      fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), { target: { value: "250" } });
+      fireEvent.click(screen.getByRole("button", { name: "crqPostShipment" }));
+      await waitFor(() => expect(onView).toHaveBeenCalledWith(refreshed));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+    });
+
+    it("Transfer Receipt opens its own stacked dialog too", () => {
+      renderDetail(releasedView());
+      fireEvent.click(screen.getByRole("button", { name: "crqReceive" }));
+      const dialogs = screen.getAllByRole("dialog");
+      expect(dialogs).toHaveLength(2);
+      expect(within(dialogs[1]).getByRole("button", { name: "crqPostReceipt" })).toBeTruthy();
+    });
+
+    it("shows 'Release completed' as a success alert with spacing, not an error", () => {
+      renderDetail(releasedView({ actions: { release: action(false, "Already released."), shipment: action(true), receipt: action(false) } }));
+      const notice = screen.getByTestId("feed-workflow-notice");
+      expect(notice.textContent).toContain("Release completed. Post the Transfer Shipment to continue.");
+      expect(notice.className).toContain("mb-4");
+      const box = notice.firstElementChild as HTMLElement;
+      expect(box.getAttribute("style")).toContain("var(--success-muted)");
+      expect(box.getAttribute("style")).not.toContain("var(--danger");
+    });
+
+    it("shows a blocked step as a warning, not an error", () => {
+      renderDetail(base());
+      const box = screen.getByTestId("feed-workflow-notice").firstElementChild as HTMLElement;
+      expect(box.getAttribute("style")).toContain("var(--warning-muted)");
+    });
+  });
 });

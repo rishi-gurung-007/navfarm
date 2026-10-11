@@ -4,6 +4,7 @@ import { CommonRequisitionDetail } from "../src/components/console/requisitions/
 import { emptyCommonRequisition, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionView } from "../src/components/console/requisitions/common-requisition-model";
 import { todayIso } from "../src/components/console/inventory/feed-format";
 import { api } from "../src/services/api-client";
+import { Dialog } from "../src/components/ui/dialog";
 jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
 import { showToast } from '../src/components/ui/toast';
 beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
@@ -232,6 +233,22 @@ describe("CommonRequisitionDetail", () => {
     await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqShipped"));
     // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
     await waitFor(() => expect(showToast.success).toHaveBeenCalledWith("crqShipped"));
+  });
+
+  it("Transfer Shipment opens in a second dialog stacked on the requisition and closes after a post", async () => {
+    const onView = jest.fn();
+    const view = released({ lines: [line(1, { balance_to_ship: 4 }) as any] });
+    render(<Dialog open onClose={jest.fn()} title="REQ" presentation="page"><CommonRequisitionDetail embedded initial={view} onView={onView} onBack={jest.fn()} /></Dialog>);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(screen.getByText("crqShip"));
+    expect(screen.getAllByRole("dialog")).toHaveLength(2);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(screen.getByText("crqShip"));
+    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), { target: { value: "3" } });
+    fireEvent.click(screen.getByText("crqPostShipment"));
+    await waitFor(() => expect(onView).toHaveBeenCalledWith(expect.anything(), "crqShipped"));
+    await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
   });
 
   it("leaves a blank shipping line out of the body", async () => {

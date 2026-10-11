@@ -21,7 +21,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
-import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
+import { Dialog, DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -129,6 +129,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     }
   };
   const emit = (res: unknown, message: string) => {
+    setPanel(null); // a posting dialog stacked on the requisition closes once the post lands
     showToast.success(message);
     onView(unwrap<CommonRequisitionView>(res), message);
   };
@@ -206,9 +207,9 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
       )}
       {draft.purpose === "STORE" && (
         <>
-          <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")}
+          <Button size="sm" variant="outline" onClick={() => setPanel("ship")}
             disabled={busy || !actions.includes("ship")}>{t("crqShip")}</Button>
-          <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")}
+          <Button size="sm" variant="outline" onClick={() => setPanel("receive")}
             disabled={busy || !actions.includes("receive")}>{t("crqReceive")}</Button>
         </>
       )}
@@ -245,7 +246,9 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
             view; drafting controls live in the dialog footer and later
             workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
-        {panel === "ship" && actions.includes("ship") && (
+        {/* Rishi, 11 Oct: Ship and Receive open in their own dialog stacked on the requisition. */}
+        <Dialog open={panel === "ship" && actions.includes("ship")} onClose={() => setPanel(null)} title={t("crqShip")}
+          footer={<Button size="sm" onClick={ship} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
             {shipLines.map((l) => {
@@ -258,11 +261,11 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
                 </Field>
               );
             })}
-            <Button size="sm" onClick={ship} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>
           </div>
-        )}
+        </Dialog>
 
-        {panel === "receive" && actions.includes("receive") && (
+        <Dialog open={panel === "receive" && actions.includes("receive")} onClose={() => setPanel(null)} title={t("crqReceive")}
+          footer={<Button size="sm" onClick={receive} disabled={busy || !recvValid}>{t("crqPostReceipt")}</Button>}>
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
             <Field className="w-48" label={t("crqShipment")} htmlFor="crq-shipment">
@@ -281,9 +284,8 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
                 </Field>
               );
             })}
-            <Button size="sm" onClick={receive} disabled={busy || !recvValid}>{t("crqPostReceipt")}</Button>
           </div>
-        )}
+        </Dialog>
       </div>
       {(actions.includes("save") || actions.includes("submit")) && (
         <DialogFooterActions>

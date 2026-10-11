@@ -21,7 +21,7 @@ import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
-import { DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
+import { Dialog, DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "./feed-format";
@@ -171,16 +171,17 @@ export function FeedRequisitionDetail({
     receipt: { enabled: false, reason: t("rqActionUnavailable") },
   };
   const releaseComplete = view.document_status === "RELEASED" || view.document_status === "RECEIVED" || actions.release.reason?.toLowerCase().includes("already released");
-  const workflowBlocker = releaseComplete
+  // A finished step with a next action is a success/info message; only a blocked step is a warning.
+  const workflowNotice: { variant: "success" | "warning"; text: string } | null = releaseComplete
     ? (!actions.shipment.enabled && actions.shipment.reason
-      ? `Release completed. Transfer Shipment is unavailable: ${actions.shipment.reason}`
-      : "Release completed. Post the Transfer Shipment to continue.")
+      ? { variant: "warning", text: `Release completed. Transfer Shipment is unavailable: ${actions.shipment.reason}` }
+      : { variant: "success", text: "Release completed. Post the Transfer Shipment to continue." })
     : !actions.release.enabled && actions.release.reason
-      ? `Release is unavailable: ${actions.release.reason}`
+      ? { variant: "warning", text: `Release is unavailable: ${actions.release.reason}` }
     : !actions.shipment.enabled && actions.shipment.reason
-      ? `Transfer Shipment is unavailable: ${actions.shipment.reason}`
+      ? { variant: "warning", text: `Transfer Shipment is unavailable: ${actions.shipment.reason}` }
       : !actions.receipt.enabled && actions.receipt.reason
-        ? `Transfer Receipt is unavailable: ${actions.receipt.reason}`
+        ? { variant: "warning", text: `Transfer Receipt is unavailable: ${actions.receipt.reason}` }
         : null;
   const needsBinDietAssignment = !actions.release.enabled && Boolean(actions.release.reason?.includes("mill BIN assignment"));
   const transfers = view.transfers ?? [];
@@ -251,6 +252,7 @@ export function FeedRequisitionDetail({
       transfer_id: transferId, posting_date: postingDate, lines: shipBody,
     }));
     setShipQty({});
+    setPanel(null);
     showToast.success(tRef.current("crqShipped"));
     onView(result);
   });
@@ -259,6 +261,7 @@ export function FeedRequisitionDetail({
       transfer_id: transferId, shipment_id: shipmentId, posting_date: postingDate, lines: receiveBody,
     }));
     resetReceiptInputs();
+    setPanel(null);
     setLastReceipt(result?.receipt ?? null);
     showToast.success(result?.receipt?.receipt_no
       ? tRef.current("w2tReceiptPosted", { receipt: result.receipt.receipt_no })
@@ -278,11 +281,11 @@ export function FeedRequisitionDetail({
       <Button size="sm" onClick={release} disabled={busy || !actions.release.enabled} title={actions.release.reason ?? undefined}>
         {t("crqRelease")}
       </Button>
-      <Button size="sm" variant="outline" onClick={() => setPanel(panel === "ship" ? null : "ship")}
+      <Button size="sm" variant="outline" onClick={() => setPanel("ship")}
         disabled={busy || !actions.shipment.enabled} title={actions.shipment.reason ?? undefined}>
         {t("crqShip")}
       </Button>
-      <Button size="sm" variant="outline" onClick={() => setPanel(panel === "receive" ? null : "receive")}
+      <Button size="sm" variant="outline" onClick={() => setPanel("receive")}
         disabled={busy || !actions.receipt.enabled} title={actions.receipt.reason ?? undefined}>
         {t("crqReceive")}
       </Button>
@@ -314,7 +317,11 @@ export function FeedRequisitionDetail({
         </div>
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
-      {workflowBlocker && <InlineAlert>{workflowBlocker}{needsBinDietAssignment && <> <a className="font-medium underline" href="/master-data/bin-diet-assignment">Open BIN Diet Assignments</a></>}</InlineAlert>}
+      {workflowNotice && (
+        <div className="mb-4 shrink-0" data-testid="feed-workflow-notice">
+          <InlineAlert variant={workflowNotice.variant}>{workflowNotice.text}{needsBinDietAssignment && <> <a className="font-medium underline" href="/master-data/bin-diet-assignment">Open BIN Diet Assignments</a></>}</InlineAlert>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">
         <FeedRequisitionDocument
           view={view}
@@ -330,8 +337,10 @@ export function FeedRequisitionDetail({
           onPriorityChange={setPriority}
         />
       </div>
-      {panel === "ship" && actions.shipment.enabled && (
-        <div className="flex shrink-0 flex-wrap items-end gap-3 pt-3">
+      {/* Rishi, 11 Oct: Transfer Shipment opens in its own dialog stacked on the requisition. */}
+      <Dialog open={panel === "ship" && actions.shipment.enabled} onClose={() => setPanel(null)} title={t("crqShip")}
+        footer={<Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
+        <div className="flex flex-wrap items-end gap-3">
           {dateField}
           {transferField}
           {shipLines.map((line, index) => {
@@ -343,11 +352,11 @@ export function FeedRequisitionDetail({
               </Field>
             );
           })}
-          <Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>
         </div>
-      )}
-      {panel === "receive" && actions.receipt.enabled && (
-        <div className="flex shrink-0 flex-wrap items-end gap-3 pt-3">
+      </Dialog>
+      <Dialog open={panel === "receive" && actions.receipt.enabled} onClose={() => setPanel(null)} title={t("crqReceive")}
+        footer={<Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>}>
+        <div className="flex flex-wrap items-end gap-3">
           {dateField}
           {transferField}
           <Field className="w-48" label={t("crqShipment")} htmlFor="feed-shipment">
@@ -369,7 +378,6 @@ export function FeedRequisitionDetail({
               {t("w2tOpenShipment", { no: chosenShipment.shipment_no })}
             </a>
           )}
-          <Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>
           {receiptRows.length > 0 && (
             <div className="w-full overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs" aria-label={t("w2tReceiptLines")}>
@@ -450,7 +458,7 @@ export function FeedRequisitionDetail({
             </div>
           )}
         </div>
-      )}
+      </Dialog>
       {lastReceipt && (
         <div className="shrink-0 pt-3 text-xs" role="status" aria-label={t("w2tLastReceipt")} style={{ color: "var(--text-primary)" }}>
           <span className="font-semibold">{t("w2tReceiptPosted", { receipt: lastReceipt.receipt_no })}</span>{" "}
