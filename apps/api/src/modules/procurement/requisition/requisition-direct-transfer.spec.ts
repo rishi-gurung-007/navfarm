@@ -156,13 +156,11 @@ describe('WP1c — a direct-transfer requisition ships and receives in one post'
   };
   const VIEW = { ...RELEASED_ROW, lines: [lineRow()], shipments: [] };
 
-  function shipSetup(over: { fromDepartmentId?: string | null; userDepartmentId?: string | null } = {}) {
+  function shipSetup() {
     const { db, selectResults } = makeDb();
     selectResults.push(
       [RELEASED_ROW],                                                              // releasedStore's lock
       [{ line_id: 'tl-1', requisition_line_id: 'line-1' }],                        // releasedStore's transfer lines
-      [{ location_id: 'loc-store', department_id: over.fromDepartmentId ?? 'cc-1' }], // the From location's dimension
-      [{ user_id: 'u1', department_id: over.userDepartmentId ?? 'cc-1' }],         // the caller's department
       [VIEW],                                                                       // findOne read-back
       [lineRow()],
       [],
@@ -191,10 +189,11 @@ describe('WP1c — a direct-transfer requisition ships and receives in one post'
     expect(stockTransfers.postShipment).not.toHaveBeenCalled();
   });
 
-  it('still enforces the From department check on the direct post (no admin bypass)', async () => {
-    const { service, stockTransfers } = shipSetup({ fromDepartmentId: 'cc-store', userDepartmentId: 'cc-other' });
-    await expect(service.ship('req-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 10 }] } as any, TENANT, { userId: 'u1' }))
-      .rejects.toThrow(ForbiddenException);
-    expect(stockTransfers.postDirectTransfer).not.toHaveBeenCalled();
+  it('has no department check on the direct post (Rishi, 11 Oct): the right alone is enough', async () => {
+    const { service, stockTransfers } = shipSetup();
+    const assertDept = jest.spyOn(service as any, 'assertPostingDepartmentFor');
+    await service.ship('req-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 10 }] } as any, TENANT, { userId: 'u1' });
+    expect(assertDept).not.toHaveBeenCalledWith(expect.anything(), TENANT, 'FROM', expect.anything(), expect.anything());
+    expect(stockTransfers.postDirectTransfer).toHaveBeenCalledTimes(1);
   });
 });

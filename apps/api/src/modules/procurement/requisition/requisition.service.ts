@@ -1111,15 +1111,16 @@ export class RequisitionService {
 
   async ship(requisitionId: string, dto: RequisitionShipmentDto, tenantId: string, userPayload?: { userId?: string; userType?: string; email?: string }) {
     const { row, transferId, transferLines } = await this.releasedStore(requisitionId, tenantId);
-    await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
     // WP1c (Rishi's 4 Oct list): "If Direct Transfer = True: Shipment +
     // Receipt posted together." The one-step post is the transfer service's
-    // own postDirectTransfer — not a second writer — and it still goes through
-    // the same department check above.
+    // own postDirectTransfer, not a second writer. Rishi, 11 Oct: Direct
+    // Transfer has NO department check; the Direct Transfer right (checked
+    // when the flag is set) is enough. A normal shipment keeps the From check.
     if (row.direct_transfer) {
       await this.stockTransfers.postDirectTransfer(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
       return this.findOne(requisitionId, tenantId, { caller: userPayload });
     }
+    await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
     await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
     return this.findOne(requisitionId, tenantId, { caller: userPayload });
   }
