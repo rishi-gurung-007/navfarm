@@ -122,4 +122,47 @@ describe('GlPostingService', () => {
     expect(query.params).toContain('nob-1');
   });
 
+
+  // Each farm has its own cost centre (decisions, 11 Oct).
+  describe('farm cost centre on inventory journals', () => {
+    const locLookup = (row: any) => ({
+      from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []) }) }),
+    });
+    const mapping = () => mappingLookup([
+      { item_category_id: null, nob_id: null, lob_id: null, valuation_method: null, debit_gl_account_id: 'gl-dr', credit_gl_account_id: 'gl-cr' },
+    ]);
+    const postWith = async (locations: any[]) => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      for (const l of locations) mockDbSelect.mockReturnValueOnce(locLookup(l));
+      await service.postInventoryLedgerEntry({ ...baseLedgerEntry, location_id: 'silo-1' } as any);
+      return mockJournalService.createAndPostSystemJournal.mock.calls[0][0].lines;
+    };
+
+    it("puts the owning farm's cost centre on both lines, walking up from a silo", async () => {
+      const lines = await postWith([
+        { location_type: 'SILO', parent_location_id: 'farm-1', farm_id: 'farm-1', cost_center_id: null },
+        { location_type: 'FARM', parent_location_id: null, farm_id: null, cost_center_id: 'cc-farm' },
+      ]);
+      expect(lines.map((l: any) => l.costCenterId)).toEqual(['cc-farm', 'cc-farm']);
+    });
+
+    it('uses the mill for a bin under a mill', async () => {
+      const lines = await postWith([
+        { location_type: 'BIN', parent_location_id: 'mill-1', farm_id: null, cost_center_id: null },
+        { location_type: 'MILL', parent_location_id: null, farm_id: null, cost_center_id: 'cc-mill' },
+      ]);
+      expect(lines[0].costCenterId).toBe('cc-mill');
+    });
+
+    it('leaves the cost centre undefined (NULL) when the farm has none, and still posts', async () => {
+      const lines = await postWith([{ location_type: 'FARM', parent_location_id: null, farm_id: null, cost_center_id: null }]);
+      expect(lines.map((l: any) => l.costCenterId)).toEqual([undefined, undefined]);
+    });
+
+    it('does not look anything up for a ledger row with no location', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      await service.postInventoryLedgerEntry(baseLedgerEntry as any);
+      expect(mockDbSelect).toHaveBeenCalledTimes(2);
+    });
+  });
 });

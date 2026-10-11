@@ -1289,6 +1289,10 @@ export const locationMaster = mysqlTable('location_master', {
   // A Store requisition's sender department is read from here, never compared
   // as free text. Nullable and additive; migration is Task 12.
   department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // The farm's (or mill's) own Cost Centre — decisions, 11 Oct: every inventory
+  // journal line posted against a location under this FARM/MILL carries it.
+  // Distinct from department_id (a DEPARTMENT-type identity). Nullable.
+  cost_center_id: varchar('cost_center_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
   created_by: varchar('created_by', { length: 36 }),

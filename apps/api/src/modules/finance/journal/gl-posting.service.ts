@@ -107,6 +107,34 @@ export class GlPostingService {
     });
   }
 
+  /**
+   * The Cost Centre of the farm (or mill) a ledger location sits under —
+   * decisions, 11 Oct. Walks parent_location_id up to the first FARM or MILL
+   * (a BIN sits under its MILL; sheds, silos and pens under their FARM) and
+   * returns its cost_center_id. This is the one place inventory journals get
+   * their cost centre. No location, no FARM/MILL ancestor, or no cost centre
+   * set all give undefined: the line stays NULL and posting never fails.
+   */
+  async resolveFarmCostCentre(locationId: string | null | undefined): Promise<string | undefined> {
+    let currentId: string | null | undefined = locationId;
+    for (let hop = 0; currentId && hop < 8; hop++) {
+      const [loc] = await this.db
+        .select({
+          location_type: schema.locationMaster.location_type,
+          parent_location_id: schema.locationMaster.parent_location_id,
+          farm_id: schema.locationMaster.farm_id,
+          cost_center_id: schema.locationMaster.cost_center_id,
+        })
+        .from(schema.locationMaster)
+        .where(eq(schema.locationMaster.location_id, currentId))
+        .limit(1);
+      if (!loc) return undefined;
+      if (loc.location_type === 'FARM' || loc.location_type === 'MILL') return loc.cost_center_id || undefined;
+      currentId = loc.parent_location_id ?? loc.farm_id;
+    }
+    return undefined;
+  }
+
   async postInventoryLedgerEntry(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
     const [item] = ledgerEntry.item_id
       ? await this.db
@@ -130,6 +158,7 @@ export class GlPostingService {
     );
 
     const amount = Math.abs(Number(ledgerEntry.amount ?? 0));
+    const costCenterId = await this.resolveFarmCostCentre(ledgerEntry.location_id ?? ledgerEntry.warehouse_id);
 
     return this.journalService.createAndPostSystemJournal({
       tenantId: ledgerEntry.tenant_id,
@@ -146,6 +175,7 @@ export class GlPostingService {
           creditAmount: 0,
           nobId: ledgerEntry.nob_id || undefined,
           lobId: ledgerEntry.lob_id || undefined,
+          costCenterId,
         },
         {
           glAccountId: mapping.credit_gl_account_id!,
@@ -153,6 +183,7 @@ export class GlPostingService {
           creditAmount: amount,
           nobId: ledgerEntry.nob_id || undefined,
           lobId: ledgerEntry.lob_id || undefined,
+          costCenterId,
         },
       ],
       userId,

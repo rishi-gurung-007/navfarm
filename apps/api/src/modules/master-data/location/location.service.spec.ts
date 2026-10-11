@@ -1001,6 +1001,59 @@ describe('LocationService canonical hierarchy', () => {
       expect(txUpdate).not.toHaveBeenCalled();
     });
   });
+
+  // Each farm has its own cost centre (decisions, 11 Oct).
+  describe('farm cost centre (Cost Center Master)', () => {
+    const ccRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-farm', tenant_id: 'tenant-1', company_id: 'comp-1',
+      is_active: true, deleted_at: null, ...over,
+    });
+    const createFarm = () => service.create({
+      company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+      location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+      cost_center_id: '11111111-1111-4111-8111-111111111111',
+    }, 'tenant-1', { userId: 'user-1' });
+
+    it('refuses a cost centre of another company', async () => {
+      selectResults.push([company], [ccRow({ company_id: 'comp-2' })]);
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses an inactive cost centre', async () => {
+      selectResults.push([company], [ccRow({ is_active: false })]);
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+    });
+
+    it('refuses a cost centre on a location that is not a FARM or MILL', async () => {
+      selectResults.push([company]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Shed', location_type: 'SHED', max_capacity: 1, capacity_uom: 'HEAD',
+        cost_center_id: '11111111-1111-4111-8111-111111111111',
+      } as any, 'tenant-1')).rejects.toThrow('Cost Centre can be set on a FARM or MILL only.');
+    });
+
+    it('stores a valid cost centre on the created farm', async () => {
+      selectResults.push(
+        [company], [ccRow()], [farmType], [uom], [series],
+        [{ location_id: 'loc-1', location_code: 'FARM-001', location_type: 'FARM', location_level: 1, cost_center_id: 'cc-farm' }],
+      );
+      await createFarm();
+      const insertedRow = (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+      expect(insertedRow.cost_center_id).toBe('11111111-1111-4111-8111-111111111111');
+    });
+
+    it('refuses an update whose cost centre belongs to another company', async () => {
+      selectResults.push(
+        [{ ...farmParent(), parent_location_id: null, storage_type: null }],
+        [farmType],
+        [ccRow({ company_id: 'comp-2' })],
+      );
+      await expect(service.update('farm-1', { cost_center_id: '11111111-1111-4111-8111-111111111111' }, 'tenant-1'))
+        .rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('hierarchical location codes', () => {

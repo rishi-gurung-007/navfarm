@@ -4628,6 +4628,9 @@ export const translations = {
     alrtNoFarmCode: "Farm not recorded",
     crqNoLinkedTransfer: "No transfer order yet",
     crqNoLinkedPo: "No PO linked yet",
+    // CC (11 Oct)
+    locCostCentre: "Cost Centre",
+    locCostCentreHelp: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

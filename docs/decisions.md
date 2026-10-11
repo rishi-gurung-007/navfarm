@@ -3421,3 +3421,9 @@ mills that do have something to count are unchanged.
 Also noted, no change: the stock-adjustment journal does not carry a cost centre. The journal lines support one, but
 the posting path (`postInventoryLedgerEntry`) never passes it, and a farm has no cost centre of its own (only a shared
 DEPARTMENT cost centre in `location_master.department_id`). Needs a ruling on which cost centre is the "Farm Cost Centre".
+
+## 2026-10-11 — Each farm has its own cost centre
+
+Rishi, 11 Oct, on Silo Balance row 47 ("Farm Cost Centre"): **give each farm a cost centre.** The farm record in
+Location Master gets a Cost Centre field, chosen from the Cost Centre Master. Every inventory journal line for that
+farm carries it, including stock-take adjustments. Mill journals carry the mill's cost centre, if one is set.

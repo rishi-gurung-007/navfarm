@@ -146,6 +146,30 @@ export class LocationService {
     private readonly siloFeedService: SiloFeedService,
   ) {}
 
+  /** The Cost Centre field lives on a FARM or MILL only (decisions, 11 Oct). */
+  private assertCostCentreOwnerType(locationType: string | null | undefined) {
+    if (locationType !== 'FARM' && locationType !== 'MILL') {
+      throw new BadRequestException('Cost Centre can be set on a FARM or MILL only.');
+    }
+  }
+
+  /** An active, non-deleted Cost Center Master row of exactly this company. */
+  private async assertCostCentreOfCompany(costCenterId: string, tenantId: string, companyId: string | null | undefined) {
+    const [row] = await this.db
+      .select({
+        tenant_id: schema.costCenterMaster.tenant_id,
+        company_id: schema.costCenterMaster.company_id,
+        is_active: schema.costCenterMaster.is_active,
+        deleted_at: schema.costCenterMaster.deleted_at,
+      })
+      .from(schema.costCenterMaster)
+      .where(eq(schema.costCenterMaster.cost_center_id, costCenterId))
+      .limit(1);
+    if (!row || row.tenant_id !== tenantId || row.is_active === false || row.deleted_at || !companyId || row.company_id !== companyId) {
+      throw new BadRequestException('Cost Centre must be an active cost center of this company.');
+    }
+  }
+
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) {
@@ -375,6 +399,7 @@ export class LocationService {
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
       department_id: dto.department_id || null,
+      cost_center_id: dto.cost_center_id || null,
       feed_in_bags: null,
       // The feed-era farm columns (refill buffer, lead time, bulk multiple, bag
       // size, truck target, production weekday) are no longer written here
@@ -944,6 +969,10 @@ export class LocationService {
         label: 'Department',
       });
     }
+    if (dto.cost_center_id) {
+      this.assertCostCentreOwnerType(dto.location_type);
+      await this.assertCostCentreOfCompany(dto.cost_center_id, tenantId, dto.company_id);
+    }
 
     const companyId = dto.company_id;
     const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
@@ -1450,6 +1479,10 @@ export class LocationService {
         label: 'Department',
       });
     }
+    if (dto.cost_center_id) {
+      this.assertCostCentreOwnerType(effectiveLocationType);
+      await this.assertCostCentreOfCompany(dto.cost_center_id, tenantId, effectiveCompanyId);
+    }
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
@@ -1545,6 +1578,7 @@ export class LocationService {
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
     if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
+    if (dto.cost_center_id !== undefined) updates.cost_center_id = dto.cost_center_id || null;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
