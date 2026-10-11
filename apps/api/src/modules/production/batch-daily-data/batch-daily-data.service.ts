@@ -1016,40 +1016,45 @@ export class BatchDailyDataService {
   private async reconcileEmptyBags(group: PendingConsumption[], consumedKg: number): Promise<string | null> {
     const counted = group.filter((p) => p.dto.empty_bags != null);
     if (counted.length === 0) return null;
-    const emptyBags = counted.reduce((n, p) => n + Number(p.dto.empty_bags), 0);
-    const first = group[0];
-    const { header, tenantId, batchId, line } = first;
-    const rows = await this.db
-      .select({ farm_id: schema.feedPlanningSetting.farm_id, bag_size_kg: schema.feedPlanningSetting.bag_size_kg, bag_tolerance_pct: schema.feedPlanningSetting.bag_tolerance_pct })
-      .from(schema.feedPlanningSetting)
-      .where(and(
-        eq(schema.feedPlanningSetting.tenant_id, tenantId),
-        eq(schema.feedPlanningSetting.company_id, header.company_id),
-        eq(schema.feedPlanningSetting.is_active, true),
-      ));
-    const company = rows.find((r) => r.farm_id === null);
-    const farm = first.farmId ? rows.find((r) => r.farm_id === first.farmId) : undefined;
-    const bagSizeKg = Number(farm?.bag_size_kg ?? company?.bag_size_kg ?? 50);
-    const tolerance = company?.bag_tolerance_pct;
-    const warning = bagReconciliationWarning({ emptyBags, bagSizeKg, consumedKg, tolerancePct: tolerance == null ? null : Number(tolerance) });
-    if (!warning) return null;
-    await this.db.insert(schema.notificationAlertLog).values({
-      alert_id: randomUUID(),
-      tenant_id: tenantId,
-      company_id: header.company_id,
-      lob_id: header.lob_id,
-      batch_id: batchId,
-      line_id: line.line_id,
-      alert_type: 'BAG_RECONCILIATION',
-      severity: 'WARNING',
-      title: 'Empty Bags vs Feed Consumed',
-      message: warning,
-      activity_name: line.activity_name,
-      kpi_mode: 'VALUE',
-      expected_value: String(emptyBags * bagSizeKg),
-      actual_value: String(consumedKg),
-    });
-    return warning;
+    // Flag only, never block: a failure reading the settings or logging the alert must not fail the posting.
+    try {
+      const emptyBags = counted.reduce((n, p) => n + Number(p.dto.empty_bags), 0);
+      const first = group[0];
+      const { header, tenantId, batchId, line } = first;
+      const rows = await this.db
+        .select({ farm_id: schema.feedPlanningSetting.farm_id, bag_size_kg: schema.feedPlanningSetting.bag_size_kg, bag_tolerance_pct: schema.feedPlanningSetting.bag_tolerance_pct })
+        .from(schema.feedPlanningSetting)
+        .where(and(
+          eq(schema.feedPlanningSetting.tenant_id, tenantId),
+          eq(schema.feedPlanningSetting.company_id, header.company_id),
+          eq(schema.feedPlanningSetting.is_active, true),
+        ));
+      const company = rows.find((r) => r.farm_id === null);
+      const farm = first.farmId ? rows.find((r) => r.farm_id === first.farmId) : undefined;
+      const bagSizeKg = Number(farm?.bag_size_kg ?? company?.bag_size_kg ?? 50);
+      const tolerance = company?.bag_tolerance_pct;
+      const warning = bagReconciliationWarning({ emptyBags, bagSizeKg, consumedKg, tolerancePct: tolerance == null ? null : Number(tolerance) });
+      if (!warning) return null;
+      await this.db.insert(schema.notificationAlertLog).values({
+        alert_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: header.company_id,
+        lob_id: header.lob_id,
+        batch_id: batchId,
+        line_id: line.line_id,
+        alert_type: 'BAG_RECONCILIATION',
+        severity: 'WARNING',
+        title: 'Empty Bags vs Feed Consumed',
+        message: warning,
+        activity_name: line.activity_name,
+        kpi_mode: 'VALUE',
+        expected_value: String(emptyBags * bagSizeKg),
+        actual_value: String(consumedKg),
+      });
+      return warning;
+    } catch {
+      return null;
+    }
   }
 
   /**

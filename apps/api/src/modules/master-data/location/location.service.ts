@@ -1519,11 +1519,16 @@ export class LocationService {
       const wasActive = location.status === 'ACTIVE' && location.is_active !== false;
       const willBeActive = (dto.status !== undefined ? dto.status : location.status) === 'ACTIVE'
         && (dto.is_active !== undefined ? dto.is_active : location.is_active) !== false;
-      if (willBeActive && (!wasActive || dto.attached_sheds !== undefined)) {
-        const shedCount = dto.attached_sheds !== undefined
-          ? new Set(dto.attached_sheds).size
-          : (await this.attachedShedIds(id, tenantId)).length;
-        this.assertSiloHasShed(shedCount);
+      // Block (a) a silo becoming ACTIVE with no shed, or (b) an ACTIVE silo that has sheds being saved with none.
+      // An already-ACTIVE silo that never had a shed (older data) stays editable for unrelated fields, even when
+      // the form sends attached_sheds: [].
+      if (willBeActive) {
+        const requested = dto.attached_sheds !== undefined ? new Set(dto.attached_sheds).size : null;
+        if (!wasActive) {
+          this.assertSiloHasShed(requested ?? (await this.attachedShedIds(id, tenantId)).length);
+        } else if (requested === 0 && (await this.attachedShedIds(id, tenantId)).length > 0) {
+          this.assertSiloHasShed(0);
+        }
       }
     }
 

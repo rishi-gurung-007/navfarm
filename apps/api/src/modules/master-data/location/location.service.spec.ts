@@ -795,6 +795,36 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.attached_sheds).toEqual([]);
   });
 
+  describe('checkpoint 1 on an ACTIVE silo (edit)', () => {
+    const activeSilo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00', status: 'ACTIVE', is_active: true,
+      storage_type: 'SILO', silo_capacity_kg: '40000.00', silo_capacity_uom: 'TON', silo_reorder_days: 7,
+    };
+
+    it('keeps an ACTIVE silo with no shed editable for unrelated fields when the form sends attached_sheds: []', async () => {
+      selectResults.push(
+        [activeSilo], [siloType], [farmParent()],
+        [{ parent_location_id: null }],
+        [], // attachedShedIds: it never had a shed
+        [activeSilo], [],
+      );
+      await expect(service.update('silo-1', { low_level_kg: 250, attached_sheds: [] }, 'tenant-1', { userId: 'user-1' })).resolves.toBeDefined();
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('still refuses to empty an ACTIVE silo that has sheds', async () => {
+      selectResults.push(
+        [activeSilo], [siloType], [farmParent()],
+        [{ parent_location_id: null }],
+        [{ shed_id: 'shed-1' }], // attachedShedIds: it feeds a shed today
+      );
+      await expect(service.update('silo-1', { attached_sheds: [] }, 'tenant-1', { userId: 'user-1' })).rejects.toThrow('cannot be ACTIVE');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+  });
+
   it('keeps location type and generated identity immutable', async () => {
     selectResults.push([{
       location_id: 'loc-1', company_id: 'comp-1', location_code: 'FARM-001',

@@ -1129,5 +1129,16 @@ describe('BatchDailyDataService', () => {
       await expect((service as any).reconcileEmptyBags(group(undefined), 5000)).resolves.toBeNull();
       expect(alertValues).not.toHaveBeenCalled();
     });
+
+    it('returns null, never throws, when the settings read fails (flag only, never block)', async () => {
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockRejectedValue(new Error('db down')) }) });
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
+    });
+
+    it('returns null, never throws, when the alert log insert fails', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '1.00' }]);
+      alertValues.mockRejectedValueOnce(new Error('insert failed'));
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
+    });
   });
 });

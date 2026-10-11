@@ -728,7 +728,7 @@ export class FeedForecastService {
   private async maxSpanDays(companyId: string, farmId: string): Promise<number> {
     const resolved = (await this.feedSettings.resolveForFeedPlanning(companyId, farmId)) as { maxForecastDays?: number | null };
     const configured = resolved?.maxForecastDays;
-    return typeof configured === 'number' && configured >= 1 ? configured : MAX_SPAN_DAYS;
+    return typeof configured === 'number' && configured >= 1 ? Math.min(configured, MAX_SPAN_DAYS) : MAX_SPAN_DAYS;
   }
 
   /**

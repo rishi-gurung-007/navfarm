@@ -150,6 +150,12 @@ describe('FeedForecastService', () => {
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-10-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
   });
 
+  it('never lets a configured Maximum Forecast Days exceed the 45-day horizon', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, maxForecastDays: 90 } as any);
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-10' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow('Choose a range of at most 45 days.');
+  });
+
   it('rejects an impossible calendar day', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-02-27', to: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
