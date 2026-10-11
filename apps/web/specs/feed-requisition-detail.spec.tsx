@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Dialog } from "../src/components/ui/dialog";
 import { FeedRequisitionDetail } from "../src/components/console/inventory/feed-requisition-detail";
 import type { RequisitionView } from "../src/components/console/inventory/feed-requisition-document";
@@ -110,6 +110,17 @@ describe("FeedRequisitionDetail draft document", () => {
     }));
     expect(onView).toHaveBeenCalledWith(draftView);
     expect(showToast.success).toHaveBeenCalledWith("rqSaved");
+  });
+
+  it("Submit sends an escalated priority with the submit call, not as a separate PUT", async () => {
+    post.mockResolvedValue({ data: draftView });
+    render(<FeedRequisitionDetail view={{ ...draftView, submission_deadline: "2099-01-01", priority: "WARNING", priority_options: ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING"] }} onView={jest.fn()} onBack={jest.fn()} />);
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.change(screen.getByRole("combobox", { name: "rqdPriority" }), { target: { value: "CRITICAL" } });
+    fireEvent.click(screen.getByRole("button", { name: "rqSubmit" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/feed-requisition/req-1/submit", { remarks: "", lines: [], priority: "CRITICAL" }));
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("renders no Save or Submit buttons once approved", () => {

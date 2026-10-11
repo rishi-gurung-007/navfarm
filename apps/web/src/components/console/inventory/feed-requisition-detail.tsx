@@ -158,8 +158,7 @@ export function FeedRequisitionDetail({
 
   const submit = () =>
     run(async () => {
-      if (priorityPatch().priority) await api.put(`/feed-requisition/${view.requisition_id}`, priorityPatch());
-      const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/submit`, { remarks, lines: lineEdits() }));
+      const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/submit`, { remarks, lines: lineEdits(), ...priorityPatch() }));
       setEdits({});
       setRemarks(result.remarks ?? "");
       showToast.success(tRef.current("rqSubmitted"));
