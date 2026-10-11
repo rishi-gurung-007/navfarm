@@ -375,12 +375,13 @@ export class FeedAlertService {
     return rows.map((r) => r.code);
   }
 
-  /** Every rule of the company (or tenant-wide) that could apply to this farm — inactive ones too, so their open alerts resolve as RULE_OFF. */
+  /** Every rule of the company (or tenant-wide) that could apply to this farm — inactive ones too, but never a soft-deleted one: its open alerts resolve as RULE_OFF either way. */
   private async loadRules(companyId: string, farmId: string, tenantId: string): Promise<AlertRuleFact[]> {
     const rows = await this.db.select().from(schema.alertRule).where(and(
       eq(schema.alertRule.tenant_id, tenantId),
       or(eq(schema.alertRule.company_id, companyId), isNull(schema.alertRule.company_id)),
       or(eq(schema.alertRule.farm_id, farmId), isNull(schema.alertRule.farm_id)),
+      isNull(schema.alertRule.deleted_at),
     ));
     return rows.map((r) => ({
       ruleId: r.rule_id,

@@ -56,7 +56,7 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
         then: (ok: any, err: any) => {
           const rows = table === schema.feedPlan
             ? (opts.existingPlan ? [opts.existingPlan] : [])
-            : logs.filter((l) => l.run_key && boundValues(cond).includes(l.run_key));
+            : logs.filter((l) => { const bound = boundValues(cond); return bound.length > 0 && bound.every((b) => Object.values(l).includes(b)); });
           return Promise.resolve(rows).then(ok, err);
         },
       };
@@ -295,5 +295,39 @@ describe('FeedSchedulerService — the Wednesday plan is generated once per farm
     expect(h.logs.find((l) => l.trigger_type === 'PLAN_LOCK')).toEqual(expect.objectContaining({ status: 'FAILED', run_key: null }));
     await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900);
     expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('FeedSchedulerService — plan week claim and back-off', () => {
+  it('does not treat the Feed Plan week claim as stale after 30 minutes, but does after 2 hours with the week still empty', async () => {
+    const h = harness();
+    h.logs.push({ run_id: 'lock', run_key: 'PLAN_WEEK|farm-1|202639', status: 'RUNNING', started_at: '2026-09-23 07:00:00', trigger_type: 'PLAN_LOCK', job_code: 'TENTATIVE_PLAN' });
+    const soon = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', at('2026-09-23T07:45:00Z'));
+    expect(soon[0].summary?.plan?.status).toBe('SKIPPED');
+    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
+    const later = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', at('2026-09-23T09:10:00Z'));
+    expect(later[0].summary?.plan?.status).toBe('GENERATED');
+  });
+
+  it('never reclaims the claim when the week already has a plan, however old', async () => {
+    const h = harness({ existingPlan: { plan_id: 'plan-0', plan_code: 'FP', plan_type: 'TENTATIVE', version: 1, production_date: '2026-09-27' } });
+    h.logs.push({ run_id: 'lock', run_key: 'PLAN_WEEK|farm-1|202639', status: 'RUNNING', started_at: '2026-09-23 01:00:00', trigger_type: 'PLAN_LOCK', job_code: 'TENTATIVE_PLAN' });
+    const r = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900 + 6 * 3_600_000);
+    expect(r[0].summary?.plan?.status).toBe('EXISTS');
+    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
+  });
+
+  it('stops retrying a job after 3 failed runs in one period, warns once, and tries again next period', async () => {
+    const h = harness();
+    const warn = (h.service as any).logger.warn as jest.Mock;
+    h.alerts.evaluateFarm.mockRejectedValue(new Error('forecast down'));
+    const diet = async (ms: number) => (await h.service.runDue('t1', ms)).find((r) => r.job === 'DIET_CHANGE')!.status;
+    expect([await diet(THU_1000), await diet(THU_1000 + 300_000), await diet(THU_1000 + 600_000)]).toEqual(['FAILED', 'FAILED', 'FAILED']);
+    expect(await diet(THU_1000 + 900_000)).toBe('BACKED_OFF');
+    expect(await diet(THU_1000 + 1_200_000)).toBe('BACKED_OFF');
+    expect(h.alerts.evaluateFarm.mock.calls.length).toBe(6); // 3 DIET_CHANGE + 3 ESCALATION (a different job and period) failures, no 4th DIET_CHANGE
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('DIET_CHANGE failed 3 times'))).toHaveLength(1);
+    h.alerts.evaluateFarm.mockResolvedValue(h.evaluation());
+    expect(await diet(THU_1000 + 24 * 3_600_000)).toBe('DONE');
   });
 });

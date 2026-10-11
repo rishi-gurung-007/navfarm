@@ -257,3 +257,12 @@ describe('planAlerts — pushed events (brief B)', () => {
     expect(planAlerts(base({ rules: [lowRule], active: [other] })).resolve).toEqual([]);
   });
 });
+
+describe('planAlerts — a switched-off rule (RULE_OFF)', () => {
+  it('resolves the open alerts of an inactive rule of any event type as RULE_OFF, and keeps those of an active one', () => {
+    const offSilo: AlertRuleFact = { ...aboveRule, isActive: false };
+    const open = active({ alertId: 'o1', ruleId: aboveRule.ruleId, eventType: 'FEED_ABOVE', dedupKey: `${aboveRule.ruleId}|s1` });
+    expect(planAlerts(base({ rules: [lowRule, offSilo], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
+  });
+});

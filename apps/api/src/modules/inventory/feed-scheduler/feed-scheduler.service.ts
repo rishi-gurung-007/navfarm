@@ -21,6 +21,10 @@ import { FEED_JOBS, FEED_SCHEDULER_ACTOR, FeedJob, ScheduleSettings, duePeriod, 
 
 /** A RUNNING scheduler row older than this was abandoned (crash, restart) and may be reclaimed. */
 export const STALE_RUN_MS = 30 * 60_000;
+/** The Feed Plan week claim is held while a plan is being made, so it is only abandoned after this (and only if the week still has no plan). */
+export const STALE_PLAN_LOCK_MS = 2 * 60 * 60_000;
+/** A job that failed this many times in one period stops being retried until the next period. */
+export const MAX_FAILED_RUNS = 3;
 
 type Settings = ScheduleSettings & Awaited<ReturnType<FeedSettingsService['resolveForFeedPlanning']>>;
 
@@ -57,7 +61,7 @@ export interface FarmRunResult {
   companyId: string;
   job: FeedJob;
   period: string;
-  status: 'DONE' | 'FAILED' | 'ALREADY_RAN';
+  status: 'DONE' | 'FAILED' | 'ALREADY_RAN' | 'BACKED_OFF';
   summary?: JobSummary;
   error?: string;
 }
@@ -201,6 +205,16 @@ export class FeedSchedulerService {
     run: { trigger: 'SCHEDULED' | 'MANUAL'; period: string; runKey: string | null; actorId?: string },
   ): Promise<FarmRunResult> {
     const base = { farmId: farm.farmId, farmCode: farm.code, companyId: farm.companyId, job, period: run.period };
+    if (run.trigger === 'SCHEDULED') {
+      const F = schema.feedScheduleLog;
+      const failed = await this.db.select({ run_id: F.run_id }).from(F).where(and(
+        eq(F.farm_id, farm.farmId), eq(F.job_code, job), eq(F.period_key, run.period), eq(F.trigger_type, 'SCHEDULED'), eq(F.status, 'FAILED'),
+      ));
+      if (failed.length >= MAX_FAILED_RUNS) {
+        this.warnOnce(`backoff:${job}|${farm.farmId}|${run.period}`, `Feed scheduler ${job} failed ${failed.length} times for farm ${farm.code} on ${run.period}; not retrying until the next period.`);
+        return { ...base, status: 'BACKED_OFF' };
+      }
+    }
     const runId = await this.claim({
       tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: job,
       trigger_type: run.trigger, period_key: run.period, triggered_by: run.actorId ?? null,
@@ -226,11 +240,11 @@ export class FeedSchedulerService {
   /**
    * Claims feed_schedule_log.run_key (null = a manual run, always granted). Returns the new run_id, or null when
    * another run holds the key. A FAILED holder, or a RUNNING one older than STALE_RUN_MS (a crashed process),
-   * is released and the claim retried once; the unique key still lets only one racing instance win.
+   * is released and the claim retried once (staleMs: the week claim passes a longer one); the unique key still lets only one racing instance win.
    */
   private async claim(
     values: { tenant_id: string; company_id: string; farm_id: string; job_code: string; trigger_type: string; period_key: string; triggered_by: string | null },
-    runKey: string | null, nowMs: number,
+    runKey: string | null, nowMs: number, staleMs: number = STALE_RUN_MS,
   ): Promise<string | null> {
     const attempt = async (): Promise<string | null> => {
       const runId = randomUUID();
@@ -247,7 +261,7 @@ export class FeedSchedulerService {
     const [holder] = await this.db.select({
       run_id: schema.feedScheduleLog.run_id, status: schema.feedScheduleLog.status, started_at: schema.feedScheduleLog.started_at,
     }).from(schema.feedScheduleLog).where(eq(schema.feedScheduleLog.run_key, runKey)).limit(1);
-    const stale = holder?.status === 'RUNNING' && parseUtcTimestamp(holder.started_at) < nowMs - STALE_RUN_MS;
+    const stale = holder?.status === 'RUNNING' && parseUtcTimestamp(holder.started_at) < nowMs - staleMs;
     if (!holder || !(holder.status === 'FAILED' || stale)) return null;
     await this.db.update(schema.feedScheduleLog)
       .set({ status: 'FAILED', run_key: null, finished_at: utcTimestamp(nowMs), error_message: stale ? 'Abandoned while RUNNING; released for a retry.' : undefined })
@@ -311,7 +325,7 @@ export class FeedSchedulerService {
     const lockId = await this.claim({
       tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: 'TENTATIVE_PLAN',
       trigger_type: 'PLAN_LOCK', period_key: planWeek, triggered_by: null,
-    }, lockKey, nowMs);
+    }, lockKey, nowMs, STALE_PLAN_LOCK_MS); // the week was just confirmed to have no plan, so only a very old claim is abandoned
     if (!lockId) {
       return (await existingPlan()) ?? { status: 'SKIPPED', reason: 'Another run is generating this week\'s Feed Plan.', planWeek, productionDate };
     }

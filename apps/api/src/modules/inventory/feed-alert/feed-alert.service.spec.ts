@@ -471,3 +471,15 @@ describe('FeedAlertService.closedPlans — which PLAN_AVAILABLE notices are over
     expect(await (service as any).closedPlans([{ alertId: 'x', eventType: 'FEED_ABOVE', subjectId: 's' } as any], 'farm-1', 't1')).toEqual({});
   });
 });
+
+describe('FeedAlertService.loadRules — soft-deleted rules', () => {
+  it('asks for rules that are not soft-deleted, and keeps an inactive one as isActive false so its alerts resolve RULE_OFF', async () => {
+    const row = { rule_id: 'r1', notification_code: 'X', event_type: 'FEED_ABOVE', threshold_reference: 'SILO_ABOVE', threshold_value: null, priority_level: 'INFO',
+      recipient_roles: ['A'], frequency: 'ONCE', escalation_after_hours: null, escalation_role: null, farm_id: null, is_active: false, deleted_at: null };
+    const { db, wheres } = selectDb(() => [row]);
+    const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, {} as any);
+    const rules = await (service as any).loadRules('co-1', 'farm-1', 't1');
+    expect(rules).toEqual([expect.objectContaining({ ruleId: 'r1', isActive: false })]);
+    expect(render(wheres[0]).sql).toContain('`alert_rule`.`deleted_at` is null');
+  });
+});
