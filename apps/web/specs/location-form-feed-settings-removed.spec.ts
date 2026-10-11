@@ -74,3 +74,10 @@ describe("Requisition r15 — Feed Type lives on the SILO record", () => {
     expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: "SILO" }] });
   });
 });
+
+describe("Department on a location (Rishi's requisition list, 11 Oct)", () => {
+  const field = locationConfig.fields.find((f) => f.key === "department_id")!;
+  it("shows only on the types a Store requisition ships from or receives into", () => {
+    expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: ["FARM", "STORE", "SHED", "SILO"] }] });
+  });
+});
