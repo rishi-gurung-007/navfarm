@@ -494,11 +494,14 @@ export function FeedForecastGrid({
                   aria-label={t("ffBalanceExplainAria", { date: column.label })}
                   onClick={() => balance && setSelectedBalance({ row, column, balance })}
                 >
-                  <span className="block">{fmtKg(value)}</span>
-                  {showIncoming && <>
-                    {balance.plannedIncomingKg > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10px] font-semibold text-[var(--accent)]">+{fmtKg(balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</span>}
-                    {balance.openTransferKg > 0 && <span className="mt-0.5 block whitespace-nowrap text-[10px] font-semibold text-[var(--accent)]">+{fmtKg(balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</span>}
-                  </>}
+                  {/* Rishi, 11 Oct: no second line in the cell. The balance on a
+                      day feed arrives is coloured; clicking it opens the dialog
+                      that itemises the planned feed and expected transfer. */}
+                  <span
+                    data-incoming={showIncoming ? "true" : undefined}
+                    title={showIncoming ? t("ffIncomingCellHint") : undefined}
+                    className={cn("block", showIncoming && "font-semibold text-[var(--accent)]")}
+                  >{fmtKg(value)}</span>
                 </button>
               </td>;
             })}

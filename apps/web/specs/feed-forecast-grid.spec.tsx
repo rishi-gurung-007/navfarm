@@ -231,8 +231,13 @@ describe('FeedForecastGrid — Engine row 70', () => {
       t={t}
     />);
 
-    expect(screen.getByText('+3,000.00 KG ffPlannedShort')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    // 11 Oct: no second line in the cell; the balance is coloured and the
+    // movement is itemised only in the dialog.
+    expect(screen.queryByText('+3,000.00 KG ffPlannedShort')).toBeNull();
+    const cell = screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' });
+    expect(cell.querySelector('[data-incoming="true"]')?.textContent).toBe('2,500.00');
+    fireEvent.click(cell);
+    expect(await screen.findByText('+ 3,000.00 KG ffPlannedShort')).toBeTruthy();
     expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
     expect(await screen.findByText('ffBalanceOpening:{"kg":"1,500.00"}')).toBeTruthy();
     expect(await screen.findByText('ffPlannedIncomingReference:{"references":"REQ-VIL100-2026-00005"}')).toBeTruthy();
