@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 
 /**
  * Monthly Stock Take and Period Close rules (Brief C; workbook "Silo Balance and
@@ -33,7 +33,7 @@ export function assertStockTakePeriod(period: StockTakePeriod | null | undefined
     throw new BadRequestException('The reporting period does not exist. Define it in the Reporting Period Master before taking stock.');
   }
   if (period.period_status === 'CLOSED') {
-    throw new BadRequestException(`Reporting period ${period.period_code} is closed; reopen it before taking stock.`);
+    throw new BadRequestException(`Reporting period ${period.period_code} is closed; stock cannot be taken in it.`);
   }
   return period;
 }
@@ -85,18 +85,4 @@ export function assertPeriodCanClose(
       + (empty.length ? ` Nothing to count (not required): ${empty.map((m) => m.code).join(', ')}.` : ''),
     );
   }
-}
-
-/** Reopen is admin-only and needs a reason. */
-export function reopenPatch(
-  period: StockTakePeriod,
-  actor: { userId: string; isAdmin: boolean },
-  reason: string | null | undefined,
-  now: string,
-) {
-  if (!actor.isAdmin) throw new ForbiddenException('Only an administrator can reopen a closed reporting period.');
-  if (period.period_status !== 'CLOSED') throw new BadRequestException(`Reporting period ${period.period_code} is not closed.`);
-  const text = (reason ?? '').trim();
-  if (!text) throw new BadRequestException('A reason is required to reopen a closed reporting period.');
-  return { period_status: 'OPEN', reopened_by: actor.userId, reopened_at: now, reopen_reason: text.slice(0, 500) };
 }

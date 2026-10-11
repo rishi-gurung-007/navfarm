@@ -1630,10 +1630,9 @@ const reportingPeriod: MasterDataConfig = {
     { key: "status", label: "Status" }, { key: "period_status", label: "Period Status" },
   ],
   // Period Close (workbook Checkpoints r31/r32): the API refuses Close until every farm and the mill
-  // have a posted Monthly Stock Take; Reopen is administrators only and needs a reason.
+  // have a posted Monthly Stock Take.
   rowCommands: [
     { key: "close", label: "Close Period", path: "close", visibleWhen: (row) => row.period_status !== "CLOSED", successMessage: "Period closed" },
-    { key: "reopen", label: "Reopen Period", path: "reopen", visibleWhen: (row) => row.period_status === "CLOSED", reasonPrompt: "Reason for reopening this period", successMessage: "Period reopened" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },

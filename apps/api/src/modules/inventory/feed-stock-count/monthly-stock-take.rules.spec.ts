@@ -1,5 +1,5 @@
 import {
-  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, nothingToCount, periodCloseBlockers, reopenPatch, stockTakeNo,
+  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, nothingToCount, periodCloseBlockers, stockTakeNo,
 } from './monthly-stock-take.rules';
 import { approvalRoute, assertVarianceReason, varianceFact } from './feed-stock-count.rules';
 import { assertPeriodWindowOpen, assertPostingPeriodOpen, closedPeriodFor } from '../../../common/period-close';
@@ -93,16 +93,5 @@ describe('Closed period blocks postings dated in it (r32) — one shared guard',
     await expect(assertPostingPeriodOpen(db, { tenantId: 'T', companyId: 'C', postingDate: '2026-09-10' })).rejects.toThrow(/closed/);
     where.mockResolvedValue([]);
     await expect(assertPostingPeriodOpen(db, { tenantId: 'T', companyId: 'C', postingDate: '2026-10-01' })).resolves.toBeUndefined();
-  });
-});
-
-describe('Reopen', () => {
-  const closed = { ...period, period_status: 'CLOSED' };
-  it('requires an administrator and a reason', () => {
-    expect(() => reopenPatch(closed, { userId: 'U', isAdmin: false }, 'recount', 'now')).toThrow(/Only an administrator/);
-    expect(() => reopenPatch(closed, { userId: 'A', isAdmin: true }, '  ', 'now')).toThrow(/reason is required/);
-    expect(() => reopenPatch(period, { userId: 'A', isAdmin: true }, 'x', 'now')).toThrow(/not closed/);
-    expect(reopenPatch(closed, { userId: 'A', isAdmin: true }, ' Silo 2 recount ', '2026-10-02 09:00:00'))
-      .toEqual({ period_status: 'OPEN', reopened_by: 'A', reopened_at: '2026-10-02 09:00:00', reopen_reason: 'Silo 2 recount' });
   });
 });

@@ -28,7 +28,7 @@ export function assertPeriodWindowOpen(periods: PeriodWindow[], postingDate: str
   if (closed) {
     throw new BadRequestException(
       `Reporting period ${closed.period_code} (${day(closed.start_date)} to ${day(closed.end_date)}) is closed. `
-      + `Nothing dated ${day(postingDate)} can be posted until an administrator reopens it.`,
+      + `Nothing dated ${day(postingDate)} can be posted into a closed period.`,
     );
   }
 }

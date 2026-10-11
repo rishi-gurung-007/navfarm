@@ -28,8 +28,6 @@ export class ReportingPeriodController {
   async activate(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.activate(id, req.user.tenantId, req.user) }; }
   @Post(':id/close') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'approve')
   async close(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.close(id, req.user.tenantId, req.user) }; }
-  @Post(':id/reopen') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'approve')
-  async reopen(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req: any) { return { data: await this.periods.reopen(id, body?.reason, req.user.tenantId, req.user) }; }
   @Patch(':id/restore') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'approve')
   async restore(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.activate(id, req.user.tenantId, req.user) }; }
 }
