@@ -58,4 +58,10 @@ describe('Tenant migration 0150 — MILL/BIN location foundation', () => {
     expect(sql).toContain('FOREIGN KEY (`feed_item_id`) REFERENCES `item_master`(`item_id`)');
     expect(sql).toContain('FOREIGN KEY (`production_slot_id`) REFERENCES `production_slot_master`(`slot_id`)');
   });
+
+  it('0174 makes the legacy slot column optional without dropping anything', () => {
+    const sql = readFileSync(join(__dirname, '0174_bin_diet_slot_optional.sql'), 'utf8');
+    expect(sql).toContain('ALTER TABLE `bin_diet_assignment` MODIFY COLUMN `production_slot_id` varchar(36) NULL');
+    expect(sql.replace(/^--.*$/gm, '')).not.toMatch(/\bDROP\b|TRUNCATE|DELETE\s+FROM/i);
+  });
 });

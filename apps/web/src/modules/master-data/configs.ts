@@ -1650,34 +1650,9 @@ const reportingPeriod: MasterDataConfig = {
   ],
 };
 
-// Configurable mill-production windows. Production Date belongs to each BIN
-// assignment, not this master; it means the calendar date on which the slot
-// starts, including when End Time falls on the following date.
-const productionSlot: MasterDataConfig = {
-  key: "production-slot", label: "Production Slots", singular: "Production Slot",
-  description: "Company production windows used to schedule feed diets into loading bins.",
-  apiBase: "/production-slot", idKey: "slot_id", group: "Inventory",
-  tabOf: "location", tabLabel: "Production Slots",
-  isPrimary: false, businessAdminOnly: true,
-  columns: [
-    { key: "slot_code", label: "Code" },
-    { key: "slot_name", label: "Name" },
-    { key: "start_time", label: "Start Time" },
-    { key: "end_time", label: "End Time" },
-    { key: "status", label: "Status" },
-  ],
-  fields: [
-    { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "slot_code", label: "Code", type: "text", required: true, createOnly: true, maxLength: 50 },
-    { key: "slot_name", label: "Name", type: "text", required: true, maxLength: 100 },
-    { key: "start_time", label: "Start Time", type: "time", required: true, helpText: "Production Date is the date this time starts." },
-    { key: "end_time", label: "End Time", type: "time", required: true, helpText: "An End Time at or before Start Time ends on the following date." },
-  ],
-};
-
 const binDietAssignment: MasterDataConfig = {
   key: "bin-diet-assignment", label: "BIN Diet Assignments", singular: "BIN Diet Assignment",
-  description: "Assign the feed diet produced in a mill BIN for an exact production date and slot. Release uses this assignment without guessing a later date.",
+  description: "Assign the feed diet produced in a mill BIN for an exact production date. A BIN carries one diet per production date. Release uses this assignment without guessing a later date.",
   apiBase: "/bin-diet-assignment", idKey: "assignment_id", group: "Inventory",
   tabOf: "location", tabLabel: "BIN Diet Assignments",
   isPrimary: false, businessAdminOnly: true,
@@ -1687,7 +1662,6 @@ const binDietAssignment: MasterDataConfig = {
     { key: "feed_item_no", label: "Feed Item No." },
     { key: "feed_item_description", label: "Feed Item Description" },
     { key: "production_date", label: "Production Date", format: "date" },
-    { key: "slot_code", label: "Production Slot Code" },
     { key: "diet_priority", label: "Diet Priority" },
     { key: "status", label: "Status" },
   ],
@@ -1699,9 +1673,7 @@ const binDietAssignment: MasterDataConfig = {
       entityEndpoint: "/item?itemType=FEED&isActive=true", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
       helpText: "Feed items only (item type FEED BULK or FEED BAGGED)." },
     { key: "production_date", label: "Production Date", type: "date", required: true,
-      helpText: "Release requires an active assignment on this exact date." },
-    { key: "production_slot_id", label: "Production Slot", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/production-slot?isActive=true", entityValueKey: "slot_id", entityLabelKeys: ["slot_code", "slot_name"] },
+      helpText: "Release requires an active assignment on this exact date. A BIN can carry only one active diet per date." },
     { key: "diet_priority", label: "Diet Priority", type: "number", required: true, min: 1, step: "1" },
   ],
 };
@@ -2216,7 +2188,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, productionSlot, binDietAssignment, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, binDietAssignment, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];

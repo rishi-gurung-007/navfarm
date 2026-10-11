@@ -56,7 +56,7 @@ All of these sit under **Inventory > Feed Forecast**, which is one page with eig
     - Receipt, Requisition, Farm, Destination silo, Item, Requested KG (locked), Shipped KG, Receive now (KG), Variance KG and reason, Bag count, Compartment, Delivery note no. (optional), Loading sheet link, Post receipt, silo balance after receipt.
 
 14. **BIN Diet Assignments tab**. Menu: Master Data > Location > BIN Diet Assignments. Sheet rows: Checkpoints r9, r38; Requisition r32, r67 (the file asks for one diet per loading bin and gives no field table).
-    - BIN, Feed Item, Production Date, Production Slot, Diet Priority, Status. A second diet in the same slot is refused.
+    - BIN, Feed Item, Production Date, Diet Priority, Status. No Production Slot. One diet per loading BIN per production date; a second active diet for the same BIN and date is refused (Checkpoints rows 9 and 38).
 
 15. **Feed planning tab in Company Settings**. Menu: Company Settings > Feed planning. Sheet rows: Forecast Engine r69; Feed Forecast r8; Requisition r27, r28, r35; Checkpoints r18, r23, r25, r31, r39. (Replaces the old Feed Planning tab, see B10.)
     - Default and Maximum forecast days (Checkpoints r18); Truck target (kg) and Bulk multiple (kg) (Requisition r27, r28); Production, Submission, Critical reminder, Physical-count and Tentative plan weekdays and times (Feed Forecast r8, Requisition r35, Forecast Engine r69, Checkpoints r23, r25, r39); Capacity warning (%); Bag tolerance (%) (Checkpoints r31).
@@ -182,14 +182,14 @@ Reasons are from `docs/decisions.md` or Rishi's own requisition list (`common-re
 8. **Release button and Transfer Shipment panel (Ship now KG, Post shipment, Posting date) on the feed requisition**. The workbook has Business Central ship the Transfer Order; decisions 2026-10-03 (in-house mill) and 2026-10-08 "Feed requisitions continue through in-house transfer fulfilment".
 9. **Delete calculation** (archives a saved run, one current saved run per farm). Decision 2026-10-08 "Feed Forecast pages, saved calculations and planned incoming stock".
 10. **Open Transfer KG, Planned Feed Added KG and Feed Requisition columns on Calculation**. Same decision 2026-10-08 (planned incoming stock). The file only asks that expected and confirmed receipts are tracked apart (Forecast Engine r28).
-11. **Master Data > Location > Production Slots tab**. Decisions 2026-10-05 "MILL location and real loading-bin source" and 2026-10-08 "Mill BIN release setup stays in the shared master framework".
+11. ~~**Master Data > Location > Production Slots tab**~~ (removed 11 Oct: not in the workbook). Decisions 2026-10-05 "MILL location and real loading-bin source" and 2026-10-08 "Mill BIN release setup stays in the shared master framework".
 12. **Location Types: MILL and BIN rows**. Decision 2026-10-05 (makes them selectable).
 13. **Department field on the Location form and Department cost centres**. Rishi's list ("User Setup defines department"); decision 2026-10-01.
 14. **Team member dialog: Department and Direct Transfer right**. Rishi's list.
 15. **Company Settings > Feed planning: Farm order quantity overrides** (truck target and bulk multiple per farm). Decision 2026-10-08 (item 2).
 16. **Company Settings > Feed planning: Finance variance (%) and amount**. Decision 2026-10-01 (escalation at 5 percent); differs from Checkpoints r36 (2 percent).
 17. **Company Settings > Feed planning: Capacity warning (%)**. Decisions 2026-09-30 and 2026-10-01 (default 90).
-18. **Company Settings > Roles: new permission rows** (Feed Stock Count, Production Slots, BIN Diet Assignments, Stock Variance). Supporting, for the new screens.
+18. **Company Settings > Roles: new permission rows** (Feed Stock Count, BIN Diet Assignments, Stock Variance; the Production Slots row was removed 11 Oct). Supporting, for the new screens.
 19. **Reason Master used for stock variance and feed-line Reason**. Decisions 2026-10-01 and 2026-10-07 (screen choice, not free text).
 20. **Redirects from old feed links to the tabs and to Alerts**. Supporting; keeps bookmarks working (decision 2026-10-04).
 

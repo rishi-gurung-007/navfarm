@@ -7,7 +7,7 @@ const lines = [
 ];
 const assignment = {
   assignmentId: 'assignment-1', itemId: 'feed-a', productionDate: '2026-10-10',
-  binLocationId: 'bin-1', productionSlotId: 'slot-1',
+  binLocationId: 'bin-1',
 };
 
 describe('groupFeedTransferLines', () => {
@@ -16,7 +16,6 @@ describe('groupFeedTransferLines', () => {
       assignmentId: 'assignment-1',
       sourceLocationId: 'bin-1',
       destinationLocationId: 'silo-1',
-      productionSlotId: 'slot-1',
       lines: [
         { requisitionLineId: 'line-1', itemId: 'feed-a', quantityKg: 5000 },
         { requisitionLineId: 'line-2', itemId: 'feed-a', quantityKg: 3000 },
@@ -40,7 +39,7 @@ describe('groupFeedTransferLines', () => {
 
   it('refuses ambiguous exact-date assignments and names the item', () => {
     expect(() => groupFeedTransferLines(lines, [assignment, { ...assignment, assignmentId: 'assignment-2', binLocationId: 'bin-2' }], '2026-10-10'))
-      .toThrow(new BadRequestException('FEED-A has multiple active mill BIN assignments on 2026-10-10; select an unambiguous production slot.'));
+      .toThrow(new BadRequestException('FEED-A has multiple active mill BIN assignments on 2026-10-10; a BIN carries one diet per production date, so correct the BIN Diet Assignments.'));
   });
 
   it('returns the truthful disabled reason used by the header action', () => {

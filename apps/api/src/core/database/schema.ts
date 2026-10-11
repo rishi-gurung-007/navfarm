@@ -1370,7 +1370,7 @@ export const binDietAssignment = mysqlTable('bin_diet_assignment', {
   bin_location_id: varchar('bin_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
   feed_item_id: varchar('feed_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   production_date: date('production_date', { mode: 'string' }).notNull(),
-  production_slot_id: varchar('production_slot_id', { length: 36 }).notNull().references(() => productionSlotMaster.slot_id, { onDelete: 'restrict' }),
+  production_slot_id: varchar('production_slot_id', { length: 36 }).references(() => productionSlotMaster.slot_id, { onDelete: 'restrict' }),
   diet_priority: int('diet_priority').notNull(),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),

@@ -69,7 +69,6 @@ const DEFAULT_RESOURCES = [
   { module_code: "NOTIFICATION", resource: "SETTINGS", name: "Notification Gateway Settings", nameKey: "rolNotificationGateway" },
   { module_code: "NOTIFICATION", resource: "ALERT_RULE", name: "Alerts and Notifications Master", nameKey: "rolAlertRules" },
   { module_code: "MASTER_DATA", resource: "REPORTING_PERIOD", name: "Reporting Periods", nameKey: "rolReportingPeriods" },
-  { module_code: "MASTER_DATA", resource: "PRODUCTION_SLOT", name: "Production Slots", nameKey: "rolProductionSlots" },
   { module_code: "MASTER_DATA", resource: "BIN_DIET_ASSIGNMENT", name: "BIN Diet Assignments", nameKey: "rolBinDietAssignments" },
   { module_code: "MASTER_DATA", resource: "OPERATIONAL_AREA", name: "Operational Areas", nameKey: "operationalAreas" },
   { module_code: "MASTER_DATA", resource: "BREED_LIFECYCLE_STAGE", name: "Breed Lifecycle Standards", nameKey: "rolBreedLifecycleStandards" },

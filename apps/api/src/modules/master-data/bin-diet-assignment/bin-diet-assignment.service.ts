@@ -15,9 +15,10 @@ export interface CreateBinDietAssignment {
   bin_location_id: string;
   feed_item_id: string;
   production_date: string;
-  production_slot_id: string;
   diet_priority: number;
 }
+
+export const BIN_DATE_CONFLICT = 'This BIN already has a diet assignment for the selected Production Date; a BIN carries one diet per production date.';
 
 @Injectable()
 export class BinDietAssignmentService {
@@ -52,9 +53,6 @@ export class BinDietAssignmentService {
       feed_item_no: schema.itemMaster.item_code,
       feed_item_description: schema.itemMaster.item_name,
       production_date: schema.binDietAssignment.production_date,
-      production_slot_id: schema.binDietAssignment.production_slot_id,
-      slot_code: schema.productionSlotMaster.slot_code,
-      slot_name: schema.productionSlotMaster.slot_name,
       diet_priority: schema.binDietAssignment.diet_priority,
       is_active: schema.binDietAssignment.is_active,
       status: schema.binDietAssignment.status,
@@ -67,8 +65,7 @@ export class BinDietAssignmentService {
   private joinedQuery() {
     return this.db.select(this.selection()).from(schema.binDietAssignment)
       .innerJoin(schema.locationMaster, eq(schema.binDietAssignment.bin_location_id, schema.locationMaster.location_id))
-      .innerJoin(schema.itemMaster, eq(schema.binDietAssignment.feed_item_id, schema.itemMaster.item_id))
-      .innerJoin(schema.productionSlotMaster, eq(schema.binDietAssignment.production_slot_id, schema.productionSlotMaster.slot_id));
+      .innerJoin(schema.itemMaster, eq(schema.binDietAssignment.feed_item_id, schema.itemMaster.item_id));
   }
 
   async findOne(id: string, tenantId: string) {
@@ -89,10 +86,10 @@ export class BinDietAssignmentService {
     if (query.isActive !== undefined) conditions.push(eq(schema.binDietAssignment.is_active, query.isActive));
     if (query.filter) {
       const needle = `%${query.filter}%`;
-      conditions.push(sql`(${schema.locationMaster.location_code} LIKE ${needle} OR ${schema.itemMaster.item_code} LIKE ${needle} OR ${schema.itemMaster.item_name} LIKE ${needle} OR ${schema.productionSlotMaster.slot_code} LIKE ${needle})` as any);
+      conditions.push(sql`(${schema.locationMaster.location_code} LIKE ${needle} OR ${schema.itemMaster.item_code} LIKE ${needle} OR ${schema.itemMaster.item_name} LIKE ${needle})` as any);
     }
     return this.joinedQuery().where(and(...conditions))
-      .orderBy(asc(schema.binDietAssignment.production_date), asc(schema.productionSlotMaster.start_time), asc(schema.locationMaster.location_code))
+      .orderBy(asc(schema.binDietAssignment.production_date), asc(schema.locationMaster.location_code))
       .limit(query.limit || 50).offset(query.offset || 0);
   }
 
@@ -125,15 +122,6 @@ export class BinDietAssignmentService {
       isNull(schema.itemTypeMaster.deleted_at),
     )).limit(1);
 
-    const [slot] = await this.db.select().from(schema.productionSlotMaster).where(and(
-      eq(schema.productionSlotMaster.slot_id, dto.production_slot_id),
-      eq(schema.productionSlotMaster.tenant_id, tenantId),
-      eq(schema.productionSlotMaster.company_id, companyId),
-      eq(schema.productionSlotMaster.is_active, true),
-      isNull(schema.productionSlotMaster.deleted_at),
-    )).limit(1);
-    if (!slot) throw new NotFoundException('The selected Production Slot is not active in this company.');
-
     assertAssignmentCompatibility(bin, {
       ...item,
       item_type_name: itemType?.type_name ?? null,
@@ -145,12 +133,10 @@ export class BinDietAssignmentService {
         eq(schema.binDietAssignment.company_id, companyId),
         eq(schema.binDietAssignment.bin_location_id, dto.bin_location_id),
         eq(schema.binDietAssignment.production_date, dto.production_date),
-        eq(schema.binDietAssignment.production_slot_id, dto.production_slot_id),
+        eq(schema.binDietAssignment.is_active, true),
         isNull(schema.binDietAssignment.deleted_at),
       ));
-    if (duplicates.length) {
-      throw new ConflictException('This BIN already has a diet assignment for the selected Production Date and Slot.');
-    }
+    if (duplicates.length) throw new ConflictException(BIN_DATE_CONFLICT);
 
     const balances = await this.ledger.getStockBalance({
       companyId,
@@ -171,7 +157,6 @@ export class BinDietAssignmentService {
       bin_location_id: dto.bin_location_id,
       feed_item_id: dto.feed_item_id,
       production_date: dto.production_date,
-      production_slot_id: dto.production_slot_id,
       diet_priority: dto.diet_priority,
       is_active: true,
       status: 'ACTIVE',
@@ -198,7 +183,6 @@ export class BinDietAssignmentService {
       bin_location_id: dto.bin_location_id ?? before.bin_location_id,
       feed_item_id: dto.feed_item_id ?? before.feed_item_id,
       production_date: dto.production_date ?? before.production_date,
-      production_slot_id: dto.production_slot_id ?? before.production_slot_id,
       diet_priority: dto.diet_priority ?? before.diet_priority,
     };
     if (!Number.isInteger(next.diet_priority) || next.diet_priority < 1) {
@@ -216,19 +200,15 @@ export class BinDietAssignmentService {
       eq(schema.itemTypeMaster.tenant_id, tenantId), eq(schema.itemTypeMaster.type_code, item.item_type),
       eq(schema.itemTypeMaster.is_active, true), isNull(schema.itemTypeMaster.deleted_at),
     )).limit(1) : [];
-    const [slot] = await this.db.select().from(schema.productionSlotMaster).where(and(
-      eq(schema.productionSlotMaster.slot_id, next.production_slot_id), eq(schema.productionSlotMaster.tenant_id, tenantId),
-      eq(schema.productionSlotMaster.company_id, next.company_id), eq(schema.productionSlotMaster.is_active, true),
-      isNull(schema.productionSlotMaster.deleted_at),
-    )).limit(1);
-    if (!bin || !item || !slot) throw new BadRequestException('The selected BIN, Feed Item and Production Slot must be active in this company.');
+    if (!bin || !item) throw new BadRequestException('The selected BIN and Feed Item must be active in this company.');
     assertAssignmentCompatibility(bin, { ...item, item_type_name: itemType?.type_name ?? null });
     const duplicates = await this.db.select({ assignment_id: schema.binDietAssignment.assignment_id }).from(schema.binDietAssignment).where(and(
       eq(schema.binDietAssignment.tenant_id, tenantId), eq(schema.binDietAssignment.company_id, next.company_id),
       eq(schema.binDietAssignment.bin_location_id, next.bin_location_id), eq(schema.binDietAssignment.production_date, next.production_date),
-      eq(schema.binDietAssignment.production_slot_id, next.production_slot_id), isNull(schema.binDietAssignment.deleted_at),
+      eq(schema.binDietAssignment.is_active, true), isNull(schema.binDietAssignment.deleted_at),
     ));
-    if (duplicates.some((row) => row.assignment_id !== id)) throw new ConflictException('This BIN already has a diet assignment for the selected Production Date and Slot.');
+    const stillActive = dto.is_active ?? before.is_active;
+    if (stillActive && duplicates.some((row) => row.assignment_id !== id)) throw new ConflictException(BIN_DATE_CONFLICT);
     if (next.feed_item_id !== before.feed_item_id || next.bin_location_id !== before.bin_location_id) {
       const balances = await this.ledger.getStockBalance({ companyId: next.company_id, warehouseId: next.bin_location_id }, tenantId);
       const incompatible = balances.find((row) => row.item_id !== next.feed_item_id && Number(row.on_hand_qty) > 0);
@@ -255,6 +235,14 @@ export class BinDietAssignmentService {
 
   private async setActive(id: string, active: boolean, tenantId: string, user?: { userId?: string }) {
     const before = await this.findOne(id, tenantId);
+    if (active) {
+      const clash = await this.db.select({ assignment_id: schema.binDietAssignment.assignment_id }).from(schema.binDietAssignment).where(and(
+        eq(schema.binDietAssignment.tenant_id, tenantId), eq(schema.binDietAssignment.company_id, before.company_id),
+        eq(schema.binDietAssignment.bin_location_id, before.bin_location_id), eq(schema.binDietAssignment.production_date, before.production_date),
+        eq(schema.binDietAssignment.is_active, true), isNull(schema.binDietAssignment.deleted_at),
+      ));
+      if (clash.some((row) => row.assignment_id !== id)) throw new ConflictException(BIN_DATE_CONFLICT);
+    }
     const updates = { is_active: active, status: active ? 'ACTIVE' : 'INACTIVE', deleted_at: null, updated_by: user?.userId, updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
     await this.db.update(schema.binDietAssignment).set(updates).where(eq(schema.binDietAssignment.assignment_id, id));
     await this.audit.log({ tenantId, companyId: before.company_id, userId: user?.userId, action: active ? 'RESTORE' : 'DEACTIVATE', entityName: 'bin_diet_assignment', entityId: id, oldValues: before, newValues: updates });
@@ -268,15 +256,10 @@ export class BinDietAssignmentService {
       bin_code: schema.locationMaster.location_code,
       bin_name: schema.locationMaster.location_name,
       production_date: schema.binDietAssignment.production_date,
-      production_slot_id: schema.binDietAssignment.production_slot_id,
-      slot_code: schema.productionSlotMaster.slot_code,
-      slot_name: schema.productionSlotMaster.slot_name,
-      start_time: schema.productionSlotMaster.start_time,
       feed_item_id: schema.binDietAssignment.feed_item_id,
       diet_priority: schema.binDietAssignment.diet_priority,
     }).from(schema.binDietAssignment)
       .innerJoin(schema.locationMaster, eq(schema.binDietAssignment.bin_location_id, schema.locationMaster.location_id))
-      .innerJoin(schema.productionSlotMaster, eq(schema.binDietAssignment.production_slot_id, schema.productionSlotMaster.slot_id))
       .where(and(
         eq(schema.binDietAssignment.tenant_id, args.tenantId),
         eq(schema.binDietAssignment.company_id, args.companyId),
@@ -287,7 +270,6 @@ export class BinDietAssignmentService {
       ))
       .orderBy(
         asc(schema.binDietAssignment.production_date),
-        asc(schema.productionSlotMaster.start_time),
         asc(schema.locationMaster.location_code),
       ).limit(1);
 
@@ -298,9 +280,6 @@ export class BinDietAssignmentService {
       binCode: row.bin_code,
       binName: row.bin_name,
       productionDate: row.production_date,
-      slotId: row.production_slot_id,
-      slotCode: row.slot_code,
-      slotName: row.slot_name,
       feedItemId: row.feed_item_id,
       dietPriority: row.diet_priority,
     };

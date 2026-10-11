@@ -1212,6 +1212,13 @@
       "when": 1792000000041,
       "tag": "0173_loading_sheet_estimated_arrival",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "5",
+      "when": 1792000000042,
+      "tag": "0174_bin_diet_slot_optional",
+      "breakpoints": true
     }
   ]
 }

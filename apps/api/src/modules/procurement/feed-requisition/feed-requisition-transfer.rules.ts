@@ -13,14 +13,12 @@ export interface FeedBinAssignmentInput {
   itemId: string;
   productionDate: string;
   binLocationId: string;
-  productionSlotId: string;
 }
 
 export interface FeedTransferPlan {
   assignmentId: string;
   sourceLocationId: string;
   destinationLocationId: string;
-  productionSlotId: string;
   lines: Array<{ requisitionLineId: string; itemId: string; quantityKg: number }>;
 }
 
@@ -40,7 +38,7 @@ export function groupFeedTransferLines(
     }
     if (matches.length > 1) {
       throw new BadRequestException(
-        `${line.itemLabel} has multiple active mill BIN assignments on ${productionDate}; select an unambiguous production slot.`,
+        `${line.itemLabel} has multiple active mill BIN assignments on ${productionDate}; a BIN carries one diet per production date, so correct the BIN Diet Assignments.`,
       );
     }
     const assignment = matches[0];
@@ -49,7 +47,6 @@ export function groupFeedTransferLines(
       assignmentId: assignment.assignmentId,
       sourceLocationId: assignment.binLocationId,
       destinationLocationId: line.destinationLocationId,
-      productionSlotId: assignment.productionSlotId,
       lines: [],
     };
     plan.lines.push({ requisitionLineId: line.lineId, itemId: line.itemId, quantityKg: line.quantityKg });

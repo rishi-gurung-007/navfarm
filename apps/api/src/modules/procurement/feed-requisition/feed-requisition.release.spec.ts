@@ -55,8 +55,8 @@ describe('FeedRequisitionService.release', () => {
         { line_id: 'line-2', item_id: 'feed-b', item_code: 'FEED-B', destination_location_id: 'silo-2', quantity: '3000', mill_approved_qty_kg: '3000' },
       ],
       [                                                                            // exact-date active assignments
-        { assignmentId: 'as-1', itemId: 'feed-a', productionDate: '2026-10-10', binLocationId: 'bin-1', productionSlotId: 'slot-1' },
-        { assignmentId: 'as-2', itemId: 'feed-b', productionDate: '2026-10-10', binLocationId: 'bin-2', productionSlotId: 'slot-1' },
+        { assignmentId: 'as-1', itemId: 'feed-a', productionDate: '2026-10-10', binLocationId: 'bin-1' },
+        { assignmentId: 'as-2', itemId: 'feed-b', productionDate: '2026-10-10', binLocationId: 'bin-2' },
       ],
       [                                                                            // destination SILOs
         { location_id: 'silo-1', location_type: 'SILO', farm_id: 'farm-1', parent_location_id: 'farm-1', is_active: true, status: 'ACTIVE', deleted_at: null },

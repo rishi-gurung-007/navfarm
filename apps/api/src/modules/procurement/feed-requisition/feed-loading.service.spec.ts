@@ -70,7 +70,7 @@ describe('FeedLoadingService', () => {
   });
 
   it('snapshots the BIN the shared assignment lookup resolves, the one Release uses', async () => {
-    const assignments = [{ assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2', productionSlotId: 'slot-1' }];
+    const assignments = [{ assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2' }];
     queue.push(
       [], [{ no: 'CONS-1', companyId: 'co-1' }],
       [{ consolidation_line_id: 'cl-1', requisition_id: 'req-1', requisition_line_id: 'rl-1', farm_id: 'farm-1', destination_silo_id: 'silo-1', item_id: 'item-8', requested_qty_kg: '6050', mill_approved_qty_kg: '6000', requested_delivery_date: '2026-10-12', production_date: '2026-10-11' }],

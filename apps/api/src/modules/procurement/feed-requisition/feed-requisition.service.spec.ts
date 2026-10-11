@@ -1376,7 +1376,7 @@ describe('A1 (10 Oct) — the document returns requester, Mill Loading Bin, link
       [schema.userMaster, [[{ user_id: 'u-7', email: 'fm@grs.test', department_id: 'dept-farm' }]]],
       [schema.costCenterMaster, [[{ cost_center_id: 'dept-farm', cost_center_name: 'Farm Operations' }]]],
       [schema.feedRequisitionTransfer, [[{ transfer_id: 'tr-1', transfer_no: 'TO-0001' }, { transfer_id: 'tr-2', transfer_no: 'TO-0002' }]]],
-      [schema.binDietAssignment, [[{ assignmentId: 'as-1', itemId: 'item-r1', productionDate: '2026-09-27', binLocationId: 'bin-3', productionSlotId: 'slot-1' }]]],
+      [schema.binDietAssignment, [[{ assignmentId: 'as-1', itemId: 'item-r1', productionDate: '2026-09-27', binLocationId: 'bin-3' }]]],
       [schema.locationMaster, [[{ location_id: 'bin-3', location_code: 'MILL/BIN-03' }]]],
     ]);
     const { service } = setup([], queues);

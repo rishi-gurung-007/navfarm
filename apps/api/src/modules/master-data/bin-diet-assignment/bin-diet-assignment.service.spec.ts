@@ -55,7 +55,6 @@ describe('BinDietAssignmentService', () => {
     item_id: 'item-1', tenant_id: 'tenant-1', company_id: 'co-1', item_code: 'R4', item_name: 'Diet 4',
     item_type: 'FEED BULK', item_type_name: 'Feed Bulk', diet_no: 4, is_active: true,
   };
-  const slot = { slot_id: 'slot-1', company_id: 'co-1', slot_code: 'AM', slot_name: 'Morning', start_time: '06:00:00', is_active: true };
 
   beforeEach(() => {
     selectQueue.length = 0;
@@ -63,34 +62,45 @@ describe('BinDietAssignmentService', () => {
     ledger.getStockBalance.mockResolvedValue([]);
   });
 
-  it('refuses the same BIN/date/slot assignment before insert', async () => {
-    selectQueue.push([activeBin], [feedItem], [{ type_code: 'FEED BULK', type_name: 'Feed Bulk' }], [slot], [{ assignment_id: 'existing' }]);
+  it('refuses a second diet for the same BIN and production date before insert', async () => {
+    selectQueue.push([activeBin], [feedItem], [{ type_code: 'FEED BULK', type_name: 'Feed Bulk' }], [{ assignment_id: 'existing' }]);
     await expect(service.create({
       company_id: 'co-1', bin_location_id: 'bin-1', feed_item_id: 'item-1',
-      production_date: '2026-10-05', production_slot_id: 'slot-1', diet_priority: 1,
+      production_date: '2026-10-05', diet_priority: 1,
     }, 'tenant-1')).rejects.toThrow(ConflictException);
     expect(db.insert).not.toHaveBeenCalled();
   });
 
+  it('allows the same BIN on a different production date (no active row on that date)', async () => {
+    const created = { assignment_id: 'new', bin_location_id: 'bin-1', production_date: '2026-10-06' };
+    selectQueue.push([activeBin], [feedItem], [{ type_code: 'FEED BULK', type_name: 'Feed Bulk' }], [], [created]);
+    await expect(service.create({
+      company_id: 'co-1', bin_location_id: 'bin-1', feed_item_id: 'item-1',
+      production_date: '2026-10-06', diet_priority: 1,
+    }, 'tenant-1')).resolves.toEqual(created);
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(values.mock.calls[0][0]).not.toHaveProperty('production_slot_id');
+  });
+
   it('refuses changing a BIN to an item while positive stock of another item remains', async () => {
-    selectQueue.push([activeBin], [feedItem], [{ type_code: 'FEED BULK', type_name: 'Feed Bulk' }], [slot], []);
+    selectQueue.push([activeBin], [feedItem], [{ type_code: 'FEED BULK', type_name: 'Feed Bulk' }], []);
     ledger.getStockBalance.mockResolvedValue([{ item_id: 'item-old', item_code: 'OLD', on_hand_qty: 125 }]);
     await expect(service.create({
       company_id: 'co-1', bin_location_id: 'bin-1', feed_item_id: 'item-1',
-      production_date: '2026-10-05', production_slot_id: 'slot-1', diet_priority: 1,
+      production_date: '2026-10-05', diet_priority: 1,
     }, 'tenant-1')).rejects.toThrow('still holds 125');
     expect(ledger.getStockBalance).toHaveBeenCalledWith({ companyId: 'co-1', warehouseId: 'bin-1' }, 'tenant-1');
   });
 
-  it('returns the deterministic next assignment ordered by date, slot start and BIN code', async () => {
+  it('returns the deterministic next assignment ordered by date and BIN code', async () => {
     selectQueue.push([{
       assignment_id: 'a2', bin_location_id: 'bin-2', bin_code: 'MILL-001/BIN-002', bin_name: 'Bin 2',
-      production_date: '2026-10-06', production_slot_id: 'slot-am', slot_code: 'AM', slot_name: 'Morning', start_time: '06:00:00',
+      production_date: '2026-10-06',
       feed_item_id: 'item-1', diet_priority: 1,
     }]);
     await expect(service.findNextBinAssignment({
       tenantId: 'tenant-1', companyId: 'co-1', itemId: 'item-1', from: '2026-10-05',
-    })).resolves.toEqual(expect.objectContaining({ binCode: 'MILL-001/BIN-002', productionDate: '2026-10-06', slotCode: 'AM' }));
+    })).resolves.toEqual(expect.objectContaining({ binCode: 'MILL-001/BIN-002', productionDate: '2026-10-06'}));
   });
 
   it('returns null when no effective assignment exists', async () => {

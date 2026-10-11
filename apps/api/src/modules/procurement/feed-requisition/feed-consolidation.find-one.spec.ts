@@ -30,7 +30,7 @@ describe('FeedConsolidationService.findOne', () => {
     farm_id: farm, item_id: 'item-8', destination_silo_id: `silo-${n}`, requested_delivery_date: '2026-10-12', production_date: '2026-10-11',
     requested_qty_kg: qty, mill_approved_qty_kg: qty, adjustment_reason: null, bc_to_no: null,
   });
-  const assignment = { assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2', productionSlotId: 'slot-1' };
+  const assignment = { assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2' };
   /** Reads in order: header, lines, loading sheets, BIN assignments, locations, items, requisitions, transfers, Feed Mill Manager. */
   const reads = (o: { loading?: unknown[]; assignments?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[]; users?: unknown[] } = {}) => queue.push(
     [header],

@@ -23,7 +23,6 @@ export async function activeBinAssignments(
     itemId: schema.binDietAssignment.feed_item_id,
     productionDate: schema.binDietAssignment.production_date,
     binLocationId: schema.binDietAssignment.bin_location_id,
-    productionSlotId: schema.binDietAssignment.production_slot_id,
   }).from(schema.binDietAssignment).where(and(
     eq(schema.binDietAssignment.tenant_id, tenantId),
     eq(schema.binDietAssignment.company_id, companyId),

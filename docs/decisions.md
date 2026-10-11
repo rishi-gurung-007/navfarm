@@ -3475,3 +3475,5 @@ requisition view+approve (consolidation and loading sheets), transfer view/creat
 view/create/edit/approve (mill stock take), ledger view (forecast, alerts), BIN diet assignment view/create/edit
 (production output, mill capacity), read-only lookups. No delete, finance or user admin. In-app alerts addressed to
 MILL_MANAGER reach any user holding the role. Seeded for new companies; existing companies via `api:db-seed-mill-manager-role`.
+
+2026-10-11 — Production Slots removed (Rishi: not in the workbook). One diet per loading BIN per production date.

@@ -16,9 +16,6 @@ export class CreateBinDietAssignmentDto {
   @IsDateString()
   production_date: string;
 
-  @IsUUID()
-  production_slot_id: string;
-
   @IsInt()
   @Min(1)
   diet_priority: number;
@@ -36,10 +33,6 @@ export class UpdateBinDietAssignmentDto {
   @IsDateString()
   @IsOptional()
   production_date?: string;
-
-  @IsUUID()
-  @IsOptional()
-  production_slot_id?: string;
 
   @IsInt()
   @Min(1)
