@@ -1564,7 +1564,7 @@ export class FeedRequisitionService implements OnModuleInit {
         shipment_id: dto.shipment_id,
         lines: (posted.lines ?? []).map((l: any) => ({ ...l, requisition_line_id: reqLineOf.get(l.line_id) ?? null })),
       } : null;
-      // W4G1 (checkpoint 26): a FINAL receipt that leaves feed short tells Head of Farms and the mill.
+      // W4G1 (checkpoint 26; every short receipt since 11 Oct): a receipt that leaves feed short tells Head of Farms and the mill.
       const short = (receipt?.lines ?? []).filter((l: any) => Number(l.variance_qty) > 0);
       if (receipt && short.length) {
         const total = short.reduce((sum: number, l: any) => sum + Number(l.variance_qty), 0);
@@ -1572,7 +1572,7 @@ export class FeedRequisitionService implements OnModuleInit {
         await this.feedAlerts.raiseEventSafely({ farmId, companyId, tenantId }, {
           eventType: 'RECEIPT_VARIANCE', subjectType: 'RECEIPT', subjectId: receipt.receipt_id, observedValue: total,
           title: `Feed receipt short: ${receipt.receipt_no}`,
-          message: `Final receipt ${receipt.receipt_no} on ${(view as any).req_no ?? 'the requisition'} is ${kg(total)} KG short of what was shipped (${short.length} line${short.length === 1 ? '' : 's'}).`,
+          message: `Receipt ${receipt.receipt_no} on ${(view as any).req_no ?? 'the requisition'} is ${kg(total)} KG short of what was outstanding on the shipment (${short.length} line${short.length === 1 ? '' : 's'}).`,
         });
       }
       return { ...view, receipt };

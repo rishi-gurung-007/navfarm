@@ -80,7 +80,7 @@ describe('FeedRequisitionService transfer execution', () => {
     });
   });
 
-  it('W4G1: a final receipt that leaves feed short raises RECEIPT_VARIANCE once; a full or interim one raises nothing', async () => {
+  it('W4G1: a short receipt raises RECEIPT_VARIANCE once; a full one raises nothing', async () => {
     const { service, stockTransfers, feedAlerts } = serviceHarness();
     jest.spyOn(service as any, 'feedReceiptControls').mockResolvedValue({ bagSizeKg: 50, lines: new Map() });
     const dto: any = { transfer_id: 'tr-1', shipment_id: 'shipment-1', posting_date: '2026-10-12', lines: [{ requisition_line_id: 'rl-1', quantity: 5900 }] };
@@ -89,6 +89,10 @@ describe('FeedRequisitionService transfer execution', () => {
     expect(feedAlerts.raiseEventSafely).toHaveBeenCalledTimes(1);
     expect(feedAlerts.raiseEventSafely.mock.calls[0][0]).toEqual({ farmId: 'farm-1', companyId: 'co-1', tenantId: 'tenant-1' });
     expect(feedAlerts.raiseEventSafely.mock.calls[0][1]).toMatchObject({ eventType: 'RECEIPT_VARIANCE', subjectType: 'RECEIPT', subjectId: 'receipt-1', observedValue: 100 });
+    // Rishi, 11 Oct: any short receipt raises it, so the text must not claim a "final" receipt.
+    const message = String((feedAlerts.raiseEventSafely.mock.calls[0][1] as { message: string }).message);
+    expect(message).toContain('RC-1');
+    expect(message).not.toMatch(/final/i);
     feedAlerts.raiseEventSafely.mockClear();
     stockTransfers.postReceipt.mockResolvedValueOnce({ receipt_id: 'receipt-2', receipt_no: 'RC-2', transfer_id: 'tr-1', lines: [{ line_id: 'tl-1', variance_qty: 0 }, { line_id: 'tl-2', variance_qty: null }] });
     await service.receipt('req-1', dto, 'tenant-1', { userId: 'u-2' });
