@@ -125,6 +125,7 @@ export class FeedStockCountService implements OnModuleInit {
       company_id: schema.locationMaster.company_id,
       nob_id: schema.locationMaster.nob_id,
       lob_id: schema.locationMaster.lob_id,
+      cost_center_id: schema.locationMaster.cost_center_id,
     }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, farmId),
       eq(schema.locationMaster.tenant_id, tenantId),
@@ -510,10 +511,15 @@ export class FeedStockCountService implements OnModuleInit {
       .where(eq(schema.feedStockCountLine.count_id, countId))
       .orderBy(schema.feedStockCountLine.silo_id, schema.feedStockCountLine.item_id);
     const context = await this.siloContext(count.farm_id, count.company_id, tenantId, [...new Set(lines.map((line) => line.silo_id))], kindOfCount(count));
+    // Row 47: the farm's or mill's own Cost Centre (location_master.cost_center_id), shown beside the GL entry references.
+    const [costCenter] = place.cost_center_id ? await this.db.select({ code: schema.costCenterMaster.cost_center_code, name: schema.costCenterMaster.cost_center_name })
+      .from(schema.costCenterMaster).where(eq(schema.costCenterMaster.cost_center_id, place.cost_center_id)).limit(1) : [];
     return {
       ...count,
       ...(await this.reconciliationEvidence(count)),
       farm_code: place.location_code,
+      cost_center_code: costCenter?.code ?? null,
+      cost_center_name: costCenter?.name ?? null,
       planningDate: context.planningDate,
       lines: lines.map((line) => ({
         ...line,

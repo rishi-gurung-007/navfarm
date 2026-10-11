@@ -243,6 +243,19 @@ describe('FeedStockCountService', () => {
       });
     });
 
+    it('findOne shows the farm or mill cost centre next to the GL entry references (r47)', async () => {
+      const count = {
+        count_id: 'count-1', tenant_id: 'tenant-1', company_id: 'company-1', farm_id: 'farm-1', count_no: 'ST-FARM-001-2026-00001',
+        counted_at: '2026-09-26 05:30:00', status: 'POSTED', count_type: 'MONTHLY', stock_take_type: 'FARM', reporting_period_id: 'period-sep',
+      };
+      const q = new Map<unknown, unknown[][]>([
+        [schema.feedStockCount, [[count]]], [schema.locationMaster, [[{ ...farm, cost_center_id: 'cc-1' }]]], [schema.feedStockCountLine, [[]]],
+        [schema.costCenterMaster, [[{ code: 'CC-FARM-001', name: 'Farm 001 Cost Centre' }]]],
+      ]);
+      const { service } = setup(q);
+      await expect(service.findOne('count-1', 'tenant-1')).resolves.toMatchObject({ cost_center_code: 'CC-FARM-001', cost_center_name: 'Farm 001 Cost Centre' });
+    });
+
     it('creates a MONTHLY take for the period, with every active silo line, its variance and reason, numbered ST-Farm-YYYY-NNNNN', async () => {
       const { service, log } = setup(monthlyQueues([period]));
       await expect(service.create(monthlyDto as any, 'tenant-1', { userId: 'worker-1' }))

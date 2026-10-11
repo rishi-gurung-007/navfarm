@@ -94,6 +94,8 @@ interface CountView extends CountRow {
   production_start_date_next?: string | null;
   gl_entry_refs?: string[] | null;
   farm_code?: string | null;
+  cost_center_code?: string | null;
+  cost_center_name?: string | null;
 }
 
 interface EvidencePair extends SiloPlanning {
@@ -651,8 +653,9 @@ export default function FeedStockCountPanel() {
                   <ReadField label={t("fscStockTakeDate")} value={selected.stock_take_date ? formatDateShort(String(selected.stock_take_date).slice(0, 10)) : unavailable} appearance="control" />
                   <ReadField label={t("fscAdjustmentType")} value={adjustmentTypeKey(lines) ? t(adjustmentTypeKey(lines)!) : t("fscAdjNone")} appearance="control" />
                   <ReadField label={t("fscGlEntry")} value={selected.gl_entry_refs?.length
-                    ? selected.gl_entry_refs.map((ref, index) => <span key={ref}>{index > 0 && ", "}<RecordLink code={ref} href={JOURNAL_ROUTE} /></span>)
+                    ? selected.gl_entry_refs.map((ref, index) => <span key={ref}>{index > 0 && ", "}<RecordLink code={ref} href={`${JOURNAL_ROUTE}?no=${encodeURIComponent(ref)}`} /></span>)
                     : unavailable} appearance="control" />
+                  <ReadField label={t("fscCostCentre")} value={selected.cost_center_code ? `${selected.cost_center_code}${selected.cost_center_name ? ` · ${selected.cost_center_name}` : ""}` : unavailable} appearance="control" />
                   <ReadField label={t("fscPeriodStatusAfter")} value={selected.period_status_after
                     ? (selected.period_status_after === "CLOSED" ? t("fscPeriodClosed") : selected.period_status_after === "OPEN" ? t("fscPeriodOpen") : selected.period_status_after)
                     : unavailable} appearance="control" />

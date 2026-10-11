@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -47,7 +47,9 @@ export default function JournalPanel() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
+  // Row 47: /finance/journal?no=<journal no> filters to that entry and opens it on load.
+  const [openNo] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("no") || ""));
+  const [search, setSearch] = useState(openNo);
   const [statusFilter, setStatusFilter] = useState("");
 
   const [glAccounts, setGlAccounts] = useState<Row[]>([]);
@@ -89,6 +91,13 @@ export default function JournalPanel() {
   }, [search, statusFilter]);
 
   useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
+  const openedByNo = useRef(false);
+  useEffect(() => {
+    if (!openNo || openedByNo.current) return;
+    const match = rows.find((row) => row.journal_no === openNo);
+    if (match) { openedByNo.current = true; openView(match); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {

@@ -4659,6 +4659,7 @@ export const translations = {
     // FINAL (11 Oct)
     flsColEta: "Estimated Arrival",
     flsEtaFor: "Estimated arrival (optional) for {no}",
+    fscCostCentre: "Cost Centre",
   },
   hi: {
     dyNoCompany: "कोई कंपनी चयनित नहीं। पहले वर्कस्पेस स्विचर से एक चुनें।",

@@ -236,7 +236,7 @@ describe("Monthly Stock Take view", () => {
 describe("W5B — the stock take record (Silo r35, r36, r45, r47, r48)", () => {
   const monthly = {
     ...row, count_type: "MONTHLY", stock_take_type: "FARM", status: "POSTED", period_code: "2026-09", reporting_period_id: "period-1",
-    farm_id: "farm-1", farm_code: "GRA100", stock_take_date: "2026-09-26", period_status_after: "CLOSED", gl_entry_refs: ["JV-0001", "JV-0002"],
+    farm_id: "farm-1", farm_code: "GRA100", cost_center_code: "CC-GRA100", cost_center_name: "Grasmere Cost Centre", stock_take_date: "2026-09-26", period_status_after: "CLOSED", gl_entry_refs: ["JV-0001", "JV-0002"],
     production_start_date_next: "2026-10-01",
     lines: [{
       count_line_id: "line-1", silo_id: "silo-1", silo_code: "GRA100/SILO-001", item_id: "item-1", item_code: "FEED-001", item_name: "Grower Feed",
@@ -263,8 +263,9 @@ describe("W5B — the stock take record (Silo r35, r36, r45, r47, r48)", () => {
     expect(within(evidence).getByRole("link", { name: "GRA100" }).getAttribute("href")).toContain("recordId=farm-1");
     expect(within(evidence).getByRole("link", { name: "2026-09" }).getAttribute("href")).toBe("/master-data/reporting-period?recordId=period-1");
     expect(within(evidence).getByText("fscAdjNegative")).toBeTruthy();
-    expect(within(evidence).getByRole("link", { name: "JV-0001" }).getAttribute("href")).toBe("/finance/journal");
-    expect(within(evidence).getByRole("link", { name: "JV-0002" })).toBeTruthy();
+    expect(within(evidence).getByRole("link", { name: "JV-0001" }).getAttribute("href")).toBe("/finance/journal?no=JV-0001");
+    expect(within(evidence).getByRole("link", { name: "JV-0002" }).getAttribute("href")).toBe("/finance/journal?no=JV-0002");
+    expect(within(evidence).getByText("CC-GRA100 · Grasmere Cost Centre")).toBeTruthy();
     expect(within(evidence).getByText("fscPeriodClosed")).toBeTruthy();
     expect(within(evidence).queryByText("CLOSED")).toBeNull();
   });
