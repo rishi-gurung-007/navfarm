@@ -3467,3 +3467,11 @@ Changed by Rishi:
 Rishi, 11 Oct, on Requisition and Loading Sheet row 76: NAVFarm has no vehicle or route tracking, so the loading sheet
 gets an optional **Estimated arrival** (date and time) that the mill enters at dispatch. The MILL_DISPATCH notice
 includes it when set.
+
+## 2026-10-11 — Feed Mill Manager role added
+
+11 Oct: Feed Mill Manager role added (Rishi) — role code MILL_MANAGER, a Role Master role, not a new user type. Grants:
+requisition view+approve (consolidation and loading sheets), transfer view/create/edit (dispatch, shipment), stock count
+view/create/edit/approve (mill stock take), ledger view (forecast, alerts), BIN diet assignment view/create/edit
+(production output, mill capacity), read-only lookups. No delete, finance or user admin. In-app alerts addressed to
+MILL_MANAGER reach any user holding the role. Seeded for new companies; existing companies via `api:db-seed-mill-manager-role`.

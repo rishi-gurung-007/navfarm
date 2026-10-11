@@ -68,6 +68,21 @@ describe('FeedAlertService — every farm in scope (D24)', () => {
     expect(list.map((a: any) => a.alert_id)).toEqual(['mine']);
   });
 
+  it('delivers a MILL_MANAGER alert to a user who holds the Role Master role MILL_MANAGER (no user type needed)', async () => {
+    const { service } = build([
+      { alert: alertRow({ alert_id: 'cap', recipient_roles: ['MILL_MANAGER'] }), farm_code: 'VIL100' },
+      { alert: alertRow({ alert_id: 'rcv', recipient_roles: ['HEAD_OF_FARM', 'MILL_MANAGER'] }), farm_code: 'VIL100' },
+      { alert: alertRow({ alert_id: 'farm-only', recipient_roles: ['FARM_MANAGER'] }), farm_code: 'VIL100' },
+    ], ['MILL_MANAGER']);
+    const list = await service.listScope({}, 't', { userId: 'u', userType: 'STANDARD_USER' });
+    expect(list.map((a: any) => a.alert_id)).toEqual(['cap', 'rcv']);
+  });
+
+  it('does not deliver a MILL_MANAGER alert to a user without that role', () => {
+    expect(visibleTo(alertRow({ recipient_roles: ['MILL_MANAGER'] }), ['OPERATOR'], false)).toBe(false);
+    expect(visibleTo(alertRow({ recipient_roles: ['MILL_MANAGER'] }), ['MILL_MANAGER'], false)).toBe(true);
+  });
+
   it('shows a FARM_MANAGER alerts addressed to the farm-manager persona', async () => {
     const { service } = build([{ alert: alertRow({ alert_id: 'mine' }), farm_code: 'VIL100' }]);
     const list = await service.listScope({}, 't', { userId: 'u', userType: 'FARM_MANAGER' });

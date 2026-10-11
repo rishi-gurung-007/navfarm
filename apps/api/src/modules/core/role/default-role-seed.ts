@@ -1,8 +1,9 @@
 import * as crypto from 'crypto';
 import * as schema from '../../../core/database/schema';
+import { MILL_MANAGER_GRANTS, MILL_MANAGER_ROLE } from './mill-manager-role';
 
 /**
- * Seeds the four starter roles (SUPER_ADMIN, MANAGER, ACCOUNTANT, OPERATOR)
+ * Seeds the five starter roles (SUPER_ADMIN, MANAGER, ACCOUNTANT, OPERATOR, MILL_MANAGER)
  * for a company. Called from every path that can make a company "real" —
  * CompanyService.create() and the setup wizard's step 1 (which often
  * updates the tenant's placeholder company in place rather than inserting
@@ -72,7 +73,7 @@ const row = (roleId: string, g: Grant) => ({
 export async function seedDefaultCompanyRoles(
   tx: any,
   companyId: string,
-): Promise<{ superAdminRoleId: string; managerRoleId: string; accountantRoleId: string; operatorRoleId: string }> {
+): Promise<{ superAdminRoleId: string; managerRoleId: string; accountantRoleId: string; operatorRoleId: string; millManagerRoleId: string }> {
   const superAdminRoleId = crypto.randomUUID();
   await tx.insert(schema.roleMaster).values({
     role_id: superAdminRoleId,
@@ -177,5 +178,15 @@ export async function seedDefaultCompanyRoles(
     row(operatorRoleId, { module: 'COMPANY', resource: 'SETTINGS', view: true }),
   ]);
 
-  return { superAdminRoleId, managerRoleId, accountantRoleId, operatorRoleId };
+  /* ── Feed Mill Manager: the mill side of feed — grants live in mill-manager-role.ts ── */
+  const millManagerRoleId = crypto.randomUUID();
+  await tx.insert(schema.roleMaster).values({
+    role_id: millManagerRoleId,
+    company_id: companyId,
+    ...MILL_MANAGER_ROLE,
+    is_system_role: true,
+  });
+  await tx.insert(schema.rolePermissions).values(MILL_MANAGER_GRANTS.map((g) => row(millManagerRoleId, g)));
+
+  return { superAdminRoleId, managerRoleId, accountantRoleId, operatorRoleId, millManagerRoleId };
 }

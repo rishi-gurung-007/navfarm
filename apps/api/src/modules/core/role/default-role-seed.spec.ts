@@ -143,4 +143,24 @@ describe('seedDefaultCompanyRoles', () => {
     const operatorApprovals = operatorPerms.filter((p) => p.can_approve);
     expect(operatorApprovals).toEqual([]);
   });
+
+  it('seeds MILL_MANAGER (Feed Mill Manager) with mill-side grants and nothing destructive or financial', async () => {
+    const roleIds = await seedDefaultCompanyRoles(fakeTx as any, companyId);
+    expect(roleIds).toHaveProperty('millManagerRoleId');
+    expect(insertedRoles.find((r) => r.role_id === roleIds.millManagerRoleId)).toMatchObject({
+      company_id: companyId, role_code: 'MILL_MANAGER', role_name: 'Feed Mill Manager', is_system_role: true,
+    });
+    // the existing four are still seeded
+    expect(insertedRoles.map((r) => r.role_code)).toEqual(['SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT', 'OPERATOR', 'MILL_MANAGER']);
+
+    const perms = insertedPermissions.filter((p) => p.role_id === roleIds.millManagerRoleId);
+    const find = (m: string, r: string) => perms.find((p) => p.module_code === m && p.resource === r);
+    expect(find('PROCUREMENT', 'REQUISITION')).toMatchObject({ can_view: true, can_approve: true, can_create: false });
+    expect(find('INVENTORY', 'STOCK_TRANSFER')).toMatchObject({ can_view: true, can_create: true, can_edit: true, can_delete: false });
+    expect(find('INVENTORY', 'STOCK_COUNT')).toMatchObject({ can_view: true, can_create: true, can_edit: true, can_approve: true });
+    expect(find('INVENTORY', 'LEDGER')).toMatchObject({ can_view: true, can_create: false });
+    expect(find('MASTER_DATA', 'BIN_DIET_ASSIGNMENT')).toMatchObject({ can_view: true, can_create: true, can_edit: true, can_delete: false });
+    expect(perms.filter((p) => p.can_delete)).toEqual([]);
+    expect(perms.some((p) => p.module_code === 'FINANCE' || p.module_code === 'ALL' || p.module_code === 'PRODUCTION')).toBe(false);
+  });
 });
