@@ -11,7 +11,7 @@ describe('links effective on a date', () => {
   });
   it('filters a list', () => {
     const links = [{ id: 'a', effectiveTo: '2026-10-01' }, { id: 'b', effectiveFrom: '2026-10-02' }, { id: 'c' }];
-    expect(linksEffectiveOn(links, '2026-10-05').map((l) => l.id)).toEqual(['b', 'c']);
+    expect(linksEffectiveOn(links, '2026-10-05').map((l: { id: string }) => l.id)).toEqual(['b', 'c']);
   });
   it('the SQL form carries both ends and the date', () => {
     const { sql, params } = new MySqlDialect().sqlToQuery(siloShedLinkEffectiveOn('2026-10-05'));
