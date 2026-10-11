@@ -4,6 +4,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
+import { activeBinAssignments } from './feed-bin-assignments.query';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 import type { UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
 
@@ -37,22 +38,7 @@ export class FeedLoadingService {
       .where(eq(schema.feedConsolidationLine.consolidation_id, consolidationId));
     if (!lines.length) return { created: 0, existing: false };
     const itemIds = [...new Set(lines.map((line) => line.item_id))];
-    const productionDates = [...new Set(lines.map((line) => line.production_date).filter((date): date is string => !!date))];
-    const assignments = productionDates.length ? await this.db.select({
-      assignmentId: schema.binDietAssignment.assignment_id,
-      itemId: schema.binDietAssignment.feed_item_id,
-      productionDate: schema.binDietAssignment.production_date,
-      binLocationId: schema.binDietAssignment.bin_location_id,
-      productionSlotId: schema.binDietAssignment.production_slot_id,
-    }).from(schema.binDietAssignment).where(and(
-      eq(schema.binDietAssignment.tenant_id, tenantId),
-      eq(schema.binDietAssignment.company_id, consolidation.companyId),
-      inArray(schema.binDietAssignment.production_date, productionDates),
-      inArray(schema.binDietAssignment.feed_item_id, itemIds),
-      eq(schema.binDietAssignment.is_active, true),
-      eq(schema.binDietAssignment.status, 'ACTIVE'),
-      isNull(schema.binDietAssignment.deleted_at),
-    )) : [];
+    const assignments = await activeBinAssignments(this.db, consolidation.companyId, lines.map((line) => line.production_date), itemIds, tenantId);
     // Row 60: Loading Sheet No. is LOAD-<Req No>-<Line No>, the requisition
     // line's own number. One sheet per consolidation line, and a requisition
     // line is consolidated once, so the number is unique. Sheets numbered

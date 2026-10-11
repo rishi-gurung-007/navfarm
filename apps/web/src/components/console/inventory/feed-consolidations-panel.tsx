@@ -12,7 +12,8 @@ import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
 import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 import { CONSOLIDATION_STATUS_LABEL, labelOf } from "./requisition-labels";
-import { deepLinkIdFor, loadingSheetHref, requisitionHref, transferHref } from "./feed-loading-panel";
+import { deepLinkIdFor, loadingSheetHref, transferHref } from "./feed-loading-panel";
+import { requisitionHref } from "./transfer-source-links";
 import { millCapacityText, type MillCapacityState } from "./mill-capacity-view";
 import { formatDateShort } from "@/utils/date-short";
 
@@ -120,7 +121,7 @@ export function FeedConsolidationsPanel() {
                 <tbody>
                   {selected.lines?.map((line) => (
                     <tr key={line.consolidation_line_id}>
-                      <td className={`${TD} whitespace-nowrap`}>{line.requisition_no ? <RecordLink code={line.requisition_no} href={requisitionHref(line.requisition_id)} /> : na}</td>
+                      <td className={`${TD} whitespace-nowrap`}>{line.requisition_no ? <RecordLink code={line.requisition_no} href={requisitionHref("FEED", line.requisition_id)} /> : na}</td>
                       <td className={TD}><div>{line.farm_code ? <RecordLink code={line.farm_code} href={locationHref(line.farm_id)} /> : na}</div><div className="text-xs text-(--text-secondary)">{line.farm_name || ""}</div></td>
                       <td className={TD}><div>{line.destination_silo_code ? <RecordLink code={line.destination_silo_code} href={line.destination_silo_id ? locationHref(line.destination_silo_id) : null} /> : na}</div><div className="text-xs text-(--text-secondary)">{line.destination_silo_name || ""}</div></td>
                       <td className={`${TD} min-w-48 whitespace-normal break-words`}>

@@ -13,6 +13,7 @@ import {
   ValidateNested,
   ArrayMinSize,
   MaxLength,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -192,6 +193,11 @@ export class ReceiptLineInput {
   @MaxLength(500)
   @IsOptional()
   variance_reason?: string;
+
+  @ApiProperty({ description: 'Feed: this posting is the last for the shipment; only then a shortfall needs a variance reason', required: false })
+  @IsBoolean()
+  @IsOptional()
+  final_receipt?: boolean;
 
   @ApiProperty({ description: 'Bags physically received (feed: required for BAGGED, checkpoint 27)', required: false })
   @IsInt()

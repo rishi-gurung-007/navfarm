@@ -1,3 +1,4 @@
+import { serverToday } from './feed-requisition.rules';
 import { ForbiddenException } from '@nestjs/common';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FeedRequisitionService } from './feed-requisition.service';
@@ -54,8 +55,8 @@ describe('FeedRequisitionService.release', () => {
         { line_id: 'line-2', item_id: 'feed-b', item_code: 'FEED-B', destination_location_id: 'silo-2', quantity: '3000', mill_approved_qty_kg: '3000' },
       ],
       [                                                                            // exact-date active assignments
-        { assignment_id: 'as-1', feed_item_id: 'feed-a', production_date: '2026-10-10', bin_location_id: 'bin-1', production_slot_id: 'slot-1' },
-        { assignment_id: 'as-2', feed_item_id: 'feed-b', production_date: '2026-10-10', bin_location_id: 'bin-2', production_slot_id: 'slot-1' },
+        { assignmentId: 'as-1', itemId: 'feed-a', productionDate: '2026-10-10', binLocationId: 'bin-1', productionSlotId: 'slot-1' },
+        { assignmentId: 'as-2', itemId: 'feed-b', productionDate: '2026-10-10', binLocationId: 'bin-2', productionSlotId: 'slot-1' },
       ],
       [                                                                            // destination SILOs
         { location_id: 'silo-1', location_type: 'SILO', farm_id: 'farm-1', parent_location_id: 'farm-1', is_active: true, status: 'ACTIVE', deleted_at: null },
@@ -69,6 +70,8 @@ describe('FeedRequisitionService.release', () => {
     expect(stockTransfers.createForFeedRelease).toHaveBeenCalledTimes(2);
     expect(stockTransfers.createForFeedRelease).toHaveBeenNthCalledWith(1, expect.objectContaining({
       from_warehouse_id: 'bin-1', to_warehouse_id: 'silo-1',
+      // The header is dated when it is created, not the production date (2026-10-10).
+      posting_date: serverToday(),
       lines: [{ item_id: 'feed-a', quantity: 5000, uom: 'KG', requisition_line_id: 'line-1' }],
     }), 'tenant-1', expect.objectContaining({ userId: 'u-1' }));
     expect(inserted).toHaveLength(2);

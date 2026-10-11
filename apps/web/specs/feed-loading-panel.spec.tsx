@@ -59,7 +59,7 @@ describe("FeedLoadingPanel", () => {
     await screen.findByText(sheet.loading_sheet_no);
     const row = screen.getByText(sheet.loading_sheet_no).closest("tr")!;
     const link = (name: string) => within(row).getByRole("link", { name }).getAttribute("href");
-    expect(link("REQ-MUL100-2026-00001")).toBe("/requisitions?id=req-1");
+    expect(link("REQ-MUL100-2026-00001")).toBe("/inventory/feed-forecast?tab=feed-requisition&id=req-1");
     expect(link("MUL100")).toBe("/master-data/location?recordId=farm-1");
     expect(link("MUL100/SILO-01")).toBe("/master-data/location?recordId=silo-1");
     expect(link("ICAT-004-ITM-0008")).toBe("/master-data/item?recordId=item-8");

@@ -3,6 +3,8 @@ import { FeedLoadingService } from './feed-loading.service';
 
 // Workbook Requisition and Loading Sheet §3 (rows 60–77): the Loading
 // Instruction Sheet. A4 of workbook-100-gaps.md.
+import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
+
 describe('FeedLoadingService', () => {
   const queue: unknown[][] = [];
   const chain = (rows: unknown[]) => {
@@ -62,6 +64,20 @@ describe('FeedLoadingService', () => {
     await expect(service.createForConsolidation('cons-1', 't-1', { userId: 'user-1' })).resolves.toEqual({ created: 2, existing: false });
     const rows = inserted[0] as Array<{ loading_sheet_no: string }>;
     expect(rows.map((row) => row.loading_sheet_no)).toEqual(['LOAD-REQ-MUL100-2026-00001-10000', 'LOAD-REQ-MUL100-2026-00001-20000']);
+  });
+
+  it('snapshots the BIN the shared assignment lookup resolves, the one Release uses', async () => {
+    const assignments = [{ assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2', productionSlotId: 'slot-1' }];
+    queue.push(
+      [], [{ no: 'CONS-1', companyId: 'co-1' }],
+      [{ consolidation_line_id: 'cl-1', requisition_id: 'req-1', requisition_line_id: 'rl-1', farm_id: 'farm-1', destination_silo_id: 'silo-1', item_id: 'item-8', requested_qty_kg: '6050', mill_approved_qty_kg: '6000', requested_delivery_date: '2026-10-12', production_date: '2026-10-11' }],
+      assignments,
+      [{ line_id: 'rl-1', line_seq: 10000, req_no: 'REQ-1' }],
+    );
+    await service.createForConsolidation('cons-1', 't-1', { userId: 'user-1' });
+    const releaseBin = resolveLoadingBinId({ itemId: 'item-8', productionDate: '2026-10-11' }, assignments);
+    expect((inserted[0] as Array<{ mill_loading_bin_id: string | null }>)[0].mill_loading_bin_id).toBe(releaseBin);
+    expect(releaseBin).toBe('bin-2');
   });
 
   it('leaves existing sheets and their numbers untouched', async () => {

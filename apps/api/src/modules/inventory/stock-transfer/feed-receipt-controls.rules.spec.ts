@@ -21,14 +21,27 @@ describe('receiptVariance — shipped minus (previously received + this posting)
 describe('assertFeedReceiptLine', () => {
   const bulk = { label: 'Line 1', shipped: 6000, previouslyReceived: 0, feedType: 'BULK', bagSizeKg: 50, deliveryNoteNo: 'DN-1' };
 
-  it('accepts a full BULK receipt with no reason and returns zero variance', () => {
-    expect(assertFeedReceiptLine({ ...bulk, quantity: 6000 })).toBe(0);
+  it('accepts a full BULK final receipt with no reason and returns zero variance', () => {
+    expect(assertFeedReceiptLine({ ...bulk, quantity: 6000, finalReceipt: true })).toBe(0);
   });
 
-  it('checkpoint 26: a shortfall (6,000 shipped, 5,900 received) needs a variance reason', () => {
-    expect(() => assertFeedReceiptLine({ ...bulk, quantity: 5900 })).toThrow(/variance reason/i);
-    expect(() => assertFeedReceiptLine({ ...bulk, quantity: 5900, varianceReason: '   ' })).toThrow(BadRequestException);
-    expect(assertFeedReceiptLine({ ...bulk, quantity: 5900, varianceReason: 'Spillage at unloading' })).toBe(100);
+  it('checkpoint 26: a shortfall on the FINAL receipt (6,000 shipped, 5,900 received) needs a variance reason', () => {
+    expect(() => assertFeedReceiptLine({ ...bulk, quantity: 5900, finalReceipt: true })).toThrow(/variance reason/i);
+    expect(() => assertFeedReceiptLine({ ...bulk, quantity: 5900, finalReceipt: true, varianceReason: '   ' })).toThrow(BadRequestException);
+    expect(assertFeedReceiptLine({ ...bulk, quantity: 5900, finalReceipt: true, varianceReason: 'Spillage at unloading' })).toBe(100);
+  });
+
+  it('an interim partial receipt is not a shortfall: no reason, and no variance stored', () => {
+    expect(assertFeedReceiptLine({ ...bulk, quantity: 4000 })).toBeNull();
+    expect(assertFeedReceiptLine({ ...bulk, quantity: 4000, finalReceipt: false })).toBeNull();
+  });
+
+  it('a final receipt that closes the shipment needs no reason', () => {
+    expect(assertFeedReceiptLine({ ...bulk, previouslyReceived: 4000, quantity: 2000, finalReceipt: true })).toBe(0);
+  });
+
+  it('refuses a bag count on a line that is not BAGGED', () => {
+    expect(() => assertFeedReceiptLine({ ...bulk, quantity: 6000, bagCount: 120 })).toThrow(/bag count applies only to BAGGED/i);
   });
 
   it('Silo row 17: the delivery note no. is mandatory on a feed receipt', () => {
@@ -36,8 +49,8 @@ describe('assertFeedReceiptLine', () => {
     expect(() => assertFeedReceiptLine({ ...bulk, quantity: 6000, deliveryNoteNo: null })).toThrow(/delivery note/i);
   });
 
-  it('BULK lines ignore the bag count', () => {
-    expect(assertFeedReceiptLine({ ...bulk, quantity: 6000, bagCount: null })).toBe(0);
+  it('BULK lines take no bag count', () => {
+    expect(assertFeedReceiptLine({ ...bulk, quantity: 6000, bagCount: null, finalReceipt: true })).toBe(0);
   });
 
   describe('checkpoint 27: BAGGED lines need a bag count matching qty within 1 percent', () => {
@@ -48,15 +61,15 @@ describe('assertFeedReceiptLine', () => {
       expect(() => assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 99.5 })).toThrow(/bag count/i);
     });
     it('100 bags x 50 KG = 5,000 KG passes', () => {
-      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 100 })).toBe(0);
+      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 100, finalReceipt: true })).toBe(0);
     });
     it('uses the configured bag size, not a fixed 50', () => {
-      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 200, bagSizeKg: 25 })).toBe(0);
+      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 200, bagSizeKg: 25, finalReceipt: true })).toBe(0);
     });
     it('within 1 percent passes, beyond it is refused', () => {
       expect(BAG_COUNT_TOLERANCE).toBe(0.01);
       // 99 bags = 4,950 KG against 5,000 KG received: exactly 1 percent.
-      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 99 })).toBe(0);
+      expect(assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 99, finalReceipt: true })).toBe(0);
       // 98 bags = 4,900 KG: 2 percent off.
       expect(() => assertFeedReceiptLine({ ...bagged, quantity: 5000, bagCount: 98 })).toThrow(/4,900|4900/);
     });

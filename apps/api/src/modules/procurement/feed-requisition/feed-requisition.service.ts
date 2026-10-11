@@ -43,13 +43,14 @@ import { maySelfApprove } from '../requisition/requisition.rules';
 import {
   ApprovalLine, DEFAULT_FEED_SETTINGS, DestinationInfo, DraftLine, EXCEPTION_PREFIX, FarmFeedSettings, FeedType, LineBreakdownRow, approvalProblems, bagCountFor,
   buildLineBreakdown, diffDaysIso, exceedsCapacity, exceptionReasonOf, feedTypeOf, lifecycleRefLabel, lineChangeProblems, lineKey, planDraftUpsert,
-  productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday, wasEdited,
+  keepHigherPriority, productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday, wasEdited,
   feedListStatusFilter, priorityChangeProblem,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto, CreateFeedRequisitionFromRunDto, CreateManualFeedRequisitionDto, FeedLineEditInput, QueryFeedRequisitionDto,
   UpdateFeedRequisitionDto, FeedRequisitionReceiptDto, FeedRequisitionShipmentDto,
 } from './dto/feed-requisition.dto';
+import { activeBinAssignments as activeBinAssignmentsQuery } from './feed-bin-assignments.query';
 import { feedReleaseBlockReason, groupFeedTransferLines, resolveLoadingBinId, type FeedBinAssignmentInput } from './feed-requisition-transfer.rules';
 import { FeedLoadingService } from './feed-loading.service';
 
@@ -318,7 +319,7 @@ export class FeedRequisitionService implements OnModuleInit {
     return this.db
       .select({
         requisition_id: schema.requisition.requisition_id, req_no: schema.requisition.req_no,
-        status: schema.requisition.status, requisition_type: schema.requisition.requisition_type,
+        status: schema.requisition.status, requisition_type: schema.requisition.requisition_type, priority: schema.requisition.priority,
       })
       .from(schema.requisition)
       .where(and(
@@ -778,7 +779,7 @@ export class FeedRequisitionService implements OnModuleInit {
           // A rerun that drafts nothing new but keeps the farm's own lines leaves
           // priority and required date as they were rather than blanking them.
           ...(drafted.length ? {
-            priority: requisitionPriority(forecast.planningDate, drafted),
+            priority: keepHigherPriority(draft?.priority, requisitionPriority(forecast.planningDate, drafted)),
             required_date: [...plan.insert.map((l) => l.proposedDeliveryDate), ...plan.update.map((u) => (u.keepDeliveryDate ? u.priorProposedDeliveryDate! : u.line.proposedDeliveryDate))].sort()[0] ?? null,
           } : {}),
           forecast_run_key: runKey,
@@ -1307,24 +1308,7 @@ export class FeedRequisitionService implements OnModuleInit {
         }
 
         const itemIds = [...new Set(lines.map((line) => line.item_id!))];
-        const assignments = await this.db
-          .select({
-            assignment_id: schema.binDietAssignment.assignment_id,
-            feed_item_id: schema.binDietAssignment.feed_item_id,
-            production_date: schema.binDietAssignment.production_date,
-            bin_location_id: schema.binDietAssignment.bin_location_id,
-            production_slot_id: schema.binDietAssignment.production_slot_id,
-          })
-          .from(schema.binDietAssignment)
-          .where(and(
-            eq(schema.binDietAssignment.tenant_id, tenantId),
-            eq(schema.binDietAssignment.company_id, companyId),
-            eq(schema.binDietAssignment.production_date, row.production_date),
-            inArray(schema.binDietAssignment.feed_item_id, itemIds),
-            eq(schema.binDietAssignment.is_active, true),
-            eq(schema.binDietAssignment.status, 'ACTIVE'),
-            isNull(schema.binDietAssignment.deleted_at),
-          ));
+        const assignments = await this.activeBinAssignments(companyId, row.production_date, itemIds, tenantId);
 
         const destinationIds = [...new Set(lines.map((line) => line.destination_location_id!))];
         const destinations = await this.db
@@ -1363,13 +1347,7 @@ export class FeedRequisitionService implements OnModuleInit {
             destinationLocationId: line.destination_location_id!,
             quantityKg: Number(line.mill_approved_qty_kg),
           })),
-          assignments.map((assignment) => ({
-            assignmentId: assignment.assignment_id,
-            itemId: assignment.feed_item_id,
-            productionDate: assignment.production_date,
-            binLocationId: assignment.bin_location_id,
-            productionSlotId: assignment.production_slot_id,
-          })),
+          assignments,
           row.production_date,
         );
 
@@ -1378,7 +1356,8 @@ export class FeedRequisitionService implements OnModuleInit {
             company_id: companyId,
             from_warehouse_id: plan.sourceLocationId,
             to_warehouse_id: plan.destinationLocationId,
-            posting_date: row.production_date,
+            // Creation date, as the common requisition does; the production date is the requisition's own field.
+            posting_date: serverToday(),
             remarks: `Feed requisition ${row.req_no}`,
             lines: plan.lines.map((line) => ({
               item_id: line.itemId,
@@ -1460,7 +1439,7 @@ export class FeedRequisitionService implements OnModuleInit {
   private mapEventLines(
     transferId: string,
     available: Array<{ transfer_line_id: string; requisition_line_id: string | null }>,
-    requested: Array<{ requisition_line_id: string; quantity: number; variance_reason?: string; bag_count?: number; delivery_note_no?: string }>,
+    requested: Array<{ requisition_line_id: string; quantity: number; variance_reason?: string; final_receipt?: boolean; bag_count?: number; delivery_note_no?: string }>,
   ) {
     const transferLineOf = new Map(available.map((line) => [line.requisition_line_id, line.transfer_line_id]));
     return requested.map((line) => {
@@ -1473,6 +1452,7 @@ export class FeedRequisitionService implements OnModuleInit {
         quantity: line.quantity,
         // W2T: receipt controls ride through to the receipt line (shipments carry none).
         ...(line.variance_reason !== undefined ? { variance_reason: line.variance_reason } : {}),
+        ...(line.final_receipt !== undefined ? { final_receipt: line.final_receipt } : {}),
         ...(line.bag_count !== undefined ? { bag_count: line.bag_count } : {}),
         ...(line.delivery_note_no !== undefined ? { delivery_note_no: line.delivery_note_no } : {}),
       };
@@ -1490,12 +1470,18 @@ export class FeedRequisitionService implements OnModuleInit {
     shipmentId: string,
     companyId: string,
     farmId: string,
+    tenantId: string,
   ): Promise<FeedReceiptControls> {
     const reqLineIds = lines.map((l) => l.requisition_line_id).filter((v): v is string => !!v);
     const reqLines = reqLineIds.length ? await this.db
       .select({ line_id: schema.requisitionLine.line_id, line_seq: schema.requisitionLine.line_seq, feed_type: schema.requisitionLine.feed_type })
       .from(schema.requisitionLine)
-      .where(inArray(schema.requisitionLine.line_id, reqLineIds)) : [];
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(and(
+        inArray(schema.requisitionLine.line_id, reqLineIds),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, companyId),
+      )) : [];
     const sheets = reqLineIds.length ? await this.db
       .select({
         requisition_line_id: schema.feedLoadingSheet.requisition_line_id,
@@ -1504,7 +1490,11 @@ export class FeedRequisitionService implements OnModuleInit {
         shipment_id: schema.feedLoadingSheet.shipment_id,
       })
       .from(schema.feedLoadingSheet)
-      .where(inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds)) : [];
+      .where(and(
+        inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds),
+        eq(schema.feedLoadingSheet.tenant_id, tenantId),
+        eq(schema.feedLoadingSheet.company_id, companyId),
+      )) : [];
     const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
     const controls: FeedReceiptControls = { bagSizeKg: settings.bagSizeKg, lines: new Map() };
     for (const l of lines) {
@@ -1544,7 +1534,7 @@ export class FeedRequisitionService implements OnModuleInit {
       if (linked.transfer.destination_farm_id !== farmId && linked.transfer.destination_parent_id !== farmId) {
         throw new ForbiddenException(`Transfer ${dto.transfer_id} destination is outside requisition farm ${farmId}.`);
       }
-      const controls = await this.feedReceiptControls(linked.lines, dto.shipment_id, companyId, farmId);
+      const controls = await this.feedReceiptControls(linked.lines, dto.shipment_id, companyId, farmId, tenantId);
       const posted = await this.stockTransfers.postReceipt(dto.transfer_id, {
         shipment_id: dto.shipment_id,
         posting_date: dto.posting_date,
@@ -2015,23 +2005,8 @@ export class FeedRequisitionService implements OnModuleInit {
    * gate (feedReleaseBlockReason) and each line's Mill Loading Bin
    * (resolveLoadingBinId, Req. r32) so the two never disagree.
    */
-  private async activeBinAssignments(companyId: string, productionDate: string | null, itemIds: string[], tenantId: string): Promise<FeedBinAssignmentInput[]> {
-    if (!productionDate || !itemIds.length) return [];
-    return this.db.select({
-      assignmentId: schema.binDietAssignment.assignment_id,
-      itemId: schema.binDietAssignment.feed_item_id,
-      productionDate: schema.binDietAssignment.production_date,
-      binLocationId: schema.binDietAssignment.bin_location_id,
-      productionSlotId: schema.binDietAssignment.production_slot_id,
-    }).from(schema.binDietAssignment).where(and(
-      eq(schema.binDietAssignment.tenant_id, tenantId),
-      eq(schema.binDietAssignment.company_id, companyId),
-      eq(schema.binDietAssignment.production_date, productionDate),
-      inArray(schema.binDietAssignment.feed_item_id, itemIds),
-      eq(schema.binDietAssignment.is_active, true),
-      eq(schema.binDietAssignment.status, 'ACTIVE'),
-      isNull(schema.binDietAssignment.deleted_at),
-    ));
+  private activeBinAssignments(companyId: string, productionDate: string | null, itemIds: string[], tenantId: string): Promise<FeedBinAssignmentInput[]> {
+    return activeBinAssignmentsQuery(this.db, companyId, [productionDate], itemIds, tenantId);
   }
 
   /**
@@ -2092,6 +2067,7 @@ export class FeedRequisitionService implements OnModuleInit {
         from_warehouse_id: schema.stockTransfer.from_warehouse_id,
         to_warehouse_id: schema.stockTransfer.to_warehouse_id,
         bin_assignment_id: schema.feedRequisitionTransfer.bin_assignment_id,
+        company_id: schema.stockTransfer.company_id,
       })
       .from(schema.feedRequisitionTransfer)
       .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.feedRequisitionTransfer.transfer_id))
@@ -2163,7 +2139,11 @@ export class FeedRequisitionService implements OnModuleInit {
         shipment_id: schema.feedLoadingSheet.shipment_id,
       })
       .from(schema.feedLoadingSheet)
-      .where(inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds)) : [];
+      .where(and(
+        inArray(schema.feedLoadingSheet.requisition_line_id, reqLineIds),
+        eq(schema.feedLoadingSheet.tenant_id, tenantId),
+        inArray(schema.feedLoadingSheet.company_id, [...new Set(transfers.map((transfer) => transfer.company_id))]),
+      )) : [];
     const sheetFor = (requisitionLineId: string | null, shipmentId: string) => {
       const forLine = loadingSheets.filter((sheet) => sheet.requisition_line_id === requisitionLineId);
       return forLine.find((sheet) => sheet.shipment_id === shipmentId) ?? forLine[0] ?? null;

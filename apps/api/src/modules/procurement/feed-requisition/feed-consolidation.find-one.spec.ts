@@ -15,11 +15,12 @@ describe('FeedConsolidationService.findOne', () => {
   const db: any = { select: jest.fn(() => chain(queue.shift() ?? [])) };
   const capacity = {
     itemId: 'item-8', state: 'AVAILABLE', demandKg: 9_000, availableKg: 150_000, status: 'GREEN', priority: 1,
-    millId: 'mill-1', millCode: 'MILL-001', binId: 'bin-2', binCode: 'MILL-001/BIN-002', feedForm: 'BULK',
+    // A schedule BIN that differs from the assignment: findOne must not take it.
+    millId: 'mill-1', millCode: 'MILL-001', binId: 'bin-9', binCode: 'MILL-001/BIN-009', feedForm: 'BULK',
   };
   const millCapacity = {
     approvedDemand: jest.fn(async () => ({ lines: [], diets: new Map() })),
-    allocateOn: jest.fn(async () => new Map([['item-8', capacity]])),
+    allocateOnDates: jest.fn(async () => new Map([['2026-10-11', new Map([['item-8', capacity]])]])),
   };
   const service = new FeedConsolidationService(transactionCls(db), {} as any, {} as any, millCapacity as any);
 
@@ -29,11 +30,13 @@ describe('FeedConsolidationService.findOne', () => {
     farm_id: farm, item_id: 'item-8', destination_silo_id: `silo-${n}`, requested_delivery_date: '2026-10-12', production_date: '2026-10-11',
     requested_qty_kg: qty, mill_approved_qty_kg: qty, adjustment_reason: null, bc_to_no: null,
   });
-  /** Reads in order: header, lines, loading sheets, locations, items, requisitions, transfers, Feed Mill Manager. */
-  const reads = (o: { loading?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[]; users?: unknown[] } = {}) => queue.push(
+  const assignment = { assignmentId: 'a-1', itemId: 'item-8', productionDate: '2026-10-11', binLocationId: 'bin-2', productionSlotId: 'slot-1' };
+  /** Reads in order: header, lines, loading sheets, BIN assignments, locations, items, requisitions, transfers, Feed Mill Manager. */
+  const reads = (o: { loading?: unknown[]; assignments?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[]; users?: unknown[] } = {}) => queue.push(
     [header],
     [line(1, 'farm-1', '6000.0000'), line(2, 'farm-2', '3000.0000')],
     o.loading ?? [{ consolidation_line_id: 'cl-1', loading_sheet_id: 'ls-1', loading_sheet_no: 'LOAD-REQ-1-10000', mill_loading_bin_id: 'bin-1' }],
+    o.assignments ?? [assignment],
     o.locations ?? [
       { id: 'farm-1', code: 'MUL100', name: 'Mulberry' }, { id: 'farm-2', code: 'GRS', name: 'Green Ridge' },
       { id: 'silo-1', code: 'MUL100/SILO-01', name: 'Silo 1' }, { id: 'silo-2', code: 'GRS/SILO-01', name: 'Silo 1' },
@@ -73,9 +76,18 @@ describe('FeedConsolidationService.findOne', () => {
     });
   });
 
+  it('names the same BIN Release and the loading sheet resolve, not the capacity schedule BIN (r122)', async () => {
+    const { resolveLoadingBinId } = jest.requireActual('./feed-requisition-transfer.rules');
+    reads({ loading: [] });
+    const sheet: any = await service.findOne('cons-1', 't-1', {});
+    const releaseBin = resolveLoadingBinId({ itemId: 'item-8', productionDate: '2026-10-11' }, [assignment]);
+    expect(releaseBin).toBe('bin-2');
+    expect(sheet.lines.map((l: any) => l.mill_loading_bin_id)).toEqual([releaseBin, releaseBin]);
+  });
+
   it('never falls back to a raw id when a record is missing', async () => {
-    millCapacity.allocateOn.mockResolvedValueOnce(new Map());
-    reads({ loading: [], locations: [], items: [], reqs: [], transfers: [], users: [] });
+    millCapacity.allocateOnDates.mockResolvedValueOnce(new Map());
+    reads({ loading: [], assignments: [], locations: [], items: [], reqs: [], transfers: [], users: [] });
     const sheet: any = await service.findOne('cons-1', 't-1', {});
     expect(sheet.feed_mill_manager_name).toBeNull();
     expect(sheet.lines[0]).toMatchObject({

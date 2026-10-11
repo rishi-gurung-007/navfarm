@@ -50,7 +50,7 @@ describe("FeedConsolidationsPanel", () => {
     expect(cell.getByText("150,000")).toBeTruthy();
     expect(cell.getByText("9,000 KG")).toBeTruthy();
     const href = (name: string) => cell.getByRole("link", { name }).getAttribute("href");
-    expect(href("REQ-MUL100-2026-00001")).toBe("/requisitions?id=req-1");
+    expect(href("REQ-MUL100-2026-00001")).toBe("/inventory/feed-forecast?tab=feed-requisition&id=req-1");
     expect(href("MUL100")).toBe("/master-data/location?recordId=farm-1");
     expect(href("MUL100/SILO-01")).toBe("/master-data/location?recordId=silo-1");
     expect(href("ICAT-004-ITM-0008")).toBe("/master-data/item?recordId=item-8");

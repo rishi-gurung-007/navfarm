@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class QueryFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
@@ -124,7 +124,9 @@ export class FeedRequisitionShipmentDto {
  * (assertFeedReceiptLine), not here, because it depends on what shipped.
  */
 export class FeedRequisitionReceiptLineDto extends FeedRequisitionEventLineDto {
-  @ApiPropertyOptional({ description: 'Mandatory when shipped minus received is above zero (checkpoint 26)' })
+  @ApiPropertyOptional({ description: 'The last receipt for this shipment. Only then is a shortfall a variance that needs a reason' })
+  @IsOptional() @IsBoolean() final_receipt?: boolean;
+  @ApiPropertyOptional({ description: 'Mandatory on a final receipt that leaves a shortfall (checkpoint 26)' })
   @IsOptional() @IsString() @MaxLength(500) variance_reason?: string;
   @ApiPropertyOptional({ description: 'Bags physically received; required for BAGGED feed (checkpoint 27)' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) bag_count?: number;

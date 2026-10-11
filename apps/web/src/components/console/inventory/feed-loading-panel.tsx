@@ -11,6 +11,7 @@ import { unwrap } from "./feed-format";
 import { RecordLink, itemHref, locationHref } from "./feed-requisition-header";
 import { LOADING_STATUS_LABEL, labelOf } from "./requisition-labels";
 import { formatDateShort, formatStampShort } from "@/utils/date-short";
+import { requisitionHref } from "./transfer-source-links";
 
 type LoadingSheet = {
   loading_sheet_id: string; loading_sheet_no: string; requisition_id: string; requisition_no: string | null;
@@ -27,7 +28,6 @@ type Draft = { compartmentNo: string; kgLoaded: string; loadedBy: string };
 const quantity = (value: string | number | null, na: string) => value == null ? na : `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })} KG`;
 
 /** W5 (10 Oct): routes for the records a loading sheet names. */
-export const requisitionHref = (id: string) => `/requisitions?id=${encodeURIComponent(id)}`;
 export const transferHref = (id: string) => `/inventory/transfers?id=${encodeURIComponent(id)}`;
 /** A loading sheet opens in the Feed Forecast → Loading Instructions tab. */
 export const loadingSheetHref = (id: string) => `/inventory/feed-forecast?tab=loading-instructions&id=${encodeURIComponent(id)}`;
@@ -93,7 +93,7 @@ export function FeedLoadingPanel() {
                         {row.transfer_no ? " · " : ""}{row.shipment_no || t("flsShipmentPending")}
                       </div>
                     </td>
-                    <td className={`${TD} whitespace-nowrap`}>{row.requisition_no ? <RecordLink code={row.requisition_no} href={requisitionHref(row.requisition_id)} /> : na}</td>
+                    <td className={`${TD} whitespace-nowrap`}>{row.requisition_no ? <RecordLink code={row.requisition_no} href={requisitionHref("FEED", row.requisition_id)} /> : na}</td>
                     <td className={TD}>
                       <div className="font-medium">{row.farm_code ? <RecordLink code={row.farm_code} href={locationHref(row.farm_id)} /> : na}</div>
                       <div className="text-xs text-(--text-secondary)">{row.farm_name || ""}</div>

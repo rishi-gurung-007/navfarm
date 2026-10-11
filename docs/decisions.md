@@ -3396,3 +3396,14 @@ assignment") and empty states.
 Rishi, 10 Oct, asked against the workbook's Checkpoints row 29 (over-receipt allowed with a reason and flagged):
 **keep the block**. A receipt may never exceed the quantity shipped. Only an under-receipt (shipped minus received
 greater than zero) needs a variance reason (Checkpoints row 26). This deliberately departs from row 29.
+
+## 2026-10-11 — Receipt variance reason only on the final receipt (controller reading of Rishi's 10 Oct ruling)
+
+Rishi, 10 Oct: "only a shortfall needs a reason". **Interpretation, awaiting Rishi's confirmation:** an interim partial
+receipt, with more still to come on the shipment, is not a shortfall. So the farm marks the last receipt for a shipment
+line ("Final receipt for this shipment", `final_receipt` on the feed receipt line). The variance reason is required only
+when that flag is set and previously received plus this posting is below what shipped. Interim partials need no reason
+and store `variance_qty` as NULL; a final receipt stores it. Nothing else changes: outstanding is unchanged, a line is
+never closed short, and over-receipt stays refused (10 Oct).
+
+## 2026-10-11 — The workbook's House is the Shed; screens say Shed (Rishi). The email channel is deferred until later (Rishi).

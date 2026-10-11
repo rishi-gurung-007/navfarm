@@ -672,7 +672,7 @@ export class StockTransferService {
       this.shippedQuantities(id, transfer.tenant_id),
       this.receivedQuantities(id, transfer.tenant_id),
     ]);
-    const source = (await this.sourceLinks([id])).get(id) ?? EMPTY_SOURCE_LINK;
+    const source = (await this.sourceLinks([id], transfer.tenant_id)).get(id) ?? EMPTY_SOURCE_LINK;
     return {
       ...transfer,
       ...source,
@@ -691,7 +691,7 @@ export class StockTransferService {
    * COMMON), and for feed the Mill Consolidation Sheet and loading sheet(s).
    * A hand-made transfer has no requisition line and gets EMPTY_SOURCE_LINK.
    */
-  private async sourceLinks(transferIds: string[]): Promise<Map<string, SourceLink>> {
+  private async sourceLinks(transferIds: string[], tenantId: string): Promise<Map<string, SourceLink>> {
     const out = new Map<string, SourceLink>();
     if (!transferIds.length) return out;
     const rows = await this.db
@@ -707,11 +707,24 @@ export class StockTransferService {
         loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
       })
       .from(schema.stockTransferLine)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
       .innerJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
-      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
-      .leftJoin(schema.feedConsolidation, eq(schema.feedConsolidation.consolidation_id, schema.requisition.feed_consolidation_id))
-      .leftJoin(schema.feedLoadingSheet, eq(schema.feedLoadingSheet.requisition_line_id, schema.stockTransferLine.requisition_line_id))
-      .where(inArray(schema.stockTransferLine.transfer_id, transferIds));
+      .innerJoin(schema.requisition, and(
+        eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, schema.stockTransfer.company_id),
+      ))
+      .leftJoin(schema.feedConsolidation, and(
+        eq(schema.feedConsolidation.consolidation_id, schema.requisition.feed_consolidation_id),
+        eq(schema.feedConsolidation.tenant_id, tenantId),
+        eq(schema.feedConsolidation.company_id, schema.stockTransfer.company_id),
+      ))
+      .leftJoin(schema.feedLoadingSheet, and(
+        eq(schema.feedLoadingSheet.requisition_line_id, schema.stockTransferLine.requisition_line_id),
+        eq(schema.feedLoadingSheet.tenant_id, tenantId),
+        eq(schema.feedLoadingSheet.company_id, schema.stockTransfer.company_id),
+      ))
+      .where(and(inArray(schema.stockTransferLine.transfer_id, transferIds), eq(schema.stockTransfer.tenant_id, tenantId)));
     for (const r of rows) {
       const link = out.get(r.transfer_id) ?? {
         source_requisition_id: r.requisition_id,
@@ -784,7 +797,7 @@ export class StockTransferService {
       .where(and(...conditions))
       .limit(limit)
       .offset(offset);
-    const links = await this.sourceLinks(rows.map((r: any) => r.transfer_id));
+    const links = await this.sourceLinks(rows.map((r: any) => r.transfer_id), tenantId);
     return rows.map((r: any) => ({ ...r, ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK) }));
   }
 
@@ -1340,7 +1353,7 @@ export class StockTransferService {
 
       const receiptId = randomUUID();
       const receiptNo = await this.nextEventNo(transfer.company_id, tenantId, 'RC');
-      const receiptControls = new Map<string, { previouslyReceived: number; shipped: number; varianceQty: number }>();
+      const receiptControls = new Map<string, { previouslyReceived: number; shipped: number; varianceQty: number | null }>();
       await this.db.insert(schema.transferReceipt).values({
         receipt_id: receiptId,
         tenant_id: tenantId,
@@ -1381,10 +1394,13 @@ export class StockTransferService {
         // never gets here (refused above, decisions.md 10 Oct). A feed line must
         // explain a shortfall, count its bags if BAGGED and name its delivery note.
         const control = feedControls?.lines.get(line.line_id);
+        if (!control && input.bag_count != null) {
+          throw new BadRequestException('A bag count applies only to a BAGGED feed receipt line; remove it from this line.');
+        }
         const varianceQty = control
           ? assertFeedReceiptLine({
             label: control.label, shipped: alreadyShipped, previouslyReceived: alreadyReceived, quantity: input.quantity,
-            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null,
+            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null, finalReceipt: input.final_receipt === true,
             varianceReason: input.variance_reason ?? null, deliveryNoteNo: input.delivery_note_no ?? null,
           })
           : receiptVariance(alreadyShipped, alreadyReceived, input.quantity);
@@ -1435,7 +1451,7 @@ export class StockTransferService {
           // multi-serial line, the serials this receipt actually carried.
           lot_no: shipmentLine.lot_no,
           serial_no: receivedSerialNo,
-          variance_qty: String(varianceQty),
+          variance_qty: varianceQty === null ? null : String(varianceQty),
           variance_reason: input.variance_reason?.trim() || null,
           bag_count: control?.feedType === 'BAGGED' ? input.bag_count ?? null : null,
           delivery_note_no: input.delivery_note_no?.trim() || null,

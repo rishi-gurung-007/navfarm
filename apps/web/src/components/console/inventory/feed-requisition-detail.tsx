@@ -79,6 +79,7 @@ export function FeedRequisitionDetail({
   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
   // W2T: per requisition line — variance reason, bag count, delivery note no.
   const [receiveReason, setReceiveReason] = useState<Record<string, string>>({});
+  const [receiveFinal, setReceiveFinal] = useState<Record<string, boolean>>({});
   const [receiveBags, setReceiveBags] = useState<Record<string, string>>({});
   const [receiveNote, setReceiveNote] = useState<Record<string, string>>({});
   const [lastReceipt, setLastReceipt] = useState<FeedPostedReceipt | null>(null);
@@ -216,22 +217,26 @@ export function FeedRequisitionDetail({
     const bags = entered(receiveBags[key]);
     const bagsOk = !bagged || quantity === null || (bags !== null && Number.isInteger(bags) && bags > 0
       && Math.abs(bags * bagSizeKg - quantity) <= quantity * BAG_TOLERANCE + 1e-9);
-    const reasonOk = !short || !!receiveReason[key]?.trim();
+    // Controller reading of Rishi's 10 Oct ruling: only the final receipt can be short; an interim partial needs no reason.
+    const final = !!receiveFinal[key];
+    const reasonNeeded = final && short;
+    const reasonOk = !reasonNeeded || !!receiveReason[key]?.trim();
     const noteOk = quantity === null || !!receiveNote[key]?.trim();
-    return { line, key, index, reqLine, transferLine, shipped, previouslyReceived, outstanding, quantity, bagged, variance, short, bags, bagsOk, reasonOk, noteOk };
+    return { line, key, index, reqLine, transferLine, shipped, previouslyReceived, outstanding, quantity, bagged, variance, short, final, reasonNeeded, bags, bagsOk, reasonOk, noteOk };
   });
   const receiveBody = receiptRows.flatMap((row) => row.quantity !== null && row.quantity > 0 ? [{
     requisition_line_id: row.key,
     quantity: row.quantity,
     delivery_note_no: receiveNote[row.key]?.trim() ?? "",
-    ...(row.short ? { variance_reason: receiveReason[row.key]?.trim() ?? "" } : {}),
+    ...(row.final ? { final_receipt: true } : {}),
+    ...(row.reasonNeeded ? { variance_reason: receiveReason[row.key]?.trim() ?? "" } : {}),
     ...(row.bagged && row.bags !== null ? { bag_count: row.bags } : {}),
   }] : []);
   const receiveValid = !!chosenTransfer && !!chosenShipment
     && receiveLines.every((line) => withinCap(receiveQty[line.requisition_line_id!], line.remaining_to_receive))
     && receiptRows.every((row) => row.quantity === null || (row.bagsOk && row.reasonOk && row.noteOk))
     && receiveBody.length > 0;
-  const resetReceiptInputs = () => { setReceiveQty({}); setReceiveReason({}); setReceiveBags({}); setReceiveNote({}); };
+  const resetReceiptInputs = () => { setReceiveQty({}); setReceiveReason({}); setReceiveFinal({}); setReceiveBags({}); setReceiveNote({}); };
   const lineNumber = (requisitionLineId: string, fallback: number) =>
     lines.find((line) => line.line_id === requisitionLineId)?.line_seq ?? fallback;
 
@@ -427,11 +432,18 @@ export function FeedRequisitionDetail({
                             value={receiveBags[row.key] ?? ""} onChange={(event) => setReceiveBags((current) => ({ ...current, [row.key]: event.target.value }))} />
                         </Field>
                       )}
-                      <Field className="min-w-56 flex-1" label={t("w2tVarianceReasonFor", { line: n })} htmlFor={`feed-receive-reason-${row.key}`}
-                        error={row.reasonOk ? undefined : t("w2tVarianceReasonRequired")}>
-                        <input id={`feed-receive-reason-${row.key}`} type="text" maxLength={500} className="nf-input-sm"
-                          value={receiveReason[row.key] ?? ""} onChange={(event) => setReceiveReason((current) => ({ ...current, [row.key]: event.target.value }))} />
-                      </Field>
+                      <label className="flex items-center gap-1 pb-1 text-xs" htmlFor={`feed-receive-final-${row.key}`}>
+                        <input id={`feed-receive-final-${row.key}`} type="checkbox" checked={!!receiveFinal[row.key]}
+                          onChange={(event) => setReceiveFinal((current) => ({ ...current, [row.key]: event.target.checked }))} />
+                        {t("w2tFinalReceiptFor", { line: n })}
+                      </label>
+                      {row.reasonNeeded && (
+                        <Field className="min-w-56 flex-1" label={t("w2tVarianceReasonFor", { line: n })} htmlFor={`feed-receive-reason-${row.key}`}
+                          error={row.reasonOk ? undefined : t("w2tVarianceReasonRequired")}>
+                          <input id={`feed-receive-reason-${row.key}`} type="text" maxLength={500} className="nf-input-sm"
+                            value={receiveReason[row.key] ?? ""} onChange={(event) => setReceiveReason((current) => ({ ...current, [row.key]: event.target.value }))} />
+                        </Field>
+                      )}
                     </div>
                   );
                 })}

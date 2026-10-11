@@ -8,6 +8,8 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
+import { activeBinAssignments } from './feed-bin-assignments.query';
+import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
 import { FeedLoadingService, transfersByRequisitionLine } from './feed-loading.service';
 import { MillCapacityService } from '../../inventory/feed-forecast/mill-capacity.service';
 import type { DietCapacity } from '../../inventory/feed-forecast/mill-capacity.rules';
@@ -134,12 +136,13 @@ export class FeedConsolidationService {
     const result = new Map<string, Map<string, DietCapacity>>();
     if (!this.millCapacity) return result;
     const companyIds = [...new Set(rows.map((row) => row.company_id).filter((id): id is string => Boolean(id)))];
-    const dates = [...new Set(rows.map((row) => this.productionDateOf(row)).filter(Boolean))];
-    for (const date of dates) {
-      const { lines } = await this.millCapacity.approvedDemand(tenantId, { companyIds }, date, date);
-      result.set(date, await this.millCapacity.allocateOn(tenantId, companyIds, date, lines.map((line) => ({ itemId: line.itemId, demandKg: line.requestedKg }))));
-    }
-    return result;
+    const dates = [...new Set(rows.map((row) => this.productionDateOf(row)).filter(Boolean))].sort();
+    if (!dates.length) return result;
+    // One demand query across the whole date span and one mill/schedule load for every date.
+    const { lines } = await this.millCapacity.approvedDemand(tenantId, { companyIds }, dates[0], dates[dates.length - 1]);
+    const demandsByDate = new Map<string, Array<{ itemId: string; demandKg: number }>>(dates.map((date) => [date, []]));
+    for (const line of lines) demandsByDate.get(line.productionDate)?.push({ itemId: line.itemId, demandKg: line.requestedKg });
+    return this.millCapacity.allocateOnDates(tenantId, companyIds, demandsByDate);
   }
 
   async create(dto: CreateFeedConsolidationDto, tenantId: string, user: User) {
@@ -246,7 +249,10 @@ export class FeedConsolidationService {
     })));
     const dietOf = (line: typeof lines[number]) => capacity.get(this.productionDateOf({ production_date: line.production_date, proposed_delivery_date: line.requested_delivery_date }))?.get(line.item_id);
     // r122: the loading sheet's BIN snapshot is what the mill loads from; before a sheet exists, the assignment.
-    const binOf = (line: typeof lines[number]) => loadingByLine.get(line.consolidation_line_id)?.mill_loading_bin_id ?? dietOf(line)?.binId ?? null;
+    // Before a sheet exists, the same BIN Diet lookup Release and the loading sheet use (resolveLoadingBinId), not the capacity schedule.
+    const assignments = await activeBinAssignments(this.db, header.company_id, lines.map((line) => line.production_date), lines.map((line) => line.item_id), tenantId);
+    const binOf = (line: typeof lines[number]) => loadingByLine.get(line.consolidation_line_id)?.mill_loading_bin_id
+      ?? resolveLoadingBinId({ itemId: line.item_id, productionDate: line.production_date }, assignments);
     const locationIds = [...new Set(lines.flatMap((line) => [line.farm_id, line.destination_silo_id, binOf(line)].filter((id): id is string => !!id)))];
     const locations = locationIds.length ? await this.db.select({ id: schema.locationMaster.location_id, code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
       .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, locationIds)) : [];

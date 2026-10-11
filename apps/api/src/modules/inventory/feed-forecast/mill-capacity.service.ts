@@ -134,6 +134,18 @@ export class MillCapacityService {
     return allocateMillCapacity({ mills, schedules: byDate.get(date) ?? [], demands });
   }
 
+  /** allocateOn for several dates at once: one mills read and one schedules read, however many dates. */
+  async allocateOnDates(tenantId: string, companyIds: string[], demandsByDate: Map<string, DietDemand[]>) {
+    const result = new Map<string, Map<string, DietCapacity>>();
+    const dates = [...demandsByDate.keys()];
+    if (!dates.length) return result;
+    const [mills, { byDate }] = await Promise.all([this.mills(tenantId, companyIds), this.schedules(tenantId, companyIds, dates)]);
+    for (const date of dates) {
+      result.set(date, allocateMillCapacity({ mills, schedules: byDate.get(date) ?? [], demands: demandsByDate.get(date) ?? [] }));
+    }
+    return result;
+  }
+
   /**
    * Checkpoint 42 (Checkpoints and Validations r48): a consolidation may not
    * carry a diet above its Mill Capacity Available. Demand is every

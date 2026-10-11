@@ -223,14 +223,14 @@ describe("FeedRequisitionDocument — lines sub-form (Requisition §2)", () => {
 
   it("nests each line's batch/house breakdown beneath it, read-only (B1)", () => {
     render(<FeedRequisitionDocument view={view} editable />);
-    const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });
+    const breakdown = screen.getByRole("table", { name: "Batches and sheds for line 20000" });
     expect(within(breakdown).getByText("B-001")).toBeTruthy();
     expect(within(breakdown).getByText("GRS/SHED-003")).toBeTruthy();
     expect(within(breakdown).getByText("1,000")).toBeTruthy();
     expect(within(breakdown).getByText("995")).toBeTruthy();
     expect(within(breakdown).queryAllByRole("textbox")).toHaveLength(0);
     expect(within(breakdown).queryAllByRole("spinbutton")).toHaveLength(0);
-    expect(screen.queryByRole("table", { name: "Batches and houses for line 10000" })).toBeNull();
+    expect(screen.queryByRole("table", { name: "Batches and sheds for line 10000" })).toBeNull();
   });
 
   it("an approved requisition has nothing editable", () => {
@@ -288,7 +288,7 @@ describe("FeedRequisitionDocument — breakdown row keys (9d D2)", () => {
     });
     try {
       render(<FeedRequisitionDocument view={twoStageGroups} editable={false} />);
-      const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });
+      const breakdown = screen.getByRole("table", { name: "Batches and sheds for line 20000" });
       // Header row plus one row per stage group.
       expect(within(breakdown).getAllByRole("row")).toHaveLength(3);
       expect(within(breakdown).getByText("472.5")).toBeTruthy();
@@ -314,9 +314,9 @@ describe("FeedRequisitionDocument — breakdown row keys (9d D2)", () => {
       ],
     } as FeedRequisitionDocumentView;
     render(<FeedRequisitionDocument view={named} editable={false} />);
-    const breakdown = screen.getByRole("table", { name: "Batches and houses for line 20000" });
+    const breakdown = screen.getByRole("table", { name: "Batches and sheds for line 20000" });
     const headers = within(breakdown).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers.slice(0, 3)).toEqual(["Batch No.", "Stage", "House"]);
+    expect(headers.slice(0, 3)).toEqual(["Batch No.", "Stage", "Shed"]);
     const rows = within(breakdown).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
     expect(rows.map((cells) => cells.slice(0, 2))).toEqual([["BATCH-000007", "Flushing"], ["BATCH-000007", "GESTATION"]]);
   });

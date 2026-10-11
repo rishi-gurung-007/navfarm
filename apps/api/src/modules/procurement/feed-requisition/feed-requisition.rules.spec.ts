@@ -2,7 +2,7 @@ import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../.
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
-  feedListStatusFilter, isOffBulkMultiple, priorityChangeProblem,
+  feedListStatusFilter, isOffBulkMultiple, keepHigherPriority, priorityChangeProblem,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -536,5 +536,15 @@ describe('A1 (10 Oct) — the list status filter reads the column each status li
     expect(feedListStatusFilter('SHIPPED')).toEqual({ column: 'fulfilment_status', value: 'SHIPPED' });
     expect(feedListStatusFilter('RECEIVED')).toEqual({ column: 'fulfilment_status', value: 'RECEIVED' });
     expect(feedListStatusFilter('PARTIALLY_RECEIVED')).toEqual({ column: 'fulfilment_status', value: 'PARTIALLY_RECEIVED' });
+  });
+});
+
+describe('auto-draft rerun keeps an escalated priority', () => {
+  it('an escalated CRITICAL survives a rerun that computes INFO', () => {
+    expect(keepHigherPriority('CRITICAL', 'INFO')).toBe('CRITICAL');
+  });
+  it('a higher recomputed priority still wins; null or unknown takes the computed one', () => {
+    expect(keepHigherPriority('INFO', 'CRITICAL')).toBe('CRITICAL');
+    expect(keepHigherPriority(null, 'WARNING')).toBe('WARNING');
   });
 });

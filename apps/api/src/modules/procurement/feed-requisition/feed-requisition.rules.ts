@@ -385,6 +385,13 @@ export function isOffBulkMultiple(quantityKg: number, bulkMultipleKg: number): b
 export const PRIORITY_ORDER: readonly Priority[] = ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'];
 const PRIORITY_WORDS: Record<Priority, string> = { CRITICAL_FIRST_PRIORITY: 'Critical first priority', CRITICAL: 'Critical', WARNING: 'Warning', INFO: 'Info' };
 
+/** A rerun may raise a stored priority but never lower it: the farm's escalation (row 34) outranks a recomputed one. */
+export function keepHigherPriority(stored: string | null | undefined, computed: Priority): Priority {
+  const s = PRIORITY_ORDER.indexOf(stored as Priority);
+  if (s < 0) return computed;
+  return s < PRIORITY_ORDER.indexOf(computed) ? (stored as Priority) : computed;
+}
+
 /**
  * A1 (10 Oct), Requisition §1 row 34 "Yes - can escalate": the farm may raise
  * the priority the forecast set, never lower it. null when the change is allowed.

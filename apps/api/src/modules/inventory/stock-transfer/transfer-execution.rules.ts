@@ -268,21 +268,31 @@ export interface FeedReceiptLineCheck {
   feedType: string | null;
   bagSizeKg: number;
   bagCount?: number | null;
+  /** The farm marks this posting as the last for the shipment. Only then is a shortfall a variance that needs a reason. */
+  finalReceipt?: boolean;
   varianceReason?: string | null;
   deliveryNoteNo?: string | null;
 }
 
-/** Refuses a feed receipt line that breaks a control; returns its variance. */
-export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
+/**
+ * Refuses a feed receipt line that breaks a control. Returns its variance on a
+ * final receipt and null on an interim one: with more still to come, the
+ * balance is not a shortfall (controller reading of Rishi's 10 Oct ruling,
+ * decisions.md 11 Oct).
+ */
+export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number | null {
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
   if (!c.deliveryNoteNo?.trim()) {
     throw new BadRequestException(`${c.label}: enter the delivery note no. for this feed receipt.`);
   }
   const variance = receiptVariance(c.shipped, c.previouslyReceived, c.quantity);
-  if (variance > 0 && !c.varianceReason?.trim()) {
+  if (c.finalReceipt && variance > 0 && !c.varianceReason?.trim()) {
     throw new BadRequestException(
       `${c.label}: ${fmt(c.shipped)} KG shipped but ${fmt(c.previouslyReceived + c.quantity)} KG received leaves ${fmt(variance)} KG short; enter a variance reason (checkpoint 26).`,
     );
+  }
+  if (c.feedType !== 'BAGGED' && c.bagCount != null) {
+    throw new BadRequestException(`${c.label}: a bag count applies only to BAGGED feed; remove it from this ${c.feedType ?? 'non-bagged'} line.`);
   }
   if (c.feedType === 'BAGGED') {
     const bags = c.bagCount;
@@ -296,5 +306,5 @@ export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
       );
     }
   }
-  return variance;
+  return c.finalReceipt ? variance : null;
 }

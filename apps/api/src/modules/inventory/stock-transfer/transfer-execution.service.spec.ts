@@ -341,9 +341,18 @@ describe('W2T — feed receipt controls on postReceipt (checkpoints 26, 27; Requ
   it('refuses a shortfall with no variance reason, before any receipt line is written', async () => {
     const { service, as, inserts } = feedSetup();
     await expect(as(() => service.postReceipt('tr-1', {
-      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, bag_count: 2, delivery_note_no: 'DN-1' }],
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, bag_count: 2, final_receipt: true, delivery_note_no: 'DN-1' }],
     }, 'tenant-1', ADMIN, false, controls('BAGGED')))).rejects.toThrow(/variance reason/);
     expect(inserts(schema.transferReceiptLine)).toHaveLength(0);
+  });
+
+  it('an interim partial needs no reason and stores no variance', async () => {
+    const { service, as, inserts } = feedSetup();
+    const result: any = await as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, bag_count: 2, delivery_note_no: 'DN-1' }],
+    }, 'tenant-1', ADMIN, false, controls('BAGGED')));
+    expect(inserts(schema.transferReceiptLine)[0]).toMatchObject({ quantity: '4', variance_qty: null, variance_reason: null });
+    expect(result.lines[0].variance_qty).toBeNull();
   });
 
   it('keeps over-receipt refused exactly as before (decisions.md 10 Oct), reason or not', async () => {
@@ -364,7 +373,7 @@ describe('W2T — feed receipt controls on postReceipt (checkpoints 26, 27; Requ
     const { service, as, inserts } = feedSetup();
     const result: any = await as(() => service.postReceipt('tr-1', {
       posting_date: '2026-10-03', shipment_id: 'sh-1',
-      lines: [{ line_id: 'line-1', quantity: 4, variance_reason: ' Torn bag ', bag_count: 2, delivery_note_no: 'MILL-DN-0042' }],
+      lines: [{ line_id: 'line-1', quantity: 4, final_receipt: true, variance_reason: ' Torn bag ', bag_count: 2, delivery_note_no: 'MILL-DN-0042' }],
     }, 'tenant-1', ADMIN, false, controls('BAGGED')));
     expect(inserts(schema.transferReceiptLine)[0]).toMatchObject({
       quantity: '4', variance_qty: '2', variance_reason: 'Torn bag', bag_count: 2,
@@ -373,6 +382,21 @@ describe('W2T — feed receipt controls on postReceipt (checkpoints 26, 27; Requ
     expect(result.lines).toEqual([{
       line_id: 'line-1', qty_received: 4, qty_shipped: 6, previously_received: 0, variance_qty: 2, silo_balance_after: 1504,
     }]);
+  });
+
+  it('refuses a bag count on a line that is not BAGGED, with a 400 rather than dropping it', async () => {
+    const { service, as, inserts } = feedSetup();
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, final_receipt: true, variance_reason: 'x', bag_count: 2, delivery_note_no: 'DN-1' }],
+    }, 'tenant-1', ADMIN, false, controls('BULK')))).rejects.toThrow(/bag count applies only to BAGGED/i);
+    expect(inserts(schema.transferReceiptLine)).toHaveLength(0);
+  });
+
+  it('also refuses a bag count on a receipt that carries no feed controls', async () => {
+    const { service, as } = feedSetup();
+    await expect(as(() => service.postReceipt('tr-1', {
+      posting_date: '2026-10-03', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 4, bag_count: 2 }],
+    }, 'tenant-1', ADMIN))).rejects.toThrow(/bag count applies only to a BAGGED/i);
   });
 
   it('a common receipt (no controls) asks for nothing new and only records the variance', async () => {

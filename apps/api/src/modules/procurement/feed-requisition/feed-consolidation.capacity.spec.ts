@@ -27,7 +27,7 @@ describe('FeedConsolidationService mill capacity', () => {
   };
   const millCapacity = {
     approvedDemand: jest.fn(async () => ({ lines: [{ productionDate: '2026-10-11', farmId: 'farm-1', itemId: 'item-8', requestedKg: 6_050, millApprovedKg: null }], diets: new Map() })),
-    allocateOn: jest.fn(async () => new Map([['item-8', capacity]])),
+    allocateOnDates: jest.fn(async () => new Map([['2026-10-11', new Map([['item-8', capacity]])]])),
     assertConsolidationWithinCapacity: jest.fn(async () => undefined),
   };
   const service = new FeedConsolidationService(transactionCls(db), forecast as any, {} as any, millCapacity as any);
@@ -47,8 +47,17 @@ describe('FeedConsolidationService mill capacity', () => {
     });
   });
 
+  it('loads demand and allocation once for several production dates', async () => {
+    queue.push([line, { ...line, line_id: 'line-2', production_date: '2026-10-12' }, { ...line, line_id: 'line-3', production_date: '2026-10-13' }], []);
+    await service.eligible({}, 'tenant-1', { userType: 'TENANT_ADMIN' });
+    expect(millCapacity.approvedDemand).toHaveBeenCalledTimes(1);
+    expect(millCapacity.approvedDemand).toHaveBeenCalledWith('tenant-1', { companyIds: ['co-1'] }, '2026-10-11', '2026-10-13');
+    expect(millCapacity.allocateOnDates).toHaveBeenCalledTimes(1);
+    expect([...millCapacity.allocateOnDates.mock.calls[0][2].keys()]).toEqual(['2026-10-11', '2026-10-12', '2026-10-13']);
+  });
+
   it('names no BIN and no capacity when the diet has no BIN assignment that day', async () => {
-    millCapacity.allocateOn.mockResolvedValueOnce(new Map());
+    millCapacity.allocateOnDates.mockResolvedValueOnce(new Map());
     queue.push([line], [{ location_id: 'bin-1', location_code: 'MILL-001/BIN-001', location_name: 'Bin 1', bin_capacity_kg: '30000.00' }]);
     const [row] = await service.eligible({}, 'tenant-1', { userType: 'TENANT_ADMIN' });
     expect(row).toMatchObject({ loading_bin: null, available_mill_output_kg: null, mill_capacity_state: 'NOT_CONFIGURED' });
