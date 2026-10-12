@@ -96,9 +96,9 @@ const location: MasterDataConfig = {
       entityEndpoint: "/cost-center?costCenterType=DEPARTMENT", entityValueKey: "cost_center_id",
       entityLabelKeys: ["cost_center_code", "cost_center_name"],
       helpText: "Optional owning department (Cost Center of type DEPARTMENT). Transfer Shipment and Receipt check it on the From and To sub-locations.",
-      // Only the types a Store requisition can ship from or receive into
-      // (RequisitionService.REQUISITION_LOCATION_TYPES) carry a department (Rishi, 11 Oct).
-      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "STORE", "SHED", "SILO"] }] },
+      // Rishi, 12 Oct: hidden from the Location form and table. Existing values stay (a hidden field is
+      // never sent, so an edit keeps it) and Transfer Shipment/Receipt still check them.
+      hideInForm: true, hideInTable: true,
       section: "Identification",
     },
     // CC (11 Oct): each farm / mill has its own cost centre; inventory journals take it from here.
