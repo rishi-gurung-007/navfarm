@@ -49,6 +49,26 @@ Do not re-run blindly, because MySQL table changes are not transactional.
 8. Smoke test as a Porta tester. Their farms, batches and stock are intact. Open Feed Forecast (all tabs), Requisition,
    the Location Master silo record, Breed Lifecycle, Alert Rules and Reporting Periods.
 
+## Seed test master data into a tenant (optional, testing only)
+New companies start with blank master data by design. To give a test company a working set, copy the masters of an
+existing company (e.g. Triple C in `nf_devco`) into it. The target may be in another tenant database on the same MySQL
+server. Find the ids first:
+`SELECT company_id, company_code FROM nf_devco.company_master;` and the same for the target database.
+
+PowerShell, repository root:
+```
+$env:SOURCE_TENANT_DATABASE="nf_devco"; $env:SOURCE_COMPANY_ID="<Triple C company id>"
+$env:TARGET_TENANT_DATABASE="nf_<newtenant>"; $env:TARGET_COMPANY_ID="<new company id>"
+pnpm nx run api:db-seed-test-masters            # plan only, writes nothing
+pnpm nx run api:db-seed-test-masters -- --verify  # writes, then rolls back (proves it would work)
+pnpm nx run api:db-seed-test-masters -- --apply
+```
+It prints a table per master table (rows to copy, rows skipped and why). A table where the target company already has
+rows is skipped, so a second run plans nothing. New ids are generated, number series restart at 0, and the target
+tenant and company are stamped on every row. References to rows outside the copied set (e.g. an inactive breed) are kept
+if they exist in the target database, mapped by code, otherwise set to empty or the dependent row is skipped and
+listed. Transactions, users, roles and other companies are never touched. Local database host only.
+
 ## Rollback
 Stop the API and web, restore each database from its step-2 dump, check out the previous commit (`214b2a9f`, release 1),
 then rebuild and start.
