@@ -106,6 +106,18 @@ describe('Alerts page (D24)', () => {
     render(<AlertPanel />);
     expect(await screen.findByText('alrtFeedPartly:{"farms":"GRA100, VIL100"}')).toBeTruthy();
   });
+
+  it('keeps the alert title and message on separate lines inside a bounded cell', async () => {
+    render(<AlertPanel />);
+    const table = await screen.findByRole('table', { name: 'alrtTableLabel' });
+    const title = await within(table).findByText('Low feed: VIL100/SILO-004');
+    const message = within(table).getByText(feedAlert.message);
+    const alertCell = title.closest('td');
+    expect(alertCell).not.toBeNull();
+    expect(title.className).toContain('block');
+    expect(message.className).toContain('block');
+    expect(alertCell!.className).toContain('max-w');
+  });
 });
 
 /** W2D W11: the alert's subject (silo, requisition, batch) and its farm are links; nothing shows "—". */

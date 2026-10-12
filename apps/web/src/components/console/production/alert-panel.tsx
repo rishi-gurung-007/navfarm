@@ -191,9 +191,9 @@ export default function AlertPanel() {
               <tr key={row.key} className={row.state === "OPEN" ? undefined : "opacity-70"}>
                 <td className={TD}><Badge variant={variantOf(PRIORITY_LABEL, row.priority)} className={SMALL_BADGE}>{labelOf(PRIORITY_LABEL, row.priority, t)}</Badge></td>
                 <td className={cn(TD, "text-[var(--text-secondary)]")}>{t(row.kind === "FEED" ? "alrtTypeFeed" : "alrtTypeBatch")}</td>
-                <td className={cn(TD, "max-w-[36rem]")}>
-                  <span className="font-medium">{row.title}</span>
-                  <span className="ml-2 inline-block max-w-[24rem] truncate align-bottom text-[var(--text-secondary)]" title={row.message}>{row.message}</span>
+                <td className={cn(TD, "w-[28rem] max-w-[28rem] whitespace-normal")}>
+                  <span className="block truncate font-medium" title={row.title}>{row.title}</span>
+                  <span className="mt-0.5 block truncate text-[var(--text-secondary)]" title={row.message}>{row.message}</span>
                 </td>
                 <td className={TD}><SubjectLink subject={row.subject} t={t} /></td>
                 <td className={TD}>{row.farmId
