@@ -1772,6 +1772,7 @@ export const translations = {
     crqRequester: "Requester Name",
     crqRequesterDept: "Requester Department",
     crqSenderDept: "Sender Department",
+    crqSenderDeptAtShipment: "Set at Transfer Shipment",
     crqFrom: "From Sub-Location",
     crqTo: "To Sub-Location",
     crqDirectTransfer: "Direct Transfer",

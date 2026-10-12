@@ -115,7 +115,7 @@ function receiveQueues(over: {
 
 function setup(queues: Queues) {
   const ref = {} as { cls: ClsService };
-  const { db } = recordingDb(queues, () => ref.cls);
+  const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
   const approvals = new ApprovalService(cls, new AuditLogService(cls), {} as any);
   const stockTransfers = {
@@ -125,7 +125,7 @@ function setup(queues: Queues) {
   };
   const service = new RequisitionService(cls, approvals, stockTransfers as any, {} as any);
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
-  return { service, as, stockTransfers };
+  return { service, as, stockTransfers, log };
 }
 
 describe('WP1c — the Transfer Shipment button is the From sub-location department\'s', () => {
@@ -148,6 +148,15 @@ describe('WP1c — the Transfer Shipment button is the From sub-location departm
     const result = await as(STORE_SCOPE, () => service.ship('req-1', SHIP_DTO, 'tenant-1', SENDER));
     expect(stockTransfers.postShipment).toHaveBeenCalledWith('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'tl-1', quantity: 6 }] }, 'tenant-1', SENDER);
     expect(result.req_no).toBe('REQ-2026-0001');
+  });
+
+  it('records the shipping user\'s department as the Sender Department (Rishi, 12 Oct)', async () => {
+    const queues = shipQueues({ fromDepartmentId: 'cc-store', userDepartmentId: 'cc-store' });
+    queues.set(schema.userMaster, [[{ user_id: 'u-sender', department_id: 'cc-store' }], [{ department_id: 'cc-store' }]]);
+    const { service, as, log } = setup(queues);
+    await as(STORE_SCOPE, () => service.ship('req-1', SHIP_DTO, 'tenant-1', SENDER));
+    const update = log.find((e) => e.op === 'update' && e.table === schema.requisition && e.set?.sender_department_id);
+    expect(update?.set).toEqual({ sender_department_id: 'cc-store' });
   });
 
   it('passes when the From sub-location has no department (no dimension to match)', async () => {

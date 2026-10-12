@@ -239,11 +239,8 @@ export class RequisitionService {
         tenantId, companyId: dto.company_id, departmentId: requesterDepartmentId, label: 'Requester department',
       });
     }
-    if (dto.sender_department_id) {
-      await assertDepartmentIdentity(this.db, {
-        tenantId, companyId: dto.company_id, departmentId: dto.sender_department_id, label: 'Sender department',
-      });
-    }
+    // Sender Department is not chosen (Rishi, 12 Oct): it is the department of the user who posts the
+    // Transfer Shipment, recorded by ship(). A value sent on create or update is ignored.
 
     const scope = farmScope(this.cls);
     if (dto.farm_id) {
@@ -301,7 +298,7 @@ export class RequisitionService {
         requester_user_id: userPayload?.userId ?? null,
         requester_name: requesterName,
         requester_department_id: requesterDepartmentId,
-        sender_department_id: dto.sender_department_id ?? null,
+        sender_department_id: null,
         from_location_id: dto.from_location_id ?? null,
         to_location_id: dto.to_location_id ?? null,
         direct_transfer: directTransfer,
@@ -437,7 +434,7 @@ export class RequisitionService {
           : [];
         assertDirectTransfer({ docType, purpose, fromLocationId, toLocationId, hasPermission: Boolean(caller?.direct_transfer_allowed) });
       }
-      for (const [id, label] of [[dto.requester_department_id, 'Requester department'], [dto.sender_department_id, 'Sender department']] as const) {
+      for (const [id, label] of [[dto.requester_department_id, 'Requester department']] as const) {
         if (id) await assertDepartmentIdentity(this.db, { tenantId, companyId: row.company_id, departmentId: id, label });
       }
       const scope = farmScope(this.cls);
@@ -449,7 +446,7 @@ export class RequisitionService {
       // farmOfLocation). A location it cannot place leaves the stored farm.
       const mainLocationId = dto.main_location_id ?? row.main_location_id;
       const farmId = (mainLocationId ? await farmOfLocation(this.db, mainLocationId) : null) ?? row.farm_id;
-      // Kept when omitted: purpose, requisition_date, main_location_id, requester_department_id. Cleared when omitted: sender_department_id, remarks, required_date, justification, direct_transfer.
+      // Kept when omitted: purpose, requisition_date, main_location_id, requester_department_id. Never taken from the form: sender_department_id (set by ship()). Cleared when omitted: remarks, required_date, justification, direct_transfer.
       await this.db
         .update(schema.requisition)
         .set({
@@ -458,7 +455,7 @@ export class RequisitionService {
           requisition_date: dto.requisition_date ?? row.requisition_date,
           main_location_id: mainLocationId,
           requester_department_id: dto.requester_department_id ?? row.requester_department_id,
-          sender_department_id: dto.sender_department_id ?? null,
+          sender_department_id: row.sender_department_id,
           from_location_id: fromLocationId,
           to_location_id: toLocationId,
           direct_transfer: directTransfer,
@@ -1135,11 +1132,34 @@ export class RequisitionService {
     // when the flag is set) is enough. A normal shipment keeps the From check.
     if (row.direct_transfer) {
       await this.stockTransfers.postDirectTransfer(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+      await this.recordSenderDepartment(requisitionId, tenantId, userPayload?.userId);
       return this.findOne(requisitionId, tenantId, { caller: userPayload });
     }
     await this.assertPostingDepartmentFor(row, tenantId, 'FROM', 'Transfer Shipment', userPayload);
     await this.stockTransfers.postShipment(transferId, { posting_date: dto.posting_date, lines: mapToTransferLines(dto.lines, transferLines) }, tenantId, userPayload);
+    await this.recordSenderDepartment(requisitionId, tenantId, userPayload?.userId);
     return this.findOne(requisitionId, tenantId, { caller: userPayload });
+  }
+
+  /**
+   * Sender Department = the department (User Setup) of the user who posts the Transfer Shipment
+   * (Rishi, 12 Oct). The first shipment sets it; a later partial shipment leaves it.
+   */
+  private async recordSenderDepartment(requisitionId: string, tenantId: string, userId?: string) {
+    if (!userId) return;
+    const [user] = await this.db
+      .select({ department_id: schema.userMaster.department_id })
+      .from(schema.userMaster)
+      .where(eq(schema.userMaster.user_id, userId))
+      .limit(1);
+    if (!user?.department_id) return;
+    await this.db.update(schema.requisition)
+      .set({ sender_department_id: user.department_id })
+      .where(and(
+        eq(schema.requisition.requisition_id, requisitionId),
+        eq(schema.requisition.tenant_id, tenantId),
+        isNull(schema.requisition.sender_department_id),
+      ));
   }
 
   /**

@@ -3477,3 +3477,11 @@ view/create/edit/approve (mill stock take), ledger view (forecast, alerts), BIN 
 MILL_MANAGER reach any user holding the role. Seeded for new companies; existing companies via `api:db-seed-mill-manager-role`.
 
 2026-10-11 — Production Slots removed (Rishi: not in the workbook). One diet per loading BIN per production date.
+
+## 2026-10-12 — Common requisition: Sender Department and Main / Farm Location (Rishi)
+
+1. **Sender Department is the shipping user's department.** It is no longer chosen on the form. The first
+   Transfer Shipment (or Direct Transfer) records the posting user's User Setup department; until then the field
+   reads "Set at Transfer Shipment". This replaces "Sender Department (user selects)" in the 4 Oct list.
+2. **Main / Farm Location lists every Farm-type location the user may open**, not only the requisition's own farm.
+3. Line items come from the Item Master (all active items of the company) — unchanged, confirmed.

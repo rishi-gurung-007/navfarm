@@ -124,7 +124,6 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
   // Every Farm the user may open (options.farms), not only the requisition's own; older APIs fall back to the locations.
   const farmChoices = (options?.farms ?? locations.filter((location) => location.location_type === "FARM"))
     .map((location) => ({ value: location.location_id, label: location.location_code }));
-  const deptChoices = departments.map((d) => ({ value: d.cost_center_id, label: `${d.cost_center_code} — ${d.cost_center_name}` }));
 
   const isItem = view.doc_type === "ITEM";
   // Rishi, 7 Oct: every common (non-feed) requisition shows this complete line
@@ -170,8 +169,8 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
         {/* "auto from User Setup" — the server snapshots it from the signed-in
             user, so it is shown, never chosen. */}
         <ReadField className={HALF} label={t("crqRequesterDept")} value={deptName(view.requester_department_id, view.requester_department_name)} />
-        {can ? select("crq-snd-dept", t("crqSenderDept"), view.sender_department_id, deptChoices, (v) => set({ sender_department_id: v }))
-          : <ReadField className={HALF} label={t("crqSenderDept")} value={deptName(view.sender_department_id, view.sender_department_name)} />}
+        {/* Rishi, 12 Oct: the shipping user's department, recorded when the Transfer Shipment posts — never chosen. */}
+        <ReadField className={HALF} label={t("crqSenderDept")} value={deptName(view.sender_department_id, view.sender_department_name)} emptyText={t("crqSenderDeptAtShipment")} />
         <ReadField className={HALF} label={t("crqType")} value={labelOf(DOC_TYPE_LABEL, view.doc_type, t)} />
         <ReadField className={HALF} label={t("crqStatus")} value={<Badge variant={STATUS_LABEL[commonStatus(view)].variant}>{t(STATUS_LABEL[commonStatus(view)].key as any)}</Badge>} />
         {can && view.doc_type === "ITEM"

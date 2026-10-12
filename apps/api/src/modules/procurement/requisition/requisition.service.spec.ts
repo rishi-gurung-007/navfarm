@@ -144,7 +144,6 @@ describe('RequisitionService.create — supplied header and line fields are stor
     selectResults.push(
       [{ full_name: 'Ada Farm', department_id: 'cc-dept' }], // the requesting user
       [departmentRow('cc-dept')],                            // requester department identity
-      [departmentRow('cc-snd')],                             // sender department identity
       [{ location_id: 'farm-1', parent: null, farm_id: null }], // the main location's farm
       [{ item_id: 'item-1' }],                               // line items belong to the company
       [],                                                    // number series: no prior REQ this year
@@ -176,7 +175,8 @@ describe('RequisitionService.create — supplied header and line fields are stor
       requester_user_id: 'u1',
       requester_name: 'Ada Farm',
       requester_department_id: 'cc-dept',
-      sender_department_id: 'cc-snd',
+      // Rishi, 12 Oct: Sender Department is never taken from the form; ship() records the shipper's.
+      sender_department_id: null,
       from_location_id: 'loc-store',
       to_location_id: 'loc-farm',
       direct_transfer: false,
@@ -220,15 +220,16 @@ describe('RequisitionService.create — supplied header and line fields are stor
 });
 
 describe('RequisitionService.create — department identities are Cost Center rows of type DEPARTMENT', () => {
-  it('refuses a sender department that is not a DEPARTMENT cost center', async () => {
+  it('does not check or keep a Sender Department sent on create (Rishi, 12 Oct: set at shipment)', async () => {
     const { db, selectResults, insertValues } = makeDb();
     selectResults.push(
-      [{ full_name: 'Ada Farm', department_id: null }],
+      [{ full_name: 'Ada Farm', department_id: 'cc-x' }],
       [departmentRow('cc-x', { cost_center_type: 'WAREHOUSE' })],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await expect(service.create(storeDto({ sender_department_id: 'cc-x' }) as any, TENANT, { userId: 'u1' }))
-      .rejects.toThrow('Sender department must be an active DEPARTMENT cost center of this company.');
+    // The only identity checked is the requester's (from User Setup) — the sender value is ignored.
+    await expect(service.create(storeDto({ sender_department_id: 'cc-snd' }) as any, TENANT, { userId: 'u1' }))
+      .rejects.toThrow('Requester department must be an active DEPARTMENT cost center of this company.');
     expect(insertValues).toHaveLength(0);
   });
 
@@ -247,11 +248,11 @@ describe('RequisitionService.create — department identities are Cost Center ro
   it('refuses a department belonging to another company', async () => {
     const { db, selectResults } = makeDb();
     selectResults.push(
-      [{ full_name: 'Ada Farm', department_id: null }],
+      [{ full_name: 'Ada Farm', department_id: 'cc-other' }],
       [departmentRow('cc-other', { company_id: 'co-2' })],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    await expect(service.create(storeDto({ sender_department_id: 'cc-other' }) as any, TENANT, { userId: 'u1' }))
+    await expect(service.create(storeDto() as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow(BadRequestException);
   });
 });
@@ -778,7 +779,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     });
   });
 
-  it('keeps main location, requester department, date and purpose when omitted; clears the rest', async () => {
+  it('keeps main location, requester department, sender department, date and purpose when omitted; clears the rest', async () => {
     const { db, selectResults, setCalls } = makeDb();
     selectResults.push(
       [headerRow({
@@ -798,7 +799,7 @@ describe('Part E Task 2 fix round 1 — update writes what it says', () => {
     } as any, TENANT, { userId: 'u1' });
     expect(setCalls[0]).toMatchObject({
       purpose: 'STORE', main_location_id: 'farm-9', requester_department_id: 'dep-7', requisition_date: '2026-09-30',
-      sender_department_id: null, remarks: null, required_date: null, justification: null, direct_transfer: false,
+      sender_department_id: 'dep-8', remarks: null, required_date: null, justification: null, direct_transfer: false,
     });
   });
 
