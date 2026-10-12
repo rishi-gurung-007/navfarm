@@ -55,6 +55,7 @@ describe('seed-test-masters --with-operational', () => {
     });
     expect(plan.copies).toHaveLength(1);
     expect(plan.copies[0].row.stage_code).toBe('B');
-    expect(plan.reused.get('stage_master')!.get('uq')).toBe(2);
+    expect(plan.reused.get('stage_master')!.get('uq')).toBe(1);
+    expect(plan.reused.get('stage_master')!.get('uq (within the copy set)')).toBe(1);
   });
 });
