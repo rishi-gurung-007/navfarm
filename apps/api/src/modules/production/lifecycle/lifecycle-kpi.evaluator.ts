@@ -169,17 +169,10 @@ export function evaluateLifecycleKpiLine(line: LifecycleKpiLine, headerPeriod: s
   const severity = line.severity === 'INFO' || line.severity === 'CRITICAL' ? line.severity : 'WARNING';
   const unit = line.uom ? ` ${line.uom}` : '';
   const out: KpiBreach[] = [];
-  const lower = num(line.lower_limit);
-  const upper = num(line.upper_limit);
   const avg = num(line.average_value);
   const tolPct = num(line.tolerance_pct);
 
-  if (lower !== null && actual < lower) {
-    out.push({ rule: 'LOWER_LIMIT', period, periodKey: key, actual, threshold: lower, severity, direction: 'below', message: `actual ${round(actual)}${unit} is below the lower limit ${lower}${unit}` });
-  }
-  if (upper !== null && actual > upper) {
-    out.push({ rule: 'UPPER_LIMIT', period, periodKey: key, actual, threshold: upper, severity, direction: 'above', message: `actual ${round(actual)}${unit} is above the upper limit ${upper}${unit}` });
-  }
+  // Rishi, 12 Oct: Lower/Upper Limit removed from the KPI lines; only the tolerance against the average alerts.
   if (avg !== null && tolPct !== null && (line.tolerance_type === 'UPPER' || line.tolerance_type === 'LOWER')) {
     if (line.tolerance_type === 'UPPER') {
       const bound = avg * (1 + tolPct / 100);

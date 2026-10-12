@@ -1350,15 +1350,13 @@ const breedLifecycleStage: MasterDataConfig = {
     {
       key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", subDialog: true, singleRow: true,
       jsonRow: [
-        { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
+        { key: "metric", label: "KPI Item", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
         { key: "uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
         // Display only: a line's period is always the header's KPI period (Rishi, 12 Oct).
         { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", readOnlyFollow: true, options: KPI_PERIOD_OPTIONS },
         // Stage days (day-in-stage, 1 = first day of the stage); both empty = the whole stage.
         { key: "from_day", label: "From (day)", type: "number", step: "1", min: 1 },
         { key: "to_day", label: "To (day)", type: "number", step: "1", min: 1 },
-        { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
-        { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
         { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
         { key: "tolerance_pct", label: "Tolerance (%)", type: "number", step: "0.01", min: 0, max: 100 },
         { key: "tolerance_type", label: "Tolerance Type", type: "select", options: [{ value: "UPPER", label: "Upper" }, { value: "LOWER", label: "Lower" }] },

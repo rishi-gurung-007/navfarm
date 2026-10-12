@@ -58,7 +58,7 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
 
     fireEvent.click(within(stacked).getByRole("button", { name: "Add" }));
     // Column order, left to right.
-    const labels = ["KPI", "UOM", "KPI Period", "From (day)", "To (day)", "Lower Limit", "Upper Limit", "Average Value", "Tolerance (%)", "Tolerance Type", "Alert Severity"];
+    const labels = ["KPI Item", "UOM", "KPI Period", "From (day)", "To (day)", "Average Value", "Tolerance (%)", "Tolerance Type", "Alert Severity"];
     const found = Array.from(stacked.querySelectorAll("label")).map((l) => l.textContent?.replace("*", "").trim()).filter((t) => labels.includes(t as string));
     expect(found).toEqual(labels);
 
@@ -71,8 +71,6 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
 
     fireEvent.change(within(stacked).getByRole("spinbutton", { name: "From (day)" }), { target: { value: "3" } });
     fireEvent.change(within(stacked).getByRole("spinbutton", { name: "To (day)" }), { target: { value: "9" } });
-    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "Lower Limit" }), { target: { value: "400" } });
-    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "Upper Limit" }), { target: { value: "600" } });
     fireEvent.change(within(stacked).getByRole("spinbutton", { name: "Average Value" }), { target: { value: "500" } });
     fireEvent.click(within(stacked).getByRole("button", { name: "KPI period" }));
     fireEvent.click(screen.getAllByRole("option", { name: "Weekly" }).find((o) => !o.closest("select"))!);
@@ -93,7 +91,7 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     const payload = (api.post as jest.Mock).mock.calls[0][1];
     expect(payload.kpi_alert_period).toBe("WEEKLY");
-    expect(payload.kpi_thresholds[0]).toMatchObject({ from_day: 3, to_day: 9, lower_limit: 400, upper_limit: 600, average_value: 500, tolerance_pct: 5, tolerance_type: "UPPER", kpi_period: "WEEKLY" });
+    expect(payload.kpi_thresholds[0]).toMatchObject({ from_day: 3, to_day: 9, average_value: 500, tolerance_pct: 5, tolerance_type: "UPPER", kpi_period: "WEEKLY" });
   });
 
   it("offers Daily and Weekly only for the header period", async () => {

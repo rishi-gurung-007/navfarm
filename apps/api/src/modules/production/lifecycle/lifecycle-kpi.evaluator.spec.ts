@@ -9,7 +9,7 @@ describe('lifecycle KPI pure rules', () => {
     expect(effectivePeriod(null)).toBe('DAILY');
     expect(effectivePeriod('MONTHLY')).toBe('WEEKLY');
     // a stale per-line WEEKLY does not move a DAILY header
-    const line = { metric: 'ADG', upper_limit: 100, kpi_period: 'WEEKLY' };
+    const line = { metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', kpi_period: 'WEEKLY' };
     const vals = [v('2026-10-12', 50), v('2026-10-13', 160)];
     expect(evaluateLifecycleKpiLine(line, 'DAILY', vals, '2026-10-13')[0]).toMatchObject({ period: 'DAILY', actual: 160 });
     expect(evaluateLifecycleKpiLine(line, null, vals, '2026-10-13')[0]).toMatchObject({ period: 'DAILY' });
@@ -48,8 +48,8 @@ describe('lifecycle KPI pure rules', () => {
       const dailyMean = vals.reduce((s, x) => s + (x.value / 500) * 100, 0) / 7;
       expect(dailyMean).toBeCloseTo(0.2, 10);
       expect(got!.actual).not.toBeCloseTo(dailyMean, 3);
-      const b = evaluateLifecycleKpiLine({ metric: 'MORTALITY_COUNT', uom: 'PCT', upper_limit: 1 }, 'WEEKLY', vals, '2026-10-18', { aggregation: 'PCT_OF_HEADS', headsAtStart: 500 });
-      expect(b[0].rule).toBe('UPPER_LIMIT');
+      const b = evaluateLifecycleKpiLine({ metric: 'MORTALITY_COUNT', uom: 'PCT', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER' }, 'WEEKLY', vals, '2026-10-18', { aggregation: 'PCT_OF_HEADS', headsAtStart: 500 });
+      expect(b[0].rule).toBe('TOLERANCE');
       expect(b[0].actual).toBeCloseTo(1.4, 10);
     });
     it('SUM: 7 heads; AVERAGE: the mean of the entries', () => {
@@ -66,23 +66,22 @@ describe('lifecycle KPI pure rules', () => {
   });
 
   it('From/To stage days: a line is checked only inside its window; weekly counts only entries inside it', () => {
-    const line = { metric: 'ADG', upper_limit: 100, from_day: 3, to_day: 5 };
+    const line = { metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', from_day: 3, to_day: 5 };
     const vals = [{ ...v('2026-10-12', 500), dayInStage: 2 }, { ...v('2026-10-13', 150), dayInStage: 3 }, { ...v('2026-10-14', 170), dayInStage: 4 }, { ...v('2026-10-15', 900), dayInStage: 6 }];
     expect(evaluateLifecycleKpiLine(line, 'DAILY', vals, '2026-10-12', { dayInStage: 2 })).toEqual([]);
     expect(evaluateLifecycleKpiLine(line, 'DAILY', vals, '2026-10-15', { dayInStage: 6 })).toEqual([]);
     expect(evaluateLifecycleKpiLine(line, 'DAILY', vals, '2026-10-13', { dayInStage: 3 })[0]).toMatchObject({ actual: 150 });
     // weekly on day 4: days 2 (before) and 6 (after) do not count -> mean(150,170)=160
     expect(evaluateLifecycleKpiLine(line, 'WEEKLY', vals, '2026-10-14', { dayInStage: 4 })[0]).toMatchObject({ actual: 160 });
-    expect(evaluateLifecycleKpiLine({ metric: 'ADG', upper_limit: 100, from_day: 4 }, 'DAILY', vals, '2026-10-15', { dayInStage: 6 })).toHaveLength(1);
-    expect(evaluateLifecycleKpiLine({ metric: 'ADG', upper_limit: 100 }, 'DAILY', vals, '2026-10-12', { dayInStage: 2 })).toHaveLength(1);
+    expect(evaluateLifecycleKpiLine({ metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', from_day: 4 }, 'DAILY', vals, '2026-10-15', { dayInStage: 6 })).toHaveLength(1);
+    expect(evaluateLifecycleKpiLine({ metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER' }, 'DAILY', vals, '2026-10-12', { dayInStage: 2 })).toHaveLength(1);
   });
 
-  it('lower / upper limits fire only when set', () => {
+  it('lower / upper limits on a line are ignored; only the tolerance against the average alerts', () => {
     const line = { metric: 'ADG', lower_limit: 450, upper_limit: 700, severity: 'CRITICAL' };
-    expect(evaluateLifecycleKpiLine(line, null, [v('2026-10-12', 449)], '2026-10-12').map((b) => [b.rule, b.severity])).toEqual([['LOWER_LIMIT', 'CRITICAL']]);
-    expect(evaluateLifecycleKpiLine(line, null, [v('2026-10-12', 701)], '2026-10-12').map((b) => b.rule)).toEqual(['UPPER_LIMIT']);
-    expect(evaluateLifecycleKpiLine(line, null, [v('2026-10-12', 450)], '2026-10-12')).toEqual([]);
-    expect(evaluateLifecycleKpiLine({ metric: 'ADG', upper_limit: 5 }, null, [v('2026-10-12', 0)], '2026-10-12')).toEqual([]);
+    for (const x of [449, 701, 450, 0, 5000]) expect(evaluateLifecycleKpiLine(line, null, [v('2026-10-12', x)], '2026-10-12')).toEqual([]);
+    const withTol = { ...line, average_value: 600, tolerance_pct: 5, tolerance_type: 'UPPER' };
+    expect(evaluateLifecycleKpiLine(withTol, null, [v('2026-10-12', 701)], '2026-10-12').map((x) => [x.rule, x.severity])).toEqual([['TOLERANCE', 'CRITICAL']]);
   });
 
   it('UPPER tolerance fires above +5% and not at +4%', () => {
@@ -109,7 +108,7 @@ describe('lifecycle KPI pure rules', () => {
   });
 
   it('a weekly line judges the weekly average, not the single day', () => {
-    const line = { metric: 'ADG', upper_limit: 100 };
+    const line = { metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER' };
     const vals = [v('2026-10-12', 50), v('2026-10-13', 160)]; // avg 105 > 100 on the 13th; day alone would be 160
     expect(evaluateLifecycleKpiLine(line, 'WEEKLY', vals, '2026-10-12')).toEqual([]);
     expect(evaluateLifecycleKpiLine(line, 'WEEKLY', vals, '2026-10-13')[0]).toMatchObject({ period: 'WEEKLY', periodKey: '2026-W42', actual: 105 });
@@ -159,20 +158,20 @@ describe('LifecycleKpiEvaluator', () => {
   });
 
   it('does not alert twice for the same batch + metric + rule + period', async () => {
-    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', upper_limit: 100, severity: 'WARNING' }])], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], [{ alert_id: 'old' }]]);
+    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', severity: 'WARNING' }])], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], [{ alert_id: 'old' }]]);
     expect(await ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(0);
     expect(inserted).toHaveLength(0);
   });
 
   it('uses the header period (a stored MONTHLY reads as WEEKLY) and ignores the line period', async () => {
-    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', upper_limit: 100, severity: 'WARNING', kpi_period: 'DAILY' }], { kpi_alert_period: 'MONTHLY' })], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], []]);
+    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', severity: 'WARNING', kpi_period: 'DAILY' }], { kpi_alert_period: 'MONTHLY' })], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], []]);
     expect(await ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(1);
     expect(inserted[0].message).toContain('Period: WEEKLY 2026-W42.');
   });
 
   it('checks a line only while the day-in-stage is inside From/To', async () => {
     // 2026-10-12 is day 12 of the stage that began 1 Oct.
-    const mk = (extra: object) => make([[batch], [header], [stageRow([{ metric: 'ADG', upper_limit: 100, severity: 'WARNING', ...extra }])], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], []]);
+    const mk = (extra: object) => make([[batch], [header], [stageRow([{ metric: 'ADG', average_value: 100, tolerance_pct: 0, tolerance_type: 'UPPER', severity: 'WARNING', ...extra }])], [{ metric: 'ADG', date: '2026-10-12', value: '120' }], []]);
     expect(await mk({ from_day: 13, to_day: 20 }).ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(0);
     expect(await mk({ from_day: 1, to_day: 11 }).ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(0);
     expect(await mk({ from_day: 10, to_day: 12 }).ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(1);
@@ -182,7 +181,7 @@ describe('LifecycleKpiEvaluator', () => {
   it('a % UOM line alerts on deaths / heads at period start x 100', async () => {
     // answers: batch (500 opening), headers, stage rows, uom lookup, daily data, mortality before the week (none), dedupe
     const b = { ...batch, opening_quantity: '500.0000' };
-    const { ev, inserted } = make([[b], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', upper_limit: 1, severity: 'CRITICAL' }], { kpi_alert_period: 'WEEKLY' })],
+    const { ev, inserted } = make([[b], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER', severity: 'CRITICAL' }], { kpi_alert_period: 'WEEKLY' })],
       [{ uom_code: 'PCT', uom_name: 'Percent', uom_type: 'OTHER' }],
       [{ metric: 'MORTALITY_COUNT', date: '2026-10-12', value: '5' }, { metric: 'MORTALITY_COUNT', date: '2026-10-13', value: '3' }], [], []]);
     expect(await ev.evaluateBatch('b1', 't1', '2026-10-13')).toBe(1);
@@ -190,14 +189,14 @@ describe('LifecycleKpiEvaluator', () => {
   });
 
   it('a % UOM line with no head count is skipped', async () => {
-    const { ev, inserted } = make([[{ ...batch, opening_quantity: '0' }], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', upper_limit: 1 }])],
+    const { ev, inserted } = make([[{ ...batch, opening_quantity: '0' }], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER' }])],
       [{ uom_code: 'PCT', uom_name: 'Percent', uom_type: 'OTHER' }], [{ metric: 'MORTALITY_COUNT', date: '2026-10-12', value: '5' }]]);
     expect(await ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(0);
     expect(inserted).toHaveLength(0);
   });
 
   it('skips a stage row whose day range does not cover the day-in-stage', async () => {
-    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', upper_limit: 1 }], { period_from: 100, period_to: 120 })]]);
+    const { ev, inserted } = make([[batch], [header], [stageRow([{ metric: 'ADG', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER' }], { period_from: 100, period_to: 120 })]]);
     expect(await ev.evaluateBatch('b1', 't1', '2026-10-12')).toBe(0);
     expect(inserted).toHaveLength(0);
   });
