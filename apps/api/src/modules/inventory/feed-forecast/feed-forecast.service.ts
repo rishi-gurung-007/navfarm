@@ -29,6 +29,14 @@ import { FeedPlanService } from './feed-plan.service';
 import { MillCapacityService } from './mill-capacity.service';
 import type { DietCapacity } from './mill-capacity.rules';
 
+/** Item Type FEED_BULK / FEED_BAG(GED) → the feed form it names; any other type says nothing. */
+export function itemTypeFeedForm(itemType: string | null | undefined): 'BULK' | 'BAGGED' | null {
+  const code = (itemType ?? '').toUpperCase().replace(/[\s-]+/g, '_');
+  if (code === 'FEED_BULK') return 'BULK';
+  if (code === 'FEED_BAG' || code === 'FEED_BAGS' || code === 'FEED_BAGGED') return 'BAGGED';
+  return null;
+}
+
 /**
  * The LOB bound on the forecast's location read for a restricted
  * (OPERATIONAL_ADMIN) caller. A location with no lob_id belongs to every LOB —
@@ -1816,6 +1824,16 @@ export class FeedForecastService {
     }
     const out: Record<string, 'BULK' | 'BAGGED'> = {};
     for (const [itemId, set] of forms) if (set.size === 1) out[itemId] = [...set][0] as 'BULK' | 'BAGGED';
+    // Master Setup rows 22 and 26: the Item Type itself says FEED BULK or FEED BAG,
+    // so it wins over the lifecycle row's feed_form (12 Oct; feed_form is empty in practice).
+    const items = await this.db
+      .select({ item_id: schema.itemMaster.item_id, item_type: schema.itemMaster.item_type })
+      .from(schema.itemMaster)
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, ids)));
+    for (const item of items) {
+      const form = itemTypeFeedForm(item.item_type);
+      if (form) out[item.item_id] = form;
+    }
     return out;
   }
 
