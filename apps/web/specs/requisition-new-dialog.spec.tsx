@@ -71,6 +71,21 @@ beforeEach(() => {
   post.mockResolvedValue({ data: { requisition_id: 'req-9', req_no: 'REQ-VIL100-2026-00009', lines: [] } });
 });
 
+describe('RequisitionNewDialog — farm is never locked (Rishi, 12 Oct)', () => {
+  it('shows the farm selector even when opened for a farm, and loads the newly chosen farm', async () => {
+    mockFarm = { ...mockFarm, farms: [
+      { farmId: 'farm-vil', code: 'VIL100', name: 'Villa Franca', companyId: 'co-1', companyName: 'Triple C' },
+      { farmId: 'farm-por', code: 'POR100', name: 'Porta', companyId: 'co-1', companyName: 'Triple C' },
+    ] } as any;
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    const select = document.getElementById('rqn-farm') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.value).toBe('farm-vil');
+    fireEvent.change(select, { target: { value: 'farm-por' } });
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-requisition/options?farmId=farm-por'));
+  });
+});
+
 describe('RequisitionNewDialog (D26)', () => {
   it('offers only the farm\'s silos and store, and creates the requisition', async () => {
     const onCreated = jest.fn();

@@ -122,7 +122,11 @@ export function RequisitionNewDialog({
   // Called unconditionally regardless of whether the caller already has a
   // farmId (hooks rule) — it is cheap and its farm list is cached per A3.
   const farm = useFeedFarm();
-  const effectiveFarmId = farmId ?? farm.farmId ?? "";
+  // Rishi, 12 Oct: the farm is never locked. A caller's farmId is only the starting choice; the user
+  // may pick another farm (changing it resets the lines, effect below).
+  const [pickedFarmId, setPickedFarmId] = useState<string | undefined>(farmId);
+  useEffect(() => { if (open) setPickedFarmId(farmId); }, [open, farmId]);
+  const effectiveFarmId = pickedFarmId ?? farm.farmId ?? "";
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [items, setItems] = useState<FeedItem[]>([]);
   const [lines, setLines] = useState<Draft[]>([{ ...EMPTY }]);
@@ -287,11 +291,10 @@ export function RequisitionNewDialog({
           * derived from the lines, read-only (Rishi 4 Oct).
           */}
         <FieldGroup>
-          {farmId === undefined && (
-            <div className="sm:col-span-12">
-              <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={farm.farmId} onChange={farm.setFarmId} />
-            </div>
-          )}
+          <div className="sm:col-span-12">
+            <FeedFarmSelect id="rqn-farm" label={t("rqFarm")} farms={farm.farms} farmId={effectiveFarmId}
+              onChange={(next) => { setPickedFarmId(next || undefined); if (farmId === undefined) farm.setFarmId(next); }} />
+          </div>
           <FeedRequisitionHeaderFields values={{
             reqNo: t("rqnAssignedOnSave"),
             reqDate: formatDateShort(todayIso()),
