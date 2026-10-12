@@ -510,6 +510,8 @@ const SEASON_TYPES = ['ALL', 'SUMMER', 'WINTER'] as const;
 // The row editor writes "" when a number box is cleared. Treated as not given,
 // so an open-ended limit is simply absent rather than a failed number check.
 const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : value);
+/** 12 Oct: Monthly was dropped; a value saved as MONTHLY earlier is read as WEEKLY instead of refusing the save. */
+const periodOrWeekly = (o: { value: unknown }) => { const v = blankToNull(o as any); return v === 'MONTHLY' ? 'WEEKLY' : v; };
 
 /**
  * One KPI row: which metric, its limits and how loud the alert is. The metric
@@ -577,7 +579,7 @@ export class KpiThresholdRowDto {
   uom?: string | null;
 
   @ApiProperty({ required: false, nullable: true, enum: ['DAILY', 'WEEKLY'], description: 'Always the header KPI period (the form writes it); the evaluator ignores it and uses the header' })
-  @Transform(blankToNull)
+  @Transform(periodOrWeekly)
   @IsString()
   @IsOptional()
   @IsIn(['DAILY', 'WEEKLY'])
@@ -828,7 +830,7 @@ export class CreateBreedLifecycleStageDto {
   alert_severity?: string;
 
   @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
-  @Transform(blankToNull)
+  @Transform(periodOrWeekly)
   @IsString()
   @IsOptional()
   @IsIn(KPI_ALERT_PERIODS)
@@ -1030,7 +1032,7 @@ export class UpdateBreedLifecycleStageDto {
   alert_severity?: string;
 
   @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
-  @Transform(blankToNull)
+  @Transform(periodOrWeekly)
   @IsString()
   @IsOptional()
   @IsIn(KPI_ALERT_PERIODS)
