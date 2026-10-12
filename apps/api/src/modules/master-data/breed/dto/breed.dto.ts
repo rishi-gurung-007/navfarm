@@ -544,7 +544,21 @@ export class KpiThresholdRowDto {
   @IsString()
   @IsIn(ALERT_SEVERITIES)
   severity: string;
+
+  @ApiProperty({ required: false, nullable: true, description: 'The KPI average value for this stage' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  average_value?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'The KPI unit (a UOM code)' })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  uom?: string | null;
 }
+
+export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY', 'MONTHLY'] as const;
 
 /** One resource this breed needs at this stage, chosen from Resource Master. */
 export class ResourceRequirementRowDto {
@@ -752,6 +766,13 @@ export class CreateBreedLifecycleStageDto {
   @IsIn(ALERT_SEVERITIES)
   alert_severity?: string;
 
+  @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_ALERT_PERIODS)
+  kpi_alert_period?: string | null;
+
   @ApiProperty({ description: 'Instructions for farm staff, shown as a tooltip on the data entry screen', required: false })
   @IsString()
   @IsOptional()
@@ -941,6 +962,13 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   @IsIn(ALERT_SEVERITIES)
   alert_severity?: string;
+
+  @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_ALERT_PERIODS)
+  kpi_alert_period?: string | null;
 
   @ApiProperty({ required: false })
   @IsString()

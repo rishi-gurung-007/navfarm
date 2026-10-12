@@ -1219,6 +1219,13 @@
       "when": 1792000000042,
       "tag": "0174_bin_diet_slot_optional",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "5",
+      "when": 1792000000043,
+      "tag": "0175_lifecycle_kpi_alert_period",
+      "breakpoints": true
     }
   ]
 }

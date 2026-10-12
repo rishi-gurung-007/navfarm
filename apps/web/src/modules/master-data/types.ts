@@ -41,6 +41,8 @@ export interface MasterDataField {
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
+  /** Edited in a stacked dialog opened from the record dialog's header ("KPIs & Alerts"), not in the form grid. Still part of the form state and payload. */
+  subDialog?: boolean;
   placeholder?: string;
   helpText?: string;
   /** Static dropdown options, for type: "select" */

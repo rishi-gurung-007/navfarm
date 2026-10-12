@@ -982,6 +982,7 @@ export class BreedService {
       kpi_lower_limit: dto.kpi_lower_limit?.toString() || null,
       kpi_upper_limit: dto.kpi_upper_limit?.toString() || null,
       alert_severity: dto.alert_severity || null,
+      kpi_alert_period: dto.kpi_alert_period || null,
       notes: dto.notes || null,
       is_active: true,
       created_by: userPayload?.userId || null,
@@ -1216,6 +1217,7 @@ export class BreedService {
     if (dto.kpi_lower_limit !== undefined) updates.kpi_lower_limit = dto.kpi_lower_limit?.toString() || null;
     if (dto.kpi_upper_limit !== undefined) updates.kpi_upper_limit = dto.kpi_upper_limit?.toString() || null;
     if (dto.alert_severity !== undefined) updates.alert_severity = dto.alert_severity;
+    if (dto.kpi_alert_period !== undefined) updates.kpi_alert_period = dto.kpi_alert_period || null;
     if (dto.notes !== undefined) updates.notes = dto.notes;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     // From the breed, never the request (ADDENDUM 3).

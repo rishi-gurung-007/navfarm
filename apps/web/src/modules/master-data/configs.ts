@@ -1343,14 +1343,21 @@ const breedLifecycleStage: MasterDataConfig = {
     // daily entry actually records. The picker's own New/View All buttons are
     // how a tenant adds one of their own without leaving this form.
     {
-      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json",
+      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", subDialog: true,
       jsonRow: [
         { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
+        { key: "uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
         { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
         { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
+        { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
       ],
       helpText: "One row per KPI. Leave a limit empty for a one-sided threshold.",
+    },
+    {
+      key: "kpi_alert_period", label: "KPI period", type: "select", subDialog: true,
+      options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
+      helpText: "How often the KPI alerts for this lifecycle row are looked at.",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a

@@ -2447,6 +2447,7 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   kpi_lower_limit: decimal('kpi_lower_limit', { precision: 18, scale: 4 }),
   kpi_upper_limit: decimal('kpi_upper_limit', { precision: 18, scale: 4 }),
   alert_severity: varchar('alert_severity', { length: 10 }), // INFO, WARNING, CRITICAL
+  kpi_alert_period: varchar('kpi_alert_period', { length: 10 }), // DAILY, WEEKLY, MONTHLY (stored only; alert evaluation unchanged)
   notes: text('notes'),
   is_active: boolean('is_active').default(true).notNull(),
   created_by: varchar('created_by', { length: 36 }),
