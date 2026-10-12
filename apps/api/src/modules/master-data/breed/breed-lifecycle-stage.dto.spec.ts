@@ -50,13 +50,14 @@ describe('KPI alert period and the extra KPI line keys', () => {
     expect(out.kpi_alert_period).toBeNull();
   });
 
-  it('rejects a period outside DAILY/WEEKLY/MONTHLY', async () => {
+  it('rejects a period outside DAILY/WEEKLY (Monthly was removed)', async () => {
     await expect(pipe.transform({ ...base, kpi_alert_period: 'YEARLY' }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
+    await expect(pipe.transform({ ...base, kpi_alert_period: 'MONTHLY' }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
   });
 
   it('accepts a per-line kpi_period and tolerance, and keeps them', async () => {
-    const out: any = await pipe.transform({ ...base, kpi_thresholds: [{ ...line, kpi_period: 'MONTHLY', tolerance_pct: 5, tolerance_type: 'UPPER' }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
-    expect(out.kpi_thresholds[0]).toMatchObject({ kpi_period: 'MONTHLY', tolerance_pct: 5, tolerance_type: 'UPPER' });
+    const out: any = await pipe.transform({ ...base, kpi_thresholds: [{ ...line, kpi_period: 'WEEKLY', tolerance_pct: 5, tolerance_type: 'UPPER' }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
+    expect(out.kpi_thresholds[0]).toMatchObject({ kpi_period: 'WEEKLY', tolerance_pct: 5, tolerance_type: 'UPPER' });
   });
 
   it('treats blank line period and tolerance as absent', async () => {
@@ -66,10 +67,24 @@ describe('KPI alert period and the extra KPI line keys', () => {
 
   it.each([
     [{ kpi_period: 'YEARLY' }],
+    [{ kpi_period: 'MONTHLY' }],
+    [{ from_day: 0 }],
+    [{ from_day: 1.5 }],
+    [{ to_day: 0 }],
+    [{ from_day: 5, to_day: 4 }],
     [{ tolerance_pct: -1, tolerance_type: 'UPPER' }],
     [{ tolerance_pct: 101, tolerance_type: 'UPPER' }],
     [{ tolerance_pct: 5, tolerance_type: 'MIDDLE' }],
   ])('rejects %j', async (extra) => {
     await expect(pipe.transform({ ...base, kpi_thresholds: [{ ...line, ...extra }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
+  });
+
+  it('accepts from_day/to_day stage days, either or both optional, and keeps them', async () => {
+    const pass = async (extra: object) => (await pipe.transform({ ...base, kpi_thresholds: [{ ...line, ...extra }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto }) as any).kpi_thresholds[0];
+    expect(await pass({ from_day: 3, to_day: 9 })).toMatchObject({ from_day: 3, to_day: 9 });
+    expect(await pass({ from_day: 4, to_day: 4 })).toMatchObject({ from_day: 4, to_day: 4 });
+    expect(await pass({ from_day: 3 })).toMatchObject({ from_day: 3 });
+    expect(await pass({ to_day: 9 })).toMatchObject({ to_day: 9 });
+    expect(await pass({ from_day: '', to_day: '' })).toMatchObject({ from_day: null, to_day: null });
   });
 });

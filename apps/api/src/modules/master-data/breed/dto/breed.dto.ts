@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, Matches, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, Matches, MaxLength, registerDecorator } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -524,6 +524,23 @@ const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : va
  */
 export const KPI_TOLERANCE_TYPES = ['UPPER', 'LOWER'] as const;
 
+/** To (day) may not be before From (day) on the same KPI line; an empty end is open and passes. */
+function IsNotBeforeDay(other: string) {
+  return (object: object, propertyName: string) =>
+    registerDecorator({
+      name: 'isNotBeforeDay',
+      target: object.constructor,
+      propertyName,
+      options: { message: 'To (day) cannot be before From (day).' },
+      validator: {
+        validate(value: unknown, args: any) {
+          const from = args.object?.[other];
+          return value == null || from == null || Number(value) >= Number(from);
+        },
+      },
+    });
+}
+
 export class KpiThresholdRowDto {
   @ApiProperty({ description: 'A kpi_metric_master metric_code' })
   @IsString()
@@ -559,12 +576,27 @@ export class KpiThresholdRowDto {
   @IsOptional()
   uom?: string | null;
 
-  @ApiProperty({ required: false, nullable: true, enum: ['DAILY', 'WEEKLY', 'MONTHLY'], description: "This KPI's own period; empty means use the header KPI period" })
+  @ApiProperty({ required: false, nullable: true, enum: ['DAILY', 'WEEKLY'], description: 'Always the header KPI period (the form writes it); the evaluator ignores it and uses the header' })
   @Transform(blankToNull)
   @IsString()
   @IsOptional()
-  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY'])
+  @IsIn(['DAILY', 'WEEKLY'])
   kpi_period?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'First stage day (day-in-stage, 1 = the stage start) this KPI applies to; empty with To empty = the whole stage' })
+  @Transform(blankToNull)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  from_day?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Last stage day this KPI applies to; not before From' })
+  @Transform(blankToNull)
+  @IsInt()
+  @Min(1)
+  @IsNotBeforeDay('from_day')
+  @IsOptional()
+  to_day?: number | null;
 
   @ApiProperty({ required: false, nullable: true, description: 'Tolerance around average_value, 0 to 100 percent' })
   @Transform(blankToNull)
@@ -582,7 +614,7 @@ export class KpiThresholdRowDto {
   tolerance_type?: string | null;
 }
 
-export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY', 'MONTHLY'] as const;
+export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY'] as const;
 
 /** One resource this breed needs at this stage, chosen from Resource Master. */
 export class ResourceRequirementRowDto {

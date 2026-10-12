@@ -1262,6 +1262,8 @@ const breed: MasterDataConfig = {
   ],
 };
 
+const KPI_PERIOD_OPTIONS = ["DAILY", "WEEKLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() }));
+
 const breedLifecycleStage: MasterDataConfig = {
   key: "breed-lifecycle-stage",
   label: "Breed Lifecycle Stages",
@@ -1346,13 +1348,15 @@ const breedLifecycleStage: MasterDataConfig = {
     // daily entry actually records. The picker's own New/View All buttons are
     // how a tenant adds one of their own without leaving this form.
     {
-      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", subDialog: true,
+      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", subDialog: true, singleRow: true,
       jsonRow: [
         { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
         { key: "uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
-        // Left empty, a line follows the header's KPI period (shown as the
-        // placeholder), so changing the header moves every line not set by hand.
-        { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })) },
+        // Display only: a line's period is always the header's KPI period (Rishi, 12 Oct).
+        { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", readOnlyFollow: true, options: KPI_PERIOD_OPTIONS },
+        // Stage days (day-in-stage, 1 = first day of the stage); both empty = the whole stage.
+        { key: "from_day", label: "From (day)", type: "number", step: "1", min: 1 },
+        { key: "to_day", label: "To (day)", type: "number", step: "1", min: 1 },
         { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
         { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
         { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
@@ -1360,12 +1364,12 @@ const breedLifecycleStage: MasterDataConfig = {
         { key: "tolerance_type", label: "Tolerance Type", type: "select", options: [{ value: "UPPER", label: "Upper" }, { value: "LOWER", label: "Lower" }] },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
       ],
-      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold. Tolerance is measured around the Average Value; KPI Period defaults to the header period.",
+      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold. Tolerance is measured around the Average Value. From / To are stage days (day 1 = first day of the stage); leave both empty to check the whole stage. KPI Period is the header period.",
     },
     {
       key: "kpi_alert_period", label: "KPI period", type: "select", subDialog: true,
-      options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
-      helpText: "Default KPI period for the lines below; a line can set its own.",
+      options: KPI_PERIOD_OPTIONS,
+      helpText: "The KPI period for every line below (Daily or Weekly).",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a

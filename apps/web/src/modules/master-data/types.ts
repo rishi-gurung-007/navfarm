@@ -48,6 +48,10 @@ export interface MasterDataField {
   placeholder?: string;
   /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
   defaultFromField?: string;
+  /** With defaultFromField: the column is display-only and always equals the header field (lifecycle KPI Period). */
+  readOnlyFollow?: boolean;
+  /** json field: lay each row's cells out on one non-wrapping line (scrolls horizontally if too wide). */
+  singleRow?: boolean;
   helpText?: string;
   /** Static dropdown options, for type: "select" */
   options?: SelectOption[];

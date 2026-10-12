@@ -402,12 +402,12 @@ describe('BreedService', () => {
       mockDbInsert.mockReturnValue({ values });
       const lines = [{ metric: 'ADG', uom: 'G', lower_limit: 400, upper_limit: 600, average_value: 500, severity: 'WARNING' }];
       await service.createLifecycleStage(
-        { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, kpi_alert_period: 'MONTHLY', kpi_thresholds: lines } as any,
+        { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, kpi_alert_period: 'WEEKLY', kpi_thresholds: lines } as any,
         'tenant-123',
         { userId: 'user-1' },
       );
       const inserted = values.mock.calls[0]?.[0];
-      expect(inserted.kpi_alert_period).toBe('MONTHLY');
+      expect(inserted.kpi_alert_period).toBe('WEEKLY');
       expect(JSON.parse(inserted.kpi_thresholds)[0]).toMatchObject({ uom: 'G', average_value: 500 });
     });
 

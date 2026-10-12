@@ -1599,7 +1599,7 @@ export function MasterDataTable({
         const before = String(prev[key] ?? "");
         next[jf.key] = JSON.stringify(parsed.map((r: Row) => {
           const out = { ...r };
-          for (const c of followers) if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
+          for (const c of followers) if (c.readOnlyFollow) out[c.key] = value || "DAILY"; else if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
           return out;
         }));
       } catch { /* not a row list: nothing to follow with */ }
@@ -1793,11 +1793,11 @@ export function MasterDataTable({
             throw new Error(`"${f.label}" must be valid JSON.`);
           }
           // A line still showing its header's value (older rows saved empty) is saved with that value explicitly.
-          const inheriting = (f.jsonRow || []).filter((c) => c.defaultFromField && form[c.defaultFromField]);
+          const inheriting = (f.jsonRow || []).filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow));
           if (inheriting.length && Array.isArray(v)) {
             v = v.map((r: Row) => {
               const out = { ...r };
-              for (const c of inheriting) if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
+              for (const c of inheriting) if (c.readOnlyFollow) out[c.key] = form[c.defaultFromField!] || "DAILY"; else if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
               return out;
             });
           }
@@ -2301,12 +2301,20 @@ export function MasterDataTable({
         <div className="flex flex-col gap-2">
           {broken && <InlineAlert>This entry is not a JSON array, so it cannot be shown as rows. Clear it to start again.</InlineAlert>}
           {rows.map((row, idx) => (
-            <div key={idx} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
+            <div key={idx} data-testid={f.singleRow ? "json-row-single" : undefined}
+              className={f.singleRow ? "flex flex-nowrap items-end gap-2 overflow-x-auto rounded-lg border p-2" : "flex flex-wrap items-end gap-2 rounded-lg border p-2"} style={S.raised}>
               {f.jsonRow!.map((col) => {
                 const rowFieldId = `master-${config.key}-${f.key}-${idx}-${col.key}`;
                 return (
-                  <Field key={col.key} label={tLabel(col.label)} htmlFor={rowFieldId} className="min-w-[8rem] flex-1">
-                    {col.type === "select-entity" ? (
+                  <Field key={col.key} label={tLabel(col.label)} htmlFor={rowFieldId} className={f.singleRow ? (col.type === "select-entity" ? "w-[13rem] shrink-0" : "w-[7.5rem] shrink-0") : "min-w-[8rem] flex-1"}>
+                    {col.readOnlyFollow && col.defaultFromField ? (
+                      <input id={rowFieldId} readOnly tabIndex={-1} className={inputCls} style={S.input} aria-readonly="true"
+                        value={(() => {
+                          const v = String(form[col.defaultFromField] || "DAILY");
+                          const label = (col.options || []).find((o) => o.value === v)?.label;
+                          return label ? tLabel(label) : v;
+                        })()} />
+                    ) : col.type === "select-entity" ? (
                       col.multiple ? (
                         <EntityLookupField
                           id={rowFieldId}
@@ -2382,12 +2390,12 @@ export function MasterDataTable({
               {!fieldDisabled && (isLocked(row)
                 ? <span className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.raised, color: "var(--text-muted)" }}>Mandatory</span>
                 : <button type="button" onClick={() => write(rows.filter((_, i) => i !== idx))}
-                    className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.surface, color: "var(--danger)" }}>
+                    className={`rounded-lg border px-2 py-1.5 text-xs font-medium${f.singleRow ? " shrink-0" : ""}`} style={{ ...S.surface, color: "var(--danger)" }}>
                     {t("mdRemoveRow")}
                   </button>)}
             </div>
           ))}
-          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && form[c.defaultFromField]).map((c) => [c.key, String(form[c.defaultFromField!])]))])}
+          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow)).map((c) => [c.key, String(form[c.defaultFromField!] || "DAILY")]))])}
             className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold" style={S.surface}>
             <Plus className="mr-1 inline h-3 w-3" />{rows.length ? t("mdAddMore") : t("mdAdd")}
           </button>}
@@ -3711,7 +3719,7 @@ export function MasterDataTable({
 
       {subDialogFields.length > 0 && (
         <Dialog open={modalOpen && subDialogOpen} onClose={() => setSubDialogOpen(false)}
-          title={tLabel("KPIs & Alerts")} presentation="compact" maxWidth="xl"
+          title={tLabel("KPIs & Alerts")}
           footer={
             <div className="flex items-center justify-end w-full">
               <button type="button" onClick={() => setSubDialogOpen(false)}
