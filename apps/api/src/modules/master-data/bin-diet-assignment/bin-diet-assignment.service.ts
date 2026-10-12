@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -84,9 +84,26 @@ export class BinDietAssignmentService {
       ...masterScopeConditions(this.cls, schema.binDietAssignment, query.companyId),
     ];
     if (query.isActive !== undefined) conditions.push(eq(schema.binDietAssignment.is_active, query.isActive));
-    if (query.filter) {
-      const needle = `%${query.filter}%`;
-      conditions.push(sql`(${schema.locationMaster.location_code} LIKE ${needle} OR ${schema.itemMaster.item_code} LIKE ${needle} OR ${schema.itemMaster.item_name} LIKE ${needle})` as any);
+    // The table sends the search box as `search` and column filters as `filter[<column>]` (12 Oct: the old
+    // code read `filter` as text, so every column filter matched nothing and the search box was ignored).
+    if (query.search) {
+      const needle = `%${query.search}%`;
+      conditions.push(sql`(${schema.locationMaster.location_code} LIKE ${needle} OR ${schema.locationMaster.location_name} LIKE ${needle} OR ${schema.itemMaster.item_code} LIKE ${needle} OR ${schema.itemMaster.item_name} LIKE ${needle})` as any);
+    }
+    const columnOf: Record<string, any> = {
+      bin_code: schema.locationMaster.location_code, bin_name: schema.locationMaster.location_name,
+      feed_item_no: schema.itemMaster.item_code, feed_item_description: schema.itemMaster.item_name,
+      production_date: schema.binDietAssignment.production_date, diet_priority: schema.binDietAssignment.diet_priority,
+    };
+    for (const [key, raw] of Object.entries((query.filter ?? {}) as Record<string, string | string[]>)) {
+      const values = (Array.isArray(raw) ? raw : [raw]).map(String).filter((v) => v !== '');
+      if (!values.length) continue;
+      if (key === 'status' || key === 'is_active') {
+        conditions.push(eq(schema.binDietAssignment.is_active, values.some((v) => ['ACTIVE', 'TRUE', '1'].includes(v.toUpperCase()))));
+        continue;
+      }
+      const column = columnOf[key];
+      if (column) conditions.push(inArray(column, values));
     }
     return this.joinedQuery().where(and(...conditions))
       .orderBy(asc(schema.binDietAssignment.production_date), asc(schema.locationMaster.location_code))

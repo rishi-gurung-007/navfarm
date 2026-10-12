@@ -33,7 +33,8 @@ export interface PlanFacts {
   feedItems: FeedItemFact[];
   /** `${bin_location_id}|${yyyy-mm-dd}` of active assignments */
   assignments: string[];
-  today: string; // yyyy-mm-dd
+  today: string; // yyyy-mm-dd — first production date planned
+  days?: number; // how many dates (default PLAN_DAYS)
   newId: () => string;
 }
 
@@ -109,7 +110,7 @@ export function planFeedMillDemo(f: PlanFacts): DemoPlan {
   // BIN Diet Assignments: per feed form, BIN j of that form takes item (j + day number) mod items — round-robin, rotating by date.
   if (!eligible.length) notes.push('No assignable feed item found in the company\'s breed lifecycle stages; no BIN Diet Assignments planned.');
   const taken = new Set(f.assignments);
-  for (let d = 0; d < PLAN_DAYS && eligible.length; d += 1) {
+  for (let d = 0; d < (f.days ?? PLAN_DAYS) && eligible.length; d += 1) {
     const date = addDays(f.today, d);
     const rot = dayNumber(date);
     let priority = 0;

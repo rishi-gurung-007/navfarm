@@ -79,6 +79,7 @@ explicit Bulk/Bagged type and a Diet No qualify; others are listed as notes). A 
 (writes, rolls back) / `--apply` as above; local database host only.
 ```
 pnpm nx run api:db-seed-feed-mill-demo -- --tenant ppl --company 00000000-0000-0000-0000-000000000000 --apply
+# add --from YYYY-MM-DD --days N to cover earlier production dates (e.g. cloned requisitions)
 ```
 Also run it for devco/TRIPLEC before cloning, so the clones include the mill.
 

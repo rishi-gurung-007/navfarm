@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsDateString, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export class CreateBinDietAssignmentDto {
@@ -45,6 +45,11 @@ export class UpdateBinDietAssignmentDto {
 }
 
 export class QueryBinDietAssignmentDto extends MasterListQueryDto {
+  /** The table's search box: BIN code/name, feed item code/name. */
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @IsUUID()
   @IsOptional()
   companyId?: string;

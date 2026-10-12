@@ -3,7 +3,7 @@
  * Location (MILL/BIN) and BIN Diet Assignment screens. For one company this
  * creates only what is missing: the MILL and BIN location types, one MILL
  * (MILL-001, 238,000 KG/day), four BINs (MILL-001/BIN-001..004, 30,000 KG) and a
- * BIN Diet Assignment per BIN for today..today+27, taking the company's active
+ * BIN Diet Assignment per BIN for today..today+27 (or --from YYYY-MM-DD for --days N), taking the company's active
  * breed lifecycle feed items round-robin. A second run plans nothing.
  *
  * Args: --tenant <tenant_code|db> --company <company_code|id> (resolved as in
@@ -18,7 +18,7 @@ import { countByTable, planFeedMillDemo, type PlanFacts } from './seed-feed-mill
 const ident = /^[a-zA-Z0-9_]+$/;
 
 export function parseArgs(argv: string[]) {
-  const out: { tenant?: string; company?: string; apply: boolean; verify: boolean } = { apply: false, verify: false };
+  const out: { tenant?: string; company?: string; from?: string; days?: number; apply: boolean; verify: boolean } = { apply: false, verify: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--apply') out.apply = true;
@@ -27,12 +27,21 @@ export function parseArgs(argv: string[]) {
       const v = argv[i + 1];
       if (!v || v.startsWith('--')) throw new Error(`${a} needs a value.`);
       out[a === '--tenant' ? 'tenant' : 'company'] = v; i += 1;
-    } else throw new Error(`Unknown argument '${a}'. Use --tenant, --company and optionally --verify or --apply.`);
+    } else if (a === '--from') {
+      // 12 Oct: cloned requisitions need assignments on past production dates; start the range here.
+      const v = argv[i + 1];
+      if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('--from needs a date as YYYY-MM-DD.');
+      out.from = v; i += 1;
+    } else if (a === '--days') {
+      const v = Number(argv[i + 1]);
+      if (!Number.isInteger(v) || v < 1 || v > 366) throw new Error('--days needs a whole number from 1 to 366.');
+      out.days = v; i += 1;
+    } else throw new Error(`Unknown argument '${a}'. Use --tenant, --company, optionally --from YYYY-MM-DD, --days N, and --verify or --apply.`);
   }
   if (out.apply && out.verify) throw new Error('Use --verify or --apply, not both.');
   if (!out.tenant) throw new Error('--tenant is required.');
   if (!out.company) throw new Error('--company is required.');
-  return out as { tenant: string; company: string; apply: boolean; verify: boolean };
+  return out as { tenant: string; company: string; from?: string; days?: number; apply: boolean; verify: boolean };
 }
 
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -78,7 +87,7 @@ async function run() {
       locations: locations.map((l) => ({ ...l, is_active: !!l.is_active })),
       feedItems: feedItems.map((f) => ({ ...f, is_active: !!f.is_active, order: Number(f.ord), diet_no: f.diet_no == null ? null : Number(f.diet_no) })),
       assignments: assignments.map((a) => `${a.bin_location_id}|${a.d}`),
-      today: localDate(), newId: randomUUID,
+      today: args.from ?? localDate(), days: args.days, newId: randomUUID,
     };
     const plan = planFeedMillDemo(facts);
 
