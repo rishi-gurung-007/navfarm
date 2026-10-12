@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { BatchPk } from './feed-forecast.engine';
 
@@ -201,7 +202,7 @@ export function assertNonNegativeQuantities(row: Record<string, unknown>, keys: 
   for (const key of keys) {
     const value = row[key];
     if (typeof value === 'number' && Number.isFinite(value) && value < 0) {
-      throw new Error(`${where} has a negative ${key} (${value}). Stock quantities in the Feed Forecast cannot be below zero, so this calculation was not saved.`);
+      throw new BadRequestException(`${where} has a negative ${key} (${value}). Stock quantities in the Feed Forecast cannot be below zero, so this calculation was not saved.`);
     }
   }
 }
@@ -219,12 +220,12 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
   return output.daily.map((line, index) => {
     for (const key of requiredText) {
       if (typeof line[key] !== 'string' || line[key].length === 0) {
-        throw new Error(`Forecast run line ${index + 1} is missing ${key}.`);
+        throw new BadRequestException(`Forecast run line ${index + 1} is missing ${key}.`);
       }
     }
     for (const key of requiredNumbers) {
       if (typeof line[key] !== 'number' || !Number.isFinite(line[key])) {
-        throw new Error(`Forecast run line ${index + 1} is missing ${key}.`);
+        throw new BadRequestException(`Forecast run line ${index + 1} is missing ${key}.`);
       }
     }
     assertNonNegativeQuantities(line as Record<string, unknown>, QUANTITY_KEYS, `Forecast run line ${index + 1}`);
