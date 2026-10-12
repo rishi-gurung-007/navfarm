@@ -254,6 +254,29 @@ describe('buildSelectedSiloDashboard', () => {
     ]);
   });
 
+  it('counts a next stage on the same item as current demand once, not as next demand too (12 Oct)', () => {
+    const status = {
+      siloId: 's1', siloCode: 'SILO-1', feedInSiloItemId: 'r1', currentDietItemId: 'r1', nextDietItemId: 'r1',
+      nextDietItemName: 'Diet R1', submissionDeadline: null,
+    } as any;
+    const src = {
+      sourceType: 'SILO', sourceCode: 'SILO-1', locationId: 's1', itemId: 'r1', itemName: 'Diet R1', balanceKg: 1500,
+      planningDayDemandKg: 200, currentDietDaysRemaining: 5, firstDemandDate: '2026-09-23', firstDayDemandKg: 200,
+      walkDemandKg: 1000, daysLeft: 5, runDownDate: null, shortageDate: null, isNextDiet: false, noSiloHoldsItem: false,
+      lifecycleIds: [], thresholdKg: 0, safetyStockKg: 0, deliveryDayOpeningKg: 0, incomingKg: 0, shortfallKg: 0,
+    };
+    const day = {
+      batchId: 'batch-a', itemId: 'r1', itemName: 'Diet R1', date: '2026-09-23', demandKg: 200, projectedClosingKg: 1300,
+      sourceType: 'SILO', destinationLocationId: 's1', currentInventoryKg: 1500, confirmedReceiptKg: 0,
+    };
+    const shaped = buildSelectedSiloDashboard({
+      status, planningDate: '2026-09-23', nextBinAssignment: null,
+      result: { sources: [src] as any, daily: [day] as any },
+    });
+    expect(shaped.demandSeries).toEqual([{ date: '2026-09-23', currentDietKg: 200, nextDietKg: 0 }]);
+    expect(shaped.silo.nextProjectedNeedKg).toBe(0);
+  });
+
   it('returns an exact Mill BIN assignment when supplied instead of inventing one', () => {
     const status = {
       ...fact({}), currentDietItemId: 'r1', dailyRequirementKg: 0, daysRemaining: null, firstShortageDate: null,

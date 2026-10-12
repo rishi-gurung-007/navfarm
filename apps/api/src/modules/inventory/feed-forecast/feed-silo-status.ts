@@ -113,7 +113,9 @@ export function buildSelectedSiloDashboard(args: {
   const { status, result, nextBinAssignment } = args;
   const sources = result.sources.filter((source) => source.sourceType === 'SILO' && source.locationId === status.siloId);
   const currentSources = sources.filter((source) => source.itemId === status.currentDietItemId);
-  const nextSources = sources.filter((source) => source.itemId === status.nextDietItemId);
+  // Same rule as the demand series: a next stage on the item already fed adds no separate next-diet need.
+  const nextSources = status.nextDietItemId === status.currentDietItemId ? []
+    : sources.filter((source) => source.itemId === status.nextDietItemId);
   const currentDietRemainingValues =
     currentSources
       .map(
@@ -160,8 +162,9 @@ export function buildSelectedSiloDashboard(args: {
   const demandByDate = new Map<string, SiloDemandPoint>();
   for (const point of balanceSeries) {
     const demand = demandByDate.get(point.date) ?? { date: point.date, currentDietKg: 0, nextDietKg: 0 };
+    // One kilogram is one diet's: when the next stage feeds the same item as now, it is current demand, not both.
     if (point.itemId === status.currentDietItemId) demand.currentDietKg = round3(demand.currentDietKg + point.demandKg);
-    if (point.itemId === status.nextDietItemId) demand.nextDietKg = round3(demand.nextDietKg + point.demandKg);
+    else if (point.itemId === status.nextDietItemId) demand.nextDietKg = round3(demand.nextDietKg + point.demandKg);
     demandByDate.set(point.date, demand);
   }
 

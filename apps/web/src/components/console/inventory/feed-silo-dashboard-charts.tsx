@@ -99,11 +99,11 @@ export function FeedSiloDashboardCharts({
                   {/* Headroom above the highest line, so a balance at capacity does not sit on the frame. */}
                   <YAxis tick={tick} width={64} domain={[0, yMax]} allowDataOverflow={false} tickFormatter={(value) => Number(value).toLocaleString("en-US")} />
                   <Tooltip contentStyle={tooltipStyle} labelFormatter={(value) => formatDateShort(String(value))} />
-                  {belowFeedLevelKg !== null && <ReferenceLine y={belowFeedLevelKg} stroke="var(--warning)" strokeDasharray="4 4" />}
-                  {aboveThresholdKg !== null && <ReferenceLine y={aboveThresholdKg} stroke="var(--accent)" strokeDasharray="4 4" />}
+                  {belowFeedLevelKg !== null && <ReferenceLine y={belowFeedLevelKg} stroke="var(--warning)" strokeWidth={1.5} strokeDasharray="6 4" label={levelLabel(`${t("fsdBelowFeedLevel")} ${kg(belowFeedLevelKg)}`, "var(--warning)")} />}
+                  {aboveThresholdKg !== null && <ReferenceLine y={aboveThresholdKg} stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="6 4" label={levelLabel(`${t("fsdAboveThreshold")} ${kg(aboveThresholdKg)}`, "var(--accent)")} />}
                   <Line type="monotone" dataKey="closingKg" name={t("fsdProjectedClosingKg")} stroke="var(--info)" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
                   {/* Drawn after the balance line so it stays visible when the silo is full. */}
-                  {capacityKg !== null && <ReferenceLine y={capacityKg} stroke="var(--text-muted)" strokeWidth={1.5} strokeDasharray="2 4" ifOverflow="extendDomain" />}
+                  {capacityKg !== null && <ReferenceLine y={capacityKg} stroke="var(--text-muted)" strokeWidth={1.5} strokeDasharray="2 4" ifOverflow="extendDomain" label={levelLabel(`${t("fsdCapacity")} ${kg(capacityKg)}`, "var(--text-secondary)")} />}
                   {runDown && <ReferenceDot x={runDown.date} y={0} r={5} fill="var(--danger)" stroke="var(--surface)" />}
                 </LineChart>
               </ResponsiveContainer>
@@ -149,6 +149,10 @@ export function FeedSiloDashboardCharts({
     </div>
   );
 }
+
+/** The fixed levels are flat lines, not data: name them on the line so they are not mistaken for gridlines. */
+const kg = (value: number) => `${value.toLocaleString("en-US")} kg`;
+const levelLabel = (value: string, fill: string) => ({ value, position: "insideTopLeft" as const, fill, fontSize: 11 });
 
 function LegendMark({ color, label }: { color: string; label: string }) {
   return <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />{label}</span>;
