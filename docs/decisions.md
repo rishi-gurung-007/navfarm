@@ -3496,3 +3496,10 @@ A Purchase requisition's Release is recorded in NAVFarm only: Document Released,
 recorded. The PO number is linked afterwards with Link PO (the Business Central purchase order number, typed in).
 The PO number is not the GRN number; a GRN (Inventory > GRN) records goods received and is not linked to the
 requisition today.
+
+## 2026-10-12 — Feed Form on feed items drives requisition rounding (Rishi)
+
+A FEED item carries a Feed Form (Bulk / Bagged) on Item Master. Bulk/Bagged for an item is read from Feed Form first,
+then from a FEED_BULK / FEED_BAG item type. Feed requisition rounding, the line's Feed Type and bag count follow the
+item's Feed Form when it has one (a Bagged item to a silo rounds to bags, e.g. 1,210 KG → 1,250 KG = 25 bags); an item
+without a Feed Form keeps following the destination (silo → bulk, store → bags). Confirmed by Rishi.
