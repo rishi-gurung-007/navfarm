@@ -31,7 +31,7 @@ export class BatchDailyDataController {
   constructor(private readonly batchDailyDataService: BatchDailyDataService) {}
 
   @Post()
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'create')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'create')
   @ApiOperation({
     summary:
       'Post one scheduler_line entry for a date — dispatches to inventory/GL/animal-transfer per line_type, same day+line upserts',
@@ -53,7 +53,7 @@ export class BatchDailyDataController {
   }
 
   @Get('consumption-source')
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({
     summary: 'The location (silo or farm store) a consumption line will draw its stock from',
   })
@@ -70,7 +70,7 @@ export class BatchDailyDataController {
   }
 
   @Get()
-  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'view')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({
     summary: 'List entries already recorded for this batch on a given date',
   })

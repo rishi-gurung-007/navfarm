@@ -105,6 +105,7 @@ export const translations = {
     rolBinDietAssignments: "BIN Diet Assignments",
     rolProductionParameters: "Production Parameters",
     rolProductionSchedulers: "Production Schedulers",
+    rolBatchDataEntry: "Daily Data Entry",
     deSelectBatch: "Batch",
     deWorkingDay: "Day being entered",
     deRecordingForFarm: "Recording for: {{code}} — {{name}}",
