@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } fro
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
+import { headsAt, loadBatchDeaths } from '../../production/batch-heads';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
@@ -1124,21 +1125,8 @@ export class FeedForecastService {
         sql`${schema.batchDailyData.entry_date} >= ${sourceFrom}`,
         sql`${schema.batchDailyData.entry_date} <= ${sourceTo}`,
       ));
-    const mortalityRows = await this.db.select({
-      batchId: schema.batchTransaction.batch_id,
-      date: schema.batchTransaction.transaction_date,
-      quantity: schema.batchTransaction.quantity,
-    }).from(schema.batchTransaction)
-      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchTransaction.batch_id))
-      .where(and(
-        eq(schema.batchHeader.tenant_id, tenantId),
-        eq(schema.batchHeader.company_id, companyId),
-        eq(schema.batchHeader.farm_id, farmId),
-        eq(schema.batchTransaction.transaction_type, 'MORTALITY'),
-        sql`${schema.batchTransaction.transaction_date} <= ${sourceTo}`,
-      ));
-    const mortalities = new Map<string, Array<{ date: string; quantity: number }>>();
-    for (const row of mortalityRows) mortalities.set(row.batchId, [...(mortalities.get(row.batchId) ?? []), { date: row.date, quantity: Number(row.quantity) || 0 }]);
+    // Deaths from both sources (batch_transaction MORTALITY and posted MORTALITY_COUNT entries): see production/batch-heads.
+    const mortalities = await loadBatchDeaths(this.db, [...new Set(historyRows.map((row) => row.batchId))], sourceTo);
 
     const historyByItem = new Map<string, Array<{ from: string; to: string; actualKg: number; expectedKg: number }>>();
     const ensureHistory = (itemId: string) => {
@@ -1152,9 +1140,7 @@ export class FeedForecastService {
       if (!row.itemId || row.actualKg === null) continue;
       const weekIndex = historyWeeks.findIndex((week) => row.entryDate >= week.from && row.entryDate <= week.to);
       if (weekIndex < 0) continue;
-      const deaths = (mortalities.get(row.batchId) ?? []).filter((entry) => entry.date <= row.entryDate)
-        .reduce((total, entry) => total + entry.quantity, 0);
-      const heads = Math.max(0, Number(row.openingQty) - deaths);
+      const heads = headsAt(row.openingQty, mortalities.get(row.batchId), row.entryDate, true);
       const standard = Math.max(0, Number(row.standardQty) || 0);
       const expected = row.qtyBasis === 'PER_HEAD' ? standard * heads : standard;
       const history = ensureHistory(row.itemId);

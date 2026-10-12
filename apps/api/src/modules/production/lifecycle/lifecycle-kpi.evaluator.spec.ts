@@ -188,6 +188,17 @@ describe('LifecycleKpiEvaluator', () => {
     expect(inserted[0].actual_value).toBe('1.6');
   });
 
+  it('a % UOM line divides by heads net of posted Data Entry deaths before the week (500 - 10 = 490)', async () => {
+    const b = { ...batch, opening_quantity: '500.0000' };
+    // answers: batch, headers, stage rows, uom, daily data, batch_transaction MORTALITY (none), posted MORTALITY_COUNT before the week, dedupe
+    const { ev, inserted } = make([[b], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER', severity: 'CRITICAL' }], { kpi_alert_period: 'WEEKLY' })],
+      [{ uom_code: 'PCT', uom_name: 'Percent', uom_type: 'OTHER' }],
+      [{ metric: 'MORTALITY_COUNT', date: '2026-10-12', value: '5' }, { metric: 'MORTALITY_COUNT', date: '2026-10-13', value: '3' }], [],
+      [{ batchId: 'b1', date: '2026-10-05', quantity: '10' }], []]);
+    expect(await ev.evaluateBatch('b1', 't1', '2026-10-13')).toBe(1);
+    expect(inserted[0].actual_value).toBe('1.6327');
+  });
+
   it('a % UOM line with no head count is skipped', async () => {
     const { ev, inserted } = make([[{ ...batch, opening_quantity: '0' }], [header], [stageRow([{ metric: 'MORTALITY_COUNT', uom: 'PCT', average_value: 1, tolerance_pct: 0, tolerance_type: 'UPPER' }])],
       [{ uom_code: 'PCT', uom_name: 'Percent', uom_type: 'OTHER' }], [{ metric: 'MORTALITY_COUNT', date: '2026-10-12', value: '5' }]]);

@@ -13,9 +13,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, eq, gte, inArray, isNotNull, isNull, lt, lte, or, like } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, lte, or, like } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import * as schema from '../../../core/database/schema';
+import { headsAtStartOfDate } from '../batch-heads';
 import { feedRowFor, stageDayRange, type FeedRow } from './feed-row-days';
 
 export const LIFECYCLE_KPI_ALERT_TYPE = 'LIFECYCLE_KPI';
@@ -408,18 +409,13 @@ export class LifecycleKpiEvaluator {
   }
 
   /**
-   * Heads in the batch at the start of `start`: batch_header.opening_quantity less the MORTALITY batch_transaction
-   * quantities dated before it. This is the formula the feed forecast already uses for its history
-   * (FeedForecastService, opening qty less mortalities up to the entry date); transfers are not subtracted there either.
+   * Heads in the batch at the start of `start`: opening quantity less the deaths before it, from the shared rule in
+   * ../batch-heads (batch_transaction MORTALITY plus posted MORTALITY_COUNT entries). The feed forecast uses the same.
    */
   private async headsAtStartOf(batch: { batch_id: string; opening_quantity?: string | number | null }, start: string): Promise<number | null> {
     const opening = Number(batch.opening_quantity);
     if (!Number.isFinite(opening) || opening <= 0) return null;
-    const deaths = await this.db
-      .select({ quantity: schema.batchTransaction.quantity })
-      .from(schema.batchTransaction)
-      .where(and(eq(schema.batchTransaction.batch_id, batch.batch_id), eq(schema.batchTransaction.transaction_type, 'MORTALITY'), lt(schema.batchTransaction.transaction_date, start)));
-    const heads = opening - deaths.reduce((n, d) => n + (Number(d.quantity) || 0), 0);
+    const heads = await headsAtStartOfDate(this.db, batch.batch_id, opening, start);
     return heads > 0 ? heads : null;
   }
 
