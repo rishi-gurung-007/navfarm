@@ -81,6 +81,8 @@ export interface SourceBalancePoint {
   plannedIncomingKg?: number;
   /** Stock that left other than by feeding (negative adjustment, transfer out): 0 or more, shown only in the balance dialog. */
   otherOutflowKg?: number;
+  /** Part of otherOutflowKg: a negative ledger opening recovered from this day's stock. */
+  usedBeforeReceivedKg?: number;
   incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   dailyUseKg: number;
   projectedClosingBalanceKg: number;
@@ -116,6 +118,7 @@ export interface BalanceCell {
   openTransferKg: number;
   plannedIncomingKg: number;
   otherOutflowKg: number;
+  usedBeforeReceivedKg: number;
   dailyUseKg: number;
   closingKg: number;
   incomingReferences: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
@@ -318,6 +321,7 @@ export function pivotForecastRows(
                 openTransferKg: previous.openTransferKg + nonNegative(point.openTransferMovementKg),
                 plannedIncomingKg: previous.plannedIncomingKg + nonNegative(point.plannedIncomingKg),
                 otherOutflowKg: previous.otherOutflowKg + nonNegative(point.otherOutflowKg),
+                usedBeforeReceivedKg: previous.usedBeforeReceivedKg + nonNegative(point.usedBeforeReceivedKg),
                 dailyUseKg: previous.dailyUseKg + point.dailyUseKg,
                 closingKg: point.projectedClosingBalanceKg,
                 incomingReferences: [...previous.incomingReferences, ...(point.incomingReferences ?? [])],
@@ -328,6 +332,7 @@ export function pivotForecastRows(
                 openTransferKg: nonNegative(point.openTransferMovementKg),
                 plannedIncomingKg: nonNegative(point.plannedIncomingKg),
                 otherOutflowKg: nonNegative(point.otherOutflowKg),
+                usedBeforeReceivedKg: nonNegative(point.usedBeforeReceivedKg),
                 dailyUseKg: point.dailyUseKg,
                 closingKg: point.projectedClosingBalanceKg,
                 incomingReferences: [...(point.incomingReferences ?? [])],
@@ -350,6 +355,7 @@ export function pivotForecastRows(
           openTransferKg: nonNegative(row.openTransferMovementKg),
           plannedIncomingKg: nonNegative(row.plannedIncomingKg),
           otherOutflowKg: nonNegative(row.otherOutflowKg),
+          usedBeforeReceivedKg: 0,
           dailyUseKg: row.dailyUseKg,
           closingKg: row.projectedClosingBalanceKg,
           incomingReferences: [...(row.incomingReferences ?? [])],
@@ -540,7 +546,8 @@ export function FeedForecastGrid({
           {selectedBalance.balance.plannedIncomingKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</div>}
           {selectedBalance.balance.openTransferKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</div>}
           {selectedBalance.balance.confirmedReceiptKg > 0 && <div>+ {fmtKg(selectedBalance.balance.confirmedReceiptKg)} KG {t("ffConfirmedReceiptShort")}</div>}
-          {selectedBalance.balance.otherOutflowKg > 0 && <div>− {fmtKg(selectedBalance.balance.otherOutflowKg)} KG {t("ffOtherMovementsShort")}</div>}
+          {selectedBalance.balance.usedBeforeReceivedKg > 0 && <div>− {fmtKg(selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffUsedBeforeReceivedShort")}</div>}
+          {selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg > 0.0001 && <div>− {fmtKg(selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffOtherMovementsShort")}</div>}
           <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t("ffDailyUseShort")}</div>
           <div className="mt-2 border-t border-[var(--border)] pt-2 font-semibold">= {fmtKg(selectedBalance.balance.closingKg)} KG {t("ffClosingBalanceShort")}</div>
         </div>

@@ -245,6 +245,8 @@ export interface DailyForecastRow {
    * the balance dialog; not a grid column.
    */
   otherOutflowKg?: number;
+  /** Part of `otherOutflowKg`: a negative ledger opening (feed used before it was received) recovered from this day's stock. */
+  usedBeforeReceivedKg?: number;
   incomingReferences?: Array<{
     kind: NonNullable<IncomingFeed['kind']>;
     referenceId?: string;
@@ -289,6 +291,8 @@ export interface SourceBalancePoint {
   openTransferMovementKg: number;
   plannedIncomingKg: number;
   otherOutflowKg: number;
+  /** Part of `otherOutflowKg`: a negative ledger opening recovered from this day's stock (feed used before it was received). */
+  usedBeforeReceivedKg: number;
   incomingReferences: Array<{
     kind: NonNullable<IncomingFeed['kind']>;
     referenceId?: string;
@@ -893,6 +897,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   const openingByKey = new Map<string, Map<string, number>>();
   // What each walked day started from — the day before's closing — before that day's own movements (never negative).
   const carriedByKey = new Map<string, Map<string, number>>();
+  // Per day, the part of a negative ledger opening recovered from that day's stock (see the walk).
+  const deficitUsedByKey = new Map<string, Map<string, number>>();
 
   for (const [key, sk] of keyMeta) {
     const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
@@ -904,7 +910,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const opening = new Map<string, number>();
     const carriedBefore = new Map<string, number>();
     // Rishi, 12 Oct: negative stock is impossible. A ledger balance below zero (feed posted as used before it was
-    // posted as received) enters the walk as 0, and the notes say so rather than hiding it.
+    // posted as received) is shown as 0, and the notes say so. The feed WAS eaten, though, so the deficit is a debt
+    // taken off the first stock that arrives (as an outflow, day by day until recovered) — never forgotten, never negative.
     const ledgerBalance = balanceMicrogramsFor(sk);
     if (ledgerBalance < 0 && sk.sourceType !== 'NONE' && (sk.sourceType === 'STORE' || siloById.get(sk.siloId ?? '')?.itemId === sk.itemId)) {
       flags.push({
@@ -913,12 +920,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       });
     }
     let carried = Math.max(0, ledgerBalance);
+    let debt = Math.max(0, -ledgerBalance);
+    let debtAfterPlanning = 0;
+    const deficitUsed = new Map<string, number>();
     let runDownDate: string | null = null;
     let shortageDate: string | null = null;
     for (const date of walkDates) {
       // A transfer out can exceed what is there on paper; a silo is never below empty.
       carriedBefore.set(date, carried);
-      const open = Math.max(0, carried + (inflow.get(date) ?? 0));
+      const available = carried + (inflow.get(date) ?? 0);
+      const recovered = Math.min(debt, Math.max(0, available));
+      debt -= recovered;
+      if (recovered > 0) deficitUsed.set(date, recovered);
+      if (date === input.planningDate) debtAfterPlanning = debt;
+      const open = Math.max(0, available - recovered);
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
@@ -929,6 +944,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     }
     openingByKey.set(key, opening);
     carriedByKey.set(key, carriedBefore);
+    deficitUsedByKey.set(key, deficitUsed);
     // The fallback (a purely retrospective range, nothing walked) reads the raw
     // opening, which can be negative since stockAsOf carries the signed ledger;
     // stock on hand is never shown below zero, the same clamp the walk applies.
@@ -958,7 +974,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
         incomingInMicrograms += inflowIn.get(date) ?? 0;
       }
-      shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + safety - planningOpening - incomingMicrograms);
+      shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + safety + debtAfterPlanning - planningOpening - incomingMicrograms);
     }
     // 9d D1: a shortage found past `to` (in the run-down horizon) is delivered for by `to`, as Req. row 29 dates it.
     const deliveryDay = shortageDate !== null && shortageDate <= input.to ? shortageDate : input.to;
@@ -1064,6 +1080,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       if (date < rowFrom) continue;
       const incomingDetails = incomingDetailsByLocation.get(`${locationId}|${sk.itemId}`)?.get(date) ?? [];
       const { confirmed: confirmedLedger, openTransfer, planned: plannedRequisition, outflow: otherOutflow } = splitIncoming(incomingDetails);
+      const usedBefore = deficitUsedByKey.get(key)?.get(date) ?? 0;
       const demand = byDate.get(date) ?? 0;
       sourceBalances.push({
         date,
@@ -1080,7 +1097,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         confirmedReceiptKg: toKg(confirmedLedger),
         openTransferMovementKg: toKg(openTransfer),
         plannedIncomingKg: toKg(plannedRequisition),
-        otherOutflowKg: toKg(otherOutflow),
+        otherOutflowKg: toKg(otherOutflow + usedBefore),
+        usedBeforeReceivedKg: toKg(usedBefore),
         incomingReferences: incomingDetails.map((entry) => ({
           kind: entry.kind ?? 'CONFIRMED_LEDGER',
           referenceId: entry.referenceId,
@@ -1139,6 +1157,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       confirmed: confirmedReceiptMicrograms, openTransfer: openTransferMicrograms,
       planned: plannedIncomingMicrograms, outflow: otherOutflowMicrograms,
     } = splitIncoming(dayIncoming);
+    const usedBeforeMicrograms = deficitUsedByKey.get(e.key)?.get(e.date) ?? 0;
     const totalDemandMicrograms = byDate.get(e.date) ?? 0;
     return {
       date: e.date,
@@ -1164,7 +1183,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       confirmedReceiptKg: toKg(confirmedReceiptMicrograms),
       openTransferMovementKg: toKg(openTransferMicrograms),
       plannedIncomingKg: toKg(plannedIncomingMicrograms),
-      otherOutflowKg: toKg(otherOutflowMicrograms),
+      otherOutflowKg: toKg(otherOutflowMicrograms + usedBeforeMicrograms),
+      usedBeforeReceivedKg: toKg(usedBeforeMicrograms),
       incomingReferences: dayIncoming.map((entry) => ({
         kind: entry.kind ?? 'CONFIRMED_LEDGER',
         referenceId: entry.referenceId,

@@ -1927,6 +1927,7 @@ export const translations = {
     ffExpectedTransferShort: "expected transfer",
     ffIncomingCellHint: "Feed arrives this day. Click to see the planned feed and expected transfer.",
     ffConfirmedReceiptShort: "confirmed receipt",
+    ffUsedBeforeReceivedShort: "used before it was received (ledger below zero)",
     ffOtherMovementsShort: "other stock movements (adjustments, transfers out)",
     ffOpenTransferShort: "open transfer",
     ffDailyUseShort: "daily consumption",

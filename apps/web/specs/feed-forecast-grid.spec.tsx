@@ -258,6 +258,24 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(GRID_COLUMNS).not.toContain('ffColOtherOutflow');
   });
 
+  it('the balance dialog shows feed used before it was received on its own line, apart from the adjustments line', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({ openingSystemBalanceKg: 0, confirmedReceiptKg: 40000, otherOutflowKg: 4300, usedBeforeReceivedKg: 4200, dailyUseKg: 100, projectedClosingBalanceKg: 35600 })]}
+      view="DAILY" from="2026-09-23" loading={false} t={t}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 4,200.00 KG ffUsedBeforeReceivedShort')).toBeTruthy();
+    expect(screen.getByText('− 100.00 KG ffOtherMovementsShort')).toBeTruthy();
+  });
+
+  it('only the used-before-received line appears when the whole outflow is that deficit', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ openingSystemBalanceKg: 0, confirmedReceiptKg: 40000, otherOutflowKg: 4200, usedBeforeReceivedKg: 4200 })]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 4,200.00 KG ffUsedBeforeReceivedShort')).toBeTruthy();
+    expect(screen.queryByText(/ffOtherMovementsShort/)).toBeNull();
+  });
+
   it('the balance dialog omits the other-movements line when there is none', async () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ otherOutflowKg: 0 })]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));

@@ -99,19 +99,41 @@ describe('buildFeedForecast — no negative quantities (Rishi, 12 Oct)', () => {
     expect(source.shortfallKg).toBe(0);
   });
 
-  it('a ledger balance below zero is shown as 0 with a note — not carried into the arithmetic', () => {
+  it('a ledger balance below zero shows 0 with a note, and the deficit comes off the first receipt', () => {
     const input = oneSilo({ incoming: [{ locationId: 's1', itemId: 'r1', date: '2026-10-11', kg: 40000, kind: 'CONFIRMED_LEDGER' }] }, -471.74);
     const result = buildFeedForecast(input);
     const first = result.daily.find((d) => d.date === '2026-10-10')!;
-    expect(first).toMatchObject({ openingStockKg: 0, currentInventoryKg: 0 });
+    expect(first).toMatchObject({ openingStockKg: 0, currentInventoryKg: 0, otherOutflowKg: 0 });
     expect(result.sourceBalances.find((p) => p.date === '2026-10-10')).toMatchObject({ openingSystemBalanceKg: 0 });
-    // The receipt is not eaten by the negative balance.
-    expect(result.daily.find((d) => d.date === '2026-10-11')).toMatchObject({ confirmedReceiptKg: 40000, currentInventoryKg: 40000 });
+    expect(result.daily.find((d) => d.date === '2026-10-11')).toMatchObject({
+      confirmedReceiptKg: 40000, otherOutflowKg: 471.74, usedBeforeReceivedKg: 471.74, currentInventoryKg: 39528.26,
+    });
     expect(result.sources[0].balanceKg).toBe(0);
     expect(result.flags).toContainEqual({
       kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: 'MUL100/SILO-003', itemName: 'Grower Diet', balanceKg: -471.74, date: '2026-10-10',
     });
     expectNoNegativeQuantities(result);
+  });
+
+  it('a deficit larger than the first inflow is carried forward and recovered day by day', () => {
+    const input = oneSilo({
+      incoming: [
+        { locationId: 's1', itemId: 'r1', date: '2026-10-11', kg: 300, kind: 'CONFIRMED_LEDGER' },
+        { locationId: 's1', itemId: 'r1', date: '2026-10-13', kg: 1000, kind: 'CONFIRMED_LEDGER' },
+      ],
+    }, -500);
+    const result = buildFeedForecast(input);
+    const by = (date: string) => result.daily.find((d) => d.date === date)!;
+    expect(by('2026-10-11')).toMatchObject({ usedBeforeReceivedKg: 300, otherOutflowKg: 300, currentInventoryKg: 0, projectedClosingKg: 0 });
+    expect(by('2026-10-12')).toMatchObject({ usedBeforeReceivedKg: 0, currentInventoryKg: 0 });
+    expect(by('2026-10-13')).toMatchObject({ usedBeforeReceivedKg: 200, otherOutflowKg: 200, currentInventoryKg: 800, projectedClosingKg: 700 });
+    expectNoNegativeQuantities(result);
+  });
+
+  it('an unrecovered deficit still counts toward the shortfall', () => {
+    // 100 kg/day for 5 days (10–14 Oct) against a 500 kg deficit and nothing arriving: needs 500 + 500.
+    const source = buildFeedForecast(oneSilo({}, -500)).sources[0];
+    expect(source.shortfallKg).toBe(1000);
   });
 
   it('raises no negative-balance note for a balance of zero or more', () => {

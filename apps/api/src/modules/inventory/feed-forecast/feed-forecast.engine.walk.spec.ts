@@ -260,10 +260,10 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
     expect(buildFeedForecast(input).sources[0]).toMatchObject({ sourceType: 'STORE', thresholdKg: 0, runDownDate: '2026-09-25' });
   });
 
-  // Superseded by Rishi's 12 Oct ruling (negative stock is impossible): the follow-up ruling netted a negative opening
-  // against the day's receipt (−4,200 + 40,000 = 35,800). The opening is now shown and carried as 0, so the receipt
-  // stands whole (40,000) and the notes name the negative ledger balance. nf_devco VIL100/STORE-001, ICAT-004-ITM-0002.
-  it('a store opening below zero is carried as zero and noted — the receipt is not reduced by it', () => {
+  // Rishi, 12 Oct: no negative figure is shown, but the feed was eaten (only the posting order is wrong), so the
+  // deficit is carried as an outflow against the first stock that arrives: −4,200 + 40,000 → 35,800, as before.
+  // nf_devco VIL100/STORE-001, ICAT-004-ITM-0002: −4,200 fed 10–23 Sep, +40,000 received 24 Sep.
+  it('a store opening below zero shows 0, then comes off the day\'s receipt as an outflow — 35,800, never a negative figure', () => {
     const input = oneSilo({
       planningDate: '2026-09-24', from: '2026-09-24', to: '2026-09-30',
       sheds: [{ shedId: 'h1', shedCode: 'VIL100/SHED-001', siloIds: [] }],
@@ -272,8 +272,10 @@ describe('buildFeedForecast — D19 walk edge cases (Plan R review of Task 2)', 
       incoming: [{ locationId: 'st', itemId: 'r1', date: '2026-09-24', kg: 40000 }],
     });
     const { sources, daily, flags } = buildFeedForecast(input);
-    expect(sources[0]).toMatchObject({ sourceType: 'STORE', balanceKg: 40000 });
-    expect(daily.find((d) => d.date === '2026-09-24')).toMatchObject({ currentInventoryKg: 40000, openingStockKg: 0 });
+    expect(sources[0]).toMatchObject({ sourceType: 'STORE', balanceKg: 35800 });
+    expect(daily.find((d) => d.date === '2026-09-24')).toMatchObject({
+      currentInventoryKg: 35800, openingStockKg: 0, confirmedReceiptKg: 40000, otherOutflowKg: 4200, usedBeforeReceivedKg: 4200,
+    });
     expect(flags).toContainEqual(expect.objectContaining({ kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: 'VIL100/STORE-001', balanceKg: -4200 }));
   });
 
