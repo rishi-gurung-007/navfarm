@@ -15,11 +15,15 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-/** One animal that died, as named on a MORTALITY_COUNT entry for a batch with registered animals. */
+/**
+ * One death on a MORTALITY_COUNT entry. A batch with registered animals names the animal; a count-only batch
+ * leaves animal_id out and gives only the dead weight and reason.
+ */
 export class MortalityAnimalDto {
-  @ApiProperty({ description: 'animal_register UUID - must be alive in this batch, at this line\'s stage' })
+  @ApiProperty({ description: 'animal_register UUID - must be alive in this batch, at this line\'s stage. Omitted on a count-only batch.', required: false })
+  @IsOptional()
   @IsUUID()
-  animal_id: string;
+  animal_id?: string;
 
   @ApiProperty({ description: 'Dead body weight in kg (> 0)' })
   @IsNumber()

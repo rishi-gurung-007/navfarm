@@ -21,6 +21,7 @@ testers' data must survive.
 | 0176 | All ISO countries |
 | 0177 | Item Master: nullable `feed_form` column (BULK/BAGGED) on feed items (12 Oct) |
 | 0178 | New table `batch_mortality_animal`: which registered animals died on a Data Entry mortality line, with dead weight and reason (12 Oct) |
+| 0179 | `batch_mortality_animal.animal_id` may be empty: a count-only batch records each death's dead weight and reason without naming an animal (12 Oct) |
 
 Run the migrations as **root**. If any line says FAILED: stop, restore that database from the backup, and report it.
 Do not re-run blindly, because MySQL table changes are not transactional.

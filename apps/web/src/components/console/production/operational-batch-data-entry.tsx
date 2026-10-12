@@ -60,7 +60,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import { EmptyBagsField } from './entry/empty-bags-field';
 import { MortalityAnimalsField, draftPicks, useMortalityCandidates } from './entry/mortality-animals-field';
-import { mortalityPayload, mortalityPicksComplete, requiredMortalityAnimals, type MortalityPick } from './entry/mortality-animals';
+import { countOnlyPicks, mortalityPayload, mortalityPicksComplete, requiredMortalityAnimals, type MortalityPick } from './entry/mortality-animals';
 import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
@@ -239,18 +239,18 @@ export default function OperationalBatchDataEntry() {
     .filter((l) => l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT')
     .map((l) => l.line_id as string);
   const mortalityInfo = useMortalityCandidates(currentBatch?.id, selectedDate, mortalityLineIds, !isAnimalWise, dataEntryLines);
-  /** The animals this line must name for the value typed, and who is chosen so far; null when it is count-only. */
+  /**
+   * The deaths this line adds for the value typed and what is entered for them so far. A batch with registered
+   * animals names each animal; a count-only batch gives one weight-and-reason row per death.
+   */
   const mortalityNeed = (line: Row) => {
     const info = mortalityInfo[line.line_id];
-    if (isAnimalWise || !info || info.animals.length === 0) return null;
+    if (isAnimalWise || !info) return null;
     const key = entryKey(line.line_id, undefined);
     const raw = dataEntryValues[key];
-    const required = requiredMortalityAnimals(
-      raw === undefined || raw === '' ? 0 : Number(raw),
-      info.already_posted,
-      info.animals.length,
-    );
-    return { info, key, required, picks: dataEntryMortality[key] ?? draftPicks(info) };
+    const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), info.already_posted);
+    const picks = dataEntryMortality[key] ?? draftPicks(info);
+    return { info, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks };
   };
   const mortalityIncomplete = dataEntryLines.some((line) => {
     const need = mortalityNeed(line);

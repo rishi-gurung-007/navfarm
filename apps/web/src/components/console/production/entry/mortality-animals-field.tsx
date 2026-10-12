@@ -11,6 +11,7 @@ import {
   OTHER_REASON,
   filterMortalityCandidates,
   mortalityPicksComplete,
+  tooManyDeaths,
   type MortalityCandidate,
   type MortalityPick,
 } from "./mortality-animals";
@@ -20,13 +21,13 @@ export interface MortalityInfo {
   animals: MortalityCandidate[];
   already_posted: number;
   /** The choice saved with a draft of this line and date. */
-  draft_animals: Array<{ animal_id: string; dead_weight_kg: number; reason_id: string | null; reason_text: string | null }>;
+  draft_animals: Array<{ animal_id: string | null; dead_weight_kg: number; reason_id: string | null; reason_text: string | null }>;
 }
 
 /** A saved draft's choice as picks, so it is shown again rather than asked for twice. */
 export function draftPicks(info: MortalityInfo | undefined): MortalityPick[] {
   return (info?.draft_animals ?? []).map((d) => ({
-    animal_id: d.animal_id,
+    animal_id: d.animal_id ?? "",
     dead_weight_kg: String(d.dead_weight_kg),
     reason_id: d.reason_id ?? (d.reason_text ? OTHER_REASON : ""),
     reason_text: d.reason_text ?? "",
@@ -35,7 +36,7 @@ export function draftPicks(info: MortalityInfo | undefined): MortalityPick[] {
 
 /**
  * Loads, for every whole-batch mortality line, the registered animals still alive at its stage. A line that comes
- * back with no animals is count-only and shows no picker. Animal-wise batches name their animal per entry and skip it.
+ * back with no animals is count-only: it asks for a weight and reason per death but names no animal. Animal-wise batches name their animal per entry and skip it.
  */
 export function useMortalityCandidates(batchId: string | undefined, date: string, lineIds: string[], enabled: boolean, refreshKey?: unknown) {
   const [info, setInfo] = React.useState<Record<string, MortalityInfo>>({});
@@ -67,9 +68,10 @@ export function useMortalityCandidates(batchId: string | undefined, date: string
 }
 
 /**
- * The picker for one mortality line: a button showing how many of the required animals are chosen, opening a dialog
- * where the animals are searched and ticked and each gets its dead weight and reason. A reason is picked from the
- * Reason Master (mortality reasons) or, through "Other", typed.
+ * The picker for one mortality line: a button showing how many of the required deaths are filled in, opening a dialog
+ * where each death gets its dead weight and reason. With registered animals the animals are searched and ticked first;
+ * a count-only batch (no animals) shows one row per death. A reason is picked from the Reason Master (mortality
+ * reasons) or, through "Other", typed. More deaths than registered animals alive cannot be posted.
  */
 export function MortalityAnimalsField({
   animals,
@@ -97,17 +99,27 @@ export function MortalityAnimalsField({
   );
 
   if (required <= 0) return null;
+  const countOnly = animals.length === 0;
+  if (tooManyDeaths(required, animals.length)) {
+    return (
+      <p className="mt-1 text-xs font-medium text-red-600" data-testid="mortality-too-many">
+        {t("deMortTooMany", { required: String(required), alive: String(animals.length) })}
+      </p>
+    );
+  }
 
   const complete = mortalityPicksComplete(picks, required);
+  const filled = countOnly ? picks.filter((p) => mortalityPicksComplete([p], 1)).length : picks.length;
   const pickOf = (id: string) => picks.find((p) => p.animal_id === id);
   const toggle = (id: string) => {
     if (pickOf(id)) onChange(picks.filter((p) => p.animal_id !== id));
     else if (picks.length < required) onChange([...picks, { animal_id: id, dead_weight_kg: "", reason_id: "", reason_text: "" }]);
   };
-  const patch = (id: string, change: Partial<MortalityPick>) =>
-    onChange(picks.map((p) => (p.animal_id === id ? { ...p, ...change } : p)));
+  const patch = (index: number, change: Partial<MortalityPick>) =>
+    onChange(picks.map((p, i) => (i === index ? { ...p, ...change } : p)));
   const visible = filterMortalityCandidates(animals, search);
-  const codeOf = (id: string) => animals.find((a) => a.animal_id === id)?.animal_code ?? id;
+  const labelOf = (p: MortalityPick, i: number) =>
+    countOnly ? t("deMortDeadN", { n: String(i + 1) }) : animals.find((a) => a.animal_id === p.animal_id)?.animal_code ?? p.animal_id;
 
   return (
     <div className="mt-1">
@@ -120,13 +132,13 @@ export function MortalityAnimalsField({
         data-testid="mortality-animals-button"
         className={`h-8 w-full justify-between text-xs ${complete ? "text-emerald-600" : "text-amber-600"}`}
       >
-        {t("deMortButton", { chosen: String(picks.length), required: String(required) })}
+        {t(countOnly ? "deMortCountButton" : "deMortButton", { chosen: String(filled), required: String(required) })}
       </Button>
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
         title={t("deMortTitle")}
-        description={t("deMortHelp", { required: String(required) })}
+        description={t(countOnly ? "deMortCountHelp" : "deMortHelp", { required: String(required) })}
         presentation="modal"
         footer={
           <Button type="button" size="sm" onClick={() => setOpen(false)}>
@@ -134,6 +146,7 @@ export function MortalityAnimalsField({
           </Button>
         }
       >
+        {!countOnly && (<>
         <p className="mb-3 text-sm font-medium" data-testid="mortality-progress">
           {t("deMortChosen", { chosen: String(picks.length), required: String(required) })}
         </p>
@@ -165,40 +178,41 @@ export function MortalityAnimalsField({
             );
           })}
         </ul>
+        </>)}
         {picks.length > 0 && (
-          <div className="mt-4 space-y-3 border-t border-[var(--border)] pt-3">
-            {picks.map((p) => (
-              <div key={p.animal_id} className="grid gap-2 sm:grid-cols-[8rem_9rem_1fr] sm:items-start" data-testid={`mortality-detail-${p.animal_id}`}>
-                <span className="pt-2 text-sm font-semibold">{codeOf(p.animal_id)}</span>
+          <div className={countOnly ? "space-y-3" : "mt-4 space-y-3 border-t border-[var(--border)] pt-3"}>
+            {picks.map((p, i) => (
+              <div key={countOnly ? i : p.animal_id} className="grid gap-2 sm:grid-cols-[8rem_9rem_1fr] sm:items-start" data-testid={`mortality-detail-${countOnly ? i + 1 : p.animal_id}`}>
+                <span className="pt-2 text-sm font-semibold">{labelOf(p, i)}</span>
                 <input
                   type="number"
                   min={0}
                   step="0.001"
                   inputMode="decimal"
                   value={p.dead_weight_kg}
-                  onChange={(e) => patch(p.animal_id, { dead_weight_kg: e.target.value })}
+                  onChange={(e) => patch(i, { dead_weight_kg: e.target.value })}
                   placeholder={t("deMortWeight")}
-                  aria-label={`${codeOf(p.animal_id)} - ${t("deMortWeight")}`}
+                  aria-label={`${labelOf(p, i)} - ${t("deMortWeight")}`}
                   className="h-9 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
                 />
                 <div className="space-y-1">
                   <ReasonSelect
-                    ariaLabel={`${codeOf(p.animal_id)} - ${t("deMortReason")}`}
+                    ariaLabel={`${labelOf(p, i)} - ${t("deMortReason")}`}
                     value={p.reason_id}
                     valueFormat="id"
                     reasons={reasonOptions}
                     loading={loading}
                     placeholder={t("deMortReason")}
-                    onChange={(val) => patch(p.animal_id, { reason_id: val, reason_text: val === OTHER_REASON ? p.reason_text : "" })}
+                    onChange={(val) => patch(i, { reason_id: val, reason_text: val === OTHER_REASON ? p.reason_text : "" })}
                   />
                   {p.reason_id === OTHER_REASON && (
                     <input
                       type="text"
                       maxLength={200}
                       value={p.reason_text}
-                      onChange={(e) => patch(p.animal_id, { reason_text: e.target.value })}
+                      onChange={(e) => patch(i, { reason_text: e.target.value })}
                       placeholder={t("deMortOtherText")}
-                      aria-label={`${codeOf(p.animal_id)} - ${t("deMortOtherText")}`}
+                      aria-label={`${labelOf(p, i)} - ${t("deMortOtherText")}`}
                       className="h-9 w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
                     />
                   )}

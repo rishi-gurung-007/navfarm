@@ -3224,7 +3224,7 @@ export const batchMortalityAnimal = mysqlTable(
     batch_id: varchar('batch_id', { length: 36 }).notNull(),
     line_id: varchar('line_id', { length: 36 }).notNull(),
     entry_date: date('entry_date', { mode: 'string' }).notNull(),
-    animal_id: varchar('animal_id', { length: 36 }).notNull(),
+    animal_id: varchar('animal_id', { length: 36 }),
     dead_weight_kg: decimal('dead_weight_kg', { precision: 10, scale: 3 }).notNull(),
     reason_id: varchar('reason_id', { length: 36 }),
     reason_text: varchar('reason_text', { length: 200 }),

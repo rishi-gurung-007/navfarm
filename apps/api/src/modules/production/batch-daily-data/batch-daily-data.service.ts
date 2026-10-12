@@ -35,9 +35,12 @@ const round = (n: number) => Math.round(n * 1e4) / 1e4;
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
 
-/** An animal named on a mortality entry, validated and with its reason resolved. */
+/**
+ * One death on a mortality entry, validated and with its reason resolved. A batch with registered animals names the
+ * animal; a count-only batch has none to name, so each death carries only its weight and reason.
+ */
 export interface MortalityEntry {
-  animal_id: string;
+  animal_id: string | null;
   dead_weight_kg: number;
   reason_id: string | null;
   reason_text: string | null;
@@ -535,7 +538,7 @@ export class BatchDailyDataService {
             // ANIMAL_WISE names the exact animal on the entry — mark it directly
             // instead of FIFO-guessing which of the stage's animals died.
             const dying = mortality
-              ? mortality.entries.map((e) => ({ animal_id: e.animal_id }))
+              ? mortality.entries.filter((e) => e.animal_id).map((e) => ({ animal_id: e.animal_id! }))
               : dto.animal_id
               ? deathsToRecord > 0
                 ? [{ animal_id: dto.animal_id }]
@@ -561,7 +564,7 @@ export class BatchDailyDataService {
             if (dying.length) {
               if (mortality) {
                 // Only the animals named on the entry die, each with its own reason.
-                for (const e of mortality.entries) {
+                for (const e of mortality.entries.filter((m) => m.animal_id)) {
                   await this.db
                     .update(schema.animalRegister)
                     .set({
@@ -574,7 +577,7 @@ export class BatchDailyDataService {
                       updated_by: userPayload?.userId || null,
                       updated_at: toMysqlTimestamp(),
                     })
-                    .where(eq(schema.animalRegister.animal_id, e.animal_id));
+                    .where(eq(schema.animalRegister.animal_id, e.animal_id!));
                 }
               } else {
               await this.db
@@ -612,9 +615,10 @@ export class BatchDailyDataService {
                   userId: userPayload?.userId,
                 });
               }
-              if (mortality) {
-                await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: true, userId: userPayload?.userId });
-              }
+            }
+            // Stored whether or not animals were named: a count-only batch still keeps each death's weight and reason.
+            if (mortality?.entries.length) {
+              await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: true, userId: userPayload?.userId });
             }
           }
           await this.db
@@ -1493,10 +1497,18 @@ export class BatchDailyDataService {
     const alive = await this.aliveAnimals(batchId, header.stage_id);
     const previous = existingRow?.posted && existingRow.entered_value != null ? Number(existingRow.entered_value) : 0;
     const newDeaths = Math.max(0, Math.round(dto.entered_value - previous));
-    const required = Math.min(newDeaths, alive.length);
+    // Registered: every death is a named animal, so more deaths than animals alive is refused, not capped.
+    // Count-only: there is no animal to name, but each death still needs its dead weight and reason.
+    const registered = alive.length > 0;
+    if (registered && newDeaths > alive.length) {
+      throw new BadRequestException(
+        `This entry records ${newDeaths} death${newDeaths === 1 ? '' : 's'} but only ${alive.length} registered animal${alive.length === 1 ? ' is' : 's are'} alive in this batch at this stage.`,
+      );
+    }
+    const required = newDeaths;
 
     let chosen = dto.mortality_animals as
-      | Array<{ animal_id: string; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
+      | Array<{ animal_id?: string | null; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
       | undefined;
     const supplied = chosen !== undefined;
     if (!chosen && !dto.draft && required > 0) {
@@ -1522,7 +1534,9 @@ export class BatchDailyDataService {
     if (!chosen) {
       if (!dto.draft && required > 0) {
         throw new BadRequestException(
-          `Choose the ${required} animal${required === 1 ? '' : 's'} that died, with the dead weight and the reason for each.`,
+          registered
+            ? `Choose the ${required} animal${required === 1 ? '' : 's'} that died, with the dead weight and the reason for each.`
+            : `Enter the dead weight and the reason for each of the ${required} dead animal${required === 1 ? '' : 's'}.`,
         );
       }
       return { supplied: false, entries: [] };
@@ -1530,7 +1544,9 @@ export class BatchDailyDataService {
 
     if (chosen.length !== required) {
       throw new BadRequestException(
-        `This entry records ${required} death${required === 1 ? '' : 's'} - choose exactly ${required} animal${required === 1 ? '' : 's'} (${chosen.length} chosen).`,
+        registered
+          ? `This entry records ${required} death${required === 1 ? '' : 's'} - choose exactly ${required} animal${required === 1 ? '' : 's'} (${chosen.length} chosen).`
+          : `This entry records ${required} death${required === 1 ? '' : 's'} - give a dead weight and reason for each (${chosen.length} given).`,
       );
     }
     const aliveById = new Map(alive.map((a) => [a.animal_id, a]));
@@ -1552,25 +1568,35 @@ export class BatchDailyDataService {
     const reasonById = new Map(reasons.map((r) => [r.reason_id, r]));
 
     const entries: MortalityEntry[] = [];
-    for (const c of chosen) {
-      const animal = aliveById.get(c.animal_id);
-      if (!animal) {
-        throw new BadRequestException(
-          `Animal '${c.animal_id}' is not alive in this batch at this line's stage, so it cannot be recorded as dead here.`,
-        );
+    for (const [i, c] of chosen.entries()) {
+      let who: string;
+      let animal: (typeof alive)[number] | undefined;
+      if (registered) {
+        animal = c.animal_id ? aliveById.get(c.animal_id) : undefined;
+        if (!animal) {
+          throw new BadRequestException(
+            `Animal '${c.animal_id ?? ''}' is not alive in this batch at this line's stage, so it cannot be recorded as dead here.`,
+          );
+        }
+        if (seen.has(animal.animal_id)) {
+          throw new BadRequestException(`Animal '${animal.animal_code}' is chosen more than once.`);
+        }
+        seen.add(animal.animal_id);
+        who = `animal '${animal.animal_code}'`;
+      } else {
+        if (c.animal_id) {
+          throw new BadRequestException('This batch has no registered animals alive at this stage, so no animal can be named.');
+        }
+        who = `dead animal ${i + 1}`;
       }
-      if (seen.has(c.animal_id)) {
-        throw new BadRequestException(`Animal '${animal.animal_code}' is chosen more than once.`);
-      }
-      seen.add(c.animal_id);
       const weight = Number(c.dead_weight_kg);
       if (!Number.isFinite(weight) || weight <= 0) {
-        throw new BadRequestException(`Enter the dead weight (kg, more than 0) for animal '${animal.animal_code}'.`);
+        throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${who}.`);
       }
       const text = c.reason_text?.trim() || null;
       if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
         throw new BadRequestException(
-          `Give animal '${animal.animal_code}' a reason from the Reason Master, or type one - not both, not neither.`,
+          `Give ${who} a reason from the Reason Master, or type one - not both, not neither.`,
         );
       }
       let label: string;
@@ -1589,12 +1615,12 @@ export class BatchDailyDataService {
         label = text!;
       }
       entries.push({
-        animal_id: c.animal_id,
+        animal_id: animal?.animal_id ?? null,
         dead_weight_kg: Math.round(weight * 1000) / 1000,
         reason_id: c.reason_id ?? null,
         reason_text: text,
         reason_label: label,
-        notes: animal.notes ?? null,
+        notes: animal?.notes ?? null,
       });
     }
     return { supplied: supplied || entries.length > 0, entries };

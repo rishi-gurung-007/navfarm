@@ -4633,6 +4633,10 @@ export const translations = {
     deMortOtherText: "Type the reason",
     deMortDone: "Done",
     deMortPostBlocked: "Choose the animals that died, with the dead weight and the reason for each, before posting.",
+    deMortTooMany: "{{required}} deaths entered, but only {{alive}} registered animals are alive at this stage. Correct the count.",
+    deMortCountButton: "Dead weight and reason ({{chosen}}/{{required}})",
+    deMortCountHelp: "The mortality count adds {{required}} death(s). Enter the dead weight and the reason for each dead animal.",
+    deMortDeadN: "Dead animal {{n}}",
     // LFO (11 Oct)
     lcFarmOverride: "Farm (override)",
     lcFarmOverrideHelp: "Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",

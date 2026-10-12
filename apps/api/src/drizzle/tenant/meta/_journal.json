@@ -1247,6 +1247,13 @@
       "when": 1792000000046,
       "tag": "0178_batch_mortality_animal",
       "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "5",
+      "when": 1792000000047,
+      "tag": "0179_batch_mortality_animal_count_only",
+      "breakpoints": true
     }
   ]
 }

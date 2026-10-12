@@ -182,13 +182,30 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     await expect(post({ entered_value: 1, mortality_animals: [dead(A1)] })).rejects.toThrow(/exactly 0 animals/);
   });
 
-  it('a batch with no registered animals keeps the count alone', async () => {
+  it('refuses more deaths than registered animals alive, and writes nothing', async () => {
+    await expect(post({ entered_value: 4, mortality_animals: [dead(A1), dead(A2), dead(A3)] })).rejects.toThrow(/only 3 registered animals are alive/);
+    expect(updates).toHaveLength(0);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('a count-only batch asks for a dead weight and reason per death, names no animal, and stores them', async () => {
     rows.animal_register = [];
-    await post({ entered_value: 3 });
+    await expect(post({ entered_value: 2 })).rejects.toThrow(/dead weight and the reason for each of the 2 dead animals/);
+    await expect(post({ entered_value: 2, mortality_animals: [{ dead_weight_kg: 15, reason_id: R1 }] })).rejects.toThrow(/give a dead weight and reason for each \(1 given\)/);
+    await expect(post({ entered_value: 1, mortality_animals: [dead(A1)] })).rejects.toThrow(/no animal can be named/);
+    await expect(post({ entered_value: 1, mortality_animals: [{ dead_weight_kg: 0, reason_id: R1 }] })).rejects.toThrow(/dead weight .* for dead animal 1/);
+    await expect(post({ entered_value: 1, mortality_animals: [{ dead_weight_kg: 15 }] })).rejects.toThrow(/Give dead animal 1 a reason/);
+    expect(updates).toHaveLength(0);
+
+    await post({ entered_value: 2, mortality_animals: [{ dead_weight_kg: 15, reason_id: R1 }, { dead_weight_kg: 12.25, reason_text: 'Crushed' }] });
     expect(animalUpdates()).toHaveLength(0);
-    expect(inserts.some((i) => i.table === 'batch_mortality_animal')).toBe(false);
-    expect(updates.find((u) => u.table === 'scheduler_header')!.set.animal_count).toBe('7');
-    await expect(post({ entered_value: 1, mortality_animals: [dead(A1)] })).rejects.toThrow(/exactly 0 animals/);
+    expect(movementLog.record).not.toHaveBeenCalled();
+    const detail = inserts.find((i) => i.table === 'batch_mortality_animal')!.values;
+    expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_id, d.reason_text, d.posted])).toEqual([
+      [null, '15', R1, null, true],
+      [null, '12.25', null, 'Crushed', true],
+    ]);
+    expect(updates.find((u) => u.table === 'scheduler_header')!.set.animal_count).toBe('8');
   });
 
   it('refuses animals named on a line that is not the mortality count', async () => {

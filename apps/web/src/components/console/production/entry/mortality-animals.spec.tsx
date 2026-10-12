@@ -6,6 +6,8 @@ import {
   mortalityPayload,
   mortalityPicksComplete,
   requiredMortalityAnimals,
+  tooManyDeaths,
+  countOnlyPicks,
   type MortalityPick,
 } from './mortality-animals';
 import { MortalityAnimalsField } from './mortality-animals-field';
@@ -33,12 +35,22 @@ const animals = [
 const pick = (over: Partial<MortalityPick> = {}): MortalityPick => ({ animal_id: 'a-1', dead_weight_kg: '18.5', reason_id: 'r-1', reason_text: '', ...over });
 
 describe('mortality animals rules', () => {
-  it('asks for the deaths the entry adds, capped at the registered animals alive', () => {
-    expect(requiredMortalityAnimals(2, 0, 10)).toBe(2);
-    expect(requiredMortalityAnimals(5, 0, 3)).toBe(3); // a batch registered in part
-    expect(requiredMortalityAnimals(3, 1, 10)).toBe(2); // a correction names only the extra animals
-    expect(requiredMortalityAnimals(1, 2, 10)).toBe(0); // downward: no deaths added
-    expect(requiredMortalityAnimals(2, 0, 0)).toBe(0); // count-only batch
+  it('asks for the deaths the entry adds beyond what is posted', () => {
+    expect(requiredMortalityAnimals(2, 0)).toBe(2);
+    expect(requiredMortalityAnimals(3, 1)).toBe(2); // a correction asks only for the extra deaths
+    expect(requiredMortalityAnimals(1, 2)).toBe(0); // downward: no deaths added
+  });
+
+  it('flags more deaths than registered animals alive, but not on a count-only batch', () => {
+    expect(tooManyDeaths(5, 3)).toBe(true);
+    expect(tooManyDeaths(3, 3)).toBe(false);
+    expect(tooManyDeaths(5, 0)).toBe(false);
+  });
+
+  it('gives a count-only batch exactly one row per death, and sends them without an animal', () => {
+    expect(countOnlyPicks([], 2)).toHaveLength(2);
+    expect(countOnlyPicks([pick({ animal_id: '' }), pick({ animal_id: '' }), pick({ animal_id: '' })], 1)).toHaveLength(1);
+    expect(mortalityPayload([pick({ animal_id: '', dead_weight_kg: '12' })])).toEqual([{ dead_weight_kg: 12, reason_id: 'r-1' }]);
   });
 
   it('is complete only with exactly N animals, each with weight above 0 and a reason', () => {
@@ -126,5 +138,22 @@ describe('MortalityAnimalsField', () => {
     );
     fireEvent.change(screen.getByLabelText('PIG-0001 - Type the reason'), { target: { value: 'Crushed by sow' } });
     expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ reason_id: OTHER_REASON, reason_text: 'Crushed by sow' })]);
+  });
+
+  it('refuses more deaths than registered animals alive instead of offering the picker', () => {
+    render(<Harness required={4} />);
+    expect(screen.queryByTestId('mortality-animals-button')).toBeNull();
+    expect(screen.getByTestId('mortality-too-many').textContent).toContain('only 3 registered animals');
+  });
+
+  it('on a count-only batch asks for a weight and reason per death without naming animals', () => {
+    const onChange = jest.fn();
+    const rows = countOnlyPicks([], 2);
+    render(<MortalityAnimalsField animals={[]} required={2} picks={rows} onChange={onChange} />);
+    expect(screen.getByTestId('mortality-animals-button').textContent).toContain('Dead weight and reason (0/2)');
+    fireEvent.click(screen.getByTestId('mortality-animals-button'));
+    expect(screen.queryByLabelText('Search by tag or animal ID')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Dead animal 2 - Dead weight (kg)'), { target: { value: '14' } });
+    expect(onChange).toHaveBeenCalledWith([rows[0], expect.objectContaining({ animal_id: '', dead_weight_kg: '14' })]);
   });
 });
