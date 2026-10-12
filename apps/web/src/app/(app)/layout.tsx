@@ -51,6 +51,10 @@ import { resolveLobFamily } from "@/lib/lob";
 import { LIVESTOCK_SECTIONS } from "@/components/console/livestock/livestock-page-shell";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
 
+/** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
+const sortCountries = (rows: any) =>
+  Array.isArray(rows) ? [...rows].sort((a, b) => String(a.country_name ?? "").localeCompare(String(b.country_name ?? ""))) : rows;
+
 export default function ConsoleLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -162,7 +166,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         api.get("/timezone").then((r: any) => r?.data ?? r).catch(() => []),
         // /country now answers with the shared list envelope, like every
         // other master; take the rows out of it.
-        api.get("/country").then((r: any) => r?.data ?? r).catch(() => []),
+        api.get("/country?limit=500").then((r: any) => sortCountries(r?.data ?? r)).catch(() => []),
         api.get("/setup/wizard/nobs").then((r: any) => r?.data ?? r).catch(() => []),
       ]);
       setLanguages(langList);

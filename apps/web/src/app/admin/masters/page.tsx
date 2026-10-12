@@ -13,6 +13,10 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../../components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 
+/** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
+const sortCountries = (rows: any) =>
+  Array.isArray(rows) ? [...rows].sort((a, b) => String(a.country_name ?? "").localeCompare(String(b.country_name ?? ""))) : rows;
+
 // ── Shared style tokens ─────────────────────────────────────────────────────
 const S = {
   surface:  { backgroundColor: "var(--surface)",        borderColor: "var(--border)" },
@@ -103,7 +107,7 @@ export default function AdminMastersPage() {
         api.get("/currency").then((r: any) => r?.data ?? r),
         api.get("/language"),
         api.get("/timezone"),
-        api.get("/country").then((r: any) => r?.data ?? r),
+        api.get("/country?limit=500").then((r: any) => sortCountries(r?.data ?? r)),
         api.get("/costing-method"),
       ]);
       setNobs(nobList); setCurrencies(currList); setLanguages(langList);
@@ -212,7 +216,7 @@ export default function AdminMastersPage() {
       setSuccess("Country added.");
       setShowCountryForm(false);
       setCountryForm({ iso2: "", iso3: "", country_name: "", phone_code: "", flag_emoji: "" });
-      setCountries(await api.get("/country").then((r: any) => r?.data ?? r));
+      setCountries(await api.get("/country?limit=500").then((r: any) => sortCountries(r?.data ?? r)));
     } catch (err: any) { setError(err?.message || "Failed to create country."); }
     finally { setSavingCountry(false); }
   };
