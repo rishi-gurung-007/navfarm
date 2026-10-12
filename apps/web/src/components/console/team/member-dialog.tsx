@@ -17,6 +17,22 @@ import { assignableUserTypes, isTenantLevelUserType, userTypeLabel } from "./use
 
 type Row = Record<string, any>;
 
+/**
+ * The rows out of a lookup response, whichever shape it arrives in.
+ *
+ * `api.get` returns the body untouched, and this dialog's four lookups do not
+ * agree on one: `/user/assignable-farms`, `/user/assignable-areas` and
+ * `/role/company/:id` answer with a bare array, while `/cost-center` is a
+ * paginated master endpoint and answers with `{ success, data, total, … }`.
+ * A bare `Array.isArray` check silently discarded the second kind, so the
+ * department picker reported that none existed on a company with three.
+ */
+const rowsOf = (payload: unknown): Row[] => {
+  if (Array.isArray(payload)) return payload;
+  const data = (payload as { data?: unknown } | null)?.data;
+  return Array.isArray(data) ? data : [];
+};
+
 export interface MemberDialogProps {
   mode: "create" | "edit";
   /** The user being edited; ignored in create mode. */
@@ -126,11 +142,11 @@ export function MemberDialog({
     ])
       .then(([farmRows, areaRows, roleRows, departmentRows]) => {
         if (cancelled) return;
-        setFarms(Array.isArray(farmRows) ? farmRows : []);
-        setAreas(Array.isArray(areaRows) ? areaRows : []);
-        setDepartments(Array.isArray(departmentRows) ? departmentRows : []);
+        setFarms(rowsOf(farmRows));
+        setAreas(rowsOf(areaRows));
+        setDepartments(rowsOf(departmentRows));
         // SUPER_ADMIN is not a role a console user is handed from this screen.
-        setRoles((Array.isArray(roleRows) ? roleRows : []).filter((r: Row) => r.role_code !== "SUPER_ADMIN" && r.role_code !== "SYSTEM_SUPER_ADMIN"));
+        setRoles(rowsOf(roleRows).filter((r: Row) => r.role_code !== "SUPER_ADMIN" && r.role_code !== "SYSTEM_SUPER_ADMIN"));
       })
       .finally(() => { if (!cancelled) setLookupsLoading(false); });
     return () => { cancelled = true; };

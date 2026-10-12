@@ -74,3 +74,46 @@ describe("Team Management — the user's department is a Cost Center, not free t
     expect(picker.value).toBe("cc-farmops");
   });
 });
+
+/**
+ * The three cases above all feed the component a bare array. `/cost-center`
+ * never returns one: it is a paginated master endpoint, so the body is
+ * `{ success, message, data: [...], total, limit, offset }`, and `api.get`
+ * hands that envelope back untouched. The dialog's `Array.isArray(rows)`
+ * check therefore fell to `[]` against the live API, and the picker rendered
+ * "no departments exist yet" on a company with three of them — advising the
+ * admin to create data that was already there.
+ *
+ * Verified by driving the running app as company.admin@triplec.local on
+ * 12 Oct 2026: GET /cost-center?costCenterType=DEPARTMENT returned Feed Mill,
+ * Farm Operations and Stores, and the dialog offered "No department" alone.
+ */
+describe("Team Management — department picker against the real response shape", () => {
+  const envelope = { success: true, message: "Cost Centers retrieved successfully.", data: DEPARTMENTS, total: 2, limit: 50, offset: 0 };
+
+  beforeEach(() => {
+    api.get.mockImplementation((url: string) => {
+      if (url.includes("cost-center")) return Promise.resolve(envelope);
+      return Promise.resolve([]);
+    });
+  });
+
+  it("offers the departments when the API wraps them in a data envelope", async () => {
+    open();
+    const picker = (await screen.findByLabelText("tmFieldDepartment")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.querySelectorAll("option").length).toBe(DEPARTMENTS.length + 1));
+    expect([...picker.querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(["D-STORES — Stores", "D-OPS — Farm Ops"]),
+    );
+  });
+
+  it("sends the chosen department_id on save", async () => {
+    open();
+    const picker = await screen.findByLabelText("tmFieldDepartment");
+    await waitFor(() => expect((picker as HTMLSelectElement).querySelectorAll("option").length).toBeGreaterThan(1));
+    fireEvent.change(picker, { target: { value: "cc-stores" } });
+    fireEvent.click(screen.getByText("saveChanges"));
+    await waitFor(() => expect(api.put).toHaveBeenCalled());
+    expect(api.put.mock.calls[0][1]).toMatchObject({ department_id: "cc-stores" });
+  });
+});
