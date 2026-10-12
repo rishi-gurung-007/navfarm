@@ -49,6 +49,18 @@ const open = (over: Record<string, unknown> = {}) =>
   render(<MemberDialog mode="edit" member={member} me={me} tenantId="t-1" companies={[{ company_id: "co-1", company_code: "C1", company_name: "Triple C" }]}
     activeCompanyId="co-1" onClose={jest.fn()} onSaved={jest.fn()} {...over} />);
 
+/** The Department field is the app's searchable picker (12 Oct): open it, then pick an option by its label. */
+async function pickDepartment(label: string) {
+  const trigger = await screen.findByRole("button", { name: "tmFieldDepartment" });
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole("option", { name: label }));
+}
+async function departmentOptions() {
+  const trigger = await screen.findByRole("button", { name: "tmFieldDepartment" });
+  fireEvent.click(trigger);
+  return (await screen.findAllByRole("option")).map((o) => o.getAttribute("aria-label"));
+}
+
 describe("Team Management — the user's department is a Cost Center, not free text", () => {
   it("asks the API only for DEPARTMENT cost centres", async () => {
     open();
@@ -60,8 +72,7 @@ describe("Team Management — the user's department is a Cost Center, not free t
 
   it("offers the department as a picker and sends department_id on save", async () => {
     open();
-    const picker = await screen.findByLabelText("tmFieldDepartment");
-    fireEvent.change(picker, { target: { value: "cc-stores" } });
+    await pickDepartment("D-STORES — Stores");
     fireEvent.click(screen.getByText("saveChanges"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     expect(api.put.mock.calls[0][1]).toMatchObject({ department_id: "cc-stores" });
@@ -69,9 +80,8 @@ describe("Team Management — the user's department is a Cost Center, not free t
 
   it("pre-selects the user's saved department when editing", async () => {
     open({ member: { ...member, department_id: "cc-farmops", department_name: "Farm Ops" } });
-    const picker = (await screen.findByLabelText("tmFieldDepartment")) as HTMLSelectElement;
-    await waitFor(() => expect(picker.querySelectorAll("option").length).toBeGreaterThan(2));
-    expect(picker.value).toBe("cc-farmops");
+    const trigger = await screen.findByRole("button", { name: "tmFieldDepartment" });
+    await waitFor(() => expect(trigger.textContent).toContain("Farm Ops"));
   });
 });
 
@@ -100,18 +110,14 @@ describe("Team Management — department picker against the real response shape"
 
   it("offers the departments when the API wraps them in a data envelope", async () => {
     open();
-    const picker = (await screen.findByLabelText("tmFieldDepartment")) as HTMLSelectElement;
-    await waitFor(() => expect(picker.querySelectorAll("option").length).toBe(DEPARTMENTS.length + 1));
-    expect([...picker.querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+    await waitFor(async () => expect(await departmentOptions()).toEqual(
       expect.arrayContaining(["D-STORES — Stores", "D-OPS — Farm Ops"]),
-    );
+    ));
   });
 
   it("sends the chosen department_id on save", async () => {
     open();
-    const picker = await screen.findByLabelText("tmFieldDepartment");
-    await waitFor(() => expect((picker as HTMLSelectElement).querySelectorAll("option").length).toBeGreaterThan(1));
-    fireEvent.change(picker, { target: { value: "cc-stores" } });
+    await pickDepartment("D-STORES — Stores");
     fireEvent.click(screen.getByText("saveChanges"));
     await waitFor(() => expect(api.put).toHaveBeenCalled());
     expect(api.put.mock.calls[0][1]).toMatchObject({ department_id: "cc-stores" });

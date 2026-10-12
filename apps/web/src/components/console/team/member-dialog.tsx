@@ -291,16 +291,20 @@ export function MemberDialog({
               {/* The rule reads this id, so it is a Cost Center picker. A
                   company with no DEPARTMENT cost centres yet shows the hint
                   rather than an empty box with no explanation. */}
-              <select id="tm-department-id" aria-label={t("tmFieldDepartment")} className="nf-input-sm nf-select w-full"
+              <SearchableEntitySelect
+                id="tm-department-id"
+                ariaLabel={t("tmFieldDepartment")}
                 value={form.department_id}
-                onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
-                <option value="">{t("tmDepartmentNone")}</option>
-                {departments.map((d) => (
-                  <option key={d.cost_center_id} value={d.cost_center_id}>
-                    {d.cost_center_code} — {d.cost_center_name}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => setForm({ ...form, department_id: next })}
+                onClear={form.department_id ? () => setForm({ ...form, department_id: "" }) : undefined}
+                options={departments}
+                valueKey="cost_center_id"
+                getLabel={(row) => `${row.cost_center_code ? `${row.cost_center_code} — ` : ""}${row.cost_center_name ?? ""}`}
+                getLabelParts={(row) => [row.cost_center_code ?? "", row.cost_center_name ?? ""]}
+                placeholder={t("tmDepartmentNone")}
+                searchPlaceholder={t("tmSearchDepartment")}
+                noMatchesLabel={t("tmNoMatches")}
+              />
             </Field>
             <Field label={t("edmDesignation")} htmlFor="tm-designation">
               <Input id="tm-designation" value={form.designation}

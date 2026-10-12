@@ -4521,6 +4521,7 @@ export const translations = {
     tmCompanyFixed: "Users are created in your own company.",
     tmSelectCompany: "Select a company",
     tmSearchCompany: "Search companies",
+    tmSearchDepartment: "Search departments",
     tmSelectFarm: "Select a farm",
     tmSearchFarm: "Search farms",
     tmSelectRole: "Select a role",
