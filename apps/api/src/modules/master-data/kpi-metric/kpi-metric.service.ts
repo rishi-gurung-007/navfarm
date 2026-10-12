@@ -29,7 +29,8 @@ export class KpiMetricService {
     const scope = this.cls.get<MasterScope>('masterScope');
     const conditions = [eq(table.tenant_id, tenantId)];
     const companyId = scope?.kind ? scope.companyId : requestedCompany;
-    if (companyId) conditions.push(or(eq(table.company_id, companyId), isNull(table.company_id))!);
+    // Rishi, 12 Oct: a company sees only its own KPI metrics (tenant-level rows are not unioned in).
+    if (companyId) conditions.push(eq(table.company_id, companyId));
     if (scope?.kind === 'OPERATIONAL') {
       if (scope.nobId) conditions.push(or(eq(table.nob_id, scope.nobId), isNull(table.nob_id))!);
       if (scope.lobId) conditions.push(or(eq(table.lob_id, scope.lobId), isNull(table.lob_id))!);

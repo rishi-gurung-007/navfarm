@@ -129,7 +129,7 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
     ]);
   });
 
-  it('evaluateFarm ensures the company defaults first (M8), then reads every fact under the farm as system work — never the caller\'s LOB-restricted scope', async () => {
+  it('evaluateFarm creates no company defaults, then reads every fact under the farm as system work — never the caller\'s LOB-restricted scope', async () => {
     const { db } = selectDb(() => []);
     const cls = transactionCls(db);
     const order: string[] = [];
@@ -154,8 +154,8 @@ describe('FeedAlertService — evaluation (caller contract of planAlerts)', () =
       await service.evaluateFarm('farm-a', 'co', 't', { levelsOnly: true });
     });
 
-    expect(order).toEqual(['ensure', 'rules']);
-    expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co', 't');
+    expect(order).toEqual(['rules']);
+    expect(alertRules.ensureDefaultRules).not.toHaveBeenCalled();
     expect(seen).toEqual([
       { farmId: 'farm-a', companyId: 'co', restricted: false, lobId: null },
       { farmId: 'farm-a', companyId: 'co', restricted: false, lobId: null },
@@ -423,11 +423,11 @@ describe('FeedAlertService.raisePlanAvailable — PLAN_AVAILABLE (checkpoint 36)
     return { service, inserted, updates, db, alertRules, order };
   };
 
-  it('ensures the default alert rules exist, before reading them, so a fresh database still notifies', async () => {
+  it('creates no default alert rules before reading them (Rishi, 12 Oct: blank for a new company)', async () => {
     const { service, alertRules, order } = build([rule]);
     await service.raisePlanAvailable('farm-1', 'co-1', 't1', plan);
-    expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co-1', 't1');
-    expect(order).toEqual(['ensure', 'load']);
+    expect(alertRules.ensureDefaultRules).not.toHaveBeenCalled();
+    expect(order).toEqual(['load']);
   });
 
   it('raises one in-app notice per active rule, about the plan, to the rule\'s recipient roles', async () => {

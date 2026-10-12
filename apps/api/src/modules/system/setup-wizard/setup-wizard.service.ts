@@ -461,19 +461,8 @@ export class SetupWizardService implements OnModuleInit {
     // Mark the final completion step as completed in log
     await this.logStepCompletion(this.db, companyId, 'SETUP_COMPLETE');
 
-    // Provision a starter chart of accounts, GL mappings, and a default
-    // warehouse — without this a brand-new company has no way to post a
-    // batch or goods receipt until someone hand-builds a chart of accounts.
-    const [company] = await this.db
-      .select({ tenant_id: schema.companyMaster.tenant_id })
-      .from(schema.companyMaster)
-      .where(eq(schema.companyMaster.company_id, companyId))
-      .limit(1);
-    if (company) {
-      await this.masterDataSeedService.seedStarterMasterData(company.tenant_id, companyId);
-      await this.logStepCompletion(this.db, companyId, 'CHART_OF_ACCOUNTS');
-      await this.logStepCompletion(this.db, companyId, 'MASTER_DATA_LOAD');
-    }
+    // Rishi, 12 Oct: a new company starts with completely blank master data — no starter chart of accounts,
+    // GL mappings or default store is created here any more (MasterDataSeedService stays for scripts).
 
     return {
       success: true,

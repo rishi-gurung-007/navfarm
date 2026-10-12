@@ -120,7 +120,8 @@ export class AlertRuleService {
     // the list reads back, so a company created after 0118 still sees them.
     const scope = this.cls.get<MasterScope | undefined>('masterScope');
     const companyId = scope?.kind ? scope.companyId : query.companyId;
-    if (companyId) await this.ensureDefaultRules(companyId, tenantId);
+    // Rishi, 12 Oct: no default rules are created on read — a new company's Alert Rules start blank.
+    void companyId;
     const conditions = [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table, query.companyId)];
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.eventType) conditions.push(eq(table.event_type, query.eventType));

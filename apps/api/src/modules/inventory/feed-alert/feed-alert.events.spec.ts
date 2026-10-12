@@ -97,7 +97,7 @@ describe('FeedAlertService pushed events — MILL_DISPATCH, MILL_ADJUSTED, RECEI
       const { service, inserted, alertRules } = build([r, rule(eventType, { ruleId: 'off', isActive: false }), rule('FEED_ABOVE')]);
       const out = await service.raiseEvent(ctx, { eventType: eventType as any, subjectType: subjectType as any, subjectId, title: 'T', message: 'M' }, NOW);
       expect(out).toEqual({ rules: 1, raised: 1 });
-      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co-1', 't1');
+      expect(alertRules.ensureDefaultRules).not.toHaveBeenCalled();
       expect(inserted[0]).toMatchObject({
         tenant_id: 't1', company_id: 'co-1', farm_id: 'farm-1', event_type: eventType, subject_type: subjectType, subject_id: subjectId,
         dedup_key: `rule-${eventType}|${subjectId}`, active_key: `rule-${eventType}|${subjectId}`, status: 'ACTIVE', recipient_roles: roles,
@@ -126,7 +126,7 @@ describe('FeedAlertService pushed events — MILL_DISPATCH, MILL_ADJUSTED, RECEI
     expect(db.update).toHaveBeenCalledTimes(1);
   });
 
-  it('on an empty rule table, raising MILL_DISPATCH seeds the default rule first and then raises the alert (raiseEvent and raiseEventSafely)', async () => {
+  it('on an empty rule table, raising MILL_DISPATCH creates no rule and raises nothing (raiseEvent and raiseEventSafely)', async () => {
     for (const safe of [false, true]) {
       const table: AlertRuleFact[] = [];
       const inserted: any[] = [];
@@ -135,11 +135,11 @@ describe('FeedAlertService pushed events — MILL_DISPATCH, MILL_ADJUSTED, RECEI
       const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, alertRules);
       jest.spyOn(service as any, 'loadRules').mockImplementation(async () => [...table]);
       const args = [ctx, { eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: 'ls-1', title: 'T', message: 'M' }, NOW] as const;
-      if (safe) await service.raiseEventSafely(...(args as any)); else expect(await service.raiseEvent(...(args as any))).toEqual({ rules: 1, raised: 1 });
-      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('co-1', 't1');
-      expect(table).toHaveLength(1);
-      expect(inserted).toHaveLength(1);
-      expect(inserted[0]).toMatchObject({ event_type: 'MILL_DISPATCH', notification_code: 'MILL-DISPATCH', subject_id: 'ls-1', status: 'ACTIVE' });
+      // Rishi, 12 Oct: no default rules are created — an empty rule table raises nothing.
+      if (safe) await service.raiseEventSafely(...(args as any)); else expect(await service.raiseEvent(...(args as any))).toEqual({ rules: 0, raised: 0 });
+      expect(alertRules.ensureDefaultRules).not.toHaveBeenCalled();
+      expect(table).toHaveLength(0);
+      expect(inserted).toHaveLength(0);
     }
   });
 });

@@ -98,7 +98,7 @@ export class FeedAlertService {
   ): Promise<AlertPlan & { forecastError?: string }> {
     const levelsOnly = !!opts.levelsOnly;
     // M8: a company created after 0118 has no rules until something ensures them.
-    await this.alertRules.ensureDefaultRules(companyId, tenantId);
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
     return this.systemFarmScope(farmId, companyId, async () => {
       const nowMs = Date.now();
       let rules = await this.loadRules(companyId, farmId, tenantId);
@@ -241,7 +241,7 @@ export class FeedAlertService {
     nowMs: number = Date.now(),
   ): Promise<{ rules: number; raised: number }> {
     // The same seeding GET /alert-rule uses: a fresh database has no PLAN_AVAILABLE rule until it runs.
-    await this.alertRules.ensureDefaultRules(companyId, tenantId);
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
     const rules = (await this.loadRules(companyId, farmId, tenantId))
       .filter((r) => r.isActive && r.eventType === 'PLAN_AVAILABLE' && (r.farmId === null || r.farmId === farmId));
     const now = ts(nowMs);
@@ -287,7 +287,7 @@ export class FeedAlertService {
     },
     nowMs: number = Date.now(),
   ): Promise<{ rules: number; raised: number }> {
-    await this.alertRules.ensureDefaultRules(ctx.companyId, ctx.tenantId);
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
     const rules = (await this.loadRules(ctx.companyId, ctx.farmId, ctx.tenantId))
       .filter((r) => r.isActive && r.eventType === input.eventType && (r.farmId === null || r.farmId === ctx.farmId));
     const now = ts(nowMs);
@@ -394,7 +394,7 @@ export class FeedAlertService {
   async evaluateStockTakeDue(
     ctx: { farmId: string; companyId: string; tenantId: string }, nowMs: number = Date.now(),
   ): Promise<{ raised: number; resolved: number }> {
-    await this.alertRules.ensureDefaultRules(ctx.companyId, ctx.tenantId);
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
     const rules = (await this.loadRules(ctx.companyId, ctx.farmId, ctx.tenantId))
       .filter((r) => r.isActive && r.eventType === 'STOCK_TAKE_DUE' && (r.farmId === null || r.farmId === ctx.farmId));
     const { today } = await this.forecast.farmToday(ctx.companyId, ctx.tenantId, nowMs);
