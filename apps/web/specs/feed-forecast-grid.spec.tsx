@@ -243,6 +243,41 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(await screen.findByText('ffPlannedIncomingReference:{"references":"REQ-VIL100-2026-00005"}')).toBeTruthy();
   });
 
+  // Rishi, 12 Oct: no negative quantity in the calculation. A negative adjustment or transfer out is a separate
+  // non-negative outflow, explained in the dialog and not a grid column.
+  it('the balance dialog explains other stock movements as a subtraction, and shows no negative receipt', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({ openingSystemBalanceKg: 9900, confirmedReceiptKg: 0, otherOutflowKg: 5900, dailyUseKg: 100, projectedClosingBalanceKg: 3900 })]}
+      view="DAILY" from="2026-09-23" loading={false} t={t}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 5,900.00 KG ffOtherMovementsShort')).toBeTruthy();
+    expect(screen.queryByText(/ffConfirmedReceiptShort/)).toBeNull();
+    expect(screen.queryByText(/-5,900/)).toBeNull();
+    expect(GRID_COLUMNS).not.toContain('ffColOtherOutflow');
+  });
+
+  it('the balance dialog omits the other-movements line when there is none', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ otherOutflowKg: 0 })]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(screen.queryByText(/ffOtherMovementsShort/)).toBeNull();
+  });
+
+  it('adds other outflows across a weekly bucket and never shows a negative opening or receipt (older saved runs)', () => {
+    const { pivoted } = pivotForecastRows(
+      [row({ date: '2026-09-23', dateTo: '2026-09-25', days: 3 })],
+      [
+        point({ date: '2026-09-23', openingSystemBalanceKg: -471.74, confirmedReceiptKg: -5900, otherOutflowKg: 100 }),
+        point({ date: '2026-09-24', openingSystemBalanceKg: 0, otherOutflowKg: 250 }),
+      ],
+      'WEEKLY', '2026-09-23',
+    );
+    const cell = Object.values(pivoted[0].balanceBySlot)[0];
+    expect(cell).toMatchObject({ openingKg: 0, confirmedReceiptKg: 0, otherOutflowKg: 350 });
+  });
+
   it('W2D W7: links batch, house, silo, required and current item, and the planned requisition reference', () => {
     render(<FeedForecastGrid rows={[row({
       currentItemId: 'r0', currentItemName: 'Weaner Diet R0',

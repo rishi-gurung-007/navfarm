@@ -10,10 +10,13 @@
  *   every open transfer (outstandingTransferQty) from the stock date on, signed. A silo's movements of another item are
  *   dropped — it can only take a different item once empty (D8), and that is
  *   the changeover the requisition flags, not stock the forecast can use.
- * - An opening below zero is carried as it is (follow-up ruling): it is ledger
- *   truth — feed posted before the item's only receipt — and the engine nets
- *   it against that day's inflow before clamping at empty. Zeroing it here
- *   would show a receipt of 40,000 over 4,200 already fed as 40,000 on hand.
+ * - An opening below zero is passed on as it is: it is ledger truth (feed posted
+ *   before the item's receipt) and the engine needs the raw figure to raise a note.
+ *   The engine — not this file — shows and carries it as 0 (Rishi, 12 Oct: negative
+ *   stock is impossible), which supersedes the earlier follow-up ruling that netted
+ *   it against that day's receipt.
+ * - Movements keep their sign here. The engine counts only the positive ones as
+ *   Confirmed Receipts and reports the negative ones as other outflows.
  * - Feed is counted in KG only. A silo holding anything in another unit, or a
  *   store holding a *feed* item in one, is refused, as Plan A did: adding bags
  *   to kilograms would move every date the report shows.

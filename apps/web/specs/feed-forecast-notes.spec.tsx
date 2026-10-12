@@ -34,4 +34,23 @@ describe('feed forecast notes — grouped by kind, with counts (review C)', () =
     rerender(<FeedForecastNotes flags={[]} t={t} />);
     expect(container.innerHTML).toBe('');
   });
+
+  it('names a silo whose ledger balance was below zero, with the figure and the date', () => {
+    const groups = buildNoteGroups([
+      { kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: 'MUL100/SILO-004', itemName: 'Grower', balanceKg: -471.74, date: '2026-10-10' },
+      { kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: 'MUL100/SILO-004', itemName: 'Grower', balanceKg: -471.74, date: '2026-10-10' },
+    ], t);
+    expect(groups).toEqual([{
+      kind: 'NEGATIVE_SYSTEM_BALANCE', title: 'ffNoteNegativeBalance',
+      items: ['ffNoteNegativeBalanceItem:{"sourceCode":"MUL100/SILO-004","itemName":"Grower","kg":"-471.74","date":"10/10/26"}'],
+    }]);
+  });
+
+  it('writes the negative-balance note in plain words', () => {
+    const { translations } = require('../src/utils/translations');
+    const text = translations.en.ffNoteNegativeBalanceItem.replace('{{sourceCode}}', 'MUL100/SILO-004').replace('{{kg}}', '-471.74').replace('{{date}}', '10/10/26');
+    expect(text).toContain('MUL100/SILO-004');
+    expect(text).toContain('-471.74 KG');
+    expect(text).toMatch(/used before it was received/);
+  });
 });

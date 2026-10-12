@@ -130,10 +130,10 @@ export function buildFeedPlanRows(facts: FeedPlanFact[]): FeedPlanRow[] {
       varianceKg: 0,
       capacityKg: null,
     };
-    row.tentativeKg += Number(fact.tentativeKg ?? 0);
-    row.approvedRequisitionKg += Number(fact.approvedRequisitionKg ?? 0);
-    row.shippedKg += Number(fact.shippedKg ?? 0);
-    row.receivedKg += Number(fact.receivedKg ?? 0);
+    row.tentativeKg += Math.max(0, Number(fact.tentativeKg ?? 0)); // a quantity, never below zero (Rishi, 12 Oct)
+    row.approvedRequisitionKg += Math.max(0, Number(fact.approvedRequisitionKg ?? 0)); // a quantity, never below zero (Rishi, 12 Oct)
+    row.shippedKg += Math.max(0, Number(fact.shippedKg ?? 0)); // a quantity, never below zero (Rishi, 12 Oct)
+    row.receivedKg += Math.max(0, Number(fact.receivedKg ?? 0)); // a quantity, never below zero (Rishi, 12 Oct)
     if (fact.capacityKg !== null && fact.capacityKg !== undefined) row.capacityKg = (row.capacityKg ?? 0) + Number(fact.capacityKg);
     rows.set(key, row);
   }

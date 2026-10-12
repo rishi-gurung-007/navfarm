@@ -172,7 +172,10 @@ export type ForecastFlag =
   | { kind: 'BATCH_SHED_UNKNOWN'; batchNo: string }
   // Raised by the service (Plan R, Q8): the planning date is in the past — balances are as of it, heads are today's.
   // `note` says so in words, including the ruling's consequence that days before a batch's current stage began carry no demand.
-  | { kind: 'AS_OF_PAST'; planningDate: string; today: string; note: string };
+  | { kind: 'AS_OF_PAST'; planningDate: string; today: string; note: string }
+  // Raised by this engine (Rishi, 12 Oct): the ledger balance of a silo/store item was below zero on the stock date —
+  // feed was posted as used before it was posted as received. The forecast shows 0 and says so here.
+  | { kind: 'NEGATIVE_SYSTEM_BALANCE'; sourceCode: string; itemName: string; balanceKg: number; date: string };
 
 export interface ForecastRow {
   batchNo: string;
@@ -236,6 +239,12 @@ export interface DailyForecastRow {
   confirmedReceiptKg?: number;
   openTransferMovementKg?: number;
   plannedIncomingKg?: number;
+  /**
+   * Rishi, 12 Oct: stock that left by a posted or open movement other than the feeding the engine models as Daily Use
+   * (negative adjustment, transfer out, count write-down) — always 0 or more, taken off the day's balance. Explained in
+   * the balance dialog; not a grid column.
+   */
+  otherOutflowKg?: number;
   incomingReferences?: Array<{
     kind: NonNullable<IncomingFeed['kind']>;
     referenceId?: string;
@@ -279,6 +288,7 @@ export interface SourceBalancePoint {
   confirmedReceiptKg: number;
   openTransferMovementKg: number;
   plannedIncomingKg: number;
+  otherOutflowKg: number;
   incomingReferences: Array<{
     kind: NonNullable<IncomingFeed['kind']>;
     referenceId?: string;
@@ -317,7 +327,7 @@ export interface ForecastSource {
   thresholdKg: number; // the silo's Below Feed Level, 0 for none and for a store — an alert threshold, never part of the shortfall
   safetyStockKg: number; // configured safety stock added to the shortfall (default 0)
   deliveryDayOpeningKg: number; // projected opening on the shortage date (no later than `to`) — what a delivery arrives onto
-  incomingKg: number; // confirmed incoming after the planning date, up to `to`
+  incomingKg: number; // confirmed inflows (positive only) after the planning date, up to `to`
   shortfallKg: number; // Dashboard row 60: demand + safety stock − opening − incoming, largest through `to` — what an order must bring
 }
 
@@ -553,8 +563,18 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // D19 incoming, per container and item, per day, in micrograms (several transfers on one day add up).
   const incomingByLocation = new Map<string, Map<string, number>>();
   const incomingDetailsByLocation = new Map<string, Map<string, IncomingFeed[]>>();
+  // The same, inflows only: what is reported as incoming is never negative; the net above still drives the balance.
+  const inflowInByLocation = new Map<string, Map<string, number>>();
   for (const inc of input.incoming ?? []) {
     const k = `${inc.locationId}|${inc.itemId}`;
+    if (inc.kg > 0) {
+      let inByDate = inflowInByLocation.get(k);
+      if (!inByDate) {
+        inByDate = new Map();
+        inflowInByLocation.set(k, inByDate);
+      }
+      inByDate.set(inc.date, (inByDate.get(inc.date) ?? 0) + toMicrograms(inc.kg));
+    }
     let byDate = incomingByLocation.get(k);
     if (!byDate) {
       byDate = new Map();
@@ -620,6 +640,24 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       siloId: resolution.siloId,
       storeId: resolution.storeId,
       itemId,
+    };
+  }
+
+  /**
+   * One day's movements into a container, split the way the grid shows them (Rishi, 12 Oct): the three inflow
+   * kinds are positive only; every negative movement, of any kind, is `outflow` — a positive number that reduces the balance.
+   */
+  function splitIncoming(details: IncomingFeed[]): { confirmed: number; openTransfer: number; planned: number; outflow: number } {
+    const kg = { CONFIRMED_LEDGER: 0, OPEN_TRANSFER: 0, PLANNED_REQUISITION: 0, outflow: 0 };
+    for (const entry of details) {
+      if (entry.kg > 0) kg[entry.kind ?? 'CONFIRMED_LEDGER'] += entry.kg;
+      else if (entry.kg < 0) kg.outflow -= entry.kg;
+    }
+    return {
+      confirmed: toMicrograms(kg.CONFIRMED_LEDGER),
+      openTransfer: toMicrograms(kg.OPEN_TRANSFER),
+      planned: toMicrograms(kg.PLANNED_REQUISITION),
+      outflow: toMicrograms(kg.outflow),
     };
   }
 
@@ -853,19 +891,33 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   const projectionByKey = new Map<string, KeyProjection>();
   // Opening balance of every walked day, per key — the per-date rows read Current Inventory off it (Ruling M7).
   const openingByKey = new Map<string, Map<string, number>>();
+  // What each walked day started from — the day before's closing — before that day's own movements (never negative).
+  const carriedByKey = new Map<string, Map<string, number>>();
 
   for (const [key, sk] of keyMeta) {
     const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
     const locationId = sk.siloId ?? sk.storeId;
     const inflow = (locationId ? incomingByLocation.get(`${locationId}|${sk.itemId}`) : undefined) ?? new Map<string, number>();
+    const inflowIn = (locationId ? inflowInByLocation.get(`${locationId}|${sk.itemId}`) : undefined) ?? new Map<string, number>();
     const threshold = thresholdMicrogramsFor(sk);
 
     const opening = new Map<string, number>();
-    let carried = balanceMicrogramsFor(sk);
+    const carriedBefore = new Map<string, number>();
+    // Rishi, 12 Oct: negative stock is impossible. A ledger balance below zero (feed posted as used before it was
+    // posted as received) enters the walk as 0, and the notes say so rather than hiding it.
+    const ledgerBalance = balanceMicrogramsFor(sk);
+    if (ledgerBalance < 0 && sk.sourceType !== 'NONE' && (sk.sourceType === 'STORE' || siloById.get(sk.siloId ?? '')?.itemId === sk.itemId)) {
+      flags.push({
+        kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: sk.sourceCode ?? '', itemName: input.items[sk.itemId] ?? sk.itemId,
+        balanceKg: toKg(ledgerBalance), date: stockDate,
+      });
+    }
+    let carried = Math.max(0, ledgerBalance);
     let runDownDate: string | null = null;
     let shortageDate: string | null = null;
     for (const date of walkDates) {
       // A transfer out can exceed what is there on paper; a silo is never below empty.
+      carriedBefore.set(date, carried);
       const open = Math.max(0, carried + (inflow.get(date) ?? 0));
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
@@ -876,6 +928,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);
+    carriedByKey.set(key, carriedBefore);
     // The fallback (a purely retrospective range, nothing walked) reads the raw
     // opening, which can be negative since stockAsOf carries the signed ledger;
     // stock on hand is never shown below zero, the same clamp the walk applies.
@@ -891,7 +944,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     let walkDemandMicrograms = 0;
     let firstDemandDate: string | null = null;
     let firstDayDemandMicrograms = 0;
-    let incomingMicrograms = 0;
+    let incomingMicrograms = 0; // net of outflows — the shortfall below needs the true movement
+    let incomingInMicrograms = 0; // inflows only — what is reported as incoming
     let shortfallMicrograms = 0;
     for (const date of planDates) {
       const m = byDate.get(date) ?? 0;
@@ -900,7 +954,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         firstDayDemandMicrograms = m;
       }
       walkDemandMicrograms += m;
-      if (date !== input.planningDate) incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
+      if (date !== input.planningDate) {
+        incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
+        incomingInMicrograms += inflowIn.get(date) ?? 0;
+      }
       shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + safety - planningOpening - incomingMicrograms);
     }
     // 9d D1: a shortage found past `to` (in the run-down horizon) is delivered for by `to`, as Req. row 29 dates it.
@@ -919,7 +976,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       thresholdKg: toKg(threshold),
       safetyStockKg: toKg(safety),
       deliveryDayOpeningKg: toKg(deliveryDayOpeningMicrograms),
-      incomingKg: toKg(incomingMicrograms),
+      incomingKg: toKg(incomingInMicrograms),
       shortfallKg: toKg(shortfallMicrograms),
     });
   }
@@ -1005,17 +1062,8 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const currentSiloItemId = sk.sourceType === 'SILO' && sk.siloId ? (siloById.get(sk.siloId)?.itemId ?? null) : null;
     for (const date of displayedWalkDates) {
       if (date < rowFrom) continue;
-      const currentInventory = openingByKey.get(key)?.get(date) ?? 0;
       const incomingDetails = incomingDetailsByLocation.get(`${locationId}|${sk.itemId}`)?.get(date) ?? [];
-      const incomingFor = (kind: NonNullable<IncomingFeed['kind']>) =>
-        toMicrograms(
-          incomingDetails
-            .filter((entry) => (entry.kind ?? 'CONFIRMED_LEDGER') === kind)
-            .reduce((sum, entry) => sum + entry.kg, 0),
-        );
-      const confirmedLedger = incomingFor('CONFIRMED_LEDGER');
-      const openTransfer = incomingFor('OPEN_TRANSFER');
-      const plannedRequisition = incomingFor('PLANNED_REQUISITION');
+      const { confirmed: confirmedLedger, openTransfer, planned: plannedRequisition, outflow: otherOutflow } = splitIncoming(incomingDetails);
       const demand = byDate.get(date) ?? 0;
       sourceBalances.push({
         date,
@@ -1028,10 +1076,11 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         currentItemId: currentSiloItemId,
         currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
         currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
-        openingSystemBalanceKg: toKg(currentInventory - (inflow.get(date) ?? 0)),
+        openingSystemBalanceKg: toKg(carriedByKey.get(key)?.get(date) ?? 0),
         confirmedReceiptKg: toKg(confirmedLedger),
         openTransferMovementKg: toKg(openTransfer),
         plannedIncomingKg: toKg(plannedRequisition),
+        otherOutflowKg: toKg(otherOutflow),
         incomingReferences: incomingDetails.map((entry) => ({
           kind: entry.kind ?? 'CONFIRMED_LEDGER',
           referenceId: entry.referenceId,
@@ -1041,7 +1090,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
           overdue: entry.overdue,
         })),
         dailyUseKg: toKg(demand),
-        projectedClosingBalanceKg: toKg(Math.max(0, currentInventory - demand)),
+        projectedClosingBalanceKg: toKg(Math.max(0, (openingByKey.get(key)?.get(date) ?? 0) - demand)),
         recommendedQtyKg: p.shortfallKg,
         firstShortageDate: p.shortageDate,
         deliveryDate: p.shortageDate ? addDays(p.shortageDate, -2) : null,
@@ -1086,17 +1135,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     const currentSiloItemId = source.sourceType === 'SILO' && source.siloId ? (siloById.get(source.siloId)?.itemId ?? null) : null;
     const sourceLocationId = source.siloId ?? source.storeId;
     const dayIncoming = incomingDetailsByLocation.get(`${sourceLocationId}|${itemId}`)?.get(e.date) ?? [];
-    const incomingFor = (kind: NonNullable<IncomingFeed['kind']>) =>
-      toMicrograms(
-        dayIncoming
-          .filter((entry) => (entry.kind ?? 'CONFIRMED_LEDGER') === kind)
-          .reduce((sum, entry) => sum + entry.kg, 0),
-      );
-    const confirmedReceiptMicrograms = incomingFor('CONFIRMED_LEDGER');
-    const openTransferMicrograms = incomingFor('OPEN_TRANSFER');
-    const plannedIncomingMicrograms = incomingFor('PLANNED_REQUISITION');
-    const totalIncomingMicrograms =
-      confirmedReceiptMicrograms + openTransferMicrograms + plannedIncomingMicrograms;
+    const {
+      confirmed: confirmedReceiptMicrograms, openTransfer: openTransferMicrograms,
+      planned: plannedIncomingMicrograms, outflow: otherOutflowMicrograms,
+    } = splitIncoming(dayIncoming);
     const totalDemandMicrograms = byDate.get(e.date) ?? 0;
     return {
       date: e.date,
@@ -1118,10 +1160,11 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       currentItemId: currentSiloItemId,
       currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
       currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
-      openingStockKg: toKg(opening - totalIncomingMicrograms),
+      openingStockKg: toKg(carriedByKey.get(e.key)?.get(e.date) ?? 0),
       confirmedReceiptKg: toKg(confirmedReceiptMicrograms),
       openTransferMovementKg: toKg(openTransferMicrograms),
       plannedIncomingKg: toKg(plannedIncomingMicrograms),
+      otherOutflowKg: toKg(otherOutflowMicrograms),
       incomingReferences: dayIncoming.map((entry) => ({
         kind: entry.kind ?? 'CONFIRMED_LEDGER',
         referenceId: entry.referenceId,

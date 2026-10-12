@@ -18,7 +18,8 @@ export type ForecastFlag =
   | { kind: "STAGE_CHANGE_PROJECTED"; batchNo: string; stageCode: string; date: string }
   | { kind: "HEADS_ASSUMED_FLAT"; batchNo: string }
   | { kind: "BATCH_SHED_UNKNOWN"; batchNo: string }
-  | { kind: "AS_OF_PAST"; planningDate: string; today: string };
+  | { kind: "AS_OF_PAST"; planningDate: string; today: string }
+  | { kind: "NEGATIVE_SYSTEM_BALANCE"; sourceCode: string; itemName: string; balanceKg: number; date: string };
 
 export interface NoteGroup {
   kind: string;
@@ -78,6 +79,14 @@ export function buildNoteGroups(flags: ForecastFlag[], t: Translate): NoteGroup[
   if (changes.length) groups.push({ kind: "STAGE_CHANGE_PROJECTED", title: t("ffNoteStageChange"), items: changes });
   const noShed = unique(of("BATCH_SHED_UNKNOWN").map((f) => f.batchNo)).sort();
   if (noShed.length) groups.push({ kind: "BATCH_SHED_UNKNOWN", title: t("ffNoteNoShed"), items: noShed });
+  // Rishi, 12 Oct: a ledger balance below zero is shown as 0; this is where the anomaly stays visible.
+  const negative = unique(of("NEGATIVE_SYSTEM_BALANCE").map((f) => t("ffNoteNegativeBalanceItem", {
+    sourceCode: f.sourceCode,
+    itemName: f.itemName,
+    kg: f.balanceKg.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    date: formatDateShort(f.date),
+  })));
+  if (negative.length) groups.push({ kind: "NEGATIVE_SYSTEM_BALANCE", title: t("ffNoteNegativeBalance"), items: negative });
   // HEADS_ASSUMED_FLAT is raised for every batch (D11): one line covers them all.
   if (of("HEADS_ASSUMED_FLAT").length) groups.push({ kind: "HEADS_ASSUMED_FLAT", title: t("ffNoteHeads"), items: [t("ffFlagHeadsAssumedFlat")] });
   return groups;

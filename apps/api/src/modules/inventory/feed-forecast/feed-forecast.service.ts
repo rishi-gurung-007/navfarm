@@ -1873,7 +1873,7 @@ export class FeedForecastService {
         feedInSiloItemId: itemId,
         feedInSiloItemName: last?.item_description ?? null,
         feedType: silo.feedType,
-        systemBalanceKg: Math.round(onHand * 1000) / 1000,
+        systemBalanceKg: Math.max(0, Math.round(onHand * 1000) / 1000), // never below zero (Rishi, 12 Oct); a negative ledger balance is noted on the forecast
         lastApprovedCountKg: count ? Number(count.counted_qty_kg) : null,
         lastApprovedCountAt: count?.counted_at ?? null,
         lastFeedReceiptDate: last?.posting_date ?? null,

@@ -124,6 +124,10 @@ export function buildOutputSnapshot(
   lines: ForecastRunLineSnapshot[],
   display?: ForecastRunDisplaySnapshot,
 ): ForecastRunOutputSnapshot {
+  if (display) {
+    (display.daily ?? []).forEach((row, index) => assertNonNegativeQuantities(row as Record<string, unknown>, QUANTITY_KEYS, `Forecast daily row ${index + 1}`));
+    (display.sourceBalances ?? []).forEach((row, index) => assertNonNegativeQuantities(row as Record<string, unknown>, QUANTITY_KEYS, `Forecast source balance ${index + 1}`));
+  }
   const material = lines
     .map((line) => canonical(detached(line)))
     .sort((left, right) => {
@@ -181,6 +185,27 @@ type ValidatedForecastRunLineInput = ForecastRunLineInput & Required<Pick<Foreca
   | 'confirmedReceiptKg' | 'demandKg' | 'projectedClosingKg' | 'recommendedQtyKg'
 >>;
 
+/**
+ * Rishi, 12 Oct: every quantity in the calculation is 0 or positive — negative stock is physically impossible.
+ * The engine clamps at source; this refuses to save a run that carries one anyway (defence in depth), naming the field.
+ * Signed variances (Feed Plan Variance, stock-count Variance) are not stock quantities and are not listed here.
+ */
+export const QUANTITY_KEYS = [
+  'heads', 'feedRateKg', 'openingStockKg', 'confirmedReceiptKg', 'otherOutflowKg', 'openTransferMovementKg', 'plannedIncomingKg',
+  'demandKg', 'perDayIntakeKg', 'currentInventoryKg', 'projectedClosingKg', 'recommendedQtyKg',
+  // sourceBalances use these names for the same quantities
+  'openingSystemBalanceKg', 'dailyUseKg', 'projectedClosingBalanceKg',
+] as const;
+
+export function assertNonNegativeQuantities(row: Record<string, unknown>, keys: readonly string[], where: string): void {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value < 0) {
+      throw new Error(`${where} has a negative ${key} (${value}). Stock quantities in the Feed Forecast cannot be below zero, so this calculation was not saved.`);
+    }
+  }
+}
+
 export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] }): ForecastRunLineSnapshot[] {
   // D1 (3 Oct): validate realBatchId, the genuine batch_header PK — never the engine's composite `batchId`
   // (display/grouping key only), which is a `<batch_id>:<stageId>` string for an ANIMAL_WISE/REGISTERED batch
@@ -202,6 +227,7 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
         throw new Error(`Forecast run line ${index + 1} is missing ${key}.`);
       }
     }
+    assertNonNegativeQuantities(line as Record<string, unknown>, QUANTITY_KEYS, `Forecast run line ${index + 1}`);
     // The checks above are deliberately data-driven; make their resulting
     // type explicit because TypeScript cannot narrow several indexed fields
     // on the containing object across those loops.

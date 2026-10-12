@@ -1,5 +1,5 @@
 import {
-  buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, buildSourceSnapshot,
+  assertNonNegativeQuantities, buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, buildSourceSnapshot,
   FORECAST_RUN_OUTPUT_HASH_VERSION, runCodeFor, runCodePrefix, technicalRunCode,
 } from './feed-forecast-run.rules';
 
@@ -142,5 +142,38 @@ describe('feed forecast run snapshot rules', () => {
         projectedClosingKg: 400, recommendedQtyKg: 700,
       }],
     } as any)).toThrow('realBatchId');
+  });
+
+  // Rishi, 12 Oct: every quantity is 0 or positive.
+  describe('negative quantities are refused (defence in depth)', () => {
+    const line = (over: Record<string, unknown> = {}) => ({
+      date: '2026-10-11', realBatchId: 'batch-1', itemId: 'item-1', heads: 10, feedRateKg: 1,
+      openingStockKg: 600, confirmedReceiptKg: 0, demandKg: 10, projectedClosingKg: 590, recommendedQtyKg: 0, ...over,
+    });
+
+    it.each(['openingStockKg', 'confirmedReceiptKg', 'demandKg', 'projectedClosingKg', 'recommendedQtyKg', 'heads', 'feedRateKg'])(
+      'refuses a run line with a negative %s, naming it',
+      (field) => {
+        expect(() => buildRunLineSnapshots({ daily: [line(), line({ [field]: -5900 })] } as any))
+          .toThrow(new RegExp(`Forecast run line 2 has a negative ${field} \\(-5900\\).*cannot be below zero`));
+      },
+    );
+
+    it('accepts zero everywhere', () => {
+      expect(() => buildRunLineSnapshots({ daily: [line({ openingStockKg: 0, projectedClosingKg: 0, demandKg: 0 })] } as any)).not.toThrow();
+    });
+
+    it('refuses to hash a display snapshot whose source balance or daily row carries a negative quantity', () => {
+      const display = (daily: unknown[], sourceBalances: unknown[]) => ({
+        filters: { planningDate: 'd', from: 'd', to: 'd', view: 'DAILY', periodId: null }, farm: {}, settings: {}, rows: [], daily, sourceBalances,
+      });
+      expect(() => buildOutputSnapshot([], display([], [{ confirmedReceiptKg: 0, otherOutflowKg: 5900 }]))).not.toThrow();
+      expect(() => buildOutputSnapshot([], display([], [{ confirmedReceiptKg: -5900 }]))).toThrow(/source balance 1 has a negative confirmedReceiptKg/);
+      expect(() => buildOutputSnapshot([], display([{ openingStockKg: -471.74 }], []))).toThrow(/daily row 1 has a negative openingStockKg/);
+    });
+
+    it('leaves non-quantity or unlisted signed fields alone', () => {
+      expect(() => assertNonNegativeQuantities({ varianceKg: -20 }, ['openingStockKg'], 'x')).not.toThrow();
+    });
   });
 });

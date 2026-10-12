@@ -183,7 +183,7 @@ export function recommendLines(args: {
     const feedType = feedTypeOf(dest);
     const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
     const key = lineKey(s.locationId, s.itemId);
-    const systemBalanceKg = currentBalanceKg ? round3(currentBalanceKg.get(key) ?? 0) : s.balanceKg;
+    const systemBalanceKg = currentBalanceKg ? Math.max(0, round3(currentBalanceKg.get(key) ?? 0)) : s.balanceKg; // never below zero (Rishi, 12 Oct)
     // Req. row 29: derived from the earliest projected shortage; nothing short in the window → the window's end.
     // 9d D1: the shortage is looked for over the forecast's standard horizon, so it can fall past `to`; that is
     // "nothing short in the window" too — the order window stays `to`.

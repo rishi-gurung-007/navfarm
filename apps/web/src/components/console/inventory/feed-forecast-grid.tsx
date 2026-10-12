@@ -46,6 +46,7 @@ export interface ReportRow {
   confirmedReceiptsKg: number;
   openTransferMovementKg?: number;
   plannedIncomingKg?: number;
+  otherOutflowKg?: number;
   incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   heads: number;
   feedRateKg: number;
@@ -78,6 +79,8 @@ export interface SourceBalancePoint {
   confirmedReceiptKg: number;
   openTransferMovementKg?: number;
   plannedIncomingKg?: number;
+  /** Stock that left other than by feeding (negative adjustment, transfer out): 0 or more, shown only in the balance dialog. */
+  otherOutflowKg?: number;
   incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   dailyUseKg: number;
   projectedClosingBalanceKg: number;
@@ -112,9 +115,15 @@ export interface BalanceCell {
   confirmedReceiptKg: number;
   openTransferKg: number;
   plannedIncomingKg: number;
+  otherOutflowKg: number;
   dailyUseKg: number;
   closingKg: number;
   incomingReferences: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
+}
+
+/** Rishi, 12 Oct: no quantity in the calculation is negative. The API sends none; this also keeps an older saved run honest. */
+function nonNegative(value: number | null | undefined): number {
+  return Number.isFinite(value) && (value as number) > 0 ? (value as number) : 0;
 }
 
 export function diffDaysIso(a: string, b: string): number {
@@ -178,6 +187,7 @@ function collapseForecastLines(rows: ReportRow[]): ReportRow[] {
     line.confirmedReceiptsKg += row.confirmedReceiptsKg;
     line.openTransferMovementKg = (line.openTransferMovementKg ?? 0) + (row.openTransferMovementKg ?? 0);
     line.plannedIncomingKg = (line.plannedIncomingKg ?? 0) + (row.plannedIncomingKg ?? 0);
+    line.otherOutflowKg = (line.otherOutflowKg ?? 0) + (row.otherOutflowKg ?? 0);
     line.incomingReferences = [...(line.incomingReferences ?? []), ...(row.incomingReferences ?? [])];
 
     line.recommendedQtyKg = Math.max(
@@ -304,18 +314,20 @@ export function pivotForecastRows(
           balanceBySlot[slot.key] = previous
             ? {
                 ...previous,
-                confirmedReceiptKg: previous.confirmedReceiptKg + point.confirmedReceiptKg,
-                openTransferKg: previous.openTransferKg + (point.openTransferMovementKg ?? 0),
-                plannedIncomingKg: previous.plannedIncomingKg + (point.plannedIncomingKg ?? 0),
+                confirmedReceiptKg: previous.confirmedReceiptKg + nonNegative(point.confirmedReceiptKg),
+                openTransferKg: previous.openTransferKg + nonNegative(point.openTransferMovementKg),
+                plannedIncomingKg: previous.plannedIncomingKg + nonNegative(point.plannedIncomingKg),
+                otherOutflowKg: previous.otherOutflowKg + nonNegative(point.otherOutflowKg),
                 dailyUseKg: previous.dailyUseKg + point.dailyUseKg,
                 closingKg: point.projectedClosingBalanceKg,
                 incomingReferences: [...previous.incomingReferences, ...(point.incomingReferences ?? [])],
               }
             : {
-                openingKg: point.openingSystemBalanceKg,
-                confirmedReceiptKg: point.confirmedReceiptKg,
-                openTransferKg: point.openTransferMovementKg ?? 0,
-                plannedIncomingKg: point.plannedIncomingKg ?? 0,
+                openingKg: nonNegative(point.openingSystemBalanceKg),
+                confirmedReceiptKg: nonNegative(point.confirmedReceiptKg),
+                openTransferKg: nonNegative(point.openTransferMovementKg),
+                plannedIncomingKg: nonNegative(point.plannedIncomingKg),
+                otherOutflowKg: nonNegative(point.otherOutflowKg),
                 dailyUseKg: point.dailyUseKg,
                 closingKg: point.projectedClosingBalanceKg,
                 incomingReferences: [...(point.incomingReferences ?? [])],
@@ -333,10 +345,11 @@ export function pivotForecastRows(
         closingBySlot[slot.key] =
           row.projectedClosingBalanceKg;
         balanceBySlot[slot.key] = {
-          openingKg: row.openingSystemBalanceKg,
-          confirmedReceiptKg: row.confirmedReceiptsKg,
-          openTransferKg: row.openTransferMovementKg ?? 0,
-          plannedIncomingKg: row.plannedIncomingKg ?? 0,
+          openingKg: nonNegative(row.openingSystemBalanceKg),
+          confirmedReceiptKg: nonNegative(row.confirmedReceiptsKg),
+          openTransferKg: nonNegative(row.openTransferMovementKg),
+          plannedIncomingKg: nonNegative(row.plannedIncomingKg),
+          otherOutflowKg: nonNegative(row.otherOutflowKg),
           dailyUseKg: row.dailyUseKg,
           closingKg: row.projectedClosingBalanceKg,
           incomingReferences: [...(row.incomingReferences ?? [])],
@@ -474,8 +487,8 @@ export function FeedForecastGrid({
             <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.openingSystemBalanceKg)}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.confirmedReceiptsKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.openingSystemBalanceKg))}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.confirmedReceiptsKg))}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.openTransferMovementKg ?? 0)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.plannedIncomingKg ?? 0)}</td>
             <td className={TD}><PlannedReferences references={row.incomingReferences} empty={t("ffNoPlannedFeed")} /></td>
@@ -527,6 +540,7 @@ export function FeedForecastGrid({
           {selectedBalance.balance.plannedIncomingKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</div>}
           {selectedBalance.balance.openTransferKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</div>}
           {selectedBalance.balance.confirmedReceiptKg > 0 && <div>+ {fmtKg(selectedBalance.balance.confirmedReceiptKg)} KG {t("ffConfirmedReceiptShort")}</div>}
+          {selectedBalance.balance.otherOutflowKg > 0 && <div>− {fmtKg(selectedBalance.balance.otherOutflowKg)} KG {t("ffOtherMovementsShort")}</div>}
           <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t("ffDailyUseShort")}</div>
           <div className="mt-2 border-t border-[var(--border)] pt-2 font-semibold">= {fmtKg(selectedBalance.balance.closingKg)} KG {t("ffClosingBalanceShort")}</div>
         </div>

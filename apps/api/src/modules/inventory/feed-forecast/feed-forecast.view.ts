@@ -113,6 +113,8 @@ export interface ReportRow {
   confirmedReceiptsKg: number;
   openTransferMovementKg: number;
   plannedIncomingKg: number;
+  /** Stock that left other than by feeding (negative adjustment, transfer out) — 0 or more; shown in the balance dialog only. */
+  otherOutflowKg: number;
   incomingReferences: Array<{ kind: string; referenceId?: string; referenceNo?: string; overdue?: boolean }>;
   heads: number; // as of `date`
   feedRateKg: number;
@@ -257,10 +259,11 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
           // its own start here because rows are visited in date order and this is the first one seen for the key).
           date: d.date, dateTo: d.date, days: 1,
           currentInventoryKg: d.currentInventoryKg,
-          openingSystemBalanceKg: d.openingStockKg ?? d.currentInventoryKg,
+          openingSystemBalanceKg: Math.max(0, d.openingStockKg ?? d.currentInventoryKg),
           confirmedReceiptsKg: d.confirmedReceiptKg ?? 0,
           openTransferMovementKg: d.openTransferMovementKg ?? 0,
           plannedIncomingKg: d.plannedIncomingKg ?? 0,
+          otherOutflowKg: d.otherOutflowKg ?? 0,
           incomingReferences: [...(d.incomingReferences ?? [])],
           heads: d.heads, feedRateKg: d.feedRateKg, perDayIntakeKg: d.perDayIntakeKg,
           intakeKg: d.perDayIntakeKg,
@@ -282,6 +285,7 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
     group.row.confirmedReceiptsKg += d.confirmedReceiptKg ?? 0;
     group.row.openTransferMovementKg += d.openTransferMovementKg ?? 0;
     group.row.plannedIncomingKg += d.plannedIncomingKg ?? 0;
+    group.row.otherOutflowKg += d.otherOutflowKg ?? 0;
     group.row.incomingReferences.push(...(d.incomingReferences ?? []));
     group.row.dailyUseKg += d.demandKg ?? d.perDayIntakeKg;
     group.row.projectedClosingBalanceKg = d.projectedClosingKg ?? Math.max(0, d.currentInventoryKg - d.perDayIntakeKg);
