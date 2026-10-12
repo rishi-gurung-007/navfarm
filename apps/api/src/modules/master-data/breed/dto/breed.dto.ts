@@ -659,6 +659,7 @@ export class CreateBreedLifecycleStageDto {
   @ApiProperty({ description: 'Allowance for feed wastage in forecast calculation, %', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(100, { message: 'Feed Wastage % cannot be more than 100.' })
   @Min(0)
   feed_wastage_pct?: number;
 
@@ -684,24 +685,28 @@ export class CreateBreedLifecycleStageDto {
   @ApiProperty({ description: 'Expected average body weight at end of this range, KG', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99999.999, { message: 'Std Body Weight cannot be more than 99,999.999 kg.' })
   @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ description: 'Standard Average Daily Gain, grams/day', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(999999.99, { message: 'Std ADG cannot be more than 999,999.99 g/day.' })
   @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ description: 'Standard Feed Conversion Ratio', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std FCR cannot be more than 99.999 (a typical FCR is about 1.5 to 4).' })
   @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ description: 'Acceptable mortality percentage for this stage/range', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std Mortality Rate % must be below 100.' })
   @Min(0)
   std_mortality_rate_pct?: number;
 
@@ -856,6 +861,7 @@ export class UpdateBreedLifecycleStageDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(100, { message: 'Feed Wastage % cannot be more than 100.' })
   @Min(0)
   feed_wastage_pct?: number;
 
@@ -881,24 +887,28 @@ export class UpdateBreedLifecycleStageDto {
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99999.999, { message: 'Std Body Weight cannot be more than 99,999.999 kg.' })
   @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(999999.99, { message: 'Std ADG cannot be more than 999,999.99 g/day.' })
   @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std FCR cannot be more than 99.999 (a typical FCR is about 1.5 to 4).' })
   @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std Mortality Rate % must be below 100.' })
   @Min(0)
   std_mortality_rate_pct?: number;
 

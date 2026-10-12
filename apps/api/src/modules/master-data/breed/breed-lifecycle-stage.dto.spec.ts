@@ -31,6 +31,13 @@ describe('KPI alert period and the extra KPI line keys', () => {
   const base = { breed_id: '7f9d3d0e-1c2b-4a5e-9f11-2b3c4d5e6f70', stage_id: '7f9d3d0e-1c2b-4a5e-9f11-2b3c4d5e6f71', calc_unit: 'WEEK', period_from: 1, period_to: 4 };
   const line = { metric: 'ADG', uom: 'G', lower_limit: 400, upper_limit: 600, average_value: 500, severity: 'WARNING' };
 
+  // Rishi, 12 Oct: Std FCR 100 crashed the save (column decimal(5,3)); it is now a clear 400.
+  it('refuses a Std FCR above 99.999 with a clear message instead of a database error', async () => {
+    await expect(pipe.transform({ ...base, std_fcr: 100 }, { type: 'body', metatype: CreateBreedLifecycleStageDto }))
+      .rejects.toMatchObject({ response: { message: expect.arrayContaining([expect.stringContaining('Std FCR cannot be more than 99.999')]) } });
+    await expect(pipe.transform({ ...base, std_fcr: 3.2 }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).resolves.toBeDefined();
+  });
+
   it('accepts kpi_alert_period and average_value/uom on a line, and keeps them', async () => {
     const out: any = await pipe.transform({ ...base, kpi_alert_period: 'WEEKLY', kpi_thresholds: [line] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
     expect(out.kpi_alert_period).toBe('WEEKLY');
