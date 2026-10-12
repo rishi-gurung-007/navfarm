@@ -12,6 +12,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
+import { isFeedTypeCode } from '../../../common/feed-form';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -110,6 +111,13 @@ export class ItemService {
 
     if (!type) {
       throw new NotFoundException(`Item Type '${itemType}' not found.`);
+    }
+  }
+
+  /** Feed Form (Bulk/Bagged) belongs to feed items only; a value on any other type is a 400. */
+  private assertFeedForm(itemType: string, feedForm?: string | null) {
+    if (feedForm != null && !isFeedTypeCode(itemType)) {
+      throw new BadRequestException('Feed Form applies to feed items only; choose a feed Item Type first.');
     }
   }
 
@@ -263,6 +271,7 @@ export class ItemService {
     await this.assertItemTypeExists(dto.item_type, tenantId, companyId);
 
     this.assertWithdrawalDays(dto.item_type, dto.withdrawal_days);
+    this.assertFeedForm(dto.item_type, dto.feed_form);
     this.assertStandardCost(dto.valuation_method, dto.standard_cost);
     this.assertTrackingSeries(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
     await this.assertTrackingSeriesKind(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
@@ -313,6 +322,7 @@ export class ItemService {
       max_stock_level: dto.max_stock_level?.toString() || null,
       reorder_level: dto.reorder_level?.toString() || null,
       diet_no: dto.diet_no ?? null,
+      feed_form: dto.feed_form ?? null,
       lead_time_days: dto.lead_time_days ?? null,
       shelf_life_days: dto.shelf_life_days ?? null,
       storage_temp_min: dto.storage_temp_min?.toString() || null,
@@ -788,6 +798,7 @@ export class ItemService {
     const effectiveItemType = dto.item_type ?? item.item_type;
     const effectiveWithdrawalDays = dto.withdrawal_days !== undefined ? dto.withdrawal_days : item.withdrawal_days;
     this.assertWithdrawalDays(effectiveItemType, effectiveWithdrawalDays);
+    this.assertFeedForm(effectiveItemType, dto.feed_form);
 
     const effectiveValuationMethod = dto.valuation_method !== undefined ? dto.valuation_method : item.valuation_method;
     const effectiveStandardCost = dto.standard_cost !== undefined ? dto.standard_cost : (item.standard_cost != null ? Number(item.standard_cost) : null);
@@ -856,6 +867,9 @@ export class ItemService {
     if (dto.max_stock_level !== undefined) updates.max_stock_level = dto.max_stock_level?.toString() || null;
     if (dto.reorder_level !== undefined) updates.reorder_level = dto.reorder_level?.toString() || null;
     if (dto.diet_no !== undefined) updates.diet_no = dto.diet_no;
+    if (dto.feed_form !== undefined) updates.feed_form = dto.feed_form;
+    // Moving an item off a feed type drops its Feed Form with it.
+    else if (item.feed_form && !isFeedTypeCode(effectiveItemType)) updates.feed_form = null;
     if (dto.lead_time_days !== undefined) updates.lead_time_days = dto.lead_time_days;
     if (dto.shelf_life_days !== undefined) updates.shelf_life_days = dto.shelf_life_days;
     if (dto.storage_temp_min !== undefined) updates.storage_temp_min = dto.storage_temp_min?.toString() || null;

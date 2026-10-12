@@ -946,6 +946,7 @@ export const itemMaster = mysqlTable('item_master', {
   item_name: varchar('item_name', { length: 200 }).notNull(),
   item_type: varchar('item_type', { length: 30 }).notNull(),
   diet_no: int('diet_no'), // TDD Master Setup §2 / Loading Sheet row 65: Diet number 1 to 14
+  feed_form: varchar('feed_form', { length: 10 }), // BULK | BAGGED; feed items only (12 Oct)
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
   sub_category: varchar('sub_category', { length: 100 }), // Legacy text sub_category field

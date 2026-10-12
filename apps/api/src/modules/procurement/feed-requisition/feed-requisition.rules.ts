@@ -120,7 +120,9 @@ export function lineKey(destinationLocationId: string, itemId: string): string {
 }
 
 /** Requisition §1 row 15: Feed Type from Location Master. Nothing is recorded today, so a silo is bulk, a store bags (Q10). */
-export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>): FeedType {
+export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>, itemForm?: FeedType | null): FeedType {
+  // Rishi 12 Oct: the item's own Bulk/Bagged (item_master.feed_form, else its type code) is what is rounded and counted.
+  if (itemForm) return itemForm;
   if (dest.feedInBags === true) return 'BAGGED';
   if (dest.feedInBags === false) return 'BULK';
   return dest.locationType === 'STORE' ? 'BAGGED' : 'BULK';
@@ -171,8 +173,10 @@ export function recommendLines(args: {
   currentBalanceKg?: Map<string, number>;
   /** Manual lines retain forecast evidence even when no system order is needed. */
   includeZeroNeed?: boolean;
+  /** item id -> the item's own Bulk/Bagged (resolveItemFeedForm); it wins over the destination's Feed Type. */
+  itemForms?: Map<string, FeedType>;
 }): DraftLine[] {
-  const { planningDate, to, sources, destinations, settings, currentBalanceKg, includeZeroNeed = false } = args;
+  const { planningDate, to, sources, destinations, settings, currentBalanceKg, includeZeroNeed = false, itemForms } = args;
   const lines: DraftLine[] = [];
   for (const s of sources) {
     // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
@@ -180,7 +184,7 @@ export function recommendLines(args: {
     const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
     if (unroundedNeedKg <= 0 && !includeZeroNeed) continue; // Engine Step 8: automatic drafts contain shortage lines only.
     const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null, capacityKg: null };
-    const feedType = feedTypeOf(dest);
+    const feedType = feedTypeOf(dest, itemForms?.get(s.itemId));
     const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
     const key = lineKey(s.locationId, s.itemId);
     const systemBalanceKg = currentBalanceKg ? Math.max(0, round3(currentBalanceKg.get(key) ?? 0)) : s.balanceKg; // never below zero (Rishi, 12 Oct)

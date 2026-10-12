@@ -22,6 +22,7 @@ import * as schema from '../../../core/database/schema';
 import { farmScope, requisitionFarmLobCondition } from '../../../common/farm-scope';
 import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
 import { userHasPermission } from '../../../common/permissions';
+import { resolveItemFeedForm } from '../../../common/feed-form';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { draftForecastRange, FeedForecastService, MAX_SPAN_DAYS, type FeedForecastResponse } from '../../inventory/feed-forecast/feed-forecast.service';
@@ -566,7 +567,7 @@ export class FeedRequisitionService implements OnModuleInit {
       const itemIds = [...new Set(material.map((line) => line.item_id))];
       const destinationIds = [...new Set(material.map((line) => line.destination_location_id!))];
       const [items, destinations, existing] = await Promise.all([
-        this.db.select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name })
+        this.db.select({ item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code, item_name: schema.itemMaster.item_name, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
           .from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds)),
         this.db.select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code, location_name: schema.locationMaster.location_name, location_type: schema.locationMaster.location_type, feed_in_bags: schema.locationMaster.feed_in_bags })
           .from(schema.locationMaster).where(and(eq(schema.locationMaster.tenant_id, tenantId), inArray(schema.locationMaster.location_id, destinationIds))),
@@ -596,7 +597,7 @@ export class FeedRequisitionService implements OnModuleInit {
           const destination = destinationOf.get(first.destination_location_id!);
           const shortage = lines.map((line) => line.shortage_date).filter((date): date is string => !!date).sort()[0] ?? run.to_date;
           const unroundedQuantity = Math.max(...lines.map((line) => Number(line.recommended_qty_kg)));
-          const feedType: FeedType = destination?.location_type === 'STORE' || destination?.feed_in_bags ? 'BAGGED' : 'BULK';
+          const feedType: FeedType = (item ? resolveItemFeedForm(item) : null) ?? (destination?.location_type === 'STORE' || destination?.feed_in_bags ? 'BAGGED' : 'BULK');
           const quantity = roundOrderKg(unroundedQuantity, feedType, effectiveSettings);
           return {
             destination_location_id: first.destination_location_id!,
@@ -713,6 +714,7 @@ export class FeedRequisitionService implements OnModuleInit {
       const currentBalanceKg = await this.currentBalances(forecast.sources, companyId, tenantId);
       const wanted = recommendLines({
         planningDate: forecast.planningDate, to: forecast.to, sources: forecast.sources, destinations, settings: farm.settings, currentBalanceKg,
+        itemForms: await this.loadItemForms(forecast.sources.map((x) => x.itemId), tenantId),
       });
       const cycle = productionCycle(forecast.planningDate, farm.settings.productionWeekday);
       // B1: per (silo, item) order line, which batches in which houses it is for.
@@ -934,6 +936,8 @@ export class FeedRequisitionService implements OnModuleInit {
           item_code: schema.itemMaster.item_code,
           item_name: schema.itemMaster.item_name,
           uom_primary: schema.itemMaster.uom_primary,
+          item_type: schema.itemMaster.item_type,
+          feed_form: schema.itemMaster.feed_form,
         })
         .from(schema.itemMaster)
         .where(this.feedItemConditions(tenantId, companyId));
@@ -946,6 +950,19 @@ export class FeedRequisitionService implements OnModuleInit {
         items: [...items].sort((a, b) => a.item_code.localeCompare(b.item_code)),
       };
     });
+  }
+
+  /** Bulk/Bagged of each item (feed_form first, then its type code); items that state none are left out. */
+  private async loadItemForms(itemIds: string[], tenantId: string): Promise<Map<string, FeedType>> {
+    const ids = [...new Set(itemIds)];
+    const out = new Map<string, FeedType>();
+    if (!ids.length) return out;
+    const rows = await this.db
+      .select({ item_id: schema.itemMaster.item_id, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
+      .from(schema.itemMaster)
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, ids)));
+    for (const row of rows) { const form = resolveItemFeedForm(row); if (form) out.set(row.item_id, form); }
+    return out;
   }
 
   /**
@@ -1002,10 +1019,11 @@ export class FeedRequisitionService implements OnModuleInit {
       // its name copied onto the line. The options endpoint offers exactly
       // this set.
       const items = await this.db
-        .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name })
+        .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
         .from(schema.itemMaster)
         .where(and(this.feedItemConditions(tenantId, companyId), inArray(schema.itemMaster.item_id, itemIds)));
       const nameOf = new Map(items.map((i) => [i.item_id, i.item_name]));
+      const formOf = new Map(items.map((i) => [i.item_id, resolveItemFeedForm(i)]));
       const missing = itemIds.find((id) => !nameOf.has(id));
       if (missing) throw new BadRequestException(`Feed item ${missing} is not an active feed item of this company.`);
       const reasonOf = new Map<number, { reason_id: string; label: string }>();
@@ -1051,6 +1069,7 @@ export class FeedRequisitionService implements OnModuleInit {
         destinations,
         settings: farm.settings,
         currentBalanceKg,
+        itemForms: await this.loadItemForms(demand.sources.map((x) => x.itemId), tenantId),
         includeZeroNeed: true,
       }).filter((line) => selectedKeys.has(line.key));
       const evidenceOf = new Map(manualEvidence.map((line) => [line.key, line]));
@@ -1089,7 +1108,7 @@ export class FeedRequisitionService implements OnModuleInit {
         });
         await this.db.insert(schema.requisitionLine).values(dto.lines.map((line, i) => {
           const dest = destinations.get(line.destination_location_id)!;
-          const feedType: FeedType = feedTypeOf(dest);
+          const feedType: FeedType = feedTypeOf(dest, formOf.get(line.item_id));
           const evidence = evidenceOf.get(lineKey(line.destination_location_id, line.item_id));
           return {
             ...(evidence ? this.lineValues(evidence) : {}),
@@ -1727,7 +1746,7 @@ export class FeedRequisitionService implements OnModuleInit {
         .where(and(eq(schema.breedLifecycleStages.lifecycle_id, line.lifecycle_ref_id), eq(schema.breedLifecycleStages.tenant_id, tenantId))).limit(1)
       : [];
     const [item] = await this.db
-      .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name })
+      .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
       .from(schema.itemMaster)
       .where(and(this.feedItemConditions(tenantId, companyId), eq(schema.itemMaster.item_id, itemId)))
       .limit(1);
@@ -1777,7 +1796,7 @@ export class FeedRequisitionService implements OnModuleInit {
       item_id: itemId,
       destination_location_id: destinationId,
       source_type: dest.locationType,
-      feed_type: feedTypeOf(dest),
+      feed_type: feedTypeOf(dest, resolveItemFeedForm(item)),
       reason_id: exception ? reasonMaster?.reason_id ?? null : null,
       description: (exception ? `${EXCEPTION_PREFIX}${exception}` : item.item_name).slice(0, 200),
       ...(itemChanged || destinationChanged ? {

@@ -1039,6 +1039,7 @@ const item: MasterDataConfig = {
     { key: "item_code", label: "Code" },
     { key: "item_name", label: "Name" },
     { key: "item_type", label: "Type" },
+    { key: "feed_form", label: "Feed Form" },
     { key: "category_code", label: "Category" },
     { key: "sub_category", label: "Sub Category" },
     { key: "template_code", label: "Template" },
@@ -1051,6 +1052,8 @@ const item: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
     { key: "item_code", label: "Code", type: "text", createOnly: true, helpText: "Assigned from the Item number series; can be customized.", section: "Identification" },
     { key: "item_type", label: "Item Type", type: "select-entity", required: true, entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification" },
+    // Rishi 12 Oct: an item of a feed type says whether it is Bulk or Bagged (replaces separate FEED_BULK / FEED_BAG types).
+    { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }], visibleWhen: { anyOf: [{ key: "item_type", startsWith: "FEED" }] }, helpText: "Bulk (silo) or Bagged. Feed item types only.", section: "Identification" },
     { key: "item_name", label: "Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     {
       // Depends on Item Type via the query mechanism, not path substitution — a

@@ -218,7 +218,7 @@ export function buildSiloStatus(args: {
     // One source per silo and item: need and shortfall add across them, each order rounded on its own.
     const projectedNeedKg = round3(sources.reduce((sum, s) => sum + s.walkDemandKg + s.safetyStockKg, 0));
     const projectedShortfallKg = round3(sources.reduce((sum, s) => sum + Math.max(0, s.shortfallKg), 0));
-    const recommendedOrderKg = sources.reduce((sum, s) => sum + roundOrderKg(Math.max(0, round3(s.shortfallKg)), silo.feedType, settings), 0);
+    const recommendedOrderKg = sources.reduce((sum, s) => sum + roundOrderKg(Math.max(0, round3(s.shortfallKg)), itemFeedTypes[s.itemId] ?? silo.feedType, settings), 0);
     // I2: the quantities above add across every source feeding this silo (current diet
     // AND next diet), so the date fields must look across all of them too — otherwise a
     // silo with a shortfall entirely on its next-diet source shows a positive Projected

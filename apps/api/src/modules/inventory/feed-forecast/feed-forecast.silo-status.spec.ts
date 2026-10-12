@@ -33,6 +33,7 @@ describe('FeedForecastService.siloStatus', () => {
     jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
     jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input, flags: [], stageBlocks: [] });
     jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', hierarchy]]));
+    jest.spyOn(service as any, 'loadItemFeedTypes').mockResolvedValue({});
     return { cls, service };
   }
 
@@ -203,7 +204,7 @@ describe('FeedForecastService.siloStatus', () => {
     expect(out.planningDate).toBe('2026-09-23');
     expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
       { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
-    expect(feedTypes).toHaveBeenCalledWith(['r2'], 'tenant-1');
+    expect(feedTypes).toHaveBeenCalledWith(['r1', 'r2'], 'tenant-1');
     expect(out.statuses[0]).toMatchObject({
       siloId: 's1', currentDietItemCode: 'FEED-R1', nextDietItemId: 'r2', nextDietItemCode: 'FEED-R2', nextDietItemName: 'Weaner Diet R2',
       nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: true, nextDietSiloId: 's2', nextDietSiloCode: 'GRS/SILO-002',

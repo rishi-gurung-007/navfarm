@@ -130,6 +130,7 @@ export function rowOpenAction(row: Row, readOnly: boolean, editableDraft = false
 function matchesCondition(cond: RequiredCondition, form: Row): boolean {
   const raw = form[cond.key];
   const depValue = raw === undefined || raw === null ? "" : raw;
+  if (cond.startsWith !== undefined) return String(depValue).toUpperCase().startsWith(cond.startsWith.toUpperCase());
   if (cond.equals !== undefined) {
     const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
     return list.some((item: any) => {
@@ -161,7 +162,7 @@ function isFieldRequired(f: MasterDataField, form: Row): boolean {
 }
 
 /** Whether `f` is visible right now via `visibleWhen` against the live form values. */
-function isFieldVisible(f: MasterDataField, form: Row): boolean {
+export function isFieldVisible(f: MasterDataField, form: Row): boolean {
   if (!f.visibleWhen) return true;
   if (f.visibleWhen.anyOf && !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
     return false;

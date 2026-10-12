@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { assertAssignmentCompatibility, feedFormFromItemType } from './bin-diet-assignment.rules';
+import { resolveItemFeedForm } from '../../../common/feed-form';
 import { BinDietAssignmentService } from './bin-diet-assignment.service';
 
 describe('BIN Diet Assignment rules', () => {
@@ -15,6 +16,21 @@ describe('BIN Diet Assignment rules', () => {
     expect(feedFormFromItemType('FEED_BULK', 'Feed')).toBe('BULK');
     expect(feedFormFromItemType('FEED_BAG', null)).toBe('BAGGED');
     expect(feedFormFromItemType('FEED-BAGGED', '')).toBe('BAGGED');
+  });
+
+  it('uses the item feed_form first, then falls back to the type code (12 Oct)', () => {
+    const plain = { item_type: 'FEED', item_type_name: 'Feed', diet_no: 4, is_active: true };
+    expect(resolveItemFeedForm({ ...plain, feed_form: 'BULK' })).toBe('BULK');
+    expect(resolveItemFeedForm({ ...plain, feed_form: 'BAGGED' })).toBe('BAGGED');
+    expect(resolveItemFeedForm({ ...plain, feed_form: null })).toBeNull();
+    expect(resolveItemFeedForm({ item_type: 'FEED_BAG', feed_form: null })).toBe('BAGGED');
+    // the item's own choice beats a conflicting type code
+    expect(resolveItemFeedForm({ item_type: 'FEED_BAG', feed_form: 'BULK' })).toBe('BULK');
+    // non-feed types never carry a form
+    expect(resolveItemFeedForm({ item_type: 'MEDICINE', feed_form: 'BULK' })).toBeNull();
+    expect(() => assertAssignmentCompatibility(bin, { ...plain, feed_form: 'BULK' })).not.toThrow();
+    expect(() => assertAssignmentCompatibility(bin, { ...plain, feed_form: 'BAGGED' })).toThrow('does not match');
+    expect(() => assertAssignmentCompatibility(bin, plain)).toThrow('active Feed Item');
   });
 
   it('requires an active FEED item with a Diet No.', () => {

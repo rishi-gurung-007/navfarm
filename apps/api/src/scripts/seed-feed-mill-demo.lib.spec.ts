@@ -37,6 +37,13 @@ describe('planFeedMillDemo', () => {
     expect(a[a.length - 1].production_date).toBe(addDays('2026-10-12', 27));
   });
 
+  it('qualifies a plain FEED item that carries a feed_form (12 Oct)', () => {
+    const feedItems = base().feedItems.map((i) => (i.item_id === 'x' ? { ...i, feed_form: 'BULK' } : i));
+    const plan = planFeedMillDemo(base({ feedItems }));
+    expect(plan.notes.join()).not.toContain('PLAIN');
+    expect(plan.rows.filter((r) => r.table === 'bin_diet_assignment').some((r) => r.row.feed_item_id === 'x')).toBe(true);
+  });
+
   it('plans nothing when everything already exists', () => {
     const first = planFeedMillDemo(base());
     const locations = first.rows.filter((r) => r.table === 'location_master').map((r) => ({

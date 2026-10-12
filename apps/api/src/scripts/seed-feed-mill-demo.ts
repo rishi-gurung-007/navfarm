@@ -62,13 +62,13 @@ async function run() {
     const [scope] = await q('SELECT nob_id, lob_id FROM location_type_master WHERE tenant_id = ? AND (company_id = ? OR company_id IS NULL) AND nob_id IS NOT NULL AND deleted_at IS NULL ORDER BY company_id IS NULL LIMIT 1', [company.tenant_id, companyId]);
     const locations = await q("SELECT location_id, location_code, location_type, parent_location_id, is_active, bin_feed_type FROM location_master WHERE tenant_id = ? AND company_id = ? AND deleted_at IS NULL AND location_code LIKE 'MILL-001%'", [company.tenant_id, companyId]);
     const feedItems = await q(
-      `SELECT i.item_id, i.item_code, i.item_type, t.type_name AS item_type_name, i.diet_no, i.is_active, MIN(s.stage_sequence) AS ord
+      `SELECT i.item_id, i.item_code, i.item_type, t.type_name AS item_type_name, i.feed_form, i.diet_no, i.is_active, MIN(s.stage_sequence) AS ord
          FROM breed_lifecycle_stages b
          JOIN item_master i ON i.item_id = b.feed_item_id AND i.deleted_at IS NULL
          JOIN stage_master s ON s.stage_id = b.stage_id
          LEFT JOIN item_type_master t ON t.tenant_id = i.tenant_id AND t.type_code = i.item_type AND t.deleted_at IS NULL
         WHERE b.company_id = ? AND b.is_active = 1 AND b.feed_item_id IS NOT NULL
-        GROUP BY i.item_id, i.item_code, i.item_type, t.type_name, i.diet_no, i.is_active
+        GROUP BY i.item_id, i.item_code, i.item_type, t.type_name, i.feed_form, i.diet_no, i.is_active
         ORDER BY ord, i.item_code`, [companyId]);
     const assignments = await q("SELECT bin_location_id, DATE_FORMAT(production_date, '%Y-%m-%d') AS d FROM bin_diet_assignment WHERE company_id = ? AND is_active = 1 AND deleted_at IS NULL AND production_date >= ?", [companyId, localDate()]);
 

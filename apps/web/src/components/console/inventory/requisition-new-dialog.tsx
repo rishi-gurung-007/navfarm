@@ -44,7 +44,7 @@ import { DOC_TYPE_LABEL, FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURC
 import type { RequisitionView } from "./requisitions-panel";
 
 interface Destination { location_id: string; location_code: string; location_name?: string | null; location_type: string; feed_in_bags?: boolean | null }
-interface FeedItem { item_id: string; item_code: string; item_name: string }
+interface FeedItem { item_id: string; item_code: string; item_name: string; item_type?: string | null; feed_form?: string | null }
 interface Options { destinations: Destination[]; items: FeedItem[] }
 interface Draft { dest: string; item: string; kg: string; date: string; reasonId: string; reasonLabel: string }
 
@@ -67,8 +67,24 @@ const COLUMNS = [
 /** The settings the header needs (GET /feed-settings, resolved for the farm). */
 interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number; bagSizeKg: number }
 
+function feedFormOfTypeCode(code?: string | null): FeedType | null {
+  const c = String(code ?? "").toUpperCase().replace(/[_-]+/g, " ");
+  if (!c.includes("FEED")) return null;
+  if (/\bBULK\b/.test(c)) return "BULK";
+  if (/\bBAG(?:GED)?\b/.test(c)) return "BAGGED";
+  return null;
+}
+
 /** The Feed Type of a line's destination — the server's own rule (feed-requisition-header.tsx); none until a destination is chosen. */
-function feedTypeOfDraft(line: Draft, destinations: Destination[]): FeedType | null {
+function feedTypeOfDraft(line: Draft, destinations: Destination[], items: FeedItem[] = []): FeedType | null {
+  // The item's own Feed Form wins (Rishi, 12 Oct), then its type code, then the destination.
+  const item = items.find((i) => i.item_id === line.item);
+  const own = String(item?.feed_form ?? "").toUpperCase();
+  if (own === "BULK" || own === "BAGGED") return own;
+  if (item) {
+    const typeForm = feedFormOfTypeCode(item.item_type);
+    if (typeForm) return typeForm;
+  }
   const dest = destinations.find((d) => d.location_id === line.dest);
   return dest ? feedTypeOfDestination(dest) : null;
 }
@@ -213,7 +229,7 @@ export function RequisitionNewDialog({
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   // Req. r26 counts bulk only; r27 is a target, never a block (cp. 17). The same helper as the document's.
   const { bulkTotal, trips, baggedCount, baggedKg, baggedBags } = bulkTotalAndTrips(
-    lines.map((l) => ({ feedType: feedTypeOfDraft(l, destinations), kg: Number(l.kg) > 0 ? Number(l.kg) : 0 })),
+    lines.map((l) => ({ feedType: feedTypeOfDraft(l, destinations, items), kg: Number(l.kg) > 0 ? Number(l.kg) : 0 })),
     settings?.truckTargetKg ?? 0,
     settings?.bagSizeKg ?? 0,
   );
@@ -336,7 +352,7 @@ export function RequisitionNewDialog({
               <tbody>
                 {lines.map((line, i) => {
                   const item = items.find((it) => it.item_id === line.item);
-                  const type = feedTypeOfDraft(line, destinations);
+                  const type = feedTypeOfDraft(line, destinations, items);
                   return (
                     <tr key={i}>
                       <td className={cn(TD, "text-right tabular-nums")}>{(i + 1) * LINE_STEP}</td>

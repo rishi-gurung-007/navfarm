@@ -26,6 +26,7 @@ import { productionCycle } from '../../procurement/feed-requisition/feed-requisi
 import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact, SiloStatusRow } from './feed-silo-status';
 import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
 import { FeedPlanService } from './feed-plan.service';
+import { resolveItemFeedForm } from '../../../common/feed-form';
 import { MillCapacityService } from './mill-capacity.service';
 import type { DietCapacity } from './mill-capacity.rules';
 
@@ -35,6 +36,11 @@ export function itemTypeFeedForm(itemType: string | null | undefined): 'BULK' | 
   if (code === 'FEED_BULK') return 'BULK';
   if (code === 'FEED_BAG' || code === 'FEED_BAGS' || code === 'FEED_BAGGED') return 'BAGGED';
   return null;
+}
+
+/** The item's own Feed Form first, then what its item type code says. */
+export function itemFeedForm(item: { feed_form?: string | null; item_type?: string | null }): 'BULK' | 'BAGGED' | null {
+  return resolveItemFeedForm(item) ?? itemTypeFeedForm(item.item_type);
 }
 
 /**
@@ -1783,7 +1789,7 @@ export class FeedForecastService {
     const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
     const requisitions = submissionDeadline ? await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline) : new Map();
     const nextStageDiets = forecast.nextStageDiets ?? [];
-    const itemFeedTypes = await this.loadItemFeedTypes([...forecast.dietChanges.map((change) => change.toItemId), ...nextStageDiets.flatMap((d) => (d.itemId ? [d.itemId] : []))], tenantId);
+    const itemFeedTypes = await this.loadItemFeedTypes([...(forecast.sources ?? []).map((s) => s.itemId), ...forecast.dietChanges.map((change) => change.toItemId), ...nextStageDiets.flatMap((d) => (d.itemId ? [d.itemId] : []))], tenantId);
     return buildSiloStatus({
       silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings,
       itemCodes: forecast.itemCodes ?? {}, itemFeedTypes, nextStageDiets, asOf,
@@ -1827,11 +1833,11 @@ export class FeedForecastService {
     // Master Setup rows 22 and 26: the Item Type itself says FEED BULK or FEED BAG,
     // so it wins over the lifecycle row's feed_form (12 Oct; feed_form is empty in practice).
     const items = await this.db
-      .select({ item_id: schema.itemMaster.item_id, item_type: schema.itemMaster.item_type })
+      .select({ item_id: schema.itemMaster.item_id, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
       .from(schema.itemMaster)
       .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, ids)));
     for (const item of items) {
-      const form = itemTypeFeedForm(item.item_type);
+      const form = itemFeedForm(item);
       if (form) out[item.item_id] = form;
     }
     return out;

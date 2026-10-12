@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { feedFormFromItemType, resolveItemFeedForm, type FeedForm } from '../../../common/feed-form';
 
 type BinLike = {
   location_type?: string | null;
@@ -9,28 +10,20 @@ type BinLike = {
 type ItemLike = {
   item_type?: string | null;
   item_type_name?: string | null;
+  feed_form?: string | null;
   diet_no?: number | null;
   is_active?: boolean | null;
 };
 
-export type FeedForm = 'BULK' | 'BAGGED';
-
-export function feedFormFromItemType(code?: string | null, name?: string | null): FeedForm | null {
-  const normalizedCode = (code ?? '').trim().toUpperCase();
-  if (!normalizedCode.includes('FEED')) return null;
-  // '_' is a word character, so FEED_BULK never matched \bBULK\b; treat _ and - as separators (12 Oct).
-  const value = `${normalizedCode} ${(name ?? '').trim().toUpperCase()}`.replace(/[_-]+/g, ' ');
-  if (/\bBULK\b/.test(value)) return 'BULK';
-  if (/\bBAG(?:GED)?\b/.test(value)) return 'BAGGED';
-  return null;
-}
+export type { FeedForm };
+export { feedFormFromItemType };
 
 export function assertAssignmentCompatibility(bin: BinLike, item: ItemLike): FeedForm {
   if (bin.location_type !== 'BIN' || bin.is_active !== true) {
     throw new BadRequestException('BIN Diet Assignment requires an active BIN location.');
   }
 
-  const feedForm = feedFormFromItemType(item.item_type, item.item_type_name);
+  const feedForm = resolveItemFeedForm(item);
   if (item.is_active !== true || !feedForm) {
     throw new BadRequestException('BIN Diet Assignment requires an active Feed Item with an explicit Bulk or Bagged type.');
   }

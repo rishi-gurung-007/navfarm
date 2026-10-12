@@ -47,8 +47,9 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
   const conditionValues = { ...record, ...gates };
   const labelOf = (field: { label: string; labelWhen?: { key: string; labels: Record<string, string> } }) =>
     (field.labelWhen && field.labelWhen.labels[String(conditionValues[field.labelWhen.key] ?? "")]) || field.label;
-  const matchesViewCondition = (condition: { key: string; equals?: any; notEquals?: any }) => {
+  const matchesViewCondition = (condition: { key: string; equals?: any; notEquals?: any; startsWith?: string }) => {
     const rawValue = conditionValues?.[condition.key];
+    if (condition.startsWith !== undefined) return String(rawValue ?? "").toUpperCase().startsWith(condition.startsWith.toUpperCase());
     const value = rawValue === 1 || rawValue === "1" ? true : rawValue === 0 || rawValue === "0" ? false : (rawValue ?? "");
     if (condition.equals !== undefined) {
       const equalsList = Array.isArray(condition.equals) ? condition.equals : [condition.equals];

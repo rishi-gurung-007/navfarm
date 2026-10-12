@@ -18,6 +18,8 @@ testers' data must survive.
 | 0173 | Estimated arrival on loading sheets |
 | 0174 | BIN diet slot column made optional (Production Slots removed, 11 Oct) |
 | 0175 | Breed Lifecycle Stage: nullable `kpi_alert_period` column (Daily/Weekly/Monthly, 12 Oct) |
+| 0176 | All ISO countries |
+| 0177 | Item Master: nullable `feed_form` column (BULK/BAGGED) on feed items (12 Oct) |
 
 Run the migrations as **root**. If any line says FAILED: stop, restore that database from the backup, and report it.
 Do not re-run blindly, because MySQL table changes are not transactional.

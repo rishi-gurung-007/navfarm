@@ -1,3 +1,4 @@
+import { resolveItemFeedForm } from '../../../common/feed-form';
 import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
@@ -554,5 +555,23 @@ describe('auto-draft rerun keeps an escalated priority', () => {
   it('a higher recomputed priority still wins; null or unknown takes the computed one', () => {
     expect(keepHigherPriority('INFO', 'CRITICAL')).toBe('CRITICAL');
     expect(keepHigherPriority(null, 'WARNING')).toBe('WARNING');
+  });
+});
+
+describe('feedTypeOf with the item feed form (12 Oct)', () => {
+  const silo = { locationType: 'SILO', feedInBags: null } as any;
+  it('lets the item decide, then falls back to the destination', () => {
+    expect(feedTypeOf(silo)).toBe('BULK');
+    expect(feedTypeOf(silo, 'BAGGED')).toBe('BAGGED');
+    expect(feedTypeOf({ locationType: 'STORE', feedInBags: null } as any, 'BULK')).toBe('BULK');
+    expect(feedTypeOf({ locationType: 'STORE', feedInBags: null } as any, null)).toBe('BAGGED');
+  });
+  it('a BAGGED item rounds to the bag size and carries a bag count', () => {
+    const S = { ...DEFAULT_FEED_SETTINGS, bulkMultipleKg: 3000, bagSizeKg: 50 } as any;
+    const form = resolveItemFeedForm({ item_type: 'FEED', feed_form: 'BAGGED' })!;
+    const type = feedTypeOf(silo, form);
+    expect(roundOrderKg(1210, type, S)).toBe(1250);
+    expect(bagCountFor(1250, type, S)).toBe(25);
+    expect(roundOrderKg(1210, feedTypeOf(silo, resolveItemFeedForm({ item_type: 'FEED', feed_form: 'BULK' })), S)).toBe(3000);
   });
 });

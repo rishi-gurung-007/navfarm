@@ -4,7 +4,7 @@
  * shaped exactly as LocationService.create / BinDietAssignmentService.create
  * write them; the plan only adds what is missing, so a second run plans nothing.
  */
-import { feedFormFromItemType, type FeedForm } from '../modules/master-data/bin-diet-assignment/bin-diet-assignment.rules';
+import { resolveItemFeedForm, type FeedForm } from '../common/feed-form';
 
 export const MILL_CODE = 'MILL-001';
 export const BIN_COUNT = 4;
@@ -23,7 +23,7 @@ export const TYPE_SPECS: TypeSpec[] = [
 ];
 
 export interface ExistingLocation { location_id: string; location_code: string; location_type: string; parent_location_id: string | null; is_active: boolean; bin_feed_type: string | null }
-export interface FeedItemFact { item_id: string; item_code: string; item_type: string | null; item_type_name: string | null; diet_no: number | null; is_active: boolean; order: number }
+export interface FeedItemFact { item_id: string; item_code: string; item_type: string | null; item_type_name: string | null; feed_form?: string | null; diet_no: number | null; is_active: boolean; order: number }
 export interface PlanFacts {
   tenantId: string; companyId: string; nobId: string | null; lobId: string | null;
   /** type_code values already visible to the company (company-owned or tenant-wide). */
@@ -64,7 +64,7 @@ export function planFeedMillDemo(f: PlanFacts): DemoPlan {
   // Feed items a BIN may be assigned: the service requires an active item with an explicit Bulk/Bagged type and a Diet No.
   const eligible: (FeedItemFact & { form: FeedForm })[] = [];
   for (const it of [...f.feedItems].sort((a, b) => a.order - b.order || a.item_code.localeCompare(b.item_code))) {
-    const form = feedFormFromItemType(it.item_type, it.item_type_name);
+    const form = resolveItemFeedForm(it);
     if (!it.is_active || !form || it.diet_no == null) { notes.push(`feed item ${it.item_code} skipped: needs to be active, a Bulk/Bagged feed type and have a Diet No.`); continue; }
     eligible.push({ ...it, form });
   }

@@ -27,6 +27,8 @@ export interface RequiredCondition {
   key: string;
   equals?: string | boolean | Array<string | boolean | null | undefined>;
   notEquals?: string | boolean | Array<string | boolean | null | undefined>;
+  /** Matches when the value, upper-cased, starts with this prefix (e.g. every FEED-* item type). */
+  startsWith?: string;
 }
 
 export interface MasterDataField {
