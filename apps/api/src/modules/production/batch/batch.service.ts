@@ -6,6 +6,7 @@ import {
   ConflictException,
   Inject,
 } from '@nestjs/common';
+import { stagesOnDate, type StageAnimal, type StageMove } from './batch-stage-on-date';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, inArray, desc, asc, gt, SQL } from 'drizzle-orm';
@@ -3099,6 +3100,7 @@ export class BatchService {
         const liveAnimals =
           (await this.db
             .select({
+              animal_id: schema.animalRegister.animal_id,
               current_stage_id: schema.animalRegister.current_stage_id,
             })
             .from(schema.animalRegister)
@@ -3108,16 +3110,37 @@ export class BatchService {
                 eq(schema.animalRegister.is_active, true),
               ),
             )) || [];
-        const activeStageIds = new Set(
-          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
-        );
+        // The stage each animal stood in on a past day comes from its movements, not its current stage: a day
+        // posted before a stage change stays complete after it (13 Oct).
+        const moves: StageMove[] = liveAnimals.length
+          ? ((await this.db
+              .select({
+                animal_id: schema.animalMovementLog.animal_id,
+                movement_type: schema.animalMovementLog.movement_type,
+                event_date: schema.animalMovementLog.event_date,
+                to_batch_id: schema.animalMovementLog.to_batch_id,
+                from_stage_id: schema.animalMovementLog.from_stage_id,
+                to_stage_id: schema.animalMovementLog.to_stage_id,
+                created_at: schema.animalMovementLog.created_at,
+              })
+              .from(schema.animalMovementLog)
+              .where(
+                and(
+                  inArray(schema.animalMovementLog.animal_id, liveAnimals.map((a: any) => a.animal_id)),
+                  inArray(schema.animalMovementLog.movement_type, ['STAGE_CHANGE', 'ASSIGN', 'TRANSFER', 'PURCHASE']),
+                ),
+              )) as StageMove[]) || []
+          : [];
 
         let cursor = startDate;
         let count = 0;
         while (count < 365) {
+          const activeStageIds = stagesOnDate(liveAnimals as StageAnimal[], moves, batch.batch_id, cursor);
           let isComplete = false;
           if (activeStageIds.size === 0) {
-            isComplete = locks.some((l: any) => l.entry_date === cursor);
+            // No live animals at all: any lock completes the day. Live animals that had not yet joined the batch
+            // that day: there was nothing to post, so the day is complete.
+            isComplete = liveAnimals.length > 0 || locks.some((l: any) => l.entry_date === cursor);
           } else {
             const lockedStages = new Set(
               locks
