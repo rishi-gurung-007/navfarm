@@ -273,13 +273,15 @@ describe('buildSelectedSiloDashboard', () => {
   });
 });
 
-/** Rishi, 12 Oct: Next Diet Feed Item / Silo Available come from the breed lifecycle's next stage by display order. */
-describe('buildSiloStatus: next diet from the next stage (display order)', () => {
+/** Rishi, 12 Oct: Next Diet Feed Item / Silo Available come from the breed lifecycle of the stage the Next Stage field names. */
+describe('buildSiloStatus: next diet from the Next Stage field', () => {
   const stage = (stageId: string, sequence: number, over: Partial<NextStageStage> = {}): NextStageStage =>
     ({ stageId, stageCode: stageId.toUpperCase(), stageName: stageId, durationDays: 10, isActive: true, sequence, companyId: 'c1', lobId: 'l1', ...over });
   const stages = new Map<string, NextStageStage>([
-    ['grower', stage('grower', 13)], ['finisher', stage('finisher', 14)], ['weaner', stage('weaner', 12)],
-    ['retired', stage('retired', 13.5 as number, { isActive: false })], ['other-co', stage('other-co', 13.2 as number, { companyId: 'c2' })],
+    ['grower', stage('grower', 13, { nextStageId: 'finisher' })], ['finisher', stage('finisher', 14, { nextStageId: null })],
+    // Weaner's Next Stage field skips Grower although Grower is next by display order: the field wins.
+    ['weaner', stage('weaner', 12, { nextStageId: 'finisher' })],
+    ['culled', stage('culled', 20, { nextStageId: 'retired' })], ['retired', stage('retired', 21, { isActive: false })],
   ]);
   const row = (over: object) => ({ lifecycleId: 'x', breedId: 'br', stageId: 'finisher', itemId: 'fin', itemName: 'Finisher', fromDay: 1, toDay: 30, kgPerHeadPerDay: 2, wastagePct: 0, ...over });
   const batch = (stageId: string, over: object = {}) => ({
@@ -306,9 +308,9 @@ describe('buildSiloStatus: next diet from the next stage (display order)', () =>
     expect(a).toMatchObject({ nextDietItemId: 'chg', nextDietDate: '2026-10-15', nextDietNote: null });
   });
 
-  it('(b) no change in the window: next stage by display order -> its feed item, date and a matching BULK silo', () => {
+  it('(b) no change in the window: the Next Stage field -> its feed item, date and a matching BULK silo', () => {
     const [a, b] = run(diets('grower', [row({})]), { fin: 'BULK' });
-    // Grower (13) -> Finisher (14): not the retired 13.5 or the other company's 13.2. Grower starts 1 Oct for 10 days -> 11 Oct.
+    // Grower -> Finisher by its Next Stage field. Grower starts 1 Oct for 10 days -> 11 Oct.
     expect(a).toMatchObject({ nextDietItemId: 'fin', nextDietItemCode: 'FIN-1', nextDietDate: '2026-10-11', nextDietFeedType: 'BULK', siloAvailableForNextDiet: true, nextDietSiloCode: 'SILO-A', nextDietNote: null });
     expect(b).toMatchObject({ nextDietItemId: 'fin', siloAvailableForNextDiet: true, nextDietSiloCode: 'SILO-A' });
   });
@@ -318,10 +320,21 @@ describe('buildSiloStatus: next diet from the next stage (display order)', () =>
     expect(a).toMatchObject({ nextDietItemId: 'fin', nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: false, nextDietSiloCode: null });
   });
 
-  it('(d) last stage: blank next diet with a reason', () => {
+  it('(d) no Next Stage set: blank next diet with a reason', () => {
     const [a] = run(diets('finisher', [row({ stageId: 'finisher' })]), { fin: 'BULK' });
     expect(a).toMatchObject({ nextDietItemId: null, nextDietDate: null, siloAvailableForNextDiet: null });
-    expect(a.nextDietNote).toMatch(/Last stage/);
+    expect(a.nextDietNote).toBe('No Next Stage set for stage finisher — no next diet');
+  });
+
+  it('the Next Stage field wins over Display Order', () => {
+    const [a] = run(diets('weaner', [row({})]), { fin: 'BULK' });
+    expect(a).toMatchObject({ nextDietItemId: 'fin' });
+  });
+
+  it('a Next Stage that is inactive gives no next diet', () => {
+    const [a] = run(diets('culled', [row({ stageId: 'retired' })]), { fin: 'BULK' });
+    expect(a.nextDietItemId).toBeNull();
+    expect(a.nextDietNote).toMatch(/No Next Stage set for stage culled/);
   });
 
   it('(d2) next stage has no lifecycle feed item: blank with a reason naming stage and breed', () => {

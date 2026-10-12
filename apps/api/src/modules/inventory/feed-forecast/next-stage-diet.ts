@@ -2,8 +2,8 @@ import { FeedRow, feedRowFor, isEffectiveOn } from '../../production/lifecycle/f
 
 /**
  * Next Diet Feed Item from the breed lifecycle (client ruling, Rishi 12 Oct): a batch's next diet is always
- * knowable — take its current stage, the next stage by DISPLAY ORDER (stage_master.stage_sequence, the "Display
- * Order" column of the Stages master list), and that stage's breed lifecycle row. It does not wait for the engine
+ * knowable — take its current stage, the stage its Next Stage field names (stage_master.next_stage_id; Rishi
+ * 12 Oct chose the field over Display Order), and that stage's breed lifecycle row. It does not wait for the engine
  * to see a diet change inside the forecast window, so it still answers when the next stage starts after it.
  * Pure: the service supplies the batches, stages and lifecycle rows the engine already loaded.
  */
@@ -13,6 +13,8 @@ export interface NextStageStage {
   stageName?: string | null;
   durationDays: number | null;
   isActive: boolean;
+  /** stage_master.next_stage_id — the Next Stage field. */
+  nextStageId?: string | null;
   /** stage_master.stage_sequence — Display Order. */
   sequence?: number | null;
   companyId?: string | null;
@@ -41,17 +43,10 @@ const addDays = (iso: string, n: number): string => {
   return new Date(Date.UTC(y, m - 1, d) + n * DAY_MS).toISOString().slice(0, 10);
 };
 
-/** The active stage after `current` by display order, in the same company and (when both are set) LOB. */
-export function nextStageByDisplayOrder(current: NextStageStage, stages: Iterable<NextStageStage>): NextStageStage | null {
-  if (current.sequence == null) return null;
-  let best: NextStageStage | null = null;
-  for (const s of stages) {
-    if (!s.isActive || s.sequence == null || s.sequence <= current.sequence) continue;
-    if ((s.companyId ?? null) !== (current.companyId ?? null)) continue;
-    if (current.lobId && s.lobId && s.lobId !== current.lobId) continue;
-    if (!best || s.sequence < best.sequence! || (s.sequence === best.sequence && s.stageCode < best.stageCode)) best = s;
-  }
-  return best;
+/** The stage `current`'s Next Stage field names, when it exists and is active. */
+export function nextStageFromField(current: NextStageStage, stages: Map<string, NextStageStage>): NextStageStage | null {
+  const next = current.nextStageId ? stages.get(current.nextStageId) : undefined;
+  return next && next.isActive ? next : null;
 }
 
 export function resolveNextStageDiets(args: {
@@ -77,9 +72,9 @@ export function resolveNextStageDiets(args: {
     const base = { batchNo: b.batchNo, shedCode, heads: b.heads, breedId: b.breedId, currentStageCode: segment.stageCode };
     const blank = { nextStageId: null, nextStageName: null, itemId: null, itemName: null, date: null };
     const stageLabel = current?.stageName ?? segment.stageCode;
-    const next = current ? nextStageByDisplayOrder(current, stages.values()) : null;
+    const next = current ? nextStageFromField(current, stages) : null;
     if (!next) {
-      out.push({ ...base, ...blank, reason: `Last stage (${stageLabel}) — no next diet` });
+      out.push({ ...base, ...blank, reason: `No Next Stage set for stage ${stageLabel} — no next diet` });
       continue;
     }
     const nextName = next.stageName ?? next.stageCode;
