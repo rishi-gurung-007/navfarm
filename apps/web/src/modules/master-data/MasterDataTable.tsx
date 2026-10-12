@@ -1599,7 +1599,7 @@ export function MasterDataTable({
         const before = String(prev[key] ?? "");
         next[jf.key] = JSON.stringify(parsed.map((r: Row) => {
           const out = { ...r };
-          for (const c of followers) if (c.readOnlyFollow) out[c.key] = value || "DAILY"; else if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
+          for (const c of followers) if (c.readOnlyFollow) out[c.key] = value || ""; else if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
           return out;
         }));
       } catch { /* not a row list: nothing to follow with */ }
@@ -1797,7 +1797,7 @@ export function MasterDataTable({
           if (inheriting.length && Array.isArray(v)) {
             v = v.map((r: Row) => {
               const out = { ...r };
-              for (const c of inheriting) if (c.readOnlyFollow) out[c.key] = form[c.defaultFromField!] || "DAILY"; else if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
+              for (const c of inheriting) if (c.readOnlyFollow) out[c.key] = form[c.defaultFromField!] || ""; else if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
               return out;
             });
           }
@@ -2310,7 +2310,9 @@ export function MasterDataTable({
                     {col.readOnlyFollow && col.defaultFromField ? (
                       <input id={rowFieldId} readOnly tabIndex={-1} className={inputCls} style={S.input} aria-readonly="true"
                         value={(() => {
-                          const v = String(form[col.defaultFromField] || "DAILY");
+                          // Empty until the header KPI period is chosen (Rishi, 12 Oct) — no Daily fallback on screen.
+                          const v = String(form[col.defaultFromField] || "");
+                          if (!v) return "";
                           const label = (col.options || []).find((o) => o.value === v)?.label;
                           return label ? tLabel(label) : v;
                         })()} />
@@ -2395,7 +2397,7 @@ export function MasterDataTable({
                   </button>)}
             </div>
           ))}
-          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow)).map((c) => [c.key, String(form[c.defaultFromField!] || "DAILY")]))])}
+          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow)).map((c) => [c.key, String(form[c.defaultFromField!] || "")]))])}
             className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold" style={S.surface}>
             <Plus className="mr-1 inline h-3 w-3" />{rows.length ? t("mdAddMore") : t("mdAdd")}
           </button>}

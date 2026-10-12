@@ -116,8 +116,11 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     };
     const periods = () => Array.from(stacked.querySelectorAll("input[id$='-kpi_period']")).map((s) => (s as HTMLInputElement).value);
 
-    pickHeader("Daily");
+    // No header period yet: the line period is empty, not a Daily fallback (Rishi, 12 Oct).
     fireEvent.click(within(stacked).getByRole("button", { name: "Add" }));
+    expect(periods()).toEqual([""]);
+    pickHeader("Daily");
+    expect(periods()).toEqual(["Daily"]);
     fireEvent.click(within(stacked).getByRole("button", { name: "Add more" }));
     expect(periods()).toEqual(["Daily", "Daily"]);
     pickHeader("Weekly");
