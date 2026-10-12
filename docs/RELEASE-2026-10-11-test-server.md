@@ -52,16 +52,15 @@ Do not re-run blindly, because MySQL table changes are not transactional.
 ## Seed test master data into a tenant (optional, testing only)
 New companies start with blank master data by design. To give a test company a working set, copy the masters of an
 existing company (e.g. Triple C in `nf_devco`) into it. The target may be in another tenant database on the same MySQL
-server. Find the ids first:
-`SELECT company_id, company_code FROM nf_devco.company_master;` and the same for the target database.
+server. 
+Tenant and company are given as codes (or db name / id): `SELECT tenant_code, db_name FROM nf_master.tenant_master;`
+and `SELECT company_id, company_code FROM <db>.company_master;`. `--source-tenant` defaults to `devco`.
 
-PowerShell, repository root:
+Repository root:
 ```
-$env:SOURCE_TENANT_DATABASE="nf_devco"; $env:SOURCE_COMPANY_ID="<Triple C company id>"
-$env:TARGET_TENANT_DATABASE="nf_<newtenant>"; $env:TARGET_COMPANY_ID="<new company id>"
-pnpm nx run api:db-seed-test-masters            # plan only, writes nothing
-pnpm nx run api:db-seed-test-masters -- --verify  # writes, then rolls back (proves it would work)
-pnpm nx run api:db-seed-test-masters -- --apply
+pnpm nx run api:db-seed-test-masters -- --source-tenant devco --source-company <code> --tenant ppl --company <code>            # plan only
+pnpm nx run api:db-seed-test-masters -- --source-tenant devco --source-company <code> --tenant ppl --company <code> --verify   # writes, rolls back
+pnpm nx run api:db-seed-test-masters -- --source-tenant devco --source-company <code> --tenant ppl --company <code> --apply
 ```
 It prints a table per master table (rows to copy, rows skipped and why). A table where the target company already has
 rows is skipped, so a second run plans nothing. New ids are generated, number series restart at 0, and the target

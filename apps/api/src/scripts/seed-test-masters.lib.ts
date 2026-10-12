@@ -136,3 +136,43 @@ export function summarize(reports: Map<string, TableReport>, copiedByTable: Map<
     },
   };
 }
+
+// ---- command line + name resolution (pure) ----
+export interface SeedArgs { sourceTenant: string; sourceCompany: string; tenant: string; company: string; mode: 'plan' | 'verify' | 'apply' }
+const VALUE_FLAGS: Record<string, keyof SeedArgs> = { '--source-tenant': 'sourceTenant', '--source-company': 'sourceCompany', '--tenant': 'tenant', '--company': 'company' };
+
+export function parseSeedArgs(argv: string[]): SeedArgs {
+  const out: Record<string, string> = { sourceTenant: 'devco' };
+  let apply = false, verify = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--apply') apply = true;
+    else if (a === '--verify') verify = true;
+    else if (VALUE_FLAGS[a]) {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) throw new Error(`${a} needs a value.`);
+      out[VALUE_FLAGS[a]] = v; i += 1;
+    } else throw new Error(`Unknown argument '${a}'. Use --source-tenant, --source-company, --tenant, --company and optionally --verify or --apply.`);
+  }
+  if (apply && verify) throw new Error('Use --verify or --apply, not both.');
+  for (const [flag, k] of [['--source-company', 'sourceCompany'], ['--tenant', 'tenant'], ['--company', 'company']] as const) {
+    if (!out[k]) throw new Error(`${flag} is required.`);
+  }
+  return { ...(out as unknown as Omit<SeedArgs, 'mode'>), mode: apply ? 'apply' : verify ? 'verify' : 'plan' };
+}
+
+/** tenant_code or db_name -> db_name; exactly one match. */
+export function resolveTenantDb(input: string, tenants: { tenant_code: string; db_name: string }[]): string {
+  const hits = tenants.filter((t) => t.tenant_code === input || t.db_name === input);
+  const dbs = [...new Set(hits.map((t) => t.db_name))];
+  if (dbs.length === 1) return dbs[0];
+  throw new Error(dbs.length ? `Tenant '${input}' is ambiguous (${dbs.join(', ')}).` : `Tenant '${input}' not found by tenant_code or db_name in nf_master.tenant_master.`);
+}
+
+/** company_id or company_code -> company_id; exactly one match. */
+export function resolveCompanyId(input: string, database: string, companies: { company_id: string; company_code: string }[]): string {
+  const byId = companies.filter((c) => c.company_id === input);
+  const hits = byId.length ? byId : companies.filter((c) => c.company_code.toLowerCase() === input.toLowerCase());
+  if (hits.length === 1) return hits[0].company_id;
+  throw new Error(hits.length ? `Company '${input}' is ambiguous in ${database} (${hits.map((h) => h.company_id).join(', ')}); pass the company id.` : `Company '${input}' not found in ${database}.company_master (by company_code or company_id).`);
+}

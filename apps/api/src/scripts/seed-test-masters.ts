@@ -6,8 +6,13 @@
  * modules/core/company/copy-master-templates.ts (fresh UUIDs, FKs remapped
  * between copied rows, number series restarted at 0, child tables).
  *
- * Env: SOURCE_TENANT_DATABASE (default nf_devco), SOURCE_COMPANY_ID,
- *      TARGET_TENANT_DATABASE, TARGET_COMPANY_ID (all but the first required).
+ * Args: --source-tenant <tenant_code|db> (default devco), --source-company
+ *      <company_code|id>, --tenant <tenant_code|db>, --company <company_code|id>;
+ *      tenant codes resolve through nf_master.tenant_master, company codes
+ *      through the tenant database's company_master.
+ * Masters only for now. The pipeline (load rows per table -> resolve outside
+ * references -> planTemplateCopies id map and FK remap/ordering -> write) is
+ * table-list driven, so a later phase can add operational tables to the list.
  * Default is read-only (prints the plan); --verify writes and rolls back;
  * --apply commits. Local databases only. A table in which the target company
  * already has rows is skipped, so a second run plans nothing. References to
@@ -21,36 +26,38 @@ import { drizzle } from 'drizzle-orm/mysql2';
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import * as schema from '../core/database/schema';
 import { companyTemplateTables, planTemplateCopies, writeTemplateCopies } from '../modules/core/company/copy-master-templates';
-import { collectExternalRefs, prepareSeedSets, summarize, type RefLookup, type SourceSet } from './seed-test-masters.lib';
+import { collectExternalRefs, parseSeedArgs, prepareSeedSets, resolveCompanyId, resolveTenantDb, summarize, type RefLookup, type SourceSet } from './seed-test-masters.lib';
 
 const ident = /^[a-zA-Z0-9_]+$/;
-const need = (name: string, fallback?: string) => {
-  const v = process.env[name] || fallback;
-  if (!v) throw new Error(`${name} is required.`);
-  return v;
-};
 
 async function run() {
-  const apply = process.argv.includes('--apply');
-  const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
-    throw new Error('Use no flags (read-only), --verify, or --apply.');
-  }
+  const args = parseSeedArgs(process.argv.slice(2));
+  const apply = args.mode === 'apply';
+  const verify = args.mode === 'verify';
   const host = process.env.DATABASE_HOST || '127.0.0.1';
   if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
     throw new Error(`Refusing non-local host '${host}' — this script may only touch local databases.`);
   }
-  const sourceDb = need('SOURCE_TENANT_DATABASE', 'nf_devco');
-  const sourceCompany = need('SOURCE_COMPANY_ID');
-  const targetDb = need('TARGET_TENANT_DATABASE');
-  const targetCompany = need('TARGET_COMPANY_ID');
-  if (!ident.test(sourceDb) || !ident.test(targetDb)) throw new Error('Database names may only contain letters, digits and underscores.');
-  if (sourceDb === targetDb && sourceCompany === targetCompany) throw new Error('Source and target are the same company.');
-
   const connect = (database: string) => mysql.createConnection({
     host, port: Number(process.env.DATABASE_PORT || 3306),
     user: process.env.DATABASE_USERNAME || 'root', password: process.env.DATABASE_PASSWORD || '', database,
   });
+  const master = await connect(process.env.DATABASE_NAME || 'nf_master');
+  let tenants: { tenant_code: string; db_name: string }[];
+  try {
+    [tenants] = await master.query<RowDataPacket[]>('SELECT tenant_code, db_name FROM tenant_master') as any;
+  } finally { await master.end(); }
+  const sourceDb = resolveTenantDb(args.sourceTenant, tenants);
+  const targetDb = resolveTenantDb(args.tenant, tenants);
+  if (!ident.test(sourceDb) || !ident.test(targetDb)) throw new Error('Database names may only contain letters, digits and underscores.');
+  const companiesOf = async (database: string) => {
+    const c = await connect(database);
+    try { return (await c.query<RowDataPacket[]>('SELECT company_id, company_code FROM company_master WHERE deleted_at IS NULL'))[0] as any[]; } finally { await c.end(); }
+  };
+  const sourceCompany = resolveCompanyId(args.sourceCompany, sourceDb, await companiesOf(sourceDb));
+  const targetCompany = resolveCompanyId(args.company, targetDb, await companiesOf(targetDb));
+  if (sourceDb === targetDb && sourceCompany === targetCompany) throw new Error('Source and target are the same company.');
+
   const src = await connect(sourceDb);
   const tgt = await connect(targetDb);
   try {

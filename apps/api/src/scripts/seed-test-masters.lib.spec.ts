@@ -1,7 +1,7 @@
 import { getTableName } from 'drizzle-orm';
 import * as schema from '../core/database/schema';
 import { planTemplateCopies } from '../modules/core/company/copy-master-templates';
-import { collectExternalRefs, prepareSeedSets, summarize } from './seed-test-masters.lib';
+import { parseSeedArgs, resolveCompanyId, resolveTenantDb, collectExternalRefs, prepareSeedSets, summarize } from './seed-test-masters.lib';
 
 describe('seed-test-masters planning', () => {
   const tables = [schema.itemCategoryMaster, schema.itemMaster];
@@ -40,5 +40,25 @@ describe('seed-test-masters planning', () => {
     const { reports } = prepareSeedSets([{ table: schema.itemCategoryMaster, rows: [cat('a')] }], 'T', empty, tables);
     const s = summarize(reports, new Map([['item_category_master', 1]]), new Map([['uom_master', 'target already has 3 rows']]));
     expect(s.totals).toEqual({ copy: 1, rows_skipped: 0, tables_skipped: 1 });
+  });
+
+  it('parses arguments, defaulting the source tenant to devco', () => {
+    expect(parseSeedArgs(['--source-company', 'TRIPLEC', '--tenant', 'ppl', '--company', 'X', '--apply']))
+      .toEqual({ sourceTenant: 'devco', sourceCompany: 'TRIPLEC', tenant: 'ppl', company: 'X', mode: 'apply' });
+    expect(() => parseSeedArgs(['--tenant', 'a', '--company', 'b'])).toThrow('--source-company is required');
+    expect(() => parseSeedArgs(['--source-company', 'a', '--tenant', 'a', '--company', 'b', '--apply', '--verify'])).toThrow('not both');
+    expect(() => parseSeedArgs(['--bogus'])).toThrow('Unknown argument');
+  });
+
+  it('resolves tenant codes and company codes, refusing missing and ambiguous', () => {
+    const tenants = [{ tenant_code: 'devco', db_name: 'nf_devco' }];
+    expect(resolveTenantDb('devco', tenants)).toBe('nf_devco');
+    expect(resolveTenantDb('nf_devco', tenants)).toBe('nf_devco');
+    expect(() => resolveTenantDb('nope', tenants)).toThrow('not found');
+    const cs = [{ company_id: 'i1', company_code: 'AB' }, { company_id: 'i2', company_code: 'ab' }, { company_id: 'i3', company_code: 'CD' }];
+    expect(resolveCompanyId('cd', 'db', cs)).toBe('i3');
+    expect(resolveCompanyId('i2', 'db', cs)).toBe('i2');
+    expect(() => resolveCompanyId('AB', 'db', cs)).toThrow('ambiguous');
+    expect(() => resolveCompanyId('ZZ', 'db', cs)).toThrow('not found');
   });
 });
