@@ -771,6 +771,7 @@ export function MasterDataTable({
       const params = new URLSearchParams();
       if (companyId) params.set("companyId", companyId);
       if (search) params.set("search", search);
+      if (config.fixedFilter) params.set(config.fixedFilter.queryParam, config.fixedFilter.value);
       if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
       if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
       // Send the active filter-tab value as its configured query param.
@@ -1817,6 +1818,7 @@ export function MasterDataTable({
 
       const hasCompanyField = config.fields.some((f) => f.key === "company_id");
       if (!editing && companyId && hasCompanyField) payload.company_id = companyId;
+      if (config.fixedFilter) payload[config.fixedFilter.payloadKey] = config.fixedFilter.value;
 
       if (!editing && workspaceScope === "OPERATIONAL") {
         const activeArea = getActiveOperationalArea();

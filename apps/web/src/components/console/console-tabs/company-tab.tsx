@@ -21,6 +21,8 @@ import { Dialog } from "../../ui/dialog";
 import { useLanguage } from "@/hooks/useLanguage";
 import { API_ORIGIN } from "@/lib/api-client";
 import { FeedFarmOverrides } from "@/components/console/company/feed-farm-overrides";
+import MasterDataTable from "@/modules/master-data/MasterDataTable";
+import { departmentMaster } from "@/modules/master-data/configs";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -48,6 +50,7 @@ export const SETTINGS_SECTIONS = [
   { key: "feed", labelKey: "ctSecFeed", descKey: "ctSecFeedDesc" },
   { key: "fiscal", labelKey: "ctSecFiscal", descKey: "ctSecFiscalDesc" },
   { key: "modules", labelKey: "ctSecSectors", descKey: "ctSecSectorsDesc" },
+  { key: "departments", labelKey: "ctSecDepartments", descKey: "ctSecDepartmentsDesc" },
 ] as const;
 
 export default function CompanyTab({
@@ -82,7 +85,7 @@ export default function CompanyTab({
   // The active section is the page's to own: it drives the shell sub-sidebar
   // and the URL, so it cannot live in local state here. Falls back to internal
   // state only when no owner is passed.
-  const [ownTab] = useState<"profile" | "address" | "contact" | "localization" | "feed" | "fiscal" | "modules">("profile");
+  const [ownTab] = useState<"profile" | "address" | "contact" | "localization" | "feed" | "fiscal" | "modules" | "departments">("profile");
   const settingsTab = (section as typeof ownTab) || ownTab;
 
   // Support catalogs fetched on mount
@@ -1567,6 +1570,11 @@ export default function CompanyTab({
                     )
                   )}
 
+
+                  {/* departments TAB — the Cost Center master fixed to type DEPARTMENT */}
+                  {settingsTab === "departments" && (
+                    <MasterDataTable config={departmentMaster} showHeader={false} />
+                  )}
 
                   {/* modules TAB */}
                   {settingsTab === "modules" && (

@@ -3485,3 +3485,7 @@ MILL_MANAGER reach any user holding the role. Seeded for new companies; existing
    reads "Set at Transfer Shipment". This replaces "Sender Department (user selects)" in the 4 Oct list.
 2. **Main / Farm Location lists every Farm-type location the user may open**, not only the requisition's own farm.
 3. Line items come from the Item Master (all active items of the company) — unchanged, confirmed.
+
+## 2026-10-12 — Departments (Rishi)
+
+Managed in Company Settings > Departments; server script creates Stores / Farm Operations / Feed Mill per company and assigns existing users without a department by user type (Mill Manager role → Feed Mill; Farm Manager/Standard User → Farm Operations; admins → Stores).

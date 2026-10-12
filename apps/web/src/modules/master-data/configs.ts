@@ -2044,6 +2044,32 @@ const costCenter: MasterDataConfig = {
 };
 
 /**
+ * Departments (Rishi, 12 Oct): the company's Cost Center rows of type
+ * DEPARTMENT, managed from Company Settings > Departments. Not a master-data
+ * page of its own (it is not in MASTER_DATA_CONFIGS); it is the Cost Center
+ * master with the type fixed, so the same API, permission and validation apply.
+ */
+export const departmentMaster: MasterDataConfig = {
+  key: "department",
+  label: "Departments",
+  singular: "Department",
+  apiBase: "/cost-center",
+  idKey: "cost_center_id",
+  group: "Finance",
+  hideGroupBadge: true,
+  fixedFilter: { queryParam: "costCenterType", payloadKey: "cost_center_type", value: "DEPARTMENT" },
+  columns: [
+    { key: "cost_center_code", label: "Code" },
+    { key: "cost_center_name", label: "Name" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "cost_center_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "STORES" },
+    { key: "cost_center_name", label: "Name", type: "text", required: true, placeholder: "Stores" },
+  ],
+};
+
+/**
  * Both tables have been in the database since the start — currency_master and
  * exchange_rate, with endpoints behind them — and neither had a screen. It
  * showed: exchange_rate held zero rows, because there was no way to enter one,

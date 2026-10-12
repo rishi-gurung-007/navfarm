@@ -488,6 +488,13 @@ export interface MasterDataConfig {
   lookupFor?: string[];
   /** Sub-tabs that filter rows by a field value (e.g. resource_type: MANPOWER vs EQUIPMENT). */
   filterTabs?: MasterDataFilterTabs;
+  /**
+   * A view of a shared table fixed to one value of a column: the list is
+   * requested with `queryParam=value` and every saved row carries
+   * `payloadKey=value`, without the column appearing in the form. Departments
+   * are the Cost Center table fixed to type DEPARTMENT.
+   */
+  fixedFilter?: { queryParam: string; payloadKey: string; value: string };
 }
 
 export interface MasterDataFilterTabOption {

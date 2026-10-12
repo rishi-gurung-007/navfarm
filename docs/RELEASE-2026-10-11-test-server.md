@@ -37,6 +37,7 @@ Do not re-run blindly, because MySQL table changes are not transactional.
    pnpm nx run api:db-split-comma-serial-layers
    pnpm nx run api:db-fill-service-line-descriptions
    pnpm nx run api:db-seed-mill-manager-role
+   pnpm nx run api:db-seed-departments
    ```
    Repeat for `nf_devco`.
 6. Scheduler: it is **off** unless the API's environment has `FEED_SCHEDULER_ENABLED=true`. Turn it on only when you
