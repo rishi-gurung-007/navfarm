@@ -96,7 +96,18 @@ export function userColumns(table: AnyMySqlTable): Map<string, 'admin' | 'null'>
 }
 
 export interface OpCopy { table: AnyMySqlTable; pk: string; row: Row; deferred: Row }
+export interface UniqueIndex { name: string; columns: string[]; coalesced?: string[] } // coalesced: unique on COALESCE(col,'')
+/** Existing rows of the target database for the given key tuples: normalised tuple -> primary key. */
+export type UniqueFinder = (table: AnyMySqlTable, index: UniqueIndex, tuples: unknown[][]) => Promise<Map<string, string>>;
+export interface PlanContext {
+  tenantId: string; companyId: string; adminUserId: string;
+  /** target database unique indexes by table name (PRIMARY excluded) + a finder; both optional (tests). */
+  uniqueIndexes?: Map<string, UniqueIndex[]>; find?: UniqueFinder;
+}
+export const tupleKey = (values: unknown[]) => values.map((v) => String(v).toLowerCase().trimEnd()).join('\u0001');
+
 export interface FullPlan {
+  reused: Map<string, Map<string, number>>; // table -> unique index -> rows mapped onto an existing row
   copies: OpCopy[]; tableOrder: string[];
   jsonIds: Map<string, { replaced: number; stale: number }>;
   userCols: Map<string, string[]>; deferredCols: string[];
@@ -105,7 +116,11 @@ export interface FullPlan {
 const pkOf = (t: AnyMySqlTable) => Object.entries(getTableColumns(t)).find(([, c]) => c.primary)![0];
 
 /** `sets` must already have gone through prepareSeedSets (unresolvable references nulled / rows dropped). */
-export function planFullCopies(sets: SourceSet[], ctx: { tenantId: string; companyId: string; adminUserId: string }): FullPlan {
+export function planFullCopies(sets: SourceSet[], ctx: PlanContext): Promise<FullPlan> {
+  return planFull(sets, ctx);
+}
+
+async function planFull(sets: SourceSet[], ctx: PlanContext): Promise<FullPlan> {
   const live = sets.filter((s) => s.rows.length);
   const byName = new Map(live.map((s) => [getTableName(s.table), s]));
   // 1. identities
@@ -145,6 +160,7 @@ export function planFullCopies(sets: SourceSet[], ctx: { tenantId: string; compa
   // 3. rows
   const jsonIds = new Map<string, { replaced: number; stale: number }>();
   const userCols = new Map<string, string[]>();
+  const reused = new Map<string, Map<string, number>>();
   const deepReplace = (v: unknown, tally: { replaced: number; stale: number }): unknown => {
     const text = JSON.stringify(v);
     const out = text.replace(UUID_RE, (m) => {
@@ -154,7 +170,9 @@ export function planFullCopies(sets: SourceSet[], ctx: { tenantId: string; compa
     });
     return JSON.parse(out);
   };
+  const fresh = new Set(scoped.values());
   const copies: OpCopy[] = [];
+  const finalFix: { copy: OpCopy; original: Row; fk: Map<string, string> }[] = [];
   for (const name of order) {
     const { table, rows } = byName.get(name)!;
     const cols = getTableColumns(table); const pk = pkOf(table);
@@ -163,13 +181,13 @@ export function planFullCopies(sets: SourceSet[], ctx: { tenantId: string; compa
     const fkCols = new Map<string, string>();
     for (const l of links(table)) fkCols.set(l.column, getTableName(l.foreignTable));
     const defCols = deferred.get(name) || new Set<string>();
-    for (const original of rows) {
-      const row: Row = { ...original }; const later: Row = {};
+    const staged = rows.map((original) => {
+      const row: Row = { ...original };
       for (const [key, col] of Object.entries(cols)) {
         const v = original[key];
+        if (col.name === 'company_id') { row[key] = ctx.companyId; continue; } // tenant-level templates pulled in as dependencies become the company's own
         if (v === null || v === undefined) continue;
         if (col.name === 'tenant_id') row[key] = ctx.tenantId;
-        else if (col.name === 'company_id') row[key] = ctx.companyId;
         else if (col.primary) row[key] = scoped.get(`${name}:${v}`)!;
         else if (users.has(key) && (typeof v === 'string' && UUID_EXACT.test(v))) row[key] = users.get(key) === 'admin' ? ctx.adminUserId : null;
         else if (fkCols.has(col.name) && scoped.has(`${fkCols.get(col.name)}:${v}`)) row[key] = scoped.get(`${fkCols.get(col.name)}:${v}`);
@@ -178,12 +196,53 @@ export function planFullCopies(sets: SourceSet[], ctx: { tenantId: string; compa
           row[key] = deepReplace(v, tally); jsonIds.set(`${name}.${key}`, tally);
         } else if (typeof v === 'string' && UUID_EXACT.test(v) && global.has(v.toLowerCase())) row[key] = global.get(v.toLowerCase());
       }
-      for (const c of defCols) if (row[c] !== null && row[c] !== undefined) { later[c] = row[c]; row[c] = null; }
-      copies.push({ table, pk, row, deferred: later });
+      return { original, row, reuse: undefined as string | undefined };
+    });
+    // Unique keys of the target (e.g. tenant-level rows seeded by signup): a row whose key already exists is not
+    // inserted; everything that referred to it is pointed at the existing row. Same for two copied rows with one key.
+    const indexes = (ctx.uniqueIndexes?.get(name) || []).filter((ix) => !ix.columns.some((c) => cols[c]?.primary || defCols.has(c)));
+    const inSet = new Map<string, string>(); // `${index}|${key}` -> id used
+    for (const ix of indexes) {
+      const keyOf = (r: Row) => {
+        const vals = ix.columns.map((c) => (ix.coalesced?.includes(c) ? (r[c] ?? '') : r[c]));
+        // null never collides; a value that is a freshly created id can only collide with a sibling copy.
+        return vals.some((v) => v === null || v === undefined) ? undefined : vals;
+      };
+      const checkable = staged.filter((x) => !x.reuse).map((x) => ({ x, vals: keyOf(x.row) })).filter((e) => e.vals && !e.vals.some((v) => typeof v === 'string' && fresh.has(v)));
+      const hits = ctx.find && checkable.length ? await ctx.find(table, ix, checkable.map((e) => e.vals!)) : new Map<string, string>();
+      for (const x of staged) {
+        if (x.reuse) continue;
+        const vals = keyOf(x.row);
+        if (!vals) continue;
+        const k = tupleKey(vals);
+        const existing = hits.get(k);
+        const hit = existing ?? inSet.get(`${ix.name}|${k}`);
+        if (hit) {
+          x.reuse = hit;
+          const m = reused.get(name) || new Map<string, number>(); const label = existing ? ix.name : `${ix.name} (within the copy set)`; m.set(label, (m.get(label) || 0) + 1); reused.set(name, m);
+          fresh.delete(x.row[pk]);
+          scoped.set(`${name}:${x.original[pk]}`, hit);
+          if (typeof x.original[pk] === 'string' && UUID_EXACT.test(x.original[pk])) global.set(x.original[pk].toLowerCase(), hit);
+        } else inSet.set(`${ix.name}|${k}`, x.row[pk]);
+      }
+    }
+    for (const x of staged) {
+      if (x.reuse) continue;
+      const later: Row = {};
+      for (const c of defCols) if (x.row[c] !== null && x.row[c] !== undefined) { later[c] = x.row[c]; x.row[c] = null; }
+      const copy: OpCopy = { table, pk, row: x.row, deferred: later };
+      copies.push(copy);
+      if (Object.keys(later).length) finalFix.push({ copy, original: x.original, fk: fkCols });
     }
   }
+  // A deferred reference may point at a row that was reused after this one was staged: resolve it now.
+  for (const f of finalFix) for (const c of Object.keys(f.copy.deferred)) {
+    const t = f.fk.get(c); const v = f.original[c];
+    const mapped = t ? scoped.get(`${t}:${v}`) : undefined;
+    if (mapped) f.copy.deferred[c] = mapped;
+  }
   return {
-    copies, tableOrder: order, jsonIds, userCols,
+    copies, tableOrder: order, jsonIds, userCols, reused,
     deferredCols: [...deferred].flatMap(([t, cs]) => [...cs].map((c) => `${t}.${c}`)),
   };
 }

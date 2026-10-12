@@ -29,7 +29,7 @@ import { drizzle } from 'drizzle-orm/mysql2';
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import * as schema from '../core/database/schema';
 import { companyTemplateTables, planTemplateCopies, writeTemplateCopies } from '../modules/core/company/copy-master-templates';
-import { planFullCopies, selectTables, unkeyable, type OpCopy } from './seed-operational.lib';
+import { planFullCopies, selectTables, tupleKey, unkeyable, type OpCopy, type UniqueIndex, type UniqueFinder } from './seed-operational.lib';
 import { collectExternalRefs, links, parseSeedArgs, registerDbForeignKeys, prepareSeedSets, resolveCompanyId, resolveTenantDb, summarize, type RefLookup, type SourceSet } from './seed-test-masters.lib';
 
 const ident = /^[a-zA-Z0-9_]+$/;
@@ -237,9 +237,31 @@ async function run() {
     const prepared = prepareSeedSets(sets, tenantId, lookup, ops ? companyScoped : companyTemplateTables, ops ? sel.passthrough : new Set());
     const copiedByTable = new Map<string, number>();
     let copies: ReturnType<typeof planTemplateCopies> = [];
-    let full: ReturnType<typeof planFullCopies> | undefined;
+    let full: Awaited<ReturnType<typeof planFullCopies>> | undefined;
     if (ops) {
-      full = planFullCopies(prepared.sets, { tenantId, companyId: targetCompany, adminUserId });
+      const [ixRows] = await tgt.query<RowDataPacket[]>("SELECT table_name AS t, index_name AS i, column_name AS c, expression AS x FROM information_schema.statistics WHERE table_schema = ? AND non_unique = 0 AND index_name <> 'PRIMARY' ORDER BY table_name, index_name, seq_in_index", [targetDb]) as any;
+      const uniqueIndexes = new Map<string, UniqueIndex[]>();
+      for (const r of ixRows) {
+        const list = uniqueIndexes.get(r.t) || [];
+        const ix = list.find((x) => x.name === r.i) || (list.push({ name: r.i, columns: [] }), list[list.length - 1]);
+        const m = r.c ? undefined : /^coalesce\(`(\w+)`/i.exec(String(r.x || ''));
+        if (!r.c && !m) { ix.columns.push('?unsupported'); uniqueIndexes.set(r.t, list); continue; }
+        ix.columns.push(r.c || m![1]); if (m) (ix.coalesced ||= []).push(m[1]);
+        uniqueIndexes.set(r.t, list);
+      }
+      const find: UniqueFinder = async (table, ix, tuples) => {
+        const out = new Map<string, string>();
+        const tname = getTableName(table); const pkName = getTableColumns(table)[pk(table)].name;
+        const exprs = ix.columns.map((c) => (ix.coalesced?.includes(c) ? `COALESCE(\`${c}\`, '')` : `\`${c}\``));
+        const colSql = exprs.join(', ');
+        for (const part of chunks(tuples, 200)) {
+          const [found] = await tgt.query<RowDataPacket[]>(`SELECT \`${pkName}\` AS pk, ${exprs.map((e, i) => `${e} AS k${i}`).join(', ')} FROM \`${tname}\` WHERE (${colSql}) IN (${part.map(() => `(${ix.columns.map(() => '?').join(',')})`).join(',')})`, part.flat()) as any;
+          for (const f of found) out.set(tupleKey(ix.columns.map((_, i) => f[`k${i}`])), f.pk);
+        }
+        return out;
+      };
+      for (const [t, list] of uniqueIndexes) uniqueIndexes.set(t, list.filter((ix) => !ix.columns.includes('?unsupported')));
+      full = await planFullCopies(prepared.sets, { tenantId, companyId: targetCompany, adminUserId, uniqueIndexes, find });
       for (const c of full.copies) copiedByTable.set(getTableName(c.table), (copiedByTable.get(getTableName(c.table)) || 0) + 1);
     } else {
       copies = planTemplateCopies(prepared.sets, targetCompany);
@@ -276,6 +298,7 @@ async function run() {
     }
     if (full) {
       console.log(`\nTable set: ${sel.masters.length} master + ${sel.company.length} operational company tables + ${sel.children.length} child tables with no company_id; ${full.tableOrder.length} actually carry rows.`);
+      for (const [t, m] of full.reused) for (const [ix, n] of m) console.log(`  reused existing: ${n} ${t} row(s) (unique key ${ix}) - not inserted, dependents point at the existing row`);
       console.log(`Insert order: ${full.tableOrder.join(', ')}`);
       console.log(`Excluded (${sel.excluded.length}): ${sel.excluded.map((e) => e.table).sort().join(', ')}`);
       console.log(`Global reference tables, not cloned (${sel.globalTables.length}): ${sel.globalTables.join(', ')}`);

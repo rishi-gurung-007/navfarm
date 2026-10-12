@@ -4,7 +4,7 @@ import { is } from 'drizzle-orm';
 import * as schema from '../core/database/schema';
 import { companyTemplateTables } from '../modules/core/company/copy-master-templates';
 import { parseSeedArgs } from './seed-test-masters.lib';
-import { planFullCopies, selectTables, unkeyable, userColumns } from './seed-operational.lib';
+import { tupleKey, planFullCopies, selectTables, unkeyable, userColumns } from './seed-operational.lib';
 
 describe('seed-test-masters --with-operational', () => {
   const all = [...new Set((Object.values(schema) as unknown[]).filter((v) => is(v as any, MySqlTable)))] as any[];
@@ -34,15 +34,27 @@ describe('seed-test-masters --with-operational', () => {
     expect(userColumns(schema.noSeries).has('increment_by')).toBe(false);
   });
 
-  it('re-keys a header and its line, keeps history and swaps the user', () => {
+  it('re-keys a header and its line, keeps history and swaps the user', async () => {
     const header = { journal_id: 'h1', tenant_id: 'T0', company_id: 'C0', created_by: '11111111-1111-1111-1111-111111111111', created_at: '2026-01-01 10:00:00' } as any;
     const line = { line_id: 'l1', journal_id: 'h1', tenant_id: 'T0' } as any;
-    const plan = planFullCopies([{ table: schema.journalHeader, rows: [header] }, { table: schema.journalLine, rows: [line] }], { tenantId: 'T1', companyId: 'C1', adminUserId: 'ADMIN' });
+    const plan = await planFullCopies([{ table: schema.journalHeader, rows: [header] }, { table: schema.journalLine, rows: [line] }], { tenantId: 'T1', companyId: 'C1', adminUserId: 'ADMIN' });
     const h = plan.copies.find((c) => c.table === schema.journalHeader)!.row;
     const l = plan.copies.find((c) => c.table === schema.journalLine)!.row;
     expect(h.journal_id).not.toBe('h1');
     expect(l.journal_id).toBe(h.journal_id);
     expect(h).toMatchObject({ company_id: 'C1', tenant_id: 'T1', created_by: 'ADMIN', created_at: '2026-01-01 10:00:00' });
     expect(plan.tableOrder.indexOf('journal_header')).toBeLessThan(plan.tableOrder.indexOf('journal_line'));
+  });
+
+  it('reuses an existing target row with the same unique key and points dependents at it', async () => {
+    const stage = (id: string, code: string) => ({ stage_id: id, tenant_id: 'T0', company_id: 'C0', lob_id: 'L', stage_code: code }) as any;
+    const plan = await planFullCopies([{ table: schema.stageMaster, rows: [stage('s1', 'A'), stage('s2', 'B'), stage('s3', 'B')] }], {
+      tenantId: 'T1', companyId: 'C1', adminUserId: 'ADMIN',
+      uniqueIndexes: new Map([['stage_master', [{ name: 'uq', columns: ['tenant_id', 'lob_id', 'stage_code'] }]]]),
+      find: async (_t, _ix, tuples) => new Map(tuples.filter((v) => v[2] === 'A').map((v) => [tupleKey(v), 'EXISTING'])),
+    });
+    expect(plan.copies).toHaveLength(1);
+    expect(plan.copies[0].row.stage_code).toBe('B');
+    expect(plan.reused.get('stage_master')!.get('uq')).toBe(2);
   });
 });
