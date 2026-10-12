@@ -40,6 +40,8 @@ export interface SelectedSiloDashboard {
   nextDietItemId?: string | null;
   nextDietItemCode?: string | null;
   nextDietDate: string | null;
+  /** Why Next Diet Feed Item is blank (no feed item set for the next stage, last stage). */
+  nextDietNote?: string | null;
   siloAvailableForNextDiet: boolean | null;
   /** Checkpoint 9: the ACTIVE silo at the house whose Feed Type matches the next diet. */
   nextDietSiloId?: string | null;
@@ -115,7 +117,9 @@ export function FeedSiloDashboardCards({
       : t("fsdNo");
   const nextDiet: ReactNode = silo.nextDietItemName || silo.nextDietItemCode
     ? <><ItemValue id={silo.nextDietItemId} code={silo.nextDietItemCode} name={silo.nextDietItemName} unavailable={unavailable} />{silo.nextDietDate ? ` · ${date(silo.nextDietDate, unavailable)}` : ""}</>
-    : unavailable;
+    : silo.nextDietNote
+      ? <>{unavailable}<span className="block text-xs font-normal text-(--text-muted)">{silo.nextDietNote}</span></>
+      : unavailable;
   // Current diet: the item eaten today, else Feed in Silo — the same fallback the API uses for the name.
   const currentDiet: ReactNode = silo.currentDietItemCode
     ? <ItemValue id={silo.currentDietItemId} code={silo.currentDietItemCode} name={silo.currentDietItemName} unavailable={unavailable} />

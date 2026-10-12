@@ -1,6 +1,8 @@
 import { type ForecastResult, type ForecastSource } from './feed-forecast.engine';
 import { DEFAULT_FEED_SETTINGS, roundOrderKg } from '../../procurement/feed-requisition/feed-requisition.rules';
 import type { FarmFeedSettings } from '../../procurement/feed-requisition/feed-requisition.rules';
+import { linkEffectiveOn } from '../../../common/silo-shed-links';
+import { pickNextStageDiet, type NextStageDiet } from './next-stage-diet';
 
 /**
  * Silo dashboard (TDD Engine §4 Dashboard rows 47–64, Master Setup §1): the
@@ -27,6 +29,8 @@ export interface SiloFact {
   nonKgBalance: boolean;
   /** W2D: the linked House Shed(s) with their ids, so a screen can link them (Engine §1 row 10, Dashboard row 48). */
   houses?: Array<{ id: string; code: string; name: string }>;
+  /** silo_shed_link dates per linked shed; absent = every link in houseCodes is effective. */
+  houseLinks?: Array<{ code: string; effectiveFrom?: string | null; effectiveTo?: string | null }>;
 }
 
 export interface SiloStatusRow extends SiloFact {
@@ -44,6 +48,8 @@ export interface SiloStatusRow extends SiloFact {
   nextDietItemCode: string | null;
   nextDietItemName: string | null;
   nextDietDate: string | null;
+  /** Why Next Diet Feed Item is blank when the lifecycle cannot give one (no feed item set, last stage); null otherwise. */
+  nextDietNote: string | null;
   /** Feed form (BULK/BAGGED) of the next diet item from its Breed Lifecycle row (Master Setup row 37); null when not configured. */
   nextDietFeedType: 'BULK' | 'BAGGED' | null;
   /**
@@ -186,12 +192,21 @@ export function buildSiloStatus(args: {
   itemCodes?: Record<string, string>;
   /** Item id -> feed form of its Breed Lifecycle feed row (BULK/BAGGED). */
   itemFeedTypes?: Record<string, 'BULK' | 'BAGGED'>;
+  /** Each batch's next stage's feed item from the breed lifecycle (next-stage-diet.ts); used when the engine saw no diet change. */
+  nextStageDiets?: NextStageDiet[];
+  /** The day silo_shed_link dates are judged on (the planning date; defaults to today). */
+  asOf?: string;
 }): SiloStatusRow[] {
   const { silos, result, requisitionStatusBySilo, submissionDeadline } = args;
   const itemCodes = args.itemCodes ?? {};
   const itemFeedTypes = args.itemFeedTypes ?? {};
   const codeOf = (itemId: string | null | undefined) => (itemId && itemCodes[itemId]) || null;
   const settings = args.settings ?? DEFAULT_FEED_SETTINGS;
+  const nextStageDiets = args.nextStageDiets ?? [];
+  const asOf = args.asOf ?? new Date().toISOString().slice(0, 10);
+  /** The sheds a silo serves on `asOf`: its links in effect that day. */
+  const shedsOf = (s: SiloFact): string[] =>
+    s.houseLinks ? s.houseLinks.filter((l) => linkEffectiveOn(l, asOf)).map((l) => l.code) : s.houseCodes;
   return silos.map((silo) => {
     const sources: ForecastSource[] = result.sources.filter((s) => s.sourceType === 'SILO' && s.locationId === silo.siloId);
     const current = sources.find((s) => s.planningDayDemandKg > 0) ?? null;
@@ -224,17 +239,44 @@ export function buildSiloStatus(args: {
 
     // Checkpoint 9: the next diet's silo is found by Feed Type at the changing house (every silo here is ACTIVE —
     // the caller plans ACTIVE silos only), preferring the one the engine draws from.
-    const nextDietFeedType = change ? itemFeedTypes[change.toItemId] ?? null : null;
+    let nextItemId: string | null = change?.toItemId ?? null;
+    let nextItemName: string | null = change?.toItemName ?? null;
+    let nextDate: string | null = change?.changeDate ?? null;
+    let nextNote: string | null = null;
+    let nextDietFeedType = change ? itemFeedTypes[change.toItemId] ?? null : null;
     let nextDietSilo: SiloFact | null = null;
-    if (change && nextDietFeedType) {
-      const candidates = silos.filter((s) => s.houseCodes.includes(change.shedCode) && s.feedType === nextDietFeedType);
-      nextDietSilo = candidates.find((s) => s.siloCode === change.nextSourceCode) ?? candidates[0] ?? null;
-    } else if (change && change.nextSourceType === 'SILO') {
-      nextDietSilo = silos.find((s) => s.siloCode === change.nextSourceCode) ?? null;
+    let siloAvailableForNextDiet: boolean | null = null;
+    if (change) {
+      if (nextDietFeedType) {
+        const candidates = silos.filter((s) => s.houseCodes.includes(change.shedCode) && s.feedType === nextDietFeedType);
+        nextDietSilo = candidates.find((s) => s.siloCode === change.nextSourceCode) ?? candidates[0] ?? null;
+      } else if (change.nextSourceType === 'SILO') {
+        nextDietSilo = silos.find((s) => s.siloCode === change.nextSourceCode) ?? null;
+      }
+      siloAvailableForNextDiet = nextDietFeedType ? nextDietSilo !== null : change.nextSourceType === 'SILO';
+    } else {
+      // No diet change inside the window: the next stage's lifecycle row says what comes next (Rishi, 12 Oct).
+      // The batches in this silo's sheds can disagree; pickNextStageDiet takes an item over none, then the earliest
+      // known date, then the batch with the most heads — one answer per silo.
+      const mySheds = shedsOf(silo);
+      const pick = pickNextStageDiet(nextStageDiets.filter((d) => mySheds.includes(d.shedCode)));
+      if (pick) {
+        nextItemId = pick.itemId;
+        nextItemName = pick.itemName;
+        nextDate = pick.date;
+        nextNote = pick.reason;
+        if (pick.itemId) {
+          nextDietFeedType = itemFeedTypes[pick.itemId] ?? null;
+          // ACTIVE silos linked (in effect) to that batch's shed; Feed Type must match, the one holding the item first.
+          const atShed = silos.filter((s) => shedsOf(s).includes(pick.shedCode));
+          const matching = nextDietFeedType
+            ? atShed.filter((s) => s.feedType === nextDietFeedType)
+            : atShed.filter((s) => s.feedInSiloItemId === pick.itemId); // feed form unknown: only a silo already holding it
+          nextDietSilo = matching.find((s) => s.feedInSiloItemId === pick.itemId) ?? matching.find((s) => s.siloId === silo.siloId) ?? matching[0] ?? null;
+          siloAvailableForNextDiet = nextDietSilo !== null;
+        }
+      }
     }
-    const siloAvailableForNextDiet = !change ? null
-      : nextDietFeedType ? nextDietSilo !== null
-        : change.nextSourceType === 'SILO';
 
     const requisition = requisitionStatusBySilo.get(silo.siloId) ?? null;
     return {
@@ -246,10 +288,11 @@ export function buildSiloStatus(args: {
       daysRemaining: daysLeftValues.length ? Math.min(...daysLeftValues) : null,
       firstShortageDate: shortageDates[0] ?? null,
       projectedNeedKg,
-      nextDietItemId: change?.toItemId ?? null,
-      nextDietItemCode: codeOf(change?.toItemId),
-      nextDietItemName: change?.toItemName ?? null,
-      nextDietDate: change?.changeDate ?? null,
+      nextDietItemId: nextItemId,
+      nextDietItemCode: codeOf(nextItemId),
+      nextDietItemName: nextItemName,
+      nextDietDate: nextDate,
+      nextDietNote: nextNote,
       nextDietFeedType,
       siloAvailableForNextDiet,
       nextDietSiloId: nextDietSilo?.siloId ?? null,

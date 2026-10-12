@@ -1,4 +1,5 @@
 import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
+import { resolveNextStageDiets, type NextStageStage } from './next-stage-diet';
 import { buildSelectedSiloDashboard, buildSiloStatus, SiloFact, SiloStatusRow } from './feed-silo-status';
 
 /** Engine §4 Dashboard rows 47–64, on the workbook's Worked Example (SILO1 R1 1,500 kg, SILO2 R2 1,000 kg). */
@@ -269,5 +270,96 @@ describe('buildSelectedSiloDashboard', () => {
     });
 
     expect(shaped.silo.millLoadingBin).toEqual(assignment);
+  });
+});
+
+/** Rishi, 12 Oct: Next Diet Feed Item / Silo Available come from the breed lifecycle's next stage by display order. */
+describe('buildSiloStatus: next diet from the next stage (display order)', () => {
+  const stage = (stageId: string, sequence: number, over: Partial<NextStageStage> = {}): NextStageStage =>
+    ({ stageId, stageCode: stageId.toUpperCase(), stageName: stageId, durationDays: 10, isActive: true, sequence, companyId: 'c1', lobId: 'l1', ...over });
+  const stages = new Map<string, NextStageStage>([
+    ['grower', stage('grower', 13)], ['finisher', stage('finisher', 14)], ['weaner', stage('weaner', 12)],
+    ['retired', stage('retired', 13.5 as number, { isActive: false })], ['other-co', stage('other-co', 13.2 as number, { companyId: 'c2' })],
+  ]);
+  const row = (over: object) => ({ lifecycleId: 'x', breedId: 'br', stageId: 'finisher', itemId: 'fin', itemName: 'Finisher', fromDay: 1, toDay: 30, kgPerHeadPerDay: 2, wastagePct: 0, ...over });
+  const batch = (stageId: string, over: object = {}) => ({
+    batchNo: 'B1', breedId: 'br', shedId: 'shed', heads: 100, segments: [{ stageId, stageCode: stageId.toUpperCase(), start: '2026-10-01' }], ...over,
+  });
+  const diets = (stageId: string, feedRows: any[], farmId: string | null = null, extra: object = {}) => resolveNextStageDiets({
+    batches: [batch(stageId, extra)], stages, feedRows, farmId, planningDate: '2026-10-12',
+    shedCodeById: new Map([['shed', 'SHED-A']]), items: { fin: 'Finisher', fin2: 'Finisher Farm' }, breedNames: { br: 'Duroc' },
+  });
+  const silos = [
+    fact({ siloId: 'sa', siloCode: 'SILO-A', houseCodes: ['SHED-A'], feedType: 'BULK', feedInSiloItemId: 'gro' }),
+    fact({ siloId: 'sb', siloCode: 'SILO-B', houseCodes: ['SHED-A'], feedType: 'BAGGED', feedInSiloItemId: null }),
+  ];
+  const noChange = { sources: [], dietChanges: [] };
+  const run = (nextStageDiets: any[], itemFeedTypes: Record<string, 'BULK' | 'BAGGED'>, s = silos, result: any = noChange) =>
+    buildSiloStatus({ silos: s, result, requisitionStatusBySilo: new Map(), submissionDeadline: null, itemFeedTypes, nextStageDiets, asOf: '2026-10-12', itemCodes: { fin: 'FIN-1' } });
+
+  it('(a) a diet change the engine found in the window wins over the lifecycle', () => {
+    const dietChanges = [{
+      batchId: 'b', realBatchId: 'b' as any, batchNo: 'B1', shedCode: 'SHED-A', fromItemId: 'gro', fromItemName: 'Grower', toItemId: 'chg', toItemName: 'Changed',
+      changeDate: '2026-10-15', nextSourceType: 'SILO' as const, nextSourceCode: 'SILO-A',
+    }];
+    const [a] = run(diets('grower', [row({})]), { chg: 'BULK', fin: 'BULK' }, silos, { sources: [], dietChanges });
+    expect(a).toMatchObject({ nextDietItemId: 'chg', nextDietDate: '2026-10-15', nextDietNote: null });
+  });
+
+  it('(b) no change in the window: next stage by display order -> its feed item, date and a matching BULK silo', () => {
+    const [a, b] = run(diets('grower', [row({})]), { fin: 'BULK' });
+    // Grower (13) -> Finisher (14): not the retired 13.5 or the other company's 13.2. Grower starts 1 Oct for 10 days -> 11 Oct.
+    expect(a).toMatchObject({ nextDietItemId: 'fin', nextDietItemCode: 'FIN-1', nextDietDate: '2026-10-11', nextDietFeedType: 'BULK', siloAvailableForNextDiet: true, nextDietSiloCode: 'SILO-A', nextDietNote: null });
+    expect(b).toMatchObject({ nextDietItemId: 'fin', siloAvailableForNextDiet: true, nextDietSiloCode: 'SILO-A' });
+  });
+
+  it('(c) next item is BAGGED and the shed has no bagged silo: Silo Available is No', () => {
+    const [a] = run(diets('grower', [row({})]), { fin: 'BAGGED' }, [silos[0]]);
+    expect(a).toMatchObject({ nextDietItemId: 'fin', nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: false, nextDietSiloCode: null });
+  });
+
+  it('(d) last stage: blank next diet with a reason', () => {
+    const [a] = run(diets('finisher', [row({ stageId: 'finisher' })]), { fin: 'BULK' });
+    expect(a).toMatchObject({ nextDietItemId: null, nextDietDate: null, siloAvailableForNextDiet: null });
+    expect(a.nextDietNote).toMatch(/Last stage/);
+  });
+
+  it('(d2) next stage has no lifecycle feed item: blank with a reason naming stage and breed', () => {
+    const [a] = run(diets('grower', []), {});
+    expect(a).toMatchObject({ nextDietItemId: null, siloAvailableForNextDiet: null });
+    expect(a.nextDietNote).toBe('No feed item set for stage finisher of breed Duroc');
+  });
+
+  it('(e) a farm override lifecycle row beats the default row', () => {
+    const rows = [row({ lifecycleId: 'def' }), row({ lifecycleId: 'own', itemId: 'fin2', itemName: 'Finisher Farm', farmId: 'farm-1' })];
+    const [a] = run(diets('grower', rows, 'farm-1'), { fin2: 'BULK' });
+    expect(a).toMatchObject({ nextDietItemId: 'fin2', siloAvailableForNextDiet: true });
+    const [d] = run(diets('grower', rows, 'farm-2'), { fin: 'BULK' });
+    expect(d.nextDietItemId).toBe('fin');
+  });
+
+  it('a row not effective on the stage start is ignored', () => {
+    const [a] = run(diets('grower', [row({ effectiveTo: '2026-10-01' })]), {});
+    expect(a.nextDietItemId).toBeNull();
+  });
+
+  it('prefers the silo already holding the item, and only counts links in effect', () => {
+    const held = [
+      fact({ siloId: 'sa', siloCode: 'SILO-A', houseCodes: ['SHED-A'], feedType: 'BULK', feedInSiloItemId: 'gro' }),
+      fact({ siloId: 'sc', siloCode: 'SILO-C', houseCodes: ['SHED-A'], feedType: 'BULK', feedInSiloItemId: 'fin' }),
+      fact({ siloId: 'sd', siloCode: 'SILO-D', houseCodes: ['SHED-A'], houseLinks: [{ code: 'SHED-A', effectiveTo: '2026-09-01' }], feedType: 'BULK', feedInSiloItemId: 'fin' }),
+    ];
+    const rows = run(diets('grower', [row({})]), { fin: 'BULK' }, held);
+    expect(rows[0]).toMatchObject({ nextDietSiloCode: 'SILO-C' });
+    expect(rows[2]).toMatchObject({ nextDietItemId: null }); // SILO-D's link to the shed ended: it serves no batch
+  });
+
+  it('several batches: the one with an item, then the earliest date, then the most heads', () => {
+    const many = [
+      ...diets('grower', [row({})], null, { batchNo: 'LATE', segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-10-05' }], heads: 500 }),
+      ...diets('grower', [row({ itemId: 'fin2' })], null, { batchNo: 'EARLY', heads: 10 }),
+    ];
+    const [a] = run(many, { fin: 'BULK', fin2: 'BULK' });
+    expect(a.nextDietItemId).toBe('fin2');
   });
 });

@@ -8,6 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
+import { resolveNextStageDiets, type NextStageDiet } from './next-stage-diet';
 import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, forecastDemandHorizon, ForecastInput, ForecastResult, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
 import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
@@ -92,7 +93,7 @@ export interface FeedPlanningSilo {
   locationId: string;
   code: string;
   name: string;
-  linkedSheds: Array<{ locationId: string; code: string; name: string }>;
+  linkedSheds: Array<{ locationId: string; code: string; name: string; effectiveFrom?: string | null; effectiveTo?: string | null }>;
   feedType: 'BULK' | 'BAGGED';
   /** What it is holding now — read-only; null when it is empty. */
   feedItemCode: string | null;
@@ -175,6 +176,8 @@ export interface FeedForecastResponse {
   dietChanges: DietChange[];
   /** Plan R: each batch's current / next stage block (field specification, supporting block). */
   stages: StageBlock[];
+  /** Each batch's next stage (by display order) and its lifecycle feed item — Next Diet Feed Item when no diet change falls in the window. */
+  nextStageDiets?: NextStageDiet[];
   /** location_code -> location_name of the farm's silos and store, so the report shows the name beside the code (Engine r70). The engine stays name-free. */
   sourceNames: Record<string, string>;
   /** location_code -> configured fulfilment form; only explicit feed_in_bags is BAGGED for a silo. */
@@ -321,6 +324,10 @@ export interface StageInfo {
   minDays?: number | null;
   nextStageId: string | null;
   isActive: boolean;
+  /** stage_master.stage_sequence (Display Order), company and LOB: what the next-stage diet (next-stage-diet.ts) orders and scopes by. */
+  sequence?: number | null;
+  companyId?: string | null;
+  lobId?: string | null;
 }
 
 /** The slice of a location_master row the shed walk needs. */
@@ -1355,6 +1362,8 @@ export class FeedForecastService {
         shed_id: Shed.location_id,
         shed_code: Shed.location_code,
         shed_name: Shed.location_name,
+        effective_from: schema.siloShedLink.effective_from,
+        effective_to: schema.siloShedLink.effective_to,
       })
       .from(schema.siloShedLink)
       .innerJoin(Shed, eq(Shed.location_id, schema.siloShedLink.shed_id))
@@ -1368,7 +1377,7 @@ export class FeedForecastService {
       .orderBy(Shed.location_code);
     const shedsBySilo = new Map<string, Array<{ locationId: string; code: string; name: string }>>();
     for (const link of shedLinks) {
-      const linkedShed = { locationId: link.shed_id, code: link.shed_code, name: link.shed_name };
+      const linkedShed = { locationId: link.shed_id, code: link.shed_code, name: link.shed_name, effectiveFrom: link.effective_from ?? null, effectiveTo: link.effective_to ?? null };
       shedsBySilo.set(link.silo_id, [...(shedsBySilo.get(link.silo_id) ?? []), linkedShed]);
     }
 
@@ -1626,7 +1635,7 @@ export class FeedForecastService {
       // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
       // directly — see FeedSettingsService.resolveForFeedPlanning for why.
       const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
-      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes, stageNames } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
+      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes, stageNames, nextStageDiets } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
       const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
       const { rows, flags, sources, dietChanges, daily, sourceBalances = [] } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
@@ -1640,7 +1649,7 @@ export class FeedForecastService {
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
         rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, stageNames: stageNames ?? {}, sourceSnapshot,
+        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, stageNames: stageNames ?? {}, nextStageDiets: nextStageDiets ?? [], sourceSnapshot,
         itemCodes: input.itemCodes ?? {},
       };
     });
@@ -1732,7 +1741,7 @@ export class FeedForecastService {
         { planningDate, from: resolved.from, to: sentTo, horizonTo: forecastHorizon(planningDate) },
         clock,
       );
-      const statuses = await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings);
+      const statuses = await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings, planningDate);
       const status = statuses.find((candidate) => candidate.siloId === query.siloId);
       if (!status) throw new NotFoundException('Selected Silo is not available for feed planning.');
       const itemId = status.currentDietItemId ?? status.feedInSiloItemId;
@@ -1758,16 +1767,18 @@ export class FeedForecastService {
     farmId: string,
     companyId: string,
     tenantId: string,
-    forecast: Pick<ForecastResult, 'sources' | 'dietChanges'> & { itemCodes?: Record<string, string> },
+    forecast: Pick<ForecastResult, 'sources' | 'dietChanges'> & { itemCodes?: Record<string, string>; nextStageDiets?: NextStageDiet[] },
     submissionDeadline: string | null,
     settings: ReturnType<typeof toFarmFeedSettings>,
+    asOf?: string,
   ) {
     const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
     const requisitions = submissionDeadline ? await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline) : new Map();
-    const itemFeedTypes = await this.loadItemFeedTypes(forecast.dietChanges.map((change) => change.toItemId), tenantId);
+    const nextStageDiets = forecast.nextStageDiets ?? [];
+    const itemFeedTypes = await this.loadItemFeedTypes([...forecast.dietChanges.map((change) => change.toItemId), ...nextStageDiets.flatMap((d) => (d.itemId ? [d.itemId] : []))], tenantId);
     return buildSiloStatus({
       silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings,
-      itemCodes: forecast.itemCodes ?? {}, itemFeedTypes,
+      itemCodes: forecast.itemCodes ?? {}, itemFeedTypes, nextStageDiets, asOf,
     });
   }
 
@@ -1783,7 +1794,7 @@ export class FeedForecastService {
       const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
       const forecast = await this.computeForFarm(farmId, companyId, tenantId, draftForecastRange(planningDate), clock);
       // truckTargetKg: the farm's truck target (Engine row 62), for the TRUCK_TARGET alert.
-      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings), truckTargetKg: settings.truckTargetKg };
+      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings, planningDate), truckTargetKg: settings.truckTargetKg };
     });
   }
 
@@ -1867,6 +1878,7 @@ export class FeedForecastService {
         siloName: silo.name,
         houseCodes: silo.linkedSheds.map((shed) => shed.code),
         houses: silo.linkedSheds.map((shed) => ({ id: shed.locationId, code: shed.code, name: shed.name })),
+        houseLinks: silo.linkedSheds.map((shed) => ({ code: shed.code, effectiveFrom: shed.effectiveFrom ?? null, effectiveTo: shed.effectiveTo ?? null })),
         capacityKg: silo.capacityKg,
         belowFeedLevelKg: silo.lowLevelKg,
         aboveThresholdKg: silo.highLevelKg,
@@ -1999,7 +2011,7 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>; stageNames?: Record<string, string> }> {
+  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>; stageNames?: Record<string, string>; nextStageDiets?: NextStageDiet[] }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -2126,10 +2138,25 @@ export class FeedForecastService {
     const stageNames: Record<string, string> = {};
     for (const s of stages.values()) if (s.stageName) stageNames[s.stageId] = s.stageName;
 
+    const breedIds = [...new Set(batches.map((b) => b.breedId))];
+    const breedNames: Record<string, string> = {};
+    if (breedIds.length) {
+      const breedRows = await this.db
+        .select({ breed_id: schema.breedMaster.breed_id, breed_name: schema.breedMaster.breed_name })
+        .from(schema.breedMaster)
+        .where(and(eq(schema.breedMaster.tenant_id, tenantId), inArray(schema.breedMaster.breed_id, breedIds)));
+      for (const r of breedRows) breedNames[r.breed_id] = r.breed_name;
+    }
+    const nextStageDiets = resolveNextStageDiets({
+      batches, stages, feedRows, farmId: farm.id, planningDate,
+      shedCodeById: new Map(shedRows.map((s) => [s.location_id, s.location_code])), items, breedNames,
+    });
+
     return {
       sourceNames,
       sourceFeedTypes,
       stageNames,
+      nextStageDiets,
       input: {
         farmId: farm.id,
         planningDate,
@@ -2450,6 +2477,9 @@ export class FeedForecastService {
         min_days_before_move: schema.stageMaster.min_days_before_move,
         next_stage_id: schema.stageMaster.next_stage_id,
         is_active: schema.stageMaster.is_active,
+        stage_sequence: schema.stageMaster.stage_sequence,
+        company_id: schema.stageMaster.company_id,
+        lob_id: schema.stageMaster.lob_id,
       })
       .from(schema.stageMaster)
       .where(
@@ -2471,6 +2501,9 @@ export class FeedForecastService {
           minDays: s.min_days_before_move,
           nextStageId: s.next_stage_id,
           isActive: s.is_active,
+          sequence: s.stage_sequence ?? null,
+          companyId: s.company_id ?? null,
+          lobId: s.lob_id ?? null,
         },
       ]),
     );
