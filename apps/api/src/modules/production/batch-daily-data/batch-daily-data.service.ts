@@ -28,11 +28,26 @@ import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
+import { masterScopeConditions } from '../../../common/master-data-scope';
 
 const round = (n: number) => Math.round(n * 1e4) / 1e4;
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
+
+/** An animal named on a mortality entry, validated and with its reason resolved. */
+export interface MortalityEntry {
+  animal_id: string;
+  dead_weight_kg: number;
+  reason_id: string | null;
+  reason_text: string | null;
+  /** The reason as shown in the movement log: the master's name, or the typed text. */
+  reason_label: string;
+  /** The animal's notes before death, so the typed cause can be appended rather than replace them. */
+  notes: string | null;
+}
+
+const TERMINAL_ANIMAL_STATUSES = "('DEAD','SOLD','CULLED','SLAUGHTERED')";
 
 /**
  * A consumption entry that has passed every check and is waiting to be issued. A day post collects them
@@ -263,6 +278,10 @@ export class BatchDailyDataService {
       }
     }
 
+    // Whole-batch MORTALITY_COUNT on a batch with registered animals: the entry must name which animals died.
+    // Checked before anything is written, draft or post, so a bad choice changes nothing.
+    const mortality = await this.planMortality({ batchId, dto, line, header, existingRow, tenantId });
+
     // Draft save — records the value for later without touching inventory,
     // GL, animal_count, or a transfer. Nothing here dispatches until this
     // exact (line_id, entry_date[, animal_id]) is resubmitted with `draft`
@@ -303,6 +322,10 @@ export class BatchDailyDataService {
             updated_at: toMysqlTimestamp(),
           },
         });
+      // The choice rides with the draft; POST Day re-submits the draft without it and reads it back from here.
+      if (mortality?.supplied) {
+        await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: false, userId: userPayload?.userId });
+      }
       return this.findForDate(batchId, dto.entry_date, tenantId);
     }
 
@@ -489,12 +512,14 @@ export class BatchDailyDataService {
                   eq(schema.batchDailyData.entry_date, dto.entry_date),
                 );
             const [existing] = await this.db
-              .select({ entered_value: schema.batchDailyData.entered_value })
+              .select({ entered_value: schema.batchDailyData.entered_value, posted: schema.batchDailyData.posted })
               .from(schema.batchDailyData)
               .where(existingWhere)
               .limit(1);
+            // A draft row holds the value typed but nothing has happened yet: counting it here made the
+            // draft-then-post flow see a delta of zero, so no death was ever recorded.
             const previousEntered =
-              existing?.entered_value != null
+              existing?.entered_value != null && existing.posted
                 ? Number(existing.entered_value)
                 : 0;
             const delta = dto.entered_value - previousEntered;
@@ -509,7 +534,9 @@ export class BatchDailyDataService {
             const deathsToRecord = Math.round(delta);
             // ANIMAL_WISE names the exact animal on the entry — mark it directly
             // instead of FIFO-guessing which of the stage's animals died.
-            const dying = dto.animal_id
+            const dying = mortality
+              ? mortality.entries.map((e) => ({ animal_id: e.animal_id }))
+              : dto.animal_id
               ? deathsToRecord > 0
                 ? [{ animal_id: dto.animal_id }]
                 : []
@@ -532,6 +559,24 @@ export class BatchDailyDataService {
                     .limit(deathsToRecord)
                 : [];
             if (dying.length) {
+              if (mortality) {
+                // Only the animals named on the entry die, each with its own reason.
+                for (const e of mortality.entries) {
+                  await this.db
+                    .update(schema.animalRegister)
+                    .set({
+                      is_active: false,
+                      status: 'DEAD',
+                      disposal_type: 'DIED',
+                      disposal_date: dto.entry_date,
+                      disposal_reason_id: e.reason_id ?? null,
+                      notes: e.reason_text ? [e.notes, `Cause of death: ${e.reason_text}`].filter(Boolean).join('\n') : e.notes ?? null,
+                      updated_by: userPayload?.userId || null,
+                      updated_at: toMysqlTimestamp(),
+                    })
+                    .where(eq(schema.animalRegister.animal_id, e.animal_id));
+                }
+              } else {
               await this.db
                 .update(schema.animalRegister)
                 .set({
@@ -548,6 +593,7 @@ export class BatchDailyDataService {
                     dying.map((a) => a.animal_id),
                   ),
                 );
+              }
 
               // AnimalService.dispose() logs MORTALITY on the same registry
               // flip — this scheduler-driven path was silently skipping it,
@@ -561,9 +607,13 @@ export class BatchDailyDataService {
                   eventDate: dto.entry_date,
                   fromBatchId: batchId,
                   fromStageId: header.stage_id,
-                  reason: 'Recorded via daily mortality count entry',
+                  reason: (mortality?.entries.find((e) => e.animal_id === dead.animal_id)?.reason_label ?? 'Recorded via daily mortality count entry').slice(0, 200),
+                  remarks: mortality?.entries.find((e) => e.animal_id === dead.animal_id) ? `Dead weight ${mortality.entries.find((e) => e.animal_id === dead.animal_id)!.dead_weight_kg} kg` : undefined,
                   userId: userPayload?.userId,
                 });
+              }
+              if (mortality) {
+                await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: true, userId: userPayload?.userId });
               }
             }
           }
@@ -1382,6 +1432,271 @@ export class BatchDailyDataService {
       }
       throw err;
     }
+  }
+
+  /** Registered animals still alive in the batch at the stage the line belongs to - the ones that can have died. */
+  private async aliveAnimals(batchId: string, stageId: string | null | undefined) {
+    return this.db
+      .select({
+        animal_id: schema.animalRegister.animal_id,
+        animal_code: schema.animalRegister.animal_code,
+        rfid_tag: schema.animalRegister.rfid_tag,
+        notes: schema.animalRegister.notes,
+      })
+      .from(schema.animalRegister)
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batchId),
+          ...(stageId ? [eq(schema.animalRegister.current_stage_id, stageId)] : []),
+          eq(schema.animalRegister.is_active, true),
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+        ),
+      )
+      .orderBy(schema.animalRegister.animal_code);
+  }
+
+  /**
+   * Which animals a whole-batch MORTALITY_COUNT entry kills (Rishi, 12 Oct). Null when the rule does not apply: any
+   * other line, or an animal-wise entry (which already names its one animal).
+   *
+   * The deaths an entry adds are its count less what was already POSTED for the line and date (a draft row has
+   * recorded nothing). Exactly that many animals must be named, capped at the registered animals still alive: a batch
+   * registered in part cannot name animals it does not have, and one with none registered keeps the count alone.
+   * A correction upward therefore names only the extra animals; a correction downward adds no deaths, names none,
+   * and leaves the animals already marked dead as they are (reviving one is an animal-register action).
+   * A draft may omit the choice; posting may not. A draft's choice is stored, and POST Day - which re-submits the
+   * draft row without it - reads it back.
+   */
+  private async planMortality(args: {
+    batchId: string;
+    dto: CreateBatchDailyDataDto;
+    line: typeof schema.schedulerLine.$inferSelect;
+    header: typeof schema.schedulerHeader.$inferSelect;
+    existingRow: typeof schema.batchDailyData.$inferSelect | undefined;
+    tenantId: string;
+  }): Promise<{ supplied: boolean; entries: MortalityEntry[] } | null> {
+    const { batchId, dto, line, header, existingRow, tenantId } = args;
+    const applies = line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT' && !dto.animal_id;
+    if (!applies) {
+      if (dto.mortality_animals !== undefined) {
+        throw new BadRequestException(
+          'Animals that died are named only on the mortality count line of a whole-batch entry.',
+        );
+      }
+      return null;
+    }
+    if (dto.entered_value == null) {
+      if (dto.mortality_animals?.length) throw new BadRequestException('Enter the mortality count before naming the animals.');
+      return { supplied: false, entries: [] };
+    }
+
+    const alive = await this.aliveAnimals(batchId, header.stage_id);
+    const previous = existingRow?.posted && existingRow.entered_value != null ? Number(existingRow.entered_value) : 0;
+    const newDeaths = Math.max(0, Math.round(dto.entered_value - previous));
+    const required = Math.min(newDeaths, alive.length);
+
+    let chosen = dto.mortality_animals as
+      | Array<{ animal_id: string; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
+      | undefined;
+    const supplied = chosen !== undefined;
+    if (!chosen && !dto.draft && required > 0) {
+      const stored = await this.db
+        .select()
+        .from(schema.batchMortalityAnimal)
+        .where(
+          and(
+            eq(schema.batchMortalityAnimal.line_id, line.line_id),
+            eq(schema.batchMortalityAnimal.entry_date, dto.entry_date),
+            eq(schema.batchMortalityAnimal.posted, false),
+          ),
+        );
+      if (stored.length) {
+        chosen = stored.map((r) => ({
+          animal_id: r.animal_id,
+          dead_weight_kg: Number(r.dead_weight_kg),
+          reason_id: r.reason_id,
+          reason_text: r.reason_text,
+        }));
+      }
+    }
+    if (!chosen) {
+      if (!dto.draft && required > 0) {
+        throw new BadRequestException(
+          `Choose the ${required} animal${required === 1 ? '' : 's'} that died, with the dead weight and the reason for each.`,
+        );
+      }
+      return { supplied: false, entries: [] };
+    }
+
+    if (chosen.length !== required) {
+      throw new BadRequestException(
+        `This entry records ${required} death${required === 1 ? '' : 's'} - choose exactly ${required} animal${required === 1 ? '' : 's'} (${chosen.length} chosen).`,
+      );
+    }
+    const aliveById = new Map(alive.map((a) => [a.animal_id, a]));
+    const seen = new Set<string>();
+    const reasonIds = [...new Set(chosen.map((c) => c.reason_id).filter((id): id is string => !!id))];
+    const reasons = reasonIds.length
+      ? await this.db
+          .select()
+          .from(schema.reasonMaster)
+          .where(
+            and(
+              inArray(schema.reasonMaster.reason_id, reasonIds),
+              eq(schema.reasonMaster.tenant_id, tenantId),
+              eq(schema.reasonMaster.is_active, true),
+              ...masterScopeConditions(this.cls, schema.reasonMaster, header.company_id),
+            ),
+          )
+      : [];
+    const reasonById = new Map(reasons.map((r) => [r.reason_id, r]));
+
+    const entries: MortalityEntry[] = [];
+    for (const c of chosen) {
+      const animal = aliveById.get(c.animal_id);
+      if (!animal) {
+        throw new BadRequestException(
+          `Animal '${c.animal_id}' is not alive in this batch at this line's stage, so it cannot be recorded as dead here.`,
+        );
+      }
+      if (seen.has(c.animal_id)) {
+        throw new BadRequestException(`Animal '${animal.animal_code}' is chosen more than once.`);
+      }
+      seen.add(c.animal_id);
+      const weight = Number(c.dead_weight_kg);
+      if (!Number.isFinite(weight) || weight <= 0) {
+        throw new BadRequestException(`Enter the dead weight (kg, more than 0) for animal '${animal.animal_code}'.`);
+      }
+      const text = c.reason_text?.trim() || null;
+      if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
+        throw new BadRequestException(
+          `Give animal '${animal.animal_code}' a reason from the Reason Master, or type one - not both, not neither.`,
+        );
+      }
+      let label: string;
+      if (c.reason_id) {
+        const reason = reasonById.get(c.reason_id);
+        if (!reason) {
+          throw new BadRequestException(`Reason '${c.reason_id}' is not available in this workspace.`);
+        }
+        if (reason.category !== 'MORTALITY') {
+          throw new BadRequestException(
+            `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY - a death needs a mortality reason.`,
+          );
+        }
+        label = reason.reason_name;
+      } else {
+        label = text!;
+      }
+      entries.push({
+        animal_id: c.animal_id,
+        dead_weight_kg: Math.round(weight * 1000) / 1000,
+        reason_id: c.reason_id ?? null,
+        reason_text: text,
+        reason_label: label,
+        notes: animal.notes ?? null,
+      });
+    }
+    return { supplied: supplied || entries.length > 0, entries };
+  }
+
+  /** Replaces the line's not-yet-posted choice for the date with this one (a draft), or records it as posted. */
+  private async storeMortalityAnimals(args: {
+    tenantId: string;
+    companyId: string;
+    batchId: string;
+    line: { line_id: string };
+    dto: CreateBatchDailyDataDto;
+    entries: MortalityEntry[];
+    posted: boolean;
+    userId?: string;
+  }) {
+    const { tenantId, companyId, batchId, line, dto, entries, posted, userId } = args;
+    await this.db
+      .delete(schema.batchMortalityAnimal)
+      .where(
+        and(
+          eq(schema.batchMortalityAnimal.line_id, line.line_id),
+          eq(schema.batchMortalityAnimal.entry_date, dto.entry_date),
+          eq(schema.batchMortalityAnimal.posted, false),
+        ),
+      );
+    if (!entries.length) return;
+    await this.db.insert(schema.batchMortalityAnimal).values(
+      entries.map((e) => ({
+        detail_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: companyId,
+        batch_id: batchId,
+        line_id: line.line_id,
+        entry_date: dto.entry_date,
+        animal_id: e.animal_id,
+        dead_weight_kg: e.dead_weight_kg.toString(),
+        reason_id: e.reason_id,
+        reason_text: e.reason_text,
+        posted,
+        created_by: userId || null,
+      })),
+    );
+  }
+
+  /**
+   * What Data Entry needs to decide whether a mortality line asks for animals: the registered animals still alive
+   * in the batch at the line's stage. Empty means the batch is count-only for this line.
+   */
+  async mortalityCandidates(batchId: string, lineId: string, date?: string) {
+    await this.batchService.findOne(batchId);
+    const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, lineId)).limit(1);
+    if (!line) throw new NotFoundException(`Scheduler line '${lineId}' not found.`);
+    const [header] = await this.db
+      .select()
+      .from(schema.schedulerHeader)
+      .where(eq(schema.schedulerHeader.scheduler_id, line.scheduler_id))
+      .limit(1);
+    if (!header || header.batch_id !== batchId) {
+      throw new BadRequestException(`Line '${lineId}' does not belong to batch '${batchId}'.`);
+    }
+    const alive = line.kpi_metric === 'MORTALITY_COUNT' ? await this.aliveAnimals(batchId, header.stage_id) : [];
+    // What the date already has posted for the line: a correction names only the deaths it adds beyond that.
+    const [posted] = date
+      ? await this.db
+          .select({ entered_value: schema.batchDailyData.entered_value })
+          .from(schema.batchDailyData)
+          .where(
+            and(
+              eq(schema.batchDailyData.line_id, lineId),
+              eq(schema.batchDailyData.entry_date, date),
+              isNull(schema.batchDailyData.animal_id),
+              eq(schema.batchDailyData.posted, true),
+            ),
+          )
+          .limit(1)
+      : [];
+    // A saved draft's choice, so the screen can show it again instead of asking for it twice.
+    const draft = date
+      ? await this.db
+          .select()
+          .from(schema.batchMortalityAnimal)
+          .where(
+            and(
+              eq(schema.batchMortalityAnimal.line_id, lineId),
+              eq(schema.batchMortalityAnimal.entry_date, date),
+              eq(schema.batchMortalityAnimal.posted, false),
+            ),
+          )
+      : [];
+    return {
+      line_id: lineId,
+      draft_animals: draft.map((d) => ({
+        animal_id: d.animal_id,
+        dead_weight_kg: Number(d.dead_weight_kg),
+        reason_id: d.reason_id,
+        reason_text: d.reason_text,
+      })),
+      already_posted: posted?.entered_value != null ? Number(posted.entered_value) : 0,
+      stage_id: header.stage_id ?? null,
+      animals: alive.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, rfid_tag: a.rfid_tag })),
+    };
   }
 
   async findForDate(batchId: string, entryDate: string, tenantId: string) {

@@ -3210,6 +3210,35 @@ export const batchDailyData = mysqlTable(
 );
 
 /**
+ * Data Entry mortality line, registered batches only (Rishi, 12 Oct): the count entered must be matched by the
+ * animals that died, each with its dead body weight and a reason (a Reason Master row, or free text when the
+ * master has none). batch_mortality_detail cannot hold this - it is 1:1 with a batch_transaction, and a daily
+ * entry creates none. `posted` is false while the choice is saved with a draft, true once the day is posted.
+ */
+export const batchMortalityAnimal = mysqlTable(
+  'batch_mortality_animal',
+  {
+    detail_id: varchar('detail_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    batch_id: varchar('batch_id', { length: 36 }).notNull(),
+    line_id: varchar('line_id', { length: 36 }).notNull(),
+    entry_date: date('entry_date', { mode: 'string' }).notNull(),
+    animal_id: varchar('animal_id', { length: 36 }).notNull(),
+    dead_weight_kg: decimal('dead_weight_kg', { precision: 10, scale: 3 }).notNull(),
+    reason_id: varchar('reason_id', { length: 36 }),
+    reason_text: varchar('reason_text', { length: 200 }),
+    posted: boolean('posted').default(false).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uqLineDateAnimal: uniqueIndex('uq_bma_line_date_animal').on(table.line_id, table.entry_date, table.animal_id),
+  }),
+);
+
+/**
  * Append-only log of every batch/stage/location movement an animal makes —
  * the single source both the animal-detail HISTORY tab and the LOCATION
  * TRACEABILITY tab read (Rishi's decision, 2026-09-08: "Both read one

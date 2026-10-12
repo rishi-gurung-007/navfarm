@@ -69,6 +69,23 @@ export class BatchDailyDataController {
     return { success: true, message: 'Consumption source resolved.', data: result };
   }
 
+  @Get('mortality-candidates')
+  @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
+  @ApiOperation({
+    summary: 'Registered animals still alive at a mortality line\'s stage - the ones a mortality count must name',
+  })
+  @ApiParam({ name: 'batchId', description: 'Batch UUID' })
+  @ApiQuery({ name: 'lineId', description: 'Scheduler line UUID', required: true })
+  @ApiQuery({ name: 'date', description: 'YYYY-MM-DD - the entry date, for what is already posted', required: false })
+  async mortalityCandidates(
+    @Param('batchId') batchId: string,
+    @Query('lineId') lineId: string,
+    @Query('date') date?: string,
+  ) {
+    const result = await this.batchDailyDataService.mortalityCandidates(batchId, lineId, date);
+    return { success: true, message: 'Mortality candidates resolved.', data: result };
+  }
+
   @Get()
   @RequirePermission('PRODUCTION', 'BATCH_ENTRY', 'view')
   @ApiOperation({

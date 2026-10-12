@@ -34,5 +34,8 @@ describe('BatchDailyDataController authorization', () => {
     expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.consumptionSource)).toEqual({
       moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY', action: 'view',
     });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, prototype.mortalityCandidates)).toEqual({
+      moduleCode: 'PRODUCTION', resource: 'BATCH_ENTRY', action: 'view',
+    });
   });
 });

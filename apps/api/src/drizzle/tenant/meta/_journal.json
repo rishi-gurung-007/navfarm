@@ -1240,6 +1240,13 @@
       "when": 1792000000045,
       "tag": "0177_item_feed_form",
       "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "5",
+      "when": 1792000000046,
+      "tag": "0178_batch_mortality_animal",
+      "breakpoints": true
     }
   ]
 }

@@ -4620,6 +4620,19 @@ export const translations = {
     ctFeedBagToleranceHint: "Empty bags times bag size is checked against feed consumed on POST Day; a larger difference is flagged. Blank flags any difference.",
     // W4G4 (11 Oct)
     deEmptyBags: "Empty bags",
+    // Mortality animals (12 Oct)
+    deMortButton: "Animals that died ({{chosen}}/{{required}})",
+    deMortTitle: "Animals that died",
+    deMortHelp: "The mortality count adds {{required}} death(s). Choose that many animals, then enter the dead weight and the reason for each.",
+    deMortChosen: "{{chosen}} of {{required}} chosen",
+    deMortSearch: "Search by tag or animal ID",
+    deMortNone: "No registered animals are alive at this stage.",
+    deMortWeight: "Dead weight (kg)",
+    deMortReason: "Reason for death",
+    deMortOther: "Other — type the reason",
+    deMortOtherText: "Type the reason",
+    deMortDone: "Done",
+    deMortPostBlocked: "Choose the animals that died, with the dead weight and the reason for each, before posting.",
     // LFO (11 Oct)
     lcFarmOverride: "Farm (override)",
     lcFarmOverrideHelp: "Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",

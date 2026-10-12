@@ -10,7 +10,32 @@ import {
   IsInt,
   Min,
   MaxLength,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+/** One animal that died, as named on a MORTALITY_COUNT entry for a batch with registered animals. */
+export class MortalityAnimalDto {
+  @ApiProperty({ description: 'animal_register UUID - must be alive in this batch, at this line\'s stage' })
+  @IsUUID()
+  animal_id: string;
+
+  @ApiProperty({ description: 'Dead body weight in kg (> 0)' })
+  @IsNumber()
+  dead_weight_kg: number;
+
+  @ApiProperty({ description: 'Reason Master row of category MORTALITY. Give this or reason_text, not both.', required: false })
+  @IsOptional()
+  @IsUUID()
+  reason_id?: string;
+
+  @ApiProperty({ description: 'Free-text reason, when the Reason Master has none that fits. Give this or reason_id, not both.', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason_text?: string;
+}
 
 export class CreateBatchDailyDataDto {
   @ApiProperty({ description: 'scheduler_line UUID this entry answers' })
@@ -107,4 +132,16 @@ export class CreateBatchDailyDataDto {
   @IsOptional()
   @IsBoolean()
   draft?: boolean;
+
+  @ApiProperty({
+    description:
+      'MORTALITY_COUNT line of a batch with registered animals - the animals that died, with dead weight and reason. Exactly as many as the deaths this entry adds (entered count less what was already posted for the line and date, capped at the registered animals alive), so a correction upward names only the extra animals. Omit on a draft save to choose later; required to post. Batches with no registered animals keep the count alone.',
+    required: false,
+    type: [MortalityAnimalDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MortalityAnimalDto)
+  mortality_animals?: MortalityAnimalDto[];
 }

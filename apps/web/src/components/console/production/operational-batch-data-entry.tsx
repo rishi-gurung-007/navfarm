@@ -59,6 +59,8 @@ import AnimalDetailsModal from '@/components/console/piggery/animal-details-moda
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import { EmptyBagsField } from './entry/empty-bags-field';
+import { MortalityAnimalsField, draftPicks, useMortalityCandidates } from './entry/mortality-animals-field';
+import { mortalityPayload, mortalityPicksComplete, requiredMortalityAnimals, type MortalityPick } from './entry/mortality-animals';
 import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
@@ -221,10 +223,39 @@ export default function OperationalBatchDataEntry() {
   const [dataEntryDestBatches, setDataEntryDestBatches] = useState<
     Record<string, string>
   >({});
+  // Mortality count on a batch with registered animals: the animals chosen as dead, keyed like the values.
+  const [dataEntryMortality, setDataEntryMortality] = useState<
+    Record<string, MortalityPick[]>
+  >({});
 
   const isAnimalWise =
     (currentBatch as any)?.trackingMode === 'ANIMAL_WISE' ||
     (currentBatch as any)?.tracking_mode === 'ANIMAL_WISE';
+  // Whole-batch mortality lines ask which registered animals died; a line with no registered animal alive is count-only.
+  useEffect(() => {
+    setDataEntryMortality({});
+  }, [selectedBatchId, selectedDate]);
+  const mortalityLineIds = dataEntryLines
+    .filter((l) => l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT')
+    .map((l) => l.line_id as string);
+  const mortalityInfo = useMortalityCandidates(currentBatch?.id, selectedDate, mortalityLineIds, !isAnimalWise, dataEntryLines);
+  /** The animals this line must name for the value typed, and who is chosen so far; null when it is count-only. */
+  const mortalityNeed = (line: Row) => {
+    const info = mortalityInfo[line.line_id];
+    if (isAnimalWise || !info || info.animals.length === 0) return null;
+    const key = entryKey(line.line_id, undefined);
+    const raw = dataEntryValues[key];
+    const required = requiredMortalityAnimals(
+      raw === undefined || raw === '' ? 0 : Number(raw),
+      info.already_posted,
+      info.animals.length,
+    );
+    return { info, key, required, picks: dataEntryMortality[key] ?? draftPicks(info) };
+  };
+  const mortalityIncomplete = dataEntryLines.some((line) => {
+    const need = mortalityNeed(line);
+    return !!need && !mortalityPicksComplete(need.picks, need.required);
+  });
   const selectedStage = dataEntryStages.find(
     (s) => s.stage_id === selectedStageId,
   );
@@ -993,6 +1024,10 @@ export default function OperationalBatchDataEntry() {
     if (isTextCapture(line)) return !!dataEntryTexts[key];
     const rawValue = dataEntryValues[key];
     if (rawValue === undefined || rawValue === '') return false;
+    if (!animalId) {
+      const need = mortalityNeed(line);
+      if (need && !mortalityPicksComplete(need.picks, need.required)) return false;
+    }
     const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
     if (isTracked) {
       if (line.is_serial_tracked && animalId === '__ALL__') {
@@ -1040,6 +1075,10 @@ export default function OperationalBatchDataEntry() {
       }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
+      if (!animalId) {
+        const need = mortalityNeed(line);
+        if (need && need.required > 0) payload.mortality_animals = mortalityPayload(need.picks);
+      }
       const bags = dataEntryEmptyBags[key];
       if (line.is_bagged_feed && bags !== undefined && bags !== '' && Number.isInteger(Number(bags)) && Number(bags) >= 0) {
         payload.empty_bags = Number(bags);
@@ -1334,6 +1373,7 @@ export default function OperationalBatchDataEntry() {
       setDataEntryLotNos({});
       setDataEntryEmptyBags({});
       setDataEntryDestBatches({});
+      setDataEntryMortality({});
       setSelectedDate(nextDate);
       loadPostedDates();
       setTimeout(() => setSaveSuccessMsg(''), 5000);
@@ -1742,6 +1782,19 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
           )}
+          {!animalId && (() => {
+            const need = mortalityNeed(line);
+            if (!need || need.required <= 0) return null;
+            return (
+              <MortalityAnimalsField
+                animals={need.info.animals}
+                required={need.required}
+                picks={need.picks}
+                onChange={(next) => setDataEntryMortality((v) => ({ ...v, [need.key]: next }))}
+                disabled={rowLocked}
+              />
+            );
+          })()}
           {line.is_bagged_feed && (
             <EmptyBagsField
               label={t('deEmptyBags')}
@@ -2512,12 +2565,15 @@ export default function OperationalBatchDataEntry() {
                   onClick={handlePostEntry}
                   disabled={
                     posting ||
+                    mortalityIncomplete ||
                     locked ||
                     isFutureDate ||
                     (!!nextPendingDate && selectedDate !== nextPendingDate)
                   }
                   title={
-                    isFutureDate
+                    mortalityIncomplete
+                      ? t('deMortPostBlocked')
+                      : isFutureDate
                       ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
                       : !!nextPendingDate && selectedDate !== nextPendingDate
                         ? `Only the next pending date (${nextPendingDate}) can be posted.`
