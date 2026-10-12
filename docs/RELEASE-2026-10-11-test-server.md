@@ -68,6 +68,30 @@ tenant and company are stamped on every row. References to rows outside the copi
 if they exist in the target database, mapped by code, otherwise set to empty or the dependent row is skipped and
 listed. Transactions, users, roles and other companies are never touched. Local database host only.
 
+### Clone the whole company, operations included (`--with-operational`)
+Add `--with-operational` to copy not just the masters but the company's operational data as well: batches and every
+`batch_*` table, schedulers, animals and breeding, stock (inventory ledger, goods receipts, adjustments, transfers,
+shipments and receipts), feed (forecast runs, requisitions, plans, consolidations, loading sheets, stock counts, alerts),
+journals, bio-asset ledger, approvals, and the operational areas. History and inactive rows are included.
+```
+pnpm nx run api:db-seed-test-masters -- --source-company <code> --tenant <tenant> --company <code> --with-operational            # plan
+pnpm nx run api:db-seed-test-masters -- --source-company <code> --tenant <tenant> --company <code> --with-operational --verify   # writes, rolls back
+pnpm nx run api:db-seed-test-masters -- --source-company <code> --tenant <tenant> --company <code> --with-operational --apply
+```
+Rules:
+- **The target company must have no operations yet.** The run refuses if it already has any `batch_header`,
+  `inventory_ledger` or `journal_header` row. Any other table in which it already has rows is skipped (listed).
+- Everything is written in one transaction in foreign-key order; a failure leaves the target untouched.
+- Every row gets a new id; all references are remapped. User columns (`created_by`, `posted_by`, `approved_by`,
+  `requester_user_id` ...) become the target company's `COMPANY_ADMIN` user (else the tenant's `TENANT_ADMIN`);
+  override with `--as-user <email>`. Users, roles, sessions, audit and notification logs and company configuration are
+  never copied.
+- Document numbers are kept. Number series and the tenant inventory entry counter keep the source's current values, so
+  new postings do not repeat a copied number.
+- Ids inside JSON columns (forecast snapshots, protocols, `feed_forecast_run_line_ids`) are remapped when they match a
+  copied row; ids that match nothing stay as they were (printed in the summary).
+- Inactive masters that an operational row points to are copied too, so history stays consistent.
+
 ## Rollback
 Stop the API and web, restore each database from its step-2 dump, check out the previous commit (`214b2a9f`, release 1),
 then rebuild and start.

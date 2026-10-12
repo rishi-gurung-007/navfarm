@@ -22,15 +22,34 @@ const OWNER_COLUMNS = ['tenant_id', 'company_id', 'created_by', 'updated_by'];
 const key = (table: string, value: unknown) => `${table}:${value}`;
 const primaryName = (table: AnyMySqlTable) => Object.entries(getTableColumns(table)).find(([, c]) => c.primary)![0];
 
-interface Link { column: string; notNull: boolean; foreignTable: AnyMySqlTable; foreignColumn: string }
-function links(table: AnyMySqlTable): Link[] {
+export interface Link { column: string; notNull: boolean; foreignTable: AnyMySqlTable; foreignColumn: string }
+/** Foreign keys that exist in the database but are not declared in schema.ts (hand-written migrations). */
+const dbForeignKeys = new Map<string, { column: string; foreignTable: AnyMySqlTable; foreignColumn: string }[]>();
+export function registerDbForeignKeys(fks: { table: string; column: string; refTable: string; refColumn: string }[], all: AnyMySqlTable[]) {
+  const byName = new Map(all.map((t) => [getTableName(t), t]));
+  dbForeignKeys.clear();
+  for (const f of fks) {
+    const ft = byName.get(f.refTable);
+    if (!ft || !byName.has(f.table)) continue;
+    dbForeignKeys.set(f.table, [...(dbForeignKeys.get(f.table) || []), { column: f.column, foreignTable: ft, foreignColumn: f.refColumn }]);
+  }
+}
+
+export function links(table: AnyMySqlTable, passthrough: ReadonlySet<string> = new Set()): Link[] {
   const out: Link[] = [];
   for (const fk of getTableConfig(table).foreignKeys) {
     const ref = fk.reference();
+    if (passthrough.has(getTableName(ref.foreignTable))) continue; // kept untouched (users: replaced later)
     ref.columns.forEach((c, i) => {
       if (OWNER_COLUMNS.includes(c.name)) return;
       out.push({ column: c.name, notNull: c.notNull, foreignTable: ref.foreignTable, foreignColumn: ref.foreignColumns[i].name });
     });
+  }
+  const cols = Object.values(getTableColumns(table));
+  for (const f of dbForeignKeys.get(getTableName(table)) || []) {
+    if (OWNER_COLUMNS.includes(f.column) || out.some((l) => l.column === f.column)) continue;
+    if (passthrough.has(getTableName(f.foreignTable))) continue;
+    out.push({ column: f.column, notNull: !!cols.find((c) => c.name === f.column)?.notNull, foreignTable: f.foreignTable, foreignColumn: f.foreignColumn });
   }
   return out;
 }
@@ -42,11 +61,11 @@ const internalIds = (sets: SourceSet[]) => {
 };
 
 /** Every reference whose target is not one of the copied rows. */
-export function collectExternalRefs(sets: SourceSet[], companyTables: AnyMySqlTable[]): ExternalRef[] {
+export function collectExternalRefs(sets: SourceSet[], companyTables: AnyMySqlTable[], passthrough: ReadonlySet<string> = new Set()): ExternalRef[] {
   const internal = internalIds(sets);
   const seen = new Map<string, ExternalRef>();
   for (const { table, rows } of sets) {
-    for (const l of links(table)) {
+    for (const l of links(table, passthrough)) {
       const ft = getTableName(l.foreignTable);
       for (const r of rows) {
         const v = r[l.column];
@@ -61,7 +80,7 @@ export function collectExternalRefs(sets: SourceSet[], companyTables: AnyMySqlTa
 /** Stamps the target tenant and resolves external references. Returns the rows
  * to hand to planTemplateCopies plus a per-table report of what was dropped. */
 export function prepareSeedSets(
-  input: SourceSet[], targetTenantId: string, lookup: RefLookup, companyTables: AnyMySqlTable[],
+  input: SourceSet[], targetTenantId: string, lookup: RefLookup, companyTables: AnyMySqlTable[], passthrough: ReadonlySet<string> = new Set(),
 ): { sets: SourceSet[]; reports: Map<string, TableReport> } {
   const reports = new Map<string, TableReport>();
   const report = (t: string) => { if (!reports.has(t)) reports.set(t, { table: t, copied: 0, skipped: [], nulled: 0 }); return reports.get(t)!; };
@@ -80,7 +99,7 @@ export function prepareSeedSets(
       for (const row of rows) {
         let drop: string | undefined;
         const next = { ...row };
-        for (const l of links(table)) {
+        for (const l of links(table, passthrough)) {
           const v = row[l.column];
           if (!v) continue;
           const ft = getTableName(l.foreignTable);
@@ -108,7 +127,7 @@ export function prepareSeedSets(
     const name = getTableName(table);
     for (const row of rows) {
       const src = original.get(key(name, row[primaryName(table)]))!;
-      for (const l of links(table)) if (src[l.column] && !row[l.column]) report(name).nulled += 1;
+      for (const l of links(table, passthrough)) if (src[l.column] && !row[l.column]) report(name).nulled += 1;
     }
   }
   return { sets, reports };
@@ -124,7 +143,7 @@ export function summarize(reports: Map<string, TableReport>, copiedByTable: Map<
       copy: copiedByTable.get(table) ?? 0,
       rows_skipped: r?.skipped.length ?? 0,
       refs_nulled: r?.nulled ?? 0,
-      note: reason ?? (r?.skipped.length ? r.skipped[0] : ''),
+      note: (reason ?? (r?.skipped.length ? r.skipped[0] : '')).slice(0, 90),
     };
   });
   return {
@@ -138,27 +157,28 @@ export function summarize(reports: Map<string, TableReport>, copiedByTable: Map<
 }
 
 // ---- command line + name resolution (pure) ----
-export interface SeedArgs { sourceTenant: string; sourceCompany: string; tenant: string; company: string; mode: 'plan' | 'verify' | 'apply' }
-const VALUE_FLAGS: Record<string, keyof SeedArgs> = { '--source-tenant': 'sourceTenant', '--source-company': 'sourceCompany', '--tenant': 'tenant', '--company': 'company' };
+export interface SeedArgs { sourceTenant: string; sourceCompany: string; tenant: string; company: string; mode: 'plan' | 'verify' | 'apply'; withOperational: boolean; asUser?: string }
+const VALUE_FLAGS: Record<string, keyof SeedArgs> = { '--source-tenant': 'sourceTenant', '--source-company': 'sourceCompany', '--tenant': 'tenant', '--company': 'company', '--as-user': 'asUser' };
 
 export function parseSeedArgs(argv: string[]): SeedArgs {
   const out: Record<string, string> = { sourceTenant: 'devco' };
-  let apply = false, verify = false;
+  let apply = false, verify = false, withOperational = false;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--apply') apply = true;
     else if (a === '--verify') verify = true;
+    else if (a === '--with-operational') withOperational = true;
     else if (VALUE_FLAGS[a]) {
       const v = argv[i + 1];
       if (!v || v.startsWith('--')) throw new Error(`${a} needs a value.`);
       out[VALUE_FLAGS[a]] = v; i += 1;
-    } else throw new Error(`Unknown argument '${a}'. Use --source-tenant, --source-company, --tenant, --company and optionally --verify or --apply.`);
+    } else throw new Error(`Unknown argument '${a}'. Use --source-tenant, --source-company, --tenant, --company and optionally --with-operational, --as-user, --verify or --apply.`);
   }
   if (apply && verify) throw new Error('Use --verify or --apply, not both.');
   for (const [flag, k] of [['--source-company', 'sourceCompany'], ['--tenant', 'tenant'], ['--company', 'company']] as const) {
     if (!out[k]) throw new Error(`${flag} is required.`);
   }
-  return { ...(out as unknown as Omit<SeedArgs, 'mode'>), mode: apply ? 'apply' : verify ? 'verify' : 'plan' };
+  return { ...(out as unknown as Omit<SeedArgs, 'mode' | 'withOperational'>), withOperational, mode: apply ? 'apply' : verify ? 'verify' : 'plan' };
 }
 
 /** tenant_code or db_name -> db_name; exactly one match. */

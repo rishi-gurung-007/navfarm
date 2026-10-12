@@ -44,7 +44,7 @@ describe('seed-test-masters planning', () => {
 
   it('parses arguments, defaulting the source tenant to devco', () => {
     expect(parseSeedArgs(['--source-company', 'TRIPLEC', '--tenant', 'ppl', '--company', 'X', '--apply']))
-      .toEqual({ sourceTenant: 'devco', sourceCompany: 'TRIPLEC', tenant: 'ppl', company: 'X', mode: 'apply' });
+      .toEqual({ sourceTenant: 'devco', sourceCompany: 'TRIPLEC', tenant: 'ppl', company: 'X', mode: 'apply', withOperational: false });
     expect(() => parseSeedArgs(['--tenant', 'a', '--company', 'b'])).toThrow('--source-company is required');
     expect(() => parseSeedArgs(['--source-company', 'a', '--tenant', 'a', '--company', 'b', '--apply', '--verify'])).toThrow('not both');
     expect(() => parseSeedArgs(['--bogus'])).toThrow('Unknown argument');
