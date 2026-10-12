@@ -257,6 +257,7 @@ export class TenantService {
             auto_move_on_day: stage.auto_move_on_day ?? null,
             alt_trigger_condition: stage.alt_trigger_condition || null,
             data_entry_form: stage.data_entry_form,
+            applicable_gender: (stage as { applicable_gender?: string | null }).applicable_gender ?? null,
             show_on_animal_card: stage.show_on_animal_card,
             stage_description: stage.stage_description,
             sort_order: stage.stage_sequence,

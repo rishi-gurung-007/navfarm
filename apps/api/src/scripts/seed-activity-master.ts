@@ -182,7 +182,7 @@ export const STANDARD_ACTIVITY_SEEDS = [
     line_type: 'DESCRIPTIVE' as const,
     is_piggery_specific: true,
     default_occurrence: 'WEEKLY',
-    default_kpi_metric: 'BCS',
+    default_kpi_metric: 'BCS_SCORE',
     default_capture_per: 'AVERAGE',
     default_is_mandatory: false,
     description: 'Visual and palpation scoring of sow fatness (1 to 5 scale).',

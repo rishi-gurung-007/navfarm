@@ -205,6 +205,8 @@ async function run() {
             document_type: 'ITEM',
             master_type: 'ITEM',
             no_series_code: t.seriesPrefix,
+            // `prefix` is what series generation reads first; no_series_code alone left it NULL.
+            prefix: t.seriesPrefix,
             seq_length: 4,
             is_default: false,
             manual_nos: false,

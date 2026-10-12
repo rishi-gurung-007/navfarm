@@ -2057,6 +2057,8 @@ export const stageMaster = mysqlTable('stage_master', {
   alt_trigger_condition: varchar('alt_trigger_condition', { length: 50 }),
   required_kpi_to_pass: json('required_kpi_to_pass'),
   data_entry_form: varchar('data_entry_form', { length: 20 }).default('STANDARD').notNull(), // STANDARD, FARROWING, WEANING, SLAUGHTER
+  // F or M when only that sex belongs in the stage; null for either. Set by the client per stage.
+  applicable_gender: char('applicable_gender', { length: 1 }),
   scheduler_auto_create: boolean('scheduler_auto_create').default(true).notNull(),
   show_on_animal_card: boolean('show_on_animal_card').default(true).notNull(),
   icon_code: varchar('icon_code', { length: 30 }),
@@ -2316,6 +2318,10 @@ export const batchTransaction = mysqlTable('batch_transaction', {
   // batch (unchanged historical behaviour); set when a caller scoped the
   // entry to one or more specific animals in the batch.
   animal_id: varchar('animal_id', { length: 36 }).references(() => animalRegister.animal_id, { onDelete: 'set null' }),
+  // Set when the posted day this belongs to was reopened and its postings reversed. The row stays as the record of what
+  // was posted; readers of batch cost and activity skip it.
+  reversed_at: timestamp('reversed_at', { mode: 'string' }),
+  reversed_by: varchar('reversed_by', { length: 36 }),
   // The farm_record this transaction was generated from. Nullable and SET NULL
   // on delete: costing reads this table directly and must survive a record
   // being voided — the column carries provenance, not a dependency.
@@ -2391,6 +2397,8 @@ export const batchTransfer = mysqlTable('batch_transfer', {
   // FULL_BATCH moves every remaining animal and closes the source; PARTIAL
   // moves only the selected animals and leaves the source running.
   transfer_type: varchar('transfer_type', { length: 20 }).default('PARTIAL').notNull(),
+  // ANIMALS: one line per registered animal. HEADCOUNT: a number of head between batch-wise batches (no animals, no lines).
+  transfer_basis: varchar('transfer_basis', { length: 10 }).default('ANIMALS').notNull(),
   head_count: decimal('head_count', { precision: 18, scale: 4 }).default('0.0000').notNull(),
   transfer_value: decimal('transfer_value', { precision: 18, scale: 4 }).default('0.0000').notNull(),
   reason: varchar('reason', { length: 100 }),
@@ -2738,6 +2746,9 @@ export const schedulerHeader = mysqlTable('scheduler_header', {
   actual_end_date: date('actual_end_date', { mode: 'string' }),
   animal_count: decimal('animal_count', { precision: 14, scale: 4 }).notNull(),
   auto_generated: boolean('auto_generated').default(true).notNull(),
+  // The system_scheduler this header's lines were copied from, when the user
+  // accepted one — a record of origin only; the lines are a snapshot.
+  system_scheduler_id: varchar('system_scheduler_id', { length: 36 }),
   approved_by: varchar('approved_by', { length: 36 }),
   approved_at: timestamp('approved_at', { mode: 'string' }),
   notes: text('notes'),
@@ -2842,6 +2853,97 @@ export const schedulerLineCustomDays = mysqlTable('scheduler_line_custom_days', 
 }));
 
 /**
+ * A stage's standard activities with no batch — the template a batch's
+ * scheduler_header copies its lines from when the user accepts it at batch
+ * creation or stage transfer. Kept in its own tables, not as a batch-less
+ * scheduler_header, because every reader of scheduler_header/scheduler_line
+ * (feed forecast, data entry, costing) takes a row there as a real batch's
+ * plan. The copy is a snapshot: editing a system scheduler never touches a
+ * batch scheduler already made from it.
+ *
+ * One per company + LOB + stage code + breed. Matched on stage_code, not
+ * stage_id: a stage exists both as the tenant template row and as the
+ * company's own copy, and batches point at either, so the same stage has two
+ * ids. breed_id NULL means "every breed", and a breed-specific row wins over
+ * it; breed_key ('*' for NULL) carries the uniqueness because MySQL lets
+ * NULLs repeat in a unique index.
+ */
+export const systemScheduler = mysqlTable('system_scheduler', {
+  system_scheduler_id: varchar('system_scheduler_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  lob_id: varchar('lob_id', { length: 36 }).notNull().references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
+  stage_id: varchar('stage_id', { length: 36 }).notNull().references(() => stageMaster.stage_id, { onDelete: 'restrict' }),
+  stage_code: varchar('stage_code', { length: 50 }).notNull(),
+  breed_id: varchar('breed_id', { length: 36 }).references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+  breed_key: varchar('breed_key', { length: 36 }).default('*').notNull(),
+  scheduler_name: varchar('scheduler_name', { length: 150 }).notNull(),
+  data_entry_level: varchar('data_entry_level', { length: 10 }).default('SHED').notNull(), // FARM, SHED, PEN
+  is_active: boolean('is_active').default(true).notNull(),
+  notes: text('notes'),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqCompanyStageBreed: uniqueIndex('uq_system_scheduler_company_stage_breed').on(table.company_id, table.lob_id, table.stage_code, table.breed_key),
+}));
+
+/** A system scheduler's activity — scheduler_line's columns less the batch-only
+ * ones (stage/nob/lob flow from the header; source and lifecycle_ref_id belong
+ * to the batch copy). Validated by the same LINE TYPE REFERENCE rules. */
+export const systemSchedulerLine = mysqlTable('system_scheduler_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  system_scheduler_id: varchar('system_scheduler_id', { length: 36 }).notNull(),
+  line_seq: int('line_seq').notNull(),
+  line_type: varchar('line_type', { length: 20 }).notNull(),
+  activity_name: varchar('activity_name', { length: 200 }).notNull(),
+  occurrence: varchar('occurrence', { length: 10 }).default('DAILY').notNull(),
+  start_day: int('start_day').default(1).notNull(),
+  end_day: int('end_day'),
+  day_of_week: int('day_of_week'),
+  is_mandatory: boolean('is_mandatory').default(false).notNull(),
+  item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  item_description: varchar('item_description', { length: 200 }),
+  standard_qty: decimal('standard_qty', { precision: 18, scale: 6 }),
+  qty_basis: varchar('qty_basis', { length: 20 }),
+  allow_qty_edit: boolean('allow_qty_edit').default(true).notNull(),
+  lot_required: boolean('lot_required').default(false).notNull(),
+  creates_inventory: boolean('creates_inventory').default(false).notNull(),
+  output_lot_auto: boolean('output_lot_auto').default(true).notNull(),
+  output_basis: varchar('output_basis', { length: 20 }),
+  auto_triggers_stage: boolean('auto_triggers_stage').default(false).notNull(),
+  kpi_metric: varchar('kpi_metric', { length: 50 }),
+  kpi_uom: varchar('kpi_uom', { length: 20 }),
+  std_value: decimal('std_value', { precision: 18, scale: 4 }),
+  lower_alert_limit: decimal('lower_alert_limit', { precision: 18, scale: 4 }),
+  upper_alert_limit: decimal('upper_alert_limit', { precision: 18, scale: 4 }),
+  alert_severity: varchar('alert_severity', { length: 10 }).default('WARNING'),
+  capture_per: varchar('capture_per', { length: 20 }),
+  overhead_category: varchar('overhead_category', { length: 30 }),
+  gl_account: varchar('gl_account', { length: 20 }),
+  estimated_cost: decimal('estimated_cost', { precision: 18, scale: 4 }),
+  resource_id: varchar('resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'restrict' }),
+  is_active: boolean('is_active').default(true).notNull(),
+}, (table) => ({
+  systemSchedulerFk: foreignKey({
+    columns: [table.system_scheduler_id],
+    foreignColumns: [systemScheduler.system_scheduler_id],
+    name: 'system_scheduler_line_header_fk',
+  }).onDelete('cascade'),
+  uqSystemSchedulerLineSeq: uniqueIndex('uq_system_scheduler_line_seq').on(table.system_scheduler_id, table.line_seq),
+}));
+
+/** Day numbers of a CUSTOM-occurrence system line — same shape as scheduler_line_custom_days. */
+export const systemSchedulerLineCustomDays = mysqlTable('system_scheduler_line_custom_days', {
+  custom_day_id: varchar('custom_day_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => systemSchedulerLine.line_id, { onDelete: 'cascade' }),
+  day_number: int('day_number').notNull(),
+}, (table) => ({
+  uqLineDay: uniqueIndex('uq_system_scheduler_line_custom_days_line_day').on(table.line_id, table.day_number),
+}));
+
+/**
  * One row per (scheduler_line, entry_date) — what a farmer actually entered on the
  * daily data-entry screen, and what posting resulted from it. `posted`/`posting_reference`
  * record the outcome of BatchDailyDataService's per-line_type dispatch (see the "LINE TYPE
@@ -2878,6 +2980,15 @@ export const batchDailyData = mysqlTable(
     lot_no: varchar('lot_no', { length: 80 }),
     serial_no: varchar('serial_no', { length: 100 }),
     resource_id: varchar('resource_id', { length: 36 }),
+    // Chosen at entry (0148): the item an OUTPUT takes out of the batch, when not the line's own; the batch a TRANSFER
+    // or a weaning sends head to. Kept on the draft so posting the day uses them.
+    item_id: varchar('item_id', { length: 36 }),
+    destination_batch_id: varchar('destination_batch_id', { length: 36 }),
+    // The other boars a semen collection is pooled with (0152): a JSON array of animal ids; null on every other row.
+    pool_animal_ids: text('pool_animal_ids'),
+    // MORTALITY lines: the Reason Master reason (category MORTALITY) picked for the death, kept on the draft so
+    // posting the day records it on the animal.
+    reason_id: varchar('reason_id', { length: 36 }),
     posted: boolean('posted').default(false).notNull(),
     posting_reference: varchar('posting_reference', { length: 36 }), // inventory_ledger.ledger_id, journal_header.journal_id, or destination batch_id
     alert_triggered: boolean('alert_triggered').default(false).notNull(),
@@ -3595,13 +3706,19 @@ export const animalRegister = mysqlTable('animal_register', {
   grading: varchar('grading', { length: 20 }),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(), // ACTIVE, QUARANTINE, SICK, PREGNANT, LACTATING, DRY, CULLED, DEAD, SOLD, SLAUGHTERED
   disposal_date: date('disposal_date', { mode: 'string' }),
-  disposal_type: varchar('disposal_type', { length: 20 }), // SOLD, SLAUGHTERED, DIED, TRANSFERRED
+  disposal_type: varchar('disposal_type', { length: 20 }), // SOLD, SLAUGHTERED, DIED, TRANSFERRED, CULLED
   // Reason Master Template (added 2026-09-21): MORTALITY (21 codes) and CULL
   // (10 codes) exist to be picked here, at the point an animal leaves the
   // register — the reason master had no consumer anywhere before this. Nullable:
   // SOLD/TRANSFERRED disposals commonly have no catalog reason behind them, and
   // existing disposed animals predate this column.
   disposal_reason_id: varchar('disposal_reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
+  // Culling (BBP-1, migration 0149): taken out of production, then culled on or after that date; the weight at
+  // exit and where the animal went are recorded for every exit.
+  out_of_production_date: date('out_of_production_date', { mode: 'string' }),
+  cull_date: date('cull_date', { mode: 'string' }),
+  exit_weight_kg: decimal('exit_weight_kg', { precision: 10, scale: 3 }),
+  disposal_destination: varchar('disposal_destination', { length: 100 }),
   disposal_value: decimal('disposal_value', { precision: 18, scale: 4 }),
   gain_loss_on_disposal: decimal('gain_loss_on_disposal', { precision: 18, scale: 4 }), // CALC at disposal
   notes: text('notes'),
@@ -3891,6 +4008,9 @@ export const farrowingRecord = mysqlTable('farrowing_record', {
   sow_animal_id: varchar('sow_animal_id', { length: 36 }).notNull().references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
   breeding_id: varchar('breeding_id', { length: 36 }).references(() => breedingRecord.breeding_id, { onDelete: 'set null' }),
   batch_id: varchar('batch_id', { length: 36 }).references(() => batchHeader.batch_id, { onDelete: 'set null' }),
+  // The piglets this litter produced, held as a lot of the piglet bio-asset item in a batch-wise batch (batch_id above is the sow's own).
+  piglet_batch_id: varchar('piglet_batch_id', { length: 36 }),
+  piglet_lot_no: varchar('piglet_lot_no', { length: 50 }),
   farrowing_date: date('farrowing_date', { mode: 'string' }).notNull(),
   piglets_born_total: int('piglets_born_total').default(0).notNull(),
   piglets_born_live: int('piglets_born_live').default(0).notNull(),
@@ -3932,11 +4052,39 @@ export const semenBatch = mysqlTable('semen_batch', {
   doses_sold: decimal('doses_sold', { precision: 10, scale: 2 }).default('0.00'),
   output_item_id: varchar('output_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'set null' }),
   inventory_posted: boolean('inventory_posted').default(false).notNull(),
+  // Set when the collection is posted to inventory: the lot, its expiry, the store holding it and its lot-level QR.
+  lot_no: varchar('lot_no', { length: 50 }),
+  expiry_date: date('expiry_date', { mode: 'string' }),
+  warehouse_id: varchar('warehouse_id', { length: 36 }),
+  qr_id: varchar('qr_id', { length: 36 }),
+  // Quality on the collection (migration 0150, audit G8): carried on the lot's QR.
+  volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
+  motility_pct: decimal('motility_pct', { precision: 5, scale: 2 }),
+  concentration_m_per_ml: decimal('concentration_m_per_ml', { precision: 10, scale: 2 }),
   notes: text('notes'),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
 });
+
+/**
+ * The boars that went into a pooled semen lot (migration 0152). `semen_batch.boar_animal_id` is the primary boar; a
+ * lot pooled from several has one row here per boar, with the share of the lot's running cost he carried. A lot from a
+ * single boar has no rows.
+ */
+export const semenBatchBoar = mysqlTable(
+  'semen_batch_boar',
+  {
+    semen_batch_id: varchar('semen_batch_id', { length: 36 }).notNull().references(() => semenBatch.semen_batch_id, { onDelete: 'cascade' }),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 }).notNull().references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    boar_batch_id: varchar('boar_batch_id', { length: 36 }),
+    sort_order: int('sort_order').default(0).notNull(),
+    cost_share: decimal('cost_share', { precision: 18, scale: 4 }).default('0.0000').notNull(),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.semen_batch_id, t.boar_animal_id] })],
+);
 
 export const breedingRecordRelations = relations(breedingRecord, ({ one, many }) => ({
   company: one(companyMaster, { fields: [breedingRecord.company_id], references: [companyMaster.company_id] }),

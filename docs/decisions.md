@@ -2462,3 +2462,544 @@ lot tracked, seeded by chapter `09-costing-scenarios`; `pnpm verify:costing` reh
   The entry now takes the in-date lot with the nearest expiry first, then the next, noted on the entry. Expired
   stock is never taken on the system's own choice. A lot the user names still wins; the price follows the item's
   costing method either way.
+
+## 9 Oct 2026 — System schedulers: a stage's standard activities, offered to every batch (Arun's instruction, awaiting Rishi)
+
+Extends, does not reverse, the 13 Sep decision that a scheduler belongs to one batch and stage. That stays true of
+`scheduler_header`; what is added is a template a batch's scheduler can be filled from.
+
+- **A system scheduler** holds a stage's standard activities with no batch, dates or animal count: one per company +
+  LOB + stage + breed, the breed optional (empty covers every breed; a breed's own one is used ahead of it). It lives
+  in its own tables (`system_scheduler`, `system_scheduler_line`, `system_scheduler_line_custom_days`, migration
+  0142), not as a batch-less `scheduler_header`, because about 170 queries — feed forecast, data entry, costing —
+  read every `scheduler_header`/`scheduler_line` row as a real batch's plan.
+- **Matched on the stage's LOB and code, not its id.** Every stage exists twice in `stage_master` (the tenant template
+  row and the company's copy) and batches point at either; in nf_devco on 9 Oct the two batches used tenant rows and
+  the six schedulers used both.
+- **When a batch's scheduler is about to be created** — batch creation, and every stage transfer — and a system
+  scheduler matches, the user is asked whether to copy its activities. Yes copies them (a snapshot: later edits to
+  the system scheduler never reach the batch; `scheduler_header.system_scheduler_id` records the origin and copied
+  lines carry `source = 'SYSTEM'`). No gives an empty scheduler to fill by hand. With no matching system scheduler
+  nothing is asked and the lines come from `breed_lifecycle_stages` exactly as before ("keep both").
+- **Where nobody is there to ask** (data entry creating a missing scheduler, batch split, transfer posting) a matching
+  system scheduler is copied, otherwise the breed lifecycle fills it. This default is ours, not Arun's.
+- A system scheduler with no active lines is no match, so an unfinished one never suppresses the lifecycle lines.
+- **An empty scheduler can be filled later** (Arun, 9 Oct): while a batch's scheduler — or a system scheduler — has no
+  active line, Copy Activities fills it from a system scheduler or from another batch's scheduler, in one
+  transaction; refused once it has a line. From a system scheduler the lines are `SYSTEM` and the origin is recorded;
+  from a batch's scheduler they are `MANUAL`.
+- The Schedulers page has two tabs (labels Arun's, 9 Oct): **Draft** lists the system schedulers, **Active** the batch
+  schedulers grouped by batch with running ones first.
+
+Proved by `pnpm nx run api:verify-system-schedulers` (real services and MySQL, rolled back): 18 checks covering
+create/duplicate, breed preference, copy, decline, lifecycle fallback, the twin stage ids, transfer and delete.
+
+## 9 Oct 2026 — One mortality path and parity at weaning (Arun's instruction, awaiting Rishi)
+
+Plan: `docs/superpowers/plans/2026-10-09-batch-animal-output-linkage.md`, Phase 1.
+
+- **A death is one posting, however it is entered.** The daily "Daily Mortality Check" line, the Mortality & Health
+  panel (`POST /batch/:id/mortality`, all animals or none) and Animal → Dispose with `DIED` inside an ACTIVE batch now
+  all go through `BatchService.addTransaction` `MORTALITY`. Before, each did a different part: data entry flipped the
+  animal and the stage headcount but wrote no batch transaction, closing-quantity change or cost write-off; the panel
+  wrote the transaction but left the animal alive and the headcount unchanged and showed success when the save failed;
+  Dispose changed the register only. One death entered on two screens used to be counted twice.
+- **An animal-wise batch refuses an anonymous head count**: the register would keep the dead animal alive. Name the
+  animal. A named animal must be a live member of the batch; a reason must be a MORTALITY reason (the 21 codes).
+- **The stage headcount (`scheduler_header.animal_count`) drops with the death** — the animal's own stage for an
+  animal-wise batch. Without it the next stage's scheduler is created from the prior count and brings the dead back.
+- **Parity counts completed pregnancies, post weaning** (the 7 Sep decision, TDD row 27 / BBP "Parity incremented on
+  weaning POST") is now what the code does. Farrowing numbers the litter (`parity_count + 1`) and no longer changes
+  `parity_count`; weaning sets it to the litter's number (idempotent — posting a weaning twice counts nothing twice);
+  moving a sow out of a farrowing stage no longer adds one. A sow still LACTATING cannot farrow again until weaned.
+- **Not decided here:** whether stillborn/mummified piglets are mortality; write-off at the animal's own book value
+  (today the batch's running unit cost is used — a gilt booked at 18 000 was written off at 31 366.67 in the proving
+  run); reversal when a mortality count is lowered.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards): two sows in a BIO_ASSET batch recorded
+dead in one request (batch closing quantity 4→2, bio state, two MORTALITY transactions with detail, both animals DEAD
+with the reason, two movement-log rows, tagged bio-asset ledger rows, LACTATION headcount 4→2, two balanced journals);
+a gilt disposed `DIED` in a STANDARD batch (closing 3→2, FLUSH headcount 3→2, animal-level bio ledger, balanced
+journal); refusals for a head count on an animal-wise batch, an animal from another batch, an unknown reason, an
+already-dead animal and a second farrowing while nursing; a sow farrowed (parity stays 0) then weaned (parity 1,
+unchanged on a repeat post).
+
+## 9 Oct 2026 — Stage headcounts, transfers and stage moves (Arun's instruction, awaiting Rishi)
+
+Plan: `docs/superpowers/plans/2026-10-09-batch-animal-output-linkage.md`, Phase 2.
+
+- **An animal-wise batch's scheduler counts the animals at its own stage**, matched by stage code (every stage exists
+  as a tenant row and a company copy, and animals and schedulers point at either). Before, every header carried the
+  whole batch's count — in `nf_devco` the headers said 4, 3 and 3 where the register held 2, 1 and 2 — and KPI
+  alerts used it. A death, a transfer, a batch stage move and an animal stage move now all recount from the register
+  (`SchedulerHeaderService.syncAnimalWiseCounts`); a new scheduler starts from the animals actually at its stage.
+- **Animals keep their own stage when transferred into an animal-wise batch.** The transfer used to overwrite it with
+  the destination batch's nominal header stage, which turned a pregnant sow into a quarantine animal. A batch-wise
+  destination still moves them to its one stage. A stage may be named (`to_stage_id`, posted transfers only — a draft
+  has nowhere to keep it).
+- **A transfer posts in one transaction** — animals, both batches' value and head count, ledger legs, movement log and
+  status. The bio-asset ledger legs use each animal's own item, not the source batch's first input line.
+- **Minimum days count from when the animal entered its current stage** (latest movement into a stage it was not
+  already in; the farm entry date only when the log has none). Counting from the farm entry date meant a sow long on
+  the farm never looked early: a move 1 day into Farrowing (minimum 2) passed because she had been on the farm 8 days.
+- **A batch stage move** takes an event date (not in the future), and in an animal-wise batch the stage being left is
+  closed only once nobody is still in it. The stages panel no longer sends a canned remark that satisfied the
+  minimum-days check every time, no longer hides a refusal, and asks for the user's reason instead.
+- **Not done (needs a decision or a migration):** transfers between batch-wise batches (needs the headcount-transfer
+  decision), a stage "applies to sex" setting (schema), and the BIO_ASSET write-off value question below.
+
+**Open accounting question from the Phase 1 review.** For an animal in a BIO_ASSET batch, the death writes off the
+batch's average carrying value per head (in `nf_devco` 943 for sows booked at 28 000, because the batch's carrying
+value is 3 772 for four sows). `AnimalService.dispose()` used to write the animal's own book value to the bio-asset
+ledger. Which is right depends on whether the batch carrying value or the animal's book value is the ledger of
+record; not decided here.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards): a gilt transferred into an animal-wise
+batch kept FLUSH, both ledger legs carried her own item, closing quantity and bio state moved, and every scheduler
+header then matched the register; a sow moved 1 day after entering Farrowing was refused ("current: 1 days") although
+she had been on the farm 8, then allowed at 2 days, and the Farrowing/Lactation headcounts went 2/2 → 1/3; a death
+recounted Lactation 3 → 2; a stage named for the wrong line of business, a draft with a stage, and a future-dated
+batch stage move were all refused.
+
+## 9 Oct 2026 — Phase 2 completed: head-count transfers, stage sex setting, split/merge fixes (Arun's instruction, awaiting Rishi)
+
+Migration `0143_headcount_transfer_and_stage_gender` (additive; applied to nf_system and nf_devco by
+`db-migrate-all-tenants`; backups taken first).
+
+- **Head-count transfer between batch-wise batches** (`POST /batch-transfer/from/:id` with `quantity`; split and merge
+  take it too). A batch-wise batch has no animal rows, so the transfer carries a number of head
+  (`batch_transfer.transfer_basis = 'HEADCOUNT'`, no lines) and the source's average carrying value for that many head.
+  Posts both batches' bio-asset state, closing quantity, an out and an in ledger leg, and recounts the schedulers.
+  **Bio-asset batches only.** Moving head between cost-accumulated (STANDARD/FIFO) batches would also have to move their
+  accumulated cost, which is a costing decision nobody has made, so it is refused with that explanation. The recorded
+  default (ours, awaiting Rishi) is that head-count transfers between bio-asset batches are allowed.
+- **`stage_master.applicable_gender`** (F, M or empty for either; "Applies To" on the Stage master). Enforced when an
+  animal is registered into a stage, moved to one, transferred into one by name, or carried along by a batch stage move
+  (animals of the other sex stay behind). **Nothing is pre-set**: which stages are sow-only or boar-only is the client's
+  to say, so an unconfigured stage admits everyone exactly as before. The demo still has boars in GESTATION until the
+  stages are configured.
+- **Split and merge fixes found on the way.** A child split out of an animal-wise batch was created batch-wise (its
+  animals were invisible to the stage counts and to data entry); it is now the same kind of batch as its parent. A
+  split child started with the moved quantity already in it and the transfer added it again (2n); it now starts empty.
+  Split and merge run as one transaction, so a refused transfer no longer leaves an empty child batch behind.
+- **A batch stage move no longer re-stages dead animals** (the cascade had no live filter, so every dead animal at the
+  stage was moved and given a movement it never made).
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards, migration kept): two batch-wise batches
+(100 head at 25 000, 10 head at 2 500); 40 head moved (60 / 15 000 and 50 / 12 500, ledger legs ±40 / ±10 000, scheduler
+counts 60 and 50); refusals for more head than held, a head count into an animal-wise batch, and a batch-wise move with
+neither animals nor a number; a 20-head split (child 20 / 5 000, parent 40 / 10 000), 2 head dying in the child
+(18 / 4 500), the child merged back (parent 58 / 14 500, child CLOSED); Productive Sow set to female-only refused a boar
+by stage move and by transfer, admitted a sow, and was cleared.
+
+## 9 Oct 2026 — Phase 2 closed: transfer lines, destination stage, reversing a posted transfer (Arun's instruction, awaiting Rishi)
+
+- **A TRANSFER line in data entry picks nobody.** An animal-wise batch names the exact animal on every entry, and that
+  animal is the whole transfer. A batch-wise batch holds no registered animals (a Count Only batch cannot), so its
+  TRANSFER line moves a number of head — the value entered, else the line's standard quantity. The old
+  oldest-registered-first guess could only ever run against a batch with no animals in it.
+- **Animals entering an animal-wise batch without a stage named keep the one they have, and it must be a stage of the
+  destination's line of business**; otherwise the transfer is refused and asks for a destination stage. (Before, a sow
+  could arrive carrying a stage that the destination's schedulers and data entry know nothing about.)
+- **A posted transfer is reversed by a transfer of its own** (`POST /batch-transfer/:id/reverse`, "Reverse transfer" on
+  the transfer screen). Nothing posted is edited or deleted: the reversal moves the same animals — or the same head —
+  straight back through the ordinary posting path, with the reason `REVERSAL OF <transfer no>`, so value, counts,
+  ledger legs and each animal's history show the move and the move back. Refused for a draft, for a reversal, for a
+  transfer already reversed, for a date before the transfer or in the future, and when the animals are no longer live
+  in the batch they went to (a death or a further transfer overtook it) or the head is no longer there — those need
+  their own correction. Animals return to the source batch keeping the stage they have.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards): a gilt moved and reversed (batch
+quantities back, four ledger legs ±18 000, headers matching the register); a second reversal, a reversal of a reversal
+and a reversal dated before the transfer refused; a reversal after the gilt died in the destination refused with
+nothing written; 40 head moved and reversed with every figure restored to 100 / 25 000 and 10 / 2 500; a reversal
+after 35 of the receiving batch's head died refused ("has 15 head; 40 cannot be moved"); a sow with a stage from
+another line of business refused without a destination stage and admitted with a piggery one; a TRANSFER line on a
+batch-wise batch posted 12 head (48 / 12 000 and 27 / 6 750) and, with no value, its standard 5.
+
+## 9 Oct 2026 — Phase 3: output into a store, lots, consumption items, BCS (Arun's instruction, awaiting Rishi)
+
+Migration `0144_bcs_metric_repair` (data repair only; applied to nf_system and nf_devco after backups).
+
+- **What a batch produces goes into a store.** An OUTPUT posts to the batch's farm's store (the first active STORE under
+  the farm, by code — the pick the feed forecast makes; now one shared helper, `common/farm-store.ts`). It used to enter
+  the ledger with no warehouse at all: counted in the company's stock, kept nowhere, so no store transfer or sale could
+  pick it.
+- **A lot-tracked output gets its lot from the ITEM_LOT number series** when none is typed (a typed lot is kept), and an
+  item with a shelf life gets an expiry. A serial-tracked item still needs its serial — a serial is not invented.
+- **Every output leaves a `batch_output_line`** (id = the batch transaction's id = the ledger entry's document line), not
+  only a by-product. A QR pack and a QC result attach to an output line, and a main output had none.
+- **An OUTPUT line posts only the item it carries.** The fallback that took the first item named like "Piglet" or typed
+  LIVESTOCK is gone — it could post a semen collection or a manure line into stock as piglets. Output lines already
+  required an item when created; one without is refused at posting with a message to fix the line.
+- **A CONSUMPTION names its item.** The guess from keywords in the remarks ("med", "vaccin", ...), falling back to any
+  active item, is gone — it drew stock and posted cost against an item nobody chose.
+- **Body condition score is its own KPI.** The seeded BCS activity carried the code `BCS`, which no scheduler line
+  accepts; the form fell back to BODY_WEIGHT, so a 1–5 score was recorded as kilograms. The seed now says `BCS_SCORE`,
+  the activity master refuses a metric the scheduler does not know, and 0144 repairs the activity and the lines still
+  named after it. Values already posted are history and were not rewritten.
+
+**Not done, and why.**
+- **Reopening a posted day (A5).** Re-posting a changed entry after a reopen still posts it a second time. Reversing the
+  first posting needs a way to mark a batch transaction as reversed (a column and every reader of batch cost —
+  `wip_value`, close, running unit cost — taught to skip it): a reversing row with the opposite sign would be summed as
+  cost by the readers that take absolute amounts. That is a schema and costing decision, not a patch. Until it is made,
+  a correction is entered as a separate entry.
+- **Maturing sows and boars (A6)** needs the client's answer (does a productive sow/boar mature automatically?).
+- **Items on the seeded output activities (L1)** are the client's data (which item is a "Piglet Output"); none is invented.
+- **Output carries no value unless a rate is entered**: the 8 head posted in the proving run show on hand at 0 value.
+  Valuing farm-produced stock (at the batch's cost, at standard, at NRV) is a costing decision for Rishi.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143 and 0144 kept): an OUTPUT line with no
+item was refused at creation ("OUTPUT lines require: Item") and, with its item removed, refused at posting with nothing
+written; 8 head of a lot-tracked item with a 30-day shelf life posted for a sow with no lot typed — lot LOT-00003,
+expiry 2026-11-08 (the entry date plus the item's 30-day shelf life), warehouse MUL100/STORE-001, one output line
+whose id equals the transaction's — and showed in the Inventory balance at that store (8 head); a CONSUMPTION with no
+item and "ivermectin dose" in its remarks was refused and wrote nothing; the BCS activity and the existing line read
+BCS_SCORE / SCORE after 0144.
+
+## 9 Oct 2026 — Phase 6: the animal card reads what was posted (Arun's instruction, awaiting Rishi)
+
+New `GET /animal/:id/activity` (scope-checked like every animal route); the card's Movement tab now reads the movement log.
+
+- **The Movement tab is the movement log.** Assignments, transfers (including those a batch-level stage move makes for
+  every animal in step), stage changes and deaths. Before, it was pieced together from the audit trail and the batch
+  transfers, so a batch's own cascade and a data-entry death were missing, and the log the 8 Sep decision made the one
+  source of HISTORY / LOCATION TRACEABILITY was read by no screen. Birth and herd registration still come from the
+  register row; a sale, slaughter or transfer out is not on the log (dispose does not write one) so the herd-exit event
+  still comes from the register row.
+- **Weights are the ones recorded.** Current weight, daily gain (first to latest reading, in grams a day, only with two
+  readings on different days) and body condition score come from the animal's posted BODY_WEIGHT / BCS_SCORE daily
+  entries. The card read `current_weight_kg`, a field the API has never returned, so weight always showed "—"; and the
+  Weight tab also displayed figures nobody recorded — a birth weight of "~1.40 kg", "Within Expected Curve", and fixed
+  target weights per animal type. Those are removed, not re-sourced: no reading, no figure.
+- **Health tab:** the feed and medicine this animal has consumed (totals by item, from its batch consumption postings),
+  and for a dead animal the death record — the reason code, cause, post-mortem findings, disposal method and remarks.
+- **A boar's Breeding tab lists the semen lots collected from him** (doses collected / used / sold, cost per dose,
+  whether posted to inventory).
+- **Parity shows completed pregnancies**, with "Litter N not weaned yet" while a farrowing numbered above the count is
+  on the sow. The card used to show the number of farrowing records when the count was zero, i.e. the litters
+  including the unweaned one.
+- **Facility occupancy no longer double counts.** It added the opening quantity of every active batch to the animals
+  counted from the register, so an animal-wise batch's animals were counted twice and no death or transfer brought the
+  figure down. It now adds only batch-wise batches, at their head on hand (closing quantity).
+
+**Consequence of the BCS repair (0144) to check.** The "Body Condition Score (BCS)" line in `nf_devco` holds four posted
+values — 49 and 100 for PIG-0003 and PIG-0006, on 7 and 8 Oct — entered as kilograms while the line was mislabelled
+`KG`. The card now reads them as condition scores of 49 and 100. They are demo entries; they need correcting or
+re-entering as body weight. Nothing was rewritten.
+
+**Not done.** Offspring born on the farm are still not registered with their sow and boar as parents (waits on the
+piglet decision); the card's pen on a death shows only when the death was recorded with a pen.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards): the activity endpoint returned the
+posted readings for a sow — a 24 kg weight on 1 Oct and a stray test entry of 99 999 kg on 9 Oct, from which it worked
+current weight and daily gain (the 8 Oct weight was refused because that stage-day is locked, so the "24 → 31 kg"
+case is proved by the arithmetic unit tests, not live), and the demo's existing condition-score entries; a death recorded with a reason, cause, findings and disposal came back as a full death record, and the animal's
+movement log read ASSIGN (7 Oct) then MORTALITY (9 Oct, previous event 7 Oct); a boar's activity listed his semen lot
+(40 doses, 30 used, 10 sold, not posted to inventory); a sow's activity carried no semen; an unknown animal answered
+404; a sow farrowed with the register's parity staying 0 while her farrowing record carried litter 1. The new card
+sections are typechecked and covered by component tests but were not driven in a browser.
+
+## 9 Oct 2026 — Reopening a posted day reverses what it posted (A5; Arun's go-ahead, awaiting Rishi)
+
+Migration `0145_batch_transaction_reversed` (two nullable columns on `batch_transaction`; applied to nf_system and
+nf_devco after backups).
+
+- **The defect.** Reopening a posted stage-day unlocked it and nothing more. Correcting an entry and posting it again
+  ran its whole dispatch a second time: the stock was issued twice, the cost journalled twice, the batch cost counted
+  twice. The code said so ("no automated reversal exists yet … reconciliation is manual").
+- **Reopen now reverses first, in one transaction, or changes nothing.** `POST /batch/:id/stage/:stageId/reopen`
+  reverses what the stage-day posted and puts those entries back to drafts with their values, so the corrected day
+  posts exactly once:
+  - **Consumption:** the issue is reversed at its own cost and the receipt layers it drew are restored; its journal is
+    mirrored on the original accounts; a premature bio-asset batch's capitalised cost comes back out of its carrying
+    value.
+  - **Main output** (not a bio-asset batch): taken back out of stock, only if none of it has been used or moved; its
+    journal mirrored; its output line removed. Refused if a QR pack or QC result hangs off it.
+  - **Overhead and resource cost** (not a bio-asset batch): the journal it made is found by what it recorded (batch,
+    date, amount, description) and mirrored on its own accounts.
+  - **Observations:** the informational ledger rows a value left are negated.
+- **Batch transactions are not deleted.** A reversed one stays as the record of what was posted, with `reversed_at` /
+  `reversed_by`, and every reader of batch cost and activity skips it (batch detail, the batch list's WIP, the
+  data-entry "already entered" check, the animal's treatment/withdrawal lookup, the animal card). A reversing row with
+  the opposite sign was rejected: the cost totals take absolute amounts, so it would have been added.
+- **What stays posted, and says why in the response (`kept_posted`):** a transfer (use "Reverse transfer"), a recorded
+  death (the animal would have to be revived), and the output and cost of a bio-asset batch (they move its carrying
+  value, and the stage that decided how is not recorded on the posting). A kept entry that is later changed is refused
+  with the same reason rather than posted twice.
+- **If anything cannot be reversed — output already used, a journal that cannot be found — the reopen is refused with
+  the reason and nothing is changed** (everything reversed before the failing step is rolled back).
+- **Not covered:** a day reopened before this change still has its first posting standing; re-posting a changed entry on
+  it posts twice, as before. Batch-wise batches have no day lock and no reopen.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0145 kept), on the real posted
+GESTATION day of 8 Oct and a second day built with consumption, a lot-tracked output and an overhead:
+- *Reopen* of 8 Oct (4 entries, 8 transactions, 2 ledger issues): batch cost 94 100 → 93 300, journals 6 → 8 (mirrors
+  of 240 and 560, net by account 94 100 → 93 300), the two feed items back in stock (+12, +28), the 4 transactions
+  marked reversed, the 4 entries drafts, the lock REOPENED.
+- *Correction:* one animal's morning feed changed 6 → 5 and the stage posted again: feed stock 589 and 612, batch cost
+  94 080, journal net 94 080 — exactly the corrected quantities, once — and the animal card then showed 5 kg.
+- *9 Oct* posted with 8 weaners of a lot-tracked item into the store and a 150 overhead, then **refused** while 3 of
+  the 8 were marked used ("already been used or moved"): stock, cost, 14 journals and the LOCKED state unchanged.
+- *Reopen* with the stock intact: 6 entries to drafts; cost back to 94 080; feed stock back; weaner layers 0 and the lot
+  netting 0; output line removed; the day's journals net 0.00 across every account; the overhead journal mirrored.
+- A failed *post* on an unrelated lot shortage also left stock, cost and journals untouched.
+The reopen box on the data-entry screen now says what a reopen does and reports how many entries were reversed and which
+were left posted; that screen change is typechecked but was not driven in a browser.
+
+## 9 Oct 2026 — Piglets are a lot of the piglet bio-asset item in a batch-wise batch (Arun's answers 1 and 2, awaiting Rishi)
+
+Answers given to the "Sow and boar output" brief (decisions 1 and 2; 5 and 8 not yet answered):
+
+- **1. How piglets are held.** A farrowing creates the piglets as a **lot of the piglet bio-asset item in a batch-wise
+  batch**; from there they are moved by transfer, to whatever stage or batch is wanted. (Recorded as: option A of the
+  brief, the BBP's Sow → Piglet Lot → Weaner Batch chain. Piglets are not registered one by one.)
+- **2. Where farrowing, weaning and semen collection are recorded.** In batch data entry **and** on the Livestock
+  Breeding screen — both places, one posting behind them.
+
+Defaults we took for what is still open, marked as ours: stillborn and mummified piglets stay on the farrowing record
+and are not mortality (brief decision 3); parity completes at weaning (decision 4, already built); a born piglet enters
+at **no value** — a rate would post a purchase journal (BIO_ACQUISITION), which is wrong for a birth, so the value
+waits for decision 6; the piglet item is chosen where the farrowing is recorded, not assumed (decision 8).
+
+Further answers to the same brief (Arun, 9 Oct, awaiting Rishi):
+
+- **5. What the semen QR carries.** The boar, the batch and the required details — kept as a lot-level QR (option A of the
+  brief) printed when a collection is posted. "Required details" is read as: lot number, boar code and ear tag, breed, the
+  boar's batch, collection date, doses and expiry. Cost per dose is left off until decision 6 is made.
+- **8. Which items are the outputs.** Any item the user picks — semen, piglets, whatever the farm produces. Nothing is
+  fixed in the system: the output item is chosen where the output is recorded (the farrowing form, the data-entry line,
+  the semen collection), and must be a bio-asset item for piglets.
+
+## 9 Oct 2026 — Phase 4 built: a farrowing creates a piglet lot; weaning moves it on (awaiting Rishi)
+
+Migration `0146_farrowing_piglet_lot` (two nullable columns on `farrowing_record`; applied to nf_system and nf_devco after backups).
+Built to the 9 Oct answers above (piglets as a lot of the piglet bio-asset item in a batch-wise batch; recorded in data entry
+and on the Breeding screen, one posting behind both).
+
+- **Farrowing** (`POST /piggery/breeding/farrowing`, optional `piglet_item_id` and `piglet_stage_id`). With a piglet item
+  the litter's piglets — born live, plus fostered in, less fostered out — become a **batch-wise bio-asset batch**: the item
+  on its input line with a lot number from the ITEM_LOT series, born in the sow's batch's shed and farm (else her pen), in
+  the stage named (else the sow's own), activated. The farrowing record carries the batch and lot. The litter and the lot are
+  one transaction, and the item must be a bio-asset item: a refusal leaves no farrowing and no batch behind. Without a piglet
+  item only the litter is recorded, and the answer says so.
+- **No value yet.** The lot's input line has a rate of nil and activation posts no journal for a nil acquisition (the
+  acquisition journal is a purchase; a birth is not). The mortality posting likewise skips a nil write-off. Valuing a birth
+  waits for decision 6.
+- **Stillborn and mummified are not mortality** (our default for brief decision 3): they stay on the farrowing record.
+- **Weaning** (`PATCH …/farrowing/:id/weaning`, optional `move_to_batch_id` or `move_to_stage_code`, not both). The lot's
+  head not weaned are recorded as pre-weaning mortality on the lot; the weaned head are then moved to the chosen batch by a
+  head-count transfer, or the lot is moved on to the chosen stage. More weaned than the lot holds is refused. Only the
+  litter's first weaning moves piglets, so posting it again cannot move the same piglets twice.
+- **Data entry.** An OUTPUT line of a bio-asset item, for a sow in an animal-wise batch, is a farrowing when the stage's
+  data-entry form is FARROWING (that setting existed and nothing read it) and the weaning of her nursing litter on any other
+  stage; it goes through the same posting as the Breeding screen instead of arriving as stock in the sow's batch (which the
+  maturity rule would have refused). Data entry carries the live-born count only; stillborn, mummified and fostering are
+  entered on the Breeding screen. Such an entry cannot be changed in place or reversed by a reopen — the litter has its own
+  record — and says so.
+- **Breeding screen.** The farrowing form chooses the piglet item and the stage the piglets start in; the weaning form chooses
+  where the weaned piglets go. The animal card's farrowings show the piglet batch and lot.
+- **Fixed on the way:** the forms pre-filled figures nobody measured (12 born live, 1 stillborn, 1.45 kg, 11 weaned,
+  7.50 kg) and substituted 1.4 kg and 7 kg when a weight was left blank, storing them as real. They are blank now and a
+  weight is sent only when entered. (The semen form's pre-filled figures are still there; that is Phase 5.)
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0146 kept):
+- *Refused*: a farrowing naming a non-bio-asset item ("not a bio-asset item") left no farrowing and no batch.
+- *Farrowing* of 11 live, 2 stillborn and 1 fostered in: parity stayed 0, the sow LACTATING; a lot LOT-00003 in an ACTIVE
+  batch-wise BIO_ASSET batch of 12 in the sow's shed pen, the piglet item and lot on its input line at rate 0, bio state
+  12 at value 0, an acquisition ledger row at cost 0, no journal, a FARROWING scheduler counting 12.
+- *Weaning* 10 of the 12 to a second batch-wise bio-asset batch (10 head, 2 500): 2 recorded as mortality on the lot, a
+  posted head-count transfer of 10, the lot 0 and the destination 20 head still at 2 500, the sow's parity 1 and ACTIVE;
+  13 weaned was refused, a batch with a stage was refused, and weaning posted again moved nothing.
+- *Data entry*: a FARROWING-stage OUTPUT line entered for a second sow (9 live) created the same litter and a lot LOT-00004
+  in its own batch of 9, wrote no stock entry in the sow's batch, and the animal card listed the piglet batch and lot; the
+  same sow's line entered again was refused.
+Not driven live: weaning entered through data entry, moving the lot on to a stage, and the wording of the message that
+refuses a changed farrowing line (all unit-tested); the Breeding screen changes are typechecked and covered by existing
+component tests but were not driven in a browser.
+
+## 9 Oct 2026 — Phase 5 built: semen is stock, with a lot-level QR, and matings use its doses (awaiting Rishi)
+
+Migration `0147_semen_lot_inventory` (four nullable columns on `semen_batch`; applied to nf_system and nf_devco after backups).
+Built to the answers on brief decisions 2, 5 and 8 recorded above.
+
+- **A collection that names an item is posted as a lot of it.** Any item the farm picks for semen (decision 8: nothing is
+  fixed). The doses go into the boar's farm store — his batch's farm, else the farm of his pen — as an inbound OUTPUT entry
+  with a lot number from the ITEM_LOT series and an expiry from the item's shelf life. A farm with no store refuses the
+  posting; a collection with no item is recorded as before and says it is not stock. The lot, its stock and its QR are one
+  transaction.
+- **The lot-level QR (decision 5)** is a pack row of its own (`PACK-nnnnnn`, shown on the Packs screen, voidable like any
+  other) tied to the boar's batch. It carries the boar (code, ear tag, breed), the boar's batch, the lot number, collection
+  date, doses and expiry, the item and the store — and not the cost per dose, which waits on decision 6. A boar in no batch
+  has no QR (a pack needs a batch) and the answer says so.
+- **An AI mating that names the lot uses its doses.** It is refused if the lot has fewer left (collected, less used, less
+  sold); a lot held as stock has them issued from that stock at the lot, and its used count moves. A lot collected before
+  this (no stock behind it) only has its count moved. The service and its doses are one transaction.
+- **Doses enter at no value**, as piglets do: the cost per dose a collection records (worked from the costs typed on the form)
+  stays information on the lot. Valuing farm-produced stock is decision 6.
+- **Data entry.** An OUTPUT line recorded against a boar in an animal-wise batch is a semen collection of the line's item,
+  through the same posting as the Breeding screen (not stock arriving in the boar's batch). It carries doses only — no costs —
+  and, like a farrowing, cannot be changed in place or reversed by a reopen: the lot has its own record.
+- **Forms.** The collection form chooses the semen item and no longer pre-fills 40 doses, costs of 150/200/50/100 and 30 used
+  / 10 sold (the used and sold counts are no longer asked at collection — mating moves the used count). The mating form's lot
+  list shows the lot and the doses left and disables an exhausted lot. The boar's card lists the lot and expiry of each
+  collection.
+
+Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0147 kept; a medicine item with a 5-day shelf
+life stood in for a semen item, there being none in the demo):
+- *Refused*: an item that does not exist left no lot and no pack.
+- *Collection* of 40 doses: lot LOT-00003 expiring 2026-10-14, an inbound OUTPUT entry in MUL100/STORE-001 at rate 0 against the
+  boar's batch BATCH-000002, a pack PACK-000001 whose QR data held the boar (PIG-0010, tag, breed), batch, lot, date, doses,
+  expiry and store, and no cost.
+- *Matings*: 2 doses from the lot — used 2, lot stock 40 → 38, one issue entry; 100 doses refused ("has 38 doses left") with nothing
+  recorded; the demo's older lot, with nothing left (40 collected, 30 used, 10 sold), refused.
+- *Data entry*: 25 doses entered for the boar on a line of the same item made LOT-00004 and PACK-000002 and wrote no stock entry
+  in the boar's batch; the line entered again with another value was refused as a semen collection; the boar's card and the Packs
+  screen's API listed both lots/packs.
+Not driven: the Breeding screen's new semen form and mating lot picker (typechecked, existing component tests pass, not driven in
+a browser).
+
+**Found on the way (not changed).** The seeded activity "Boar Semen Collection" carries the output basis `PER_HEAD`, which a
+schedule line rejects (the accepted bases are PER_SOW, PER_PEN, PER_BATCH), so a line cannot be made from the activity as
+seeded. Which basis a per-boar output should use is not ours to invent.
+
+## 9 Oct 2026 — Phase 7: audit fixes, and output taken out of a batch from data entry (awaiting Rishi)
+
+Asked by Arun after the audit run: fix gaps 20–23 (yes to the sow going to Dry Sow at weaning) and make data entry a
+working place to take output out of a batch, with the user choosing the item. Migration `0148_daily_data_output_item`
+(two nullable columns on `batch_daily_data`; applied to nf_system and nf_devco after backups). Verified through the
+running API and MySQL on nf_devco, then restored.
+
+- **Every stage a live animal holds has a scheduler.** `syncAnimalWiseCounts` — where every death, transfer and stage
+  move already ends — first opens a scheduler (new, or the stage's completed one reopened) for any stage code the batch's
+  live animals hold without an open one. Live: PIG-0001 transferred into BATCH-000001 opened its Gestation scheduler
+  (3 lines, count 1); a weaned sow's move opened Dry Sow; a draft TRANSFER opened Flush.
+- **A weaned sow goes to the Dry Sow stage** through the ordinary stage move (checked, logged "Weaned litter N",
+  counted), when her batch is animal-wise and her company has a `DRY_SOW` stage. **Ours:** her status stays ACTIVE — the
+  stage carries "dry"; status `DRY` is set nowhere and several screens count ACTIVE/PREGNANT/LACTATING. Without a Dry Sow
+  stage she stays where she is and the message says so.
+- **A head-count batch's closing quantity is its opening head from activation**; **a bio-asset acquisition row carries
+  its input line's lot** (piglet lot LOT-00006 now on the ledger).
+- **Output item chosen at entry (decision 8).** An OUTPUT entry may name any active item of the tenant; the line's own
+  item is the default. Any other line refuses an item chosen at entry. The line keeps its required default item — that
+  rule is the client's Schedule master template ("LINE TYPE REFERENCE"), not ours to drop. An output is no longer asked
+  for a lot when entered: its lot is made when it posts.
+- **What the output posts as is decided in one place** (`animal-output-event.ts`), asked by the posting and by the
+  data-entry screen: a boar → semen collection of the chosen item; a sow nursing an unweaned litter → its weaning,
+  **wherever she is** (changed: on the farrowing stage it used to be read as a second farrowing, which is refused —
+  sows are often weaned in the farrowing house); otherwise a sow on a FARROWING-form stage → a farrowing; a sow's
+  output of a non-bio-asset item → ordinary output. The screen shows it under the activity, with the open litter's lot
+  and head on hand.
+- **Drafts keep what was chosen** (the output item, the destination batch) and both day posts pass them on. This also
+  fixes a TRANSFER saved as a draft losing its destination when the day was posted (found while planning: the draft
+  never stored it; proved fixed live).
+- **A day's outputs and transfers post last**, after the consumption is issued: a weaning moves the sow and a transfer
+  moves the animal, after which her other entries of the day no longer matched where she was. Found live — the first
+  attempt rolled the whole day back (all-or-nothing held).
+- **Weaning from data entry may name a batch** for the weaned piglets (else they stay in their lot). Live: PIG-0006's
+  litter (LOT-00006, 9 head) weaned 8 from data entry → 1 recorded as pre-weaning mortality, 8 moved to BATCH-000004
+  (30 → 38), sow parity 1 and to Dry Sow, the result shown on the entry.
+- **Semen from data entry with a chosen item:** a generic "Animal Output" line (default item: piglet) on the boar's stage,
+  "BOAR semen" chosen at entry → lot LOT-00007, 25 doses in the farm store, QR PACK-000001.
+
+Still open: a bio-asset batch refuses output until matured (decision 7) — so a head-count piglet/grower batch cannot
+yet post an output of its own; a piglet lot left at 0 head stays ACTIVE; value of births and doses (decision 6). The
+data-entry screen changes are typechecked and tested, not driven in a browser.
+
+## 9 Oct 2026 — Phase 8: the points the audit left not done (Arun's instruction, awaiting Rishi)
+
+Migrations `0149_animal_cull_fields`, `0150_semen_quality`, `0151_qr_pack_series` (applied to nf_system and nf_devco
+after backups; 0151 also proved on a copy holding PACK-000001 — the company's counter continued at 1, and running it
+twice added nothing). Every flow below was run through the API and read in MySQL on the seeded test data, then restored.
+
+- **A7 — errors are not swallowed.** The 14 `catch {}` fallbacks in batch.service.ts were for unit-test mocks; they now
+  swallow only a mock's missing method (a TypeError). Bulk daily entry no longer invents a 1-head batch when a batch is
+  not found — the row reports the error.
+- **F5 — a dead animal's own value leaves her ledger.** In a bio-asset batch only the batch's per-head share of its
+  accumulated costs was written off; her own registered value (28,000 for a sow) stayed. Now her own book value leaves
+  her animal-level bio-asset ledger as well, and the batch row is booked under her own item (it used "the first active
+  item" for an animal-wise batch, which has no input lines).
+  **New finding, for Rishi:** a registered animal stays in livestock stock (goods receipt into the farm) after she is
+  registered, and nothing takes her out at death, sale or cull — 30 animals, ~755,786 of book value, are also stock.
+  Whether registration should issue the animal from stock into the bio-asset is an accounting decision; not built.
+- **C7 — a death recorded in error is reversed, never edited.** `POST /batch/:id/mortality/:transactionId/reverse`
+  (reason required) and Reverse on the Mortality panel: the animal named is ACTIVE again; head, bio-asset state and
+  stage counts back; both bio-asset rows mirrored; the write-off journal reversed by its exact opposite (live:
+  JE-000099 31,366.67 → JE-000100 "Reversal of JE-000099"); the movement log says MORTALITY_REVERSED with the reason; the
+  transaction marked reversed. A second reversal is refused. Lowering a posted count in data entry still cannot revive
+  anyone; its refusal now points to Reverse.
+- **E1/E5 — every exit keeps the batch in step; culling built to BBP-1.** A sale, slaughter, transfer out or cull of
+  an animal in an active batch lowers the batch head and its stage counts and logs DISPOSAL or CULL. Culling: CULLED is a
+  disposal type; it needs a CULL reason, the out-of-production date (set before with "Out of production", or given) with
+  the cull date not before it, the weight at cull and the destination (free text — BBP-1 names no list); her book value
+  leaves her ledger; gain/loss against the value realised. The 14-day INFO alert is raised when a held animal's day is
+  posted (no scheduled job exists), once per animal. **Ours / open:** whether culling is in scope is still Rishi's
+  (decisions table above); the costs her batch has accumulated stay with the animals still in it when an animal leaves
+  other than by dying — how a leaver takes her share is a decision.
+- **G9 — a litter comes from a mating.** A farrowing links the mating named, else the sow's open one (latest, on or
+  before the farrowing, not failed, not farrowed); with none it is refused. A boar's litters then show through his
+  matings. The test seed now mates its sows first.
+- **J6 — offspring on the card.** Piglets are held as lots (decision 1), so offspring are the litters: a sow's, or a
+  boar's through his matings — litter, date, dam, born live, weaned, piglet lot and batch, head now — above any animal
+  registered with this one as a parent.
+- **G8 — semen quality.** Volume (ml), motility (%), concentration (M/ml) on the collection, the lot's QR and the card;
+  from data entry, a same-day SEMEN_MOTILITY reading for the boar is carried onto the lot.
+- **G7 — the cost behind a dose is worked out when not typed.** Over the period since his last collection (or his
+  entry): his own feed and medicine (his consumption shares, medicine/vaccine items as drugs), his overheads plus his
+  equal share of his batch's, his amortisation plus his share of his batch's. Live: PIG-0010, 400 of posted feed →
+  20.00/dose over 20 doses. The doses still enter stock at nil (decision 6).
+- **I3 — pack numbers from a QR_PACK number series**, per company, continuing after the highest existing pack.
+- **H4 — informational ledger rows stay where TDD row 11 puts them** (the transaction ledger), and every stock, lot,
+  FIFO and valuation reader already filters to stock entry types; the one that did not — an item's stock card — now
+  excludes DESCRIPTIVE and OVERHEAD rows.
+- **H5 — semen moves between stores by stock transfer** with its lot: proved live (5 doses of LOT-00008 MUL100 →
+  POR100), no change needed. Note: the semen lot record keeps its own dose count; a mating issues from the lot's own
+  store.
+- **L2 — demo stage sex (ours, demo tenant only).** `db-align-demo-stage-sex`: GILT_GROWER, FLUSH, INSEMINATION,
+  GESTATION, FARROWING, LACTATION, DRY_SOW, PRODUCTIVE_SOW female; BOAR_AI male; the rest open. The two demo boars moved
+  from Gestation to Boar AI (PIG-0010 by the stage move — his batch opened a Boar AI scheduler). The demo seed no longer
+  stands boars in Gestation. Rishi's configuration replaces this.
+
+## 2026-10-11 — Number Series form and manual numbers
+
+- **Allow Manual Numbers stays editable after a series has issued numbers.** Whether a person may type a code changes
+  none already issued, so it is not part of the lock. Prefix, fields, position, separators, restart rule, digits,
+  increment and default still lock once the series has issued a number or its master holds records (the API refuses
+  with the reason). Masters read the flag live: on, a typed code is accepted; off, the series issues the next number
+  and a typed code is replaced, not refused.
+- **The form now sets the whole code, not only a prefix** — fields the code is built from (ordered, dates as Year or
+  Full date), prefix position, both separators and the restart rule — with a live example read off a real record.
+  A series needs a prefix or at least one field. The Prefix / Pattern column shows the computed pattern
+  (`{parent_location}/{location_type}-000`, `PIG-YYYY-0000`).
+- **Where "FARM" in a location code comes from:** the `location_type` field in the series, not the prefix. A prefix on
+  the LOCATION series replaces the type code on top-level locations only; with no prefix the type field supplies it.
+
+## 12 Oct 2026 — Pooled semen, and why a seeded boar read as a sow (Arun's instruction, awaiting Rishi)
+
+- **Pooled semen — one lot mixed from several boars.** Arun asked to collect semen from several boars and mix it; there
+  is no document row behind it, so what follows is ours until Rishi confirms. The collection is entered against the
+  first boar and names the others (Data Entry: *Pool with other boars* under the semen line; Breeding screen: *Mix with
+  other boars*). It makes **one** lot, one posting to stock and one QR, which names every boar. `semen_batch.boar_animal_id`
+  stays the first boar; `semen_batch_boar` (migration 0152) holds one row per boar with the share of the lot's cost he
+  carried. A lot from one boar has no rows there, so every earlier lot reads as before.
+- **Cost of a pooled lot = what every boar in it cost.** Each boar's own period (since his last collection — a lot he was
+  pooled into counts) is worked out as for a single boar and the four figures are added; typed costs are taken as the
+  lot's total and split equally. Doses are one total for the mix. **Open:** whether per-boar doses or volumes must be kept.
+- **A service from a pooled lot records no single sire.** The sire is one of the pool and not known, so
+  `breeding_record.boar_animal_id` stays empty (a boar named must be one of the pool). On a boar's card such a service is
+  counted apart (*from pooled lots*) and its litter is **not** counted as sired by him; the sow's card says *pooled lot*.
+  **Open:** whether the pool should instead count towards each boar's sired litters.
+- **A boar pooled into a lot cannot also have a collection of his own on the same line and day** — his doses would be
+  counted twice; the entry is refused with the boar named. The pool is kept on the draft (`batch_daily_data.pool_animal_ids`).
+- **Why the seeded boars read as sows (a seed fault, fixed).** `seed-boars-sows-batches` registered the two boars under
+  the sows' breed (Z-Line-Sow, which has no Boar AI stage, so the QR of every lot named a sow line) and housed them in
+  `MUL100/SHED-002`, which is the *Dry Sow* House (the Boar House is `SHED-006`); its sows were in the Farrowing House at
+  Gestation, and the boar's semen line was `PER_SOW`. Now: boars are *Teaser Boar* (the only active boar line carrying
+  Boar AI) in the Boar House, sows are Z-Line-Sow at Insemination in the Dry Sow House, the line is `PER_BATCH`.
+- **Ours, test fixtures only:** the two output items (*AI Semen Dose - Fresh (single boar)* and *- Pooled (multi-boar)*)
+  and their 5-day shelf life (it gives the lot an expiry; the existing *BOAR semen* item has none). Their cost is copied
+  from *BOAR semen*, not invented.
+- **Open — where semen is kept.** A lot goes to the farm's first active STORE by code (MUL100/STORE-001, *Demo Medicine
+  Store*). A store has only `STORE` or `SILO` as its type, so a dedicated semen/cold store would need that distinction
+  added; not done.

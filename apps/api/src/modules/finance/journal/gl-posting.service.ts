@@ -107,6 +107,54 @@ export class GlPostingService {
     });
   }
 
+  /**
+   * Posts the exact opposite of a journal that has no ledger entry to find it by (a batch's overhead or mortality
+   * cost): each line with its debit and credit swapped, on the original accounts, whatever the mappings say now.
+   * Refuses a journal that is not POSTED or that has already been reversed.
+   */
+  async reverseJournal(journalId: string, postingDate: string, description: string, userId?: string) {
+    const [header] = await this.db.select().from(schema.journalHeader)
+      .where(and(eq(schema.journalHeader.journal_id, journalId), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
+    if (!header) throw new BadRequestException('The journal to reverse is not posted.');
+    const [already] = await this.db.select({ journal_id: schema.journalHeader.journal_id }).from(schema.journalHeader)
+      .where(and(eq(schema.journalHeader.description, `Reversal of ${header.journal_no}`), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
+    if (already) throw new BadRequestException(`${header.journal_no} has already been reversed.`);
+    const lines = await this.db.select().from(schema.journalLine).where(eq(schema.journalLine.journal_id, header.journal_id));
+    if (!lines.length) throw new BadRequestException('The journal has no lines to reverse.');
+    return this.journalService.createAndPostSystemJournal({
+      tenantId: header.tenant_id, companyId: header.company_id, postingDate,
+      sourceDocumentType: header.source_document_type ?? 'BATCH', sourceDocumentNo: header.source_document_no ?? header.journal_no,
+      description: `Reversal of ${header.journal_no}`, userId,
+      lines: lines.map(line => ({ glAccountId: line.gl_account_id,
+        debitAmount: Number(line.credit_amount), creditAmount: Number(line.debit_amount),
+        costCenterId: line.cost_center_id || undefined, nobId: line.nob_id || undefined, lobId: line.lob_id || undefined })),
+    });
+  }
+
+  /**
+   * The journal a batch cost posting (overhead, mortality) made. It was not given a ledger entry or a line id, so it
+   * is found by what it recorded: the batch, the date, the amount and the description. Several identical postings on
+   * one day are told apart by taking one that has not been reversed yet.
+   */
+  async findBatchCostJournal(params: { tenantId: string; companyId: string; documentNo: string; postingDate: string; amount: number; description: string }) {
+    const candidates = await this.db.select().from(schema.journalHeader).where(and(
+      eq(schema.journalHeader.tenant_id, params.tenantId),
+      eq(schema.journalHeader.company_id, params.companyId),
+      eq(schema.journalHeader.source_document_type, 'BATCH'),
+      eq(schema.journalHeader.source_document_no, params.documentNo),
+      eq(schema.journalHeader.posting_date, params.postingDate),
+      eq(schema.journalHeader.description, params.description),
+      eq(schema.journalHeader.status, 'POSTED'),
+    ));
+    const wanted = Math.abs(params.amount);
+    for (const c of candidates.filter((j) => Math.abs(Number(j.total_debit) - wanted) < 0.005)) {
+      const [done] = await this.db.select({ journal_id: schema.journalHeader.journal_id }).from(schema.journalHeader)
+        .where(and(eq(schema.journalHeader.description, `Reversal of ${c.journal_no}`), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
+      if (!done) return c;
+    }
+    return null;
+  }
+
   async postInventoryLedgerEntry(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
     const [item] = ledgerEntry.item_id
       ? await this.db

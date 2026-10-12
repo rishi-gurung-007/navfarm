@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, Plus, Search } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,26 @@ export default function SchedulerListPanel() {
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const viewingRow = rows.find((r) => r.scheduler_id === viewingId) || null;
+
+  // One group per batch, its stages in the order they ran; batches with a
+  // running (ACTIVE) scheduler first, then by their latest stage start.
+  const groups = useMemo(() => {
+    const byBatch = new Map<string, Row[]>();
+    for (const r of rows) byBatch.set(r.batch_id, [...(byBatch.get(r.batch_id) || []), r]);
+    return [...byBatch.values()]
+      .map((stages) => {
+        const sorted = [...stages].sort((a, b) => String(a.effective_from || "").localeCompare(String(b.effective_from || "")));
+        return {
+          batchId: sorted[0].batch_id as string,
+          batchNo: sorted[0].batch_no as string | null,
+          breedName: sorted[0].breed_name as string | null,
+          stages: sorted,
+          running: sorted.filter((r) => r.scheduler_status === "ACTIVE").length,
+          latest: String(sorted[sorted.length - 1].effective_from || ""),
+        };
+      })
+      .sort((a, b) => Number(b.running > 0) - Number(a.running > 0) || b.latest.localeCompare(a.latest));
+  }, [rows]);
 
   const load = () => {
     if (!companyId) return;
@@ -98,7 +118,7 @@ export default function SchedulerListPanel() {
           className="flex items-center gap-1.5 text-xs font-medium"
         >
           <Plus className="h-3.5 w-3.5" />
-          Create Scheduler
+          {t("schCreate")}
         </Button>
       </div>
 
@@ -112,39 +132,54 @@ export default function SchedulerListPanel() {
         <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
           <table className="w-full border-collapse text-left text-xs">
             <TableHeader><tr className="border-b border-[var(--row-border)]">
-              <TableHead className="h-auto px-3 py-2">{t("schColSchedulerId")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColBatch")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColStage")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColBreed")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColStatus")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColEffectiveFrom")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColEffectiveTo")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColAnimalCount")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColLines")}</TableHead>
               <TableHead className="h-auto px-3 py-2">{t("schColLocation")}</TableHead>
+              <TableHead className="h-auto px-3 py-2">{t("schColSchedulerId")}</TableHead>
               <TableHead className="h-auto px-3 py-2"></TableHead>
             </tr></TableHeader>
             <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.scheduler_id} className="cursor-pointer" onClick={() => setViewingId(r.scheduler_id)}>
-                  <TableCell className="px-3 py-2 font-mono text-[11px] font-semibold text-[var(--accent)]" title={r.scheduler_id}>
-                    <span className="block max-w-[130px] truncate">{r.scheduler_id}</span>
-                  </TableCell>
-                  <TableCell className="px-3 py-2 font-medium" style={S.primary}>{r.batch_no || "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.stage_name || "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.breed_name || "—"}</TableCell>
-                  <TableCell className="px-3 py-2"><StatusBadge status={r.scheduler_status} /></TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.effective_from || "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.effective_to || "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.line_count ?? 0}</TableCell>
-                  <TableCell className="px-3 py-2" style={S.sub}>{r.location_name || "—"}</TableCell>
-                  <TableCell className="px-3 py-2">
-                    <button onClick={(e) => { e.stopPropagation(); setViewingId(r.scheduler_id); }} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>
-                      {t("schViewDetail")}
-                    </button>
-                  </TableCell>
-                </TableRow>
+              {groups.map((g) => (
+                <Fragment key={g.batchId}>
+                  <tr className="border-b border-[var(--row-border)]" style={{ backgroundColor: "var(--surface-raised)" }}>
+                    <td colSpan={9} className="px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="text-[13px] font-semibold" style={S.primary}>{g.batchNo || "—"}</span>
+                        {g.breedName && <span style={S.sub}>{g.breedName}</span>}
+                        <span style={S.muted}>{t("schStageCount", { n: g.stages.length })}</span>
+                        {g.running > 0 && <StatusBadge status="ACTIVE" label={t("schRunningCount", { n: g.running })} />}
+                      </div>
+                    </td>
+                  </tr>
+                  {g.stages.map((r) => (
+                    <TableRow key={r.scheduler_id} className="cursor-pointer" onClick={() => setViewingId(r.scheduler_id)}>
+                      <TableCell className="px-3 py-2 pl-6" style={S.primary}>
+                        <span className="font-medium">{r.stage_name || "—"}</span>
+                        {r.system_scheduler_name && (
+                          <span className="block text-[11px]" style={S.muted}>{t("schFromSystem", { name: r.system_scheduler_name })}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-3 py-2"><StatusBadge status={r.scheduler_status} /></TableCell>
+                      <TableCell className="px-3 py-2" style={S.sub}>{r.effective_from || "—"}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.sub}>{r.effective_to || "—"}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.sub}>{r.line_count ?? 0}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.sub}>{r.location_name || "—"}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono text-[11px] font-semibold text-[var(--accent)]" title={r.scheduler_id}>
+                        <span className="block max-w-[130px] truncate">{r.scheduler_id}</span>
+                      </TableCell>
+                      <TableCell className="px-3 py-2">
+                        <button onClick={(e) => { e.stopPropagation(); setViewingId(r.scheduler_id); }} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>
+                          {t("schViewDetail")}
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
               ))}
             </TableBody>
           </table>

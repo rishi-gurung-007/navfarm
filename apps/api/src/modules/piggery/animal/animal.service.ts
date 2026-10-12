@@ -8,12 +8,14 @@ import { aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
+import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { BatchService } from '../../production/batch/batch.service';
+import { assertStageFitsAnimal } from '../../production/stage/stage-gender';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 
@@ -29,6 +31,7 @@ const DISPOSAL_STATUS_MAP: Record<string, string | undefined> = {
   SLAUGHTERED: 'SLAUGHTERED',
   DIED: 'DEAD',
   TRANSFERRED: undefined,
+  CULLED: 'CULLED',
 };
 
 // BBP §6: "teat count < 15 is a hard block at selection" — regardless of TSI score. There is no
@@ -52,24 +55,11 @@ const MIN_GILT_TEATS = 15;
 const DISPOSAL_ONLY_STATUSES = new Set(Object.values(DISPOSAL_STATUS_MAP).filter(Boolean) as string[]);
 
 /**
- * CULLED is blocked too, but it is NOT a disposal type — DISPOSAL_TYPES is
- * SOLD / SLAUGHTERED / DIED / TRANSFERRED — so dispose() cannot set it either
- * and the message must not send anyone there.
- *
- * BBP-1: "On mortality or cull: record CLOSED (not deleted). Closure date,
- * reason, disposal destination, weight at death/cull recorded. D365BC FA or
- * inventory write-off triggered", and "Out-of-Production Date and Cull Date are
- * TWO SEPARATE fields (MOM 24 Aug). System does not allow Cull Date <
- * Out-of-Production Date", with an INFO alert when the gap exceeds 14 days
- * because the animal is still eating during the hold.
- *
- * None of that is built: the register has expected_cull_date and nothing else —
- * no out_of_production_date, no cull_date, no disposal destination, no weight
- * at cull — and the CULL reason category holds one code. So culling has no
- * correct path today, and letting a status dropdown fake one would record a
- * culled animal with none of the closure data the blueprint requires.
+ * CULLED is set by Dispose too (it is in DISPOSAL_STATUS_MAP), built to BBP-1: "On mortality or cull: record CLOSED
+ * (not deleted). Closure date, reason, disposal destination, weight at death/cull recorded", and "Out-of-Production
+ * Date and Cull Date are TWO SEPARATE fields (MOM 24 Aug). System does not allow Cull Date < Out-of-Production Date".
+ * See dispose() and markOutOfProduction().
  */
-const CULL_STATUS = 'CULLED';
 
 /**
  * Upper bound on a hand-typed age at entry. Not a client figure and not a
@@ -182,6 +172,7 @@ export class AnimalService {
     private readonly numberSeriesService: NumberSeriesService,
     private readonly nobLobResolution: NobLobResolutionService,
     private readonly movementLog: AnimalMovementLogService,
+    private readonly batchService: BatchService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -448,6 +439,7 @@ export class AnimalService {
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.batchTransaction.item_id))
       .where(and(
         eq(schema.batchTransaction.animal_id, animalId),
+        isNull(schema.batchTransaction.reversed_at),
         eq(schema.batchTransaction.transaction_type, 'CONSUMPTION'),
         sql`${schema.batchTransaction.quantity} > 0`,
       ));
@@ -664,7 +656,7 @@ export class AnimalService {
       }
     }
     if (dto.current_stage_id) {
-      await this.assertExists(
+      const stageRow = await this.assertExists(
         this.scopedStageQuery(dto.current_stage_id, tenantId, {
           company_id: dto.company_id,
           nob_id: nobId,
@@ -672,6 +664,7 @@ export class AnimalService {
         }),
         'Stage', dto.current_stage_id,
       );
+      assertStageFitsAnimal(stageRow, { gender: dto.gender, animal_code: dto.animal_code });
     }
     // The animal's farm is its location's, or its batch's when it has no
     // location (animalOnFarm) — a farmless batch leaves it on no farm at all.
@@ -892,11 +885,6 @@ export class AnimalService {
           `'${dto.status}' records that the animal has left the herd and must be set through Dispose, which checks medicine withdrawal periods and posts the gain or loss on disposal.`,
         );
       }
-      if (dto.status === CULL_STATUS) {
-        throw new BadRequestException(
-          `'CULLED' closes the animal's record and triggers a write-off, and needs the out-of-production date, cull date, reason and weight that go with it. That flow is not built yet, so it cannot be set here.`,
-        );
-      }
     }
 
     assertGiltTeatCount(animal.animal_type, dto.no_of_teats);
@@ -998,8 +986,23 @@ export class AnimalService {
    */
   async dispose(id: string, dto: DisposeAnimalDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
-    // Treatment posting locks this same animal after its batch. Disposal never
-    // locks a batch, so there is no reverse batch/animal lock ordering.
+    // Treatment posting locks this same animal after its batch. A death posts
+    // to the batch too (below), so it takes the batch lock first as well —
+    // otherwise the two would lock the same pair in opposite order.
+    if (dto.disposal_type === 'DIED') {
+      const [peek] = await this.db
+        .select({ current_batch_id: schema.animalRegister.current_batch_id })
+        .from(schema.animalRegister)
+        .where(and(eq(schema.animalRegister.animal_id, id), eq(schema.animalRegister.tenant_id, tenantId)))
+        .limit(1);
+      if (peek?.current_batch_id) {
+        await this.db
+          .select({ batch_id: schema.batchHeader.batch_id })
+          .from(schema.batchHeader)
+          .where(eq(schema.batchHeader.batch_id, peek.current_batch_id))
+          .for('update');
+      }
+    }
     const [animal] = await this.db.select().from(schema.animalRegister)
       .where(and(
         eq(schema.animalRegister.animal_id, id),
@@ -1032,6 +1035,73 @@ export class AnimalService {
       if (dto.disposal_type === 'DIED' && reason.category !== 'MORTALITY') {
         throw new BadRequestException(`Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY — a DIED disposal needs a mortality reason.`);
       }
+      if (dto.disposal_type === 'CULLED' && reason.category !== 'CULL') {
+        throw new BadRequestException(`Reason '${reason.reason_name}' is category ${reason.category}, not CULL — a cull needs a cull reason.`);
+      }
+    }
+
+    // Culling, to BBP-1: a cull reason, the out-of-production date (set before, or given now) with the cull date not
+    // before it, the weight at cull and where the animal went.
+    let outOfProductionDate: string | null = null;
+    if (dto.disposal_type === 'CULLED') {
+      if (!dto.disposal_reason_id) throw new BadRequestException('A cull needs its reason (a CULL reason).');
+      outOfProductionDate = dto.out_of_production_date || animal.out_of_production_date || null;
+      if (!outOfProductionDate) {
+        throw new BadRequestException(`A cull needs the date ${animal.animal_code} was taken out of production.`);
+      }
+      if (dto.disposal_date < outOfProductionDate) {
+        throw new BadRequestException(
+          `The cull date ${dto.disposal_date} is before the out-of-production date ${outOfProductionDate}; a cull cannot come before it.`,
+        );
+      }
+      if (!(Number(dto.exit_weight_kg) > 0)) throw new BadRequestException('A cull needs the weight at cull (kg).');
+      if (!dto.disposal_destination?.trim()) throw new BadRequestException('A cull needs where the animal went (buyer, abattoir, rendering).');
+    }
+
+    // A death inside an ACTIVE batch is the batch's mortality posting — the same
+    // one data entry and the Mortality panel use — so the batch count, cost
+    // write-off, stage headcount, movement log and register flip all happen
+    // once, together. A batchless animal, or one in a batch that is no longer
+    // ACTIVE, keeps the plain register disposal below.
+    if (dto.disposal_type === 'DIED' && animal.current_batch_id) {
+      const [batch] = await this.db
+        .select({ status: schema.batchHeader.status })
+        .from(schema.batchHeader)
+        .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
+        .limit(1);
+      if (batch?.status === 'ACTIVE') {
+        await this.batchService.addTransaction(
+          animal.current_batch_id,
+          {
+            transaction_date: dto.disposal_date,
+            transaction_type: 'MORTALITY',
+            quantity: 1,
+            uom: 'HEAD',
+            animal_id: id,
+            remarks: dto.notes,
+            mortality_detail: { reason_id: dto.disposal_reason_id },
+          } as any,
+          tenantId,
+          userPayload,
+        );
+        if (dto.notes !== undefined) {
+          await this.db
+            .update(schema.animalRegister)
+            .set({ notes: dto.notes })
+            .where(eq(schema.animalRegister.animal_id, id));
+        }
+        await this.auditService.log({
+          tenantId,
+          companyId: animal.company_id,
+          userId: userPayload?.userId,
+          action: 'DISPOSE',
+          entityName: 'animal_register',
+          entityId: id,
+          oldValues: animal,
+          newValues: { disposal_type: 'DIED', disposal_date: dto.disposal_date, disposal_reason_id: dto.disposal_reason_id ?? null },
+        });
+        return this.findOne(id);
+      }
     }
 
     const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
@@ -1045,6 +1115,9 @@ export class AnimalService {
       disposal_reason_id: dto.disposal_reason_id ?? null,
       disposal_value: dto.disposal_value?.toString() ?? null,
       gain_loss_on_disposal: gainLoss != null ? gainLoss.toString() : null,
+      exit_weight_kg: dto.exit_weight_kg != null ? String(dto.exit_weight_kg) : null,
+      disposal_destination: dto.disposal_destination?.trim() || null,
+      ...(dto.disposal_type === 'CULLED' ? { out_of_production_date: outOfProductionDate, cull_date: dto.disposal_date } : {}),
       notes: dto.notes !== undefined ? dto.notes : animal.notes,
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
@@ -1084,6 +1157,9 @@ export class AnimalService {
       });
     }
 
+    // Her batch follows: its head and stage counts, and the movement log saying how she left (E1/E5).
+    await this.batchService.recordAnimalExit(animal, dto.disposal_type, dto.disposal_date, tenantId, userPayload);
+
     await this.auditService.log({
       tenantId,
       companyId: animal.company_id,
@@ -1100,6 +1176,40 @@ export class AnimalService {
   }
 
   /**
+   * BBP-1: an animal is taken out of production first and culled later, on or after that date. She stays live and in
+   * her batch — still eating — until the cull; posting her days after 14 days of this raises an INFO alert.
+   */
+  async markOutOfProduction(id: string, dto: MarkOutOfProductionDto, tenantId: string, userPayload?: any) {
+    const animal = await this.findOne(id);
+    if (!animal.is_active) throw new BadRequestException(`Animal '${animal.animal_code}' has already left the herd.`);
+    const today = new Date().toISOString().slice(0, 10);
+    if (dto.out_of_production_date > today) throw new BadRequestException('The out-of-production date cannot be in the future.');
+    if (animal.entry_date && dto.out_of_production_date < String(animal.entry_date).slice(0, 10)) {
+      throw new BadRequestException(`The out-of-production date is before ${animal.animal_code} entered the farm.`);
+    }
+    await this.db
+      .update(schema.animalRegister)
+      .set({
+        out_of_production_date: dto.out_of_production_date,
+        notes: dto.notes !== undefined ? dto.notes : animal.notes,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.animalRegister.animal_id, id));
+    await this.auditService.log({
+      tenantId,
+      companyId: animal.company_id,
+      userId: userPayload?.userId,
+      action: 'UPDATE',
+      entityName: 'animal_register',
+      entityId: id,
+      oldValues: { out_of_production_date: animal.out_of_production_date ?? null },
+      newValues: { out_of_production_date: dto.out_of_production_date },
+    });
+    return this.findOne(id);
+  }
+
+  /**
    * Every breeding record this animal appears in, from either side.
    *
    * A boar is not a sow with a different flag: he appears on the mating as
@@ -1112,10 +1222,22 @@ export class AnimalService {
     const animal = await this.findOne(animalId);
     const sow = aliasedTable(schema.animalRegister, 'sow');
     const boar = aliasedTable(schema.animalRegister, 'boar');
+    // A boar is also in the services made with a pooled lot he went into — not as the recorded sire (a pooled lot has no
+    // single sire), so those rows are flagged and kept out of his sired litters and totals.
+    const pooledLotIds =
+      animal.gender === 'M'
+        ? (
+            await this.db
+              .select({ id: schema.semenBatchBoar.semen_batch_id })
+              .from(schema.semenBatchBoar)
+              .where(eq(schema.semenBatchBoar.boar_animal_id, animalId))
+          ).map((r) => r.id)
+        : [];
 
-    const matings = await this.db
+    const matingRows = await this.db
       .select({
         breeding_id: schema.breedingRecord.breeding_id,
+        boar_animal_id: schema.breedingRecord.boar_animal_id,
         role: sql<string>`CASE WHEN ${schema.breedingRecord.sow_animal_id} = ${animalId} THEN 'DAM' ELSE 'SIRE' END`,
         mating_type: schema.breedingRecord.mating_type,
         mating_date: schema.breedingRecord.mating_date,
@@ -1129,6 +1251,7 @@ export class AnimalService {
         boar_parity_number: schema.breedingRecord.boar_parity_number,
         semen_dose_qty: schema.breedingRecord.semen_dose_qty,
         semen_lot_id: schema.breedingRecord.semen_lot_id,
+        semen_lot_no: schema.semenBatch.lot_no,
         notes: schema.breedingRecord.notes,
         batch_id: schema.breedingRecord.batch_id,
         batch_no: schema.batchHeader.batch_no,
@@ -1139,13 +1262,20 @@ export class AnimalService {
       .leftJoin(sow, eq(sow.animal_id, schema.breedingRecord.sow_animal_id))
       .leftJoin(boar, eq(boar.animal_id, schema.breedingRecord.boar_animal_id))
       .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.breedingRecord.batch_id))
+      .leftJoin(schema.semenBatch, eq(schema.semenBatch.semen_batch_id, schema.breedingRecord.semen_lot_id))
       .where(or(
         eq(schema.breedingRecord.sow_animal_id, animalId),
         eq(schema.breedingRecord.boar_animal_id, animalId),
+        pooledLotIds.length ? inArray(schema.breedingRecord.semen_lot_id, pooledLotIds) : undefined,
       ))
       .orderBy(desc(schema.breedingRecord.mating_date));
+    const matings = matingRows.map((m) => ({
+      ...m,
+      pooled: animal.gender === 'M' && m.boar_animal_id !== animalId && m.role === 'SIRE',
+    }));
 
-    const breedingIds = matings.map((m) => m.breeding_id);
+    // His sired litters come only from the services that recorded him as the sire.
+    const breedingIds = matings.filter((m) => !m.pooled).map((m) => m.breeding_id);
     // A female owns her farrowing rows directly. A male reaches the resulting
     // litter through the breeding_id of the service in which he was the sire.
     // This keeps the panel sex-specific without hiding the outcome of a boar's
@@ -1157,6 +1287,27 @@ export class AnimalService {
         ? (breedingIds.length ? inArray(schema.farrowingRecord.breeding_id, breedingIds) : sql`false`)
         : eq(schema.farrowingRecord.sow_animal_id, animalId))
       .orderBy(desc(schema.farrowingRecord.farrowing_date));
+
+    // Each litter's piglets are a lot in a batch of their own; name the batch beside it.
+    const pigletBatchIds = [...new Set(farrowings.map((f) => f.piglet_batch_id).filter((id): id is string => !!id))];
+    const pigletBatches = pigletBatchIds.length
+      ? await this.db
+          .select({ id: schema.batchHeader.batch_id, no: schema.batchHeader.batch_no, head: schema.batchHeader.closing_quantity, opening: schema.batchHeader.opening_quantity })
+          .from(schema.batchHeader)
+          .where(inArray(schema.batchHeader.batch_id, pigletBatchIds))
+      : [];
+    const pigletBatchNo = new Map(pigletBatches.map((b) => [b.id, b.no]));
+    const pigletHeadNow = new Map(pigletBatches.map((b) => [b.id, Number(b.head ?? b.opening ?? 0)]));
+    // A boar's litters are other sows' farrowings: name the dam beside each.
+    const damIds = [...new Set(farrowings.map((f) => f.sow_animal_id).filter((id): id is string => !!id && id !== animalId))];
+    const damCode = new Map(
+      damIds.length
+        ? (await this.db
+            .select({ id: schema.animalRegister.animal_id, code: schema.animalRegister.animal_code })
+            .from(schema.animalRegister)
+            .where(inArray(schema.animalRegister.animal_id, damIds))).map((a) => [a.id, a.code])
+        : [],
+    );
 
     const auditMovements = await this.db
       .select({
@@ -1216,6 +1367,7 @@ export class AnimalService {
           dob: schema.animalRegister.dob,
           entry_date: schema.animalRegister.entry_date,
           gender: schema.animalRegister.gender,
+          status: schema.animalRegister.status,
         })
         .from(schema.animalRegister)
         .where(and(
@@ -1303,7 +1455,7 @@ export class AnimalService {
       animal_type: animal.animal_type,
       gender: animal.gender,
       matings,
-      farrowings,
+      farrowings: farrowings.map((f) => ({ ...f, piglet_batch_no: f.piglet_batch_id ? pigletBatchNo.get(f.piglet_batch_id) ?? null : null })),
       sow_summary: sowSummary,
       movements: auditMovements,
       transfers,
@@ -1311,6 +1463,20 @@ export class AnimalService {
         sire_code: parentCode(animal.sire_animal_id),
         dam_code: parentCode(animal.dam_animal_id),
         offspring,
+        // Her litters — or, for a boar, the litters of his matings — each a piglet lot (decision of 9 Oct: piglets are
+        // held as a lot, not registered one by one, so they are offspring as litters, not as animals) (audit J6).
+        litters: farrowings.map((f) => ({
+          farrow_id: f.farrow_id,
+          litter_number: f.parity_number,
+          farrowing_date: f.farrowing_date,
+          dam_code: f.sow_animal_id === animalId ? animal.animal_code : damCode.get(f.sow_animal_id) ?? null,
+          piglets_born_live: f.piglets_born_live,
+          piglets_weaned: f.piglets_weaned,
+          weaning_date: (f.piglets_weaned || 0) > 0 ? f.weaning_date : null,
+          piglet_lot_no: f.piglet_lot_no ?? null,
+          piglet_batch_no: f.piglet_batch_id ? pigletBatchNo.get(f.piglet_batch_id) ?? null : null,
+          head_now: f.piglet_batch_id ? pigletHeadNow.get(f.piglet_batch_id) ?? null : null,
+        })),
       },
       current_labels: {
         breed: breedRow[0]?.name ?? null,
@@ -1420,6 +1586,7 @@ export class AnimalService {
     if (!destStage) {
       throw new NotFoundException(`Destination Stage with ID '${dto.to_stage_id}' not found.`);
     }
+    assertStageFitsAnimal(destStage, animal);
 
     // 2. Minimum duration validation if moving from a stage that specifies min_days_before_move
     let currentStage: typeof schema.stageMaster.$inferSelect | undefined;
@@ -1431,7 +1598,12 @@ export class AnimalService {
       }
 
       if (currentStage?.min_days_before_move && currentStage.min_days_before_move > 0) {
-        const entryDate = animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at);
+        // Days in THIS stage: from when the animal entered it, not from when it joined the farm —
+        // a sow in her fourth month on the farm is not "119 days into" a 28-day lactation.
+        const enteredOn = await this.movementLog.stageEnteredOn(id, tenantId);
+        const entryDate = enteredOn
+          ? new Date(enteredOn)
+          : animal.entry_date ? new Date(animal.entry_date) : new Date(animal.created_at);
         const transDate = new Date(dto.transition_date);
         const daysPassed = Math.floor((transDate.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -1448,22 +1620,13 @@ export class AnimalService {
     // even when the caller sends no destination placement fields.
     await this.assertOperationalPlacement(animal, tenantId);
 
-    // 5. Parity count increment check: if moving through weaning/dry from farrowing
-    let newParity = animal.parity_count || 0;
-    const destCode = destStage.stage_code?.toUpperCase();
-    if (
-      animal.gender === 'F' &&
-      ['WEANING', 'DRY_SOW_GESTATION', 'FLUSH_SERVICE', 'DRY_PERIOD', 'GESTATION', 'FLUSH'].includes(destCode || '') &&
-      currentStage?.stage_code?.toUpperCase()?.includes('FARROW')
-    ) {
-      newParity += 1;
-    }
-
+    // Parity is not touched by a stage move. It completes when the litter is weaned
+    // (BreedingService.recordWeaning); moving a sow out of farrowing used to add one
+    // here as well, so a litter could be counted twice.
     const updates = {
       current_stage_id: dto.to_stage_id,
       current_location_id: animal.current_location_id,
       current_batch_id: animal.current_batch_id,
-      parity_count: newParity,
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
@@ -1472,6 +1635,9 @@ export class AnimalService {
       .update(schema.animalRegister)
       .set(updates)
       .where(eq(schema.animalRegister.animal_id, id));
+
+    // The two stages' schedulers count the live animals at them; this animal just left one and joined the other.
+    await this.batchService.syncSchedulerCounts(animal.current_batch_id);
 
     // Checklist item 6: the animal's own row keeps only the CURRENT stage, so
     // without this the stage it came from is lost the moment it moves and

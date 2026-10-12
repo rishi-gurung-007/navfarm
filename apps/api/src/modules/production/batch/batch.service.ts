@@ -8,7 +8,12 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, asc, gt, SQL } from 'drizzle-orm';
+import { eq, and, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { masterScopeConditions } from '../../../common/master-data-scope';
+import { stageFitsGender } from '../stage/stage-gender';
+import { farmStoreOf } from '../../../common/farm-store';
+import { BatchDayReversalService } from './batch-day-reversal.service';
+import { animalOutputEvent, parsePoolIds, type AnimalOutputEvent } from '../batch-daily-data/animal-output-event';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
@@ -34,6 +39,7 @@ import {
   RenewBatchDto,
   TransferStageDto,
   BulkDailyEntryDto,
+  RecordMortalityDto,
 } from './dto/batch.dto';
 
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -68,6 +74,17 @@ export interface UserContext {
   [key: string]: unknown;
 }
 
+/**
+ * The fallbacks in this file exist for unit-test mocks that lack a query method — calling it throws a TypeError. A real
+ * database or scope error is not a TypeError and must not be swallowed into a guessed value: it is rethrown.
+ */
+/** BBP-1: an INFO alert when an animal has been out of production more than this many days without being culled. */
+const CULL_HOLD_ALERT_DAYS = 14;
+
+function rethrowUnlessMockShape(err: unknown): void {
+  if (!(err instanceof TypeError)) throw err;
+}
+
 @Injectable()
 export class BatchService {
   constructor(
@@ -78,6 +95,7 @@ export class BatchService {
     private readonly numberSeriesService: NumberSeriesService,
     private readonly schedulerHeaderService: SchedulerHeaderService,
     private readonly movementLog: AnimalMovementLogService,
+    private readonly dayReversal: BatchDayReversalService,
     // Only postBatchDay() uses this, to finalize each of the day's draft
     // entries through the exact same dispatch logic postEntry() already has,
     // rather than duplicating it. Injected by string token, not the class
@@ -380,7 +398,8 @@ export class BatchService {
             }
           }
         }
-      } catch {
+      } catch (err) {
+        rethrowUnlessMockShape(err);
         // Fallback in unit test environments without stage master mock
       }
     }
@@ -506,7 +525,8 @@ export class BatchService {
               ),
             );
         }
-      } catch {
+      } catch (err) {
+        rethrowUnlessMockShape(err);
         stageRows = [];
       }
 
@@ -540,7 +560,8 @@ export class BatchService {
               stageCodeToCanonicalId.set(stageCode!, resolved.stage_id);
             }
           }
-        } catch {
+        } catch (err) {
+          rethrowUnlessMockShape(err);
           // Graceful fallback for mock unit tests
         }
       }
@@ -589,6 +610,7 @@ export class BatchService {
           stageId,
           tenantId,
           userPayload,
+          { source: dto.scheduler_source },
         );
       }
     } else {
@@ -695,6 +717,7 @@ export class BatchService {
         initialStage.stage_id,
         tenantId,
         userPayload,
+        { source: dto.scheduler_source },
       );
     }
 
@@ -858,6 +881,7 @@ export class BatchService {
             stageId,
             tenantId,
             userPayload,
+            { source: dto.scheduler_source },
           );
         }
       }
@@ -1033,6 +1057,7 @@ export class BatchService {
           initialStage.stage_id,
           tenantId,
           userPayload,
+          { source: dto.scheduler_source },
         );
       }
     }
@@ -1347,7 +1372,8 @@ export class BatchService {
           schema.locationMaster.location_id,
         ),
       )
-      .where(eq(schema.batchTransaction.batch_id, id));
+      // A reversed row stays as the record of what was posted and is not part of the batch's cost or activity.
+      .where(and(eq(schema.batchTransaction.batch_id, id), isNull(schema.batchTransaction.reversed_at)));
     const outputLines = await this.db
       .select()
       .from(schema.batchOutputLine)
@@ -1454,12 +1480,23 @@ export class BatchService {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
 
+    const todayDate = toMysqlTimestamp().slice(0, 10);
+    const eventDate = dto.transfer_date ?? todayDate;
+    if (eventDate > todayDate) {
+      throw new BadRequestException(
+        `A stage move cannot be dated in the future (${eventDate}; today is ${todayDate}).`,
+      );
+    }
+
     // Opportunistic link to stage_master: if this LOB has a seeded stage matching
     // the given code, record it alongside current_stage_code. If not (LOB has no
     // Stage Master data, or the code is hand-typed/custom), stage_id just stays
     // null — current_stage_code remains fully authoritative either way.
     const [matchedStage] = await this.db
-      .select({ stage_id: schema.stageMaster.stage_id })
+      .select({
+        stage_id: schema.stageMaster.stage_id,
+        applicable_gender: schema.stageMaster.applicable_gender,
+      })
       .from(schema.stageMaster)
       .where(
         and(
@@ -1524,7 +1561,7 @@ export class BatchService {
           ? new Date(lastTransfer.transferred_at)
           : new Date(batch.start_date);
         const daysPassed = Math.floor(
-          (Date.now() - stageEntryDate.getTime()) / (1000 * 60 * 60 * 24),
+          (new Date(eventDate).getTime() - stageEntryDate.getTime()) / (1000 * 60 * 60 * 24),
         );
 
         if (
@@ -1559,17 +1596,25 @@ export class BatchService {
     // point of tracking stage per animal rather than only per batch. Cascading
     // unconditionally would silently drag those animals forward.
     if (matchedStage?.stage_id) {
-      const inStep = await this.db
-        .select({ animal_id: schema.animalRegister.animal_id })
+      // Live animals only: a dead one keeps its batch and stage on the register for history, and
+      // must not be re-staged or given a movement it never made. A stage set to one sex also
+      // leaves behind the animals of the other sex, which stay where they are.
+      const stepRows = await this.db
+        .select({
+          animal_id: schema.animalRegister.animal_id,
+          gender: schema.animalRegister.gender,
+        })
         .from(schema.animalRegister)
         .where(
           and(
             eq(schema.animalRegister.current_batch_id, id),
+            eq(schema.animalRegister.is_active, true),
             batch.stage_id
               ? eq(schema.animalRegister.current_stage_id, batch.stage_id)
               : isNull(schema.animalRegister.current_stage_id),
           ),
         );
+      const inStep = stepRows.filter((a) => stageFitsGender(matchedStage, a.gender));
 
       if (inStep.length > 0) {
         await this.db
@@ -1589,7 +1634,7 @@ export class BatchService {
         // Batch-level moves used to only land in batch_stage_log, leaving
         // animal_movement_log (the single source the animal-detail HISTORY /
         // LOCATION TRACEABILITY tabs read) silent about every cascaded animal.
-        const moveDate = toMysqlTimestamp().slice(0, 10);
+        const moveDate = eventDate;
         for (const animal of inStep) {
           await this.movementLog.record({
             tenantId,
@@ -1617,6 +1662,7 @@ export class BatchService {
       to_location_id: dto.to_location_id || null,
       transferred_by: userPayload?.userId || null,
       remarks: dto.remarks || null,
+      ...(dto.transfer_date ? { transferred_at: `${dto.transfer_date} 12:00:00` } : {}),
     });
 
     await this.auditService.log({
@@ -1636,13 +1682,18 @@ export class BatchService {
       },
     });
 
-    if (batch.stage_id) {
-      const todayDate = toMysqlTimestamp().slice(0, 10);
+    // An animal-wise batch holds several stages at once and only the animals "in step" moved, so
+    // the stage being left is finished only when nobody is still in it.
+    const stageStillOccupied =
+      batch.tracking_mode === 'ANIMAL_WISE' && batch.stage_id
+        ? (await this.schedulerHeaderService.countLiveAnimalsAtStage(id, batch.stage_id)) > 0
+        : false;
+    if (batch.stage_id && !stageStillOccupied) {
       await this.db
         .update(schema.schedulerHeader)
         .set({
           scheduler_status: 'COMPLETED',
-          actual_end_date: todayDate,
+          actual_end_date: eventDate,
           updated_at: toMysqlTimestamp(),
         })
         .where(
@@ -1665,8 +1716,12 @@ export class BatchService {
         matchedStage.stage_id,
         tenantId,
         userPayload,
+        { source: dto.scheduler_source },
       );
     }
+
+    // The stages just changed hands: each open scheduler counts the animals now at its stage.
+    await this.schedulerHeaderService.syncAnimalWiseCounts(id);
 
     return this.findOne(id);
   }
@@ -1720,7 +1775,7 @@ export class BatchService {
         amount: schema.batchTransaction.amount,
       })
       .from(schema.batchTransaction)
-      .where(inArray(schema.batchTransaction.batch_id, batchIds));
+      .where(and(inArray(schema.batchTransaction.batch_id, batchIds), isNull(schema.batchTransaction.reversed_at)));
 
     const accrued = new Map<string, number>();
     for (const tx of costTx) {
@@ -1829,7 +1884,8 @@ export class BatchService {
       for (const line of batch.input_lines) {
         const amount = Number(line.quantity) * Number(line.rate || 0);
         totalAcquisitionCost += amount;
-        await this.glPostingService.postBatchCostEntry({
+        // A nil acquisition — the piglets of a farrowing — has no value to journal.
+        if (amount >= 0.005) await this.glPostingService.postBatchCostEntry({
           tenantId,
           companyId: batch.company_id,
           transactionType: 'BIO_ACQUISITION',
@@ -1854,6 +1910,8 @@ export class BatchService {
           batch_no: batch.batch_no,
           posting_date: batch.start_date,
           stage: 'PREMATURE',
+          // The lot the head came in as — a farrowing's piglet lot, say — so the ledger names it.
+          lot_no: line.lot_no || null,
           quantity: line.quantity,
           cost_amount: amount.toString(),
           cost_amount_each_unit: line.rate || null,
@@ -1909,6 +1967,11 @@ export class BatchService {
       .update(schema.batchHeader)
       .set({
         status: 'ACTIVE',
+        // A head-count batch starts holding its opening head; left empty, every screen that reads the closing figure
+        // showed nothing until the first death or transfer wrote one.
+        ...(batch.tracking_mode !== 'ANIMAL_WISE' && batch.closing_quantity == null && batch.opening_quantity != null
+          ? { closing_quantity: String(batch.opening_quantity) }
+          : {}),
         updated_by: userPayload?.userId || null,
         updated_at: toMysqlTimestamp(),
       })
@@ -2141,7 +2204,411 @@ export class BatchService {
     // caller, and the global ValidationPipe's `whitelist: true` would strip it
     // off an HTTP body anyway. Optional, so every existing caller — which has
     // no warehouse to name — keeps the company-wide FIFO draw it had.
-    dto: AddBatchTransactionDto & { source_warehouse_id?: string },
+    // skip_scheduler_count is server-side only for the same reason: the daily
+    // mortality line keeps the stage's headcount itself and says so here.
+    dto: AddBatchTransactionDto & {
+      source_warehouse_id?: string;
+      skip_scheduler_count?: boolean;
+    },
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    // A death touches the transaction, the cost write-off, the batch and
+    // scheduler counts and (animal-wise) the animal itself. They post together
+    // or not at all; joins the caller's transaction when one is open.
+    if (dto.transaction_type === 'MORTALITY') {
+      return withTenantTransaction(this.cls, () =>
+        this.addTransactionInner(id, dto, tenantId, userPayload),
+      );
+    }
+    return this.addTransactionInner(id, dto, tenantId, userPayload);
+  }
+
+  /** Recounts an animal-wise batch's stage headcounts from the register (no-op for a batch-wise batch). */
+  async syncSchedulerCounts(batchId: string): Promise<void> {
+    await this.schedulerHeaderService.syncAnimalWiseCounts(batchId);
+  }
+
+  /**
+   * BBP-1: "INFO alert when the gap [between Out-of-Production and Cull Date] exceeds 14 days" — the animal is still
+   * eating during the hold. There is no scheduled job in the app, so it is raised when her day is posted (her feed
+   * is what the alert is about), once per animal and hold.
+   */
+  private async raiseCullHoldAlerts(
+    batch: { batch_id: string; batch_no: string; tenant_id: string; company_id: string; lob_id: string },
+    animals: Array<{ animal_id: string; animal_code: string; is_active: boolean | null; out_of_production_date?: string | null }>,
+    dateStr: string,
+  ): Promise<void> {
+    for (const animal of animals) {
+      if (!animal.is_active || !animal.out_of_production_date) continue;
+      const since = String(animal.out_of_production_date).slice(0, 10);
+      const days = Math.floor((new Date(dateStr).getTime() - new Date(since).getTime()) / 86_400_000);
+      if (days <= CULL_HOLD_ALERT_DAYS) continue;
+      const title = `${animal.animal_code} out of production for over ${CULL_HOLD_ALERT_DAYS} days — not culled`;
+      const [already] = await this.db
+        .select({ alert_id: schema.notificationAlertLog.alert_id })
+        .from(schema.notificationAlertLog)
+        .where(
+          and(
+            eq(schema.notificationAlertLog.batch_id, batch.batch_id),
+            eq(schema.notificationAlertLog.alert_type, 'CULL_HOLD'),
+            eq(schema.notificationAlertLog.title, title),
+          ),
+        )
+        .limit(1);
+      if (already) continue;
+      await this.db.insert(schema.notificationAlertLog).values({
+        alert_id: randomUUID(),
+        tenant_id: batch.tenant_id,
+        company_id: batch.company_id,
+        lob_id: batch.lob_id,
+        batch_id: batch.batch_id,
+        alert_type: 'CULL_HOLD',
+        severity: 'INFO',
+        title,
+        message: `${animal.animal_code} was taken out of production on ${since} and has not been culled (${days} days on ${dateStr}); she is still being fed in ${batch.batch_no}.`,
+        activity_name: 'Cull hold',
+        kpi_mode: 'VALUE',
+        expected_value: String(CULL_HOLD_ALERT_DAYS),
+        actual_value: String(days),
+      });
+    }
+  }
+
+  /**
+   * A registered animal left an active batch other than by dying — sold, slaughtered, transferred out or culled
+   * (audit E1/E5): the batch's head and its stage counts follow, and the movement log says how she left. A death has
+   * its own posting (recordMortality). Her own registered value has already left her own ledger (AnimalService.dispose).
+   * The costs the batch has accumulated stay with the animals still in it: how a leaving animal takes her share of
+   * them is a decision for the client (decisions.md, 9 Oct, Phase 8).
+   */
+  async recordAnimalExit(
+    animal: {
+      animal_id: string;
+      company_id: string;
+      current_batch_id: string | null;
+      current_stage_id: string | null;
+      current_location_id: string | null;
+    },
+    exitType: string,
+    exitDate: string,
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<void> {
+    if (!animal.current_batch_id) return;
+    const [batch] = await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
+      .limit(1);
+    if (!batch || batch.status !== 'ACTIVE') return;
+
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        closing_quantity: sql`GREATEST(0, COALESCE(${schema.batchHeader.closing_quantity}, ${schema.batchHeader.opening_quantity}, 0) - 1)`,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.batchHeader.batch_id, batch.batch_id));
+    if (batch.costing_method === 'BIO_ASSET') {
+      await this.db
+        .update(schema.batchBioAssetState)
+        .set({
+          current_quantity: sql`GREATEST(0, ${schema.batchBioAssetState.current_quantity} - 1)`,
+          updated_at: toMysqlTimestamp(),
+        })
+        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+    }
+    await this.movementLog.record({
+      tenantId,
+      companyId: animal.company_id,
+      animalId: animal.animal_id,
+      movementType: exitType === 'CULLED' ? 'CULL' : 'DISPOSAL',
+      eventDate: exitDate,
+      fromBatchId: batch.batch_id,
+      fromStageId: animal.current_stage_id,
+      fromLocationId: animal.current_location_id,
+      entryNo: batch.batch_no,
+      reason: exitType,
+      userId: userPayload?.userId,
+    });
+    await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+  }
+
+  /** One death event as a unit: every animal posts, or none does. */
+  async recordMortality(
+    id: string,
+    dto: RecordMortalityDto,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const animalIds = [...new Set(dto.animal_ids ?? [])];
+    if (!animalIds.length && !(Number(dto.quantity) > 0)) {
+      throw new BadRequestException(
+        'Choose the animals that died, or enter a head count.',
+      );
+    }
+    return withTenantTransaction(this.cls, async () => {
+      if (animalIds.length) {
+        for (const animalId of animalIds) {
+          await this.addTransaction(
+            id,
+            {
+              transaction_date: dto.transaction_date,
+              transaction_type: 'MORTALITY',
+              quantity: 1,
+              uom: 'HEAD',
+              animal_id: animalId,
+              remarks: dto.remarks,
+              mortality_detail: dto.mortality_detail,
+            } as any,
+            tenantId,
+            userPayload,
+          );
+        }
+      } else {
+        await this.addTransaction(
+          id,
+          {
+            transaction_date: dto.transaction_date,
+            transaction_type: 'MORTALITY',
+            quantity: Number(dto.quantity),
+            uom: 'HEAD',
+            remarks: dto.remarks,
+            mortality_detail: dto.mortality_detail,
+          } as any,
+          tenantId,
+          userPayload,
+        );
+      }
+      return this.findOne(id);
+    });
+  }
+
+  /**
+   * What a MORTALITY row must prove before anything is posted: the reason (if
+   * one is named) is a mortality reason, and a named animal is a live member
+   * of this batch. Animal-wise batches refuse an anonymous head count — the
+   * register would keep the dead animal alive.
+   */
+  private async prepareMortality(
+    batch: Awaited<ReturnType<BatchService['findOne']>>,
+    dto: AddBatchTransactionDto,
+    tenantId: string,
+  ) {
+    let reason: typeof schema.reasonMaster.$inferSelect | undefined;
+    const reasonId = dto.mortality_detail?.reason_id;
+    if (reasonId) {
+      [reason] = await this.db
+        .select()
+        .from(schema.reasonMaster)
+        .where(
+          and(
+            eq(schema.reasonMaster.reason_id, reasonId),
+            eq(schema.reasonMaster.tenant_id, tenantId),
+            eq(schema.reasonMaster.is_active, true),
+            ...masterScopeConditions(this.cls, schema.reasonMaster, batch.company_id),
+          ),
+        )
+        .limit(1);
+      if (!reason) {
+        throw new BadRequestException(
+          `Reason '${reasonId}' is not available in this workspace.`,
+        );
+      }
+      if (reason.category !== 'MORTALITY') {
+        throw new BadRequestException(
+          `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY — a death needs a mortality reason.`,
+        );
+      }
+    }
+
+    if (!dto.animal_id) {
+      if (batch.tracking_mode === 'ANIMAL_WISE') {
+        throw new BadRequestException(
+          'This batch tracks registered animals — choose the animal(s) that died.',
+        );
+      }
+      return { reason, animal: undefined };
+    }
+
+    if (dto.quantity !== undefined && dto.quantity !== null && Number(dto.quantity) !== 1) {
+      throw new BadRequestException(
+        'A death attributed to one animal has a quantity of 1.',
+      );
+    }
+    const [animal] = await this.db
+      .select()
+      .from(schema.animalRegister)
+      .where(
+        and(
+          eq(schema.animalRegister.animal_id, dto.animal_id),
+          eq(schema.animalRegister.tenant_id, tenantId),
+        ),
+      )
+      .for('update');
+    if (!animal) {
+      throw new NotFoundException(`Animal '${dto.animal_id}' not found.`);
+    }
+    if (animal.current_batch_id !== batch.batch_id) {
+      throw new BadRequestException(
+        `Animal '${animal.animal_code}' is not a member of batch '${batch.batch_no}'.`,
+      );
+    }
+    if (!animal.is_active || ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'].includes(animal.status)) {
+      throw new BadRequestException(
+        `Animal '${animal.animal_code}' is already ${animal.status.toLowerCase()} and cannot be recorded as dead again.`,
+      );
+    }
+    return { reason, animal };
+  }
+
+  /**
+   * The non-ledger half of a death, written after its transaction row exists:
+   * the register flip and movement log for a named animal, and the stage
+   * headcount. Without the headcount a later stage's scheduler is created from
+   * the prior stage's count (createForStage) and silently resurrects the dead.
+   */
+  private async applyMortalityEffects(
+    batch: Awaited<ReturnType<BatchService['findOne']>>,
+    dto: AddBatchTransactionDto & { skip_scheduler_count?: boolean },
+    prepared: Awaited<ReturnType<BatchService['prepareMortality']>>,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
+    const { animal, reason } = prepared;
+    const quantity = Number(dto.quantity);
+
+    if (animal) {
+      await this.db
+        .update(schema.animalRegister)
+        .set({
+          is_active: false,
+          status: 'DEAD',
+          disposal_type: 'DIED',
+          disposal_date: dto.transaction_date,
+          disposal_reason_id: reason?.reason_id ?? null,
+          updated_by: userPayload?.userId || null,
+          updated_at: toMysqlTimestamp(),
+        })
+        .where(eq(schema.animalRegister.animal_id, animal.animal_id));
+
+      await this.movementLog.record({
+        tenantId,
+        companyId: batch.company_id,
+        animalId: animal.animal_id,
+        movementType: 'MORTALITY',
+        eventDate: dto.transaction_date,
+        fromBatchId: batch.batch_id,
+        fromStageId: animal.current_stage_id,
+        fromLocationId: animal.current_location_id,
+        entryNo: batch.batch_no,
+        reason: reason?.reason_name ?? dto.mortality_detail?.cause_of_death ?? null,
+        remarks: dto.remarks ?? null,
+        userId: userPayload?.userId,
+      });
+
+      // The animal's own carrying value — what she was registered at, less amortisation — leaves her own
+      // bio-asset ledger, whatever the batch's costing: what AnimalService.dispose() has always written for a
+      // DIED animal. A bio-asset batch's row above is something else — her share of the costs the batch has
+      // accumulated — and used to be the only write-off, so a dead sow kept her registered value (F5).
+      const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
+      if (bookValue != null) {
+        await this.db.insert(schema.bioAssetLedger).values({
+          entry_id: randomUUID(),
+          tenant_id: tenantId,
+          company_id: animal.company_id,
+          bio_asset_item_id: animal.item_id,
+          animal_id: animal.animal_id,
+          entry_type: 'MORTALITY',
+          document_no: animal.animal_code,
+          posting_date: dto.transaction_date,
+          stage: animal.current_stage_id || null,
+          status: 'DEAD',
+          quantity: '-1.0000',
+          cost_amount: (-bookValue).toString(),
+          cost_amount_each_unit: bookValue.toString(),
+          costing_method: 'AMORTIZED_COST',
+          nob_id: animal.nob_id,
+          lob_id: animal.lob_id,
+          created_by: userPayload?.userId || null,
+        });
+      }
+    }
+
+    // An animal-wise batch's headcount is the register's: each header counts the live animals
+    // at its own stage, so the death is counted by recounting, not by subtracting from a
+    // number that may already have drifted.
+    if (animal && batch.tracking_mode === 'ANIMAL_WISE') {
+      await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+      return;
+    }
+
+    if (dto.skip_scheduler_count) return;
+
+    // The animal's own stage owns its headcount; a batch-wise batch has one
+    // current stage. Looked up, never created — a death must not start a schedule.
+    // Every stage exists as a tenant row and a company copy and a batch's scheduler
+    // can sit under either, so the header is found by stage code, preferring the
+    // exact id.
+    const stageId = animal?.current_stage_id ?? batch.stage_id;
+    let schedulerId: string | undefined;
+    if (stageId) {
+      const [stageRow] = await this.db
+        .select({ stage_code: schema.stageMaster.stage_code })
+        .from(schema.stageMaster)
+        .where(eq(schema.stageMaster.stage_id, stageId))
+        .limit(1);
+      const candidates = await this.db
+        .select({
+          scheduler_id: schema.schedulerHeader.scheduler_id,
+          stage_id: schema.schedulerHeader.stage_id,
+        })
+        .from(schema.schedulerHeader)
+        .innerJoin(
+          schema.stageMaster,
+          eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id),
+        )
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, batch.batch_id),
+            stageRow?.stage_code
+              ? eq(schema.stageMaster.stage_code, stageRow.stage_code)
+              : eq(schema.schedulerHeader.stage_id, stageId),
+          ),
+        );
+      schedulerId = (candidates.find((c) => c.stage_id === stageId) ?? candidates[0])?.scheduler_id;
+    } else {
+      const [header] = await this.db
+        .select({ scheduler_id: schema.schedulerHeader.scheduler_id })
+        .from(schema.schedulerHeader)
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, batch.batch_id),
+            eq(schema.schedulerHeader.scheduler_status, 'ACTIVE'),
+          ),
+        )
+        .limit(1);
+      schedulerId = header?.scheduler_id;
+    }
+    if (schedulerId) {
+      await this.db
+        .update(schema.schedulerHeader)
+        .set({
+          animal_count: sql`GREATEST(0, ${schema.schedulerHeader.animal_count} - ${quantity})`,
+          updated_at: toMysqlTimestamp(),
+        })
+        .where(eq(schema.schedulerHeader.scheduler_id, schedulerId));
+    }
+  }
+
+  private async addTransactionInner(
+    id: string,
+    dto: AddBatchTransactionDto & {
+      source_warehouse_id?: string;
+      skip_scheduler_count?: boolean;
+    },
     tenantId: string,
     userPayload?: UserContext,
   ) {
@@ -2161,11 +2628,27 @@ export class BatchService {
       );
     }
 
+    let mortality: Awaited<ReturnType<BatchService['prepareMortality']>> | undefined;
+    if (dto.transaction_type === 'MORTALITY') {
+      if (dto.animal_id && (dto.quantity === undefined || dto.quantity === null)) {
+        dto.quantity = 1;
+      }
+      mortality = await this.prepareMortality(batch, dto, tenantId);
+      if (mortality.reason && !dto.mortality_detail?.cause_of_death?.trim()) {
+        dto.mortality_detail = {
+          ...(dto.mortality_detail ?? {}),
+          cause_of_death: mortality.reason.reason_name,
+        };
+      }
+    }
+
     const isBioAsset = batch.costing_method === 'BIO_ASSET';
     const bioState = isBioAsset ? await this.ensureBioState(batch, id) : undefined;
     const bio = bioState;
 
-    let bioAssetSubjectItemId = dto.item_id || batch.input_lines?.[0]?.item_id;
+    // A registered animal's death is booked under her own item; an animal-wise batch has no input lines, so the
+    // "first active item" fallback below used to name whatever item came first.
+    let bioAssetSubjectItemId = dto.item_id || mortality?.animal?.item_id || batch.input_lines?.[0]?.item_id;
     if (!bioAssetSubjectItemId && isBioAsset) {
       const [fallbackItem] = await this.db
         .select({ item_id: schema.itemMaster.item_id })
@@ -2186,51 +2669,8 @@ export class BatchService {
     let rate: number | null = dto.rate ?? null;
 
     if (dto.transaction_type === 'CONSUMPTION') {
-      if (!dto.item_id) {
-        const isMed =
-          (dto.remarks || '').toLowerCase().includes('med') ||
-          (dto.remarks || '').toLowerCase().includes('vaccin') ||
-          (dto.remarks || '').toLowerCase().includes('antibiotic') ||
-          (dto.remarks || '').toLowerCase().includes('deworm') ||
-          (dto.remarks || '').toLowerCase().includes('dextran') ||
-          (dto.remarks || '').toLowerCase().includes('ivermectin') ||
-          dto.uom === 'ML' ||
-          dto.uom === 'DOSES' ||
-          dto.uom === 'VIAL';
-
-        const [matchedItem] = await this.db
-          .select({ item_id: schema.itemMaster.item_id })
-          .from(schema.itemMaster)
-          .where(
-            and(
-              eq(schema.itemMaster.tenant_id, tenantId),
-              eq(schema.itemMaster.is_active, true),
-              isMed
-                ? eq(schema.itemMaster.item_type, 'MEDICINE')
-                : eq(schema.itemMaster.item_type, 'FEED'),
-            ),
-          )
-          .limit(1);
-
-        if (matchedItem) {
-          dto.item_id = matchedItem.item_id;
-        } else {
-          const [anyItem] = await this.db
-            .select({ item_id: schema.itemMaster.item_id })
-            .from(schema.itemMaster)
-            .where(
-              and(
-                eq(schema.itemMaster.tenant_id, tenantId),
-                eq(schema.itemMaster.is_active, true),
-              ),
-            )
-            .limit(1);
-          if (anyItem) {
-            dto.item_id = anyItem.item_id;
-          }
-        }
-      }
-
+      // The item is the caller's to name. Guessing one from keywords in the remarks, or taking any
+      // active item when nothing matched, drew stock — and posted cost — against an item nobody chose.
       if (!dto.item_id || !dto.quantity || !dto.uom) {
         throw new BadRequestException(
           'A consumption entry needs an item, a quantity and a unit of measure.',
@@ -2321,6 +2761,29 @@ export class BatchService {
         (dto.output_type === 'BY_PRODUCT' || dto.output_type === 'WASTE') &&
         dto.nrv_rate != null;
 
+      // What is produced goes into a store, with a lot where the item is lot-tracked. It used to
+      // enter the ledger with no warehouse at all — counted in the company's stock but kept nowhere,
+      // so no store transfer or sale could pick it — and a lot-tracked item needed its lot typed.
+      const [outputItem] = await this.db
+        .select({
+          is_lot_tracked: schema.itemMaster.is_lot_tracked,
+          shelf_life_days: schema.itemMaster.shelf_life_days,
+        })
+        .from(schema.itemMaster)
+        .where(eq(schema.itemMaster.item_id, dto.item_id))
+        .limit(1);
+      const outputWarehouseId = (await farmStoreOf(this.db, batch.farm_id)) ?? undefined;
+      let outputLotNo = dto.lot_no;
+      if (!outputLotNo && !dto.serial_no && outputItem?.is_lot_tracked) {
+        outputLotNo = await this.numberSeriesService.generateNext('ITEM_LOT', tenantId, batch.company_id);
+      }
+      let outputExpiry: string | undefined;
+      if (outputItem?.shelf_life_days) {
+        const expiry = new Date(dto.transaction_date);
+        expiry.setDate(expiry.getDate() + outputItem.shelf_life_days);
+        outputExpiry = expiry.toISOString().slice(0, 10);
+      }
+
       const ledgerEntry = await this.ledgerService.writePositiveEntry({
         tenantId,
         companyId: batch.company_id,
@@ -2334,8 +2797,10 @@ export class BatchService {
         uom: dto.uom,
         rate: isByProductRemoval ? dto.nrv_rate : dto.rate,
         batchNo: batch.batch_no,
-        lotNo: dto.lot_no,
+        lotNo: outputLotNo,
         serialNo: dto.serial_no,
+        expiryDate: outputExpiry,
+        warehouseId: outputWarehouseId,
         userId: userPayload?.userId,
       });
       await this.glPostingService.postInventoryLedgerEntry(
@@ -2417,18 +2882,23 @@ export class BatchService {
           });
         }
 
-        await this.db.insert(schema.batchOutputLine).values({
-          line_id: randomUUID(),
-          batch_id: id,
-          item_id: dto.item_id,
-          output_type: dto.output_type || 'BY_PRODUCT',
-          cost_split_pct: '0',
-          quantity: dto.quantity.toString(),
-          uom: dto.uom,
-          computed_cost: nrvValue.toString(),
-          unit_cost: nrvRate.toString(),
-        });
       }
+
+      // Every output leaves an output line, not only a by-product: it is what a QR pack and a QC
+      // result attach to, and until now a main output had none to attach to. Its id is the
+      // transaction's, which is also the ledger entry's document line, so the three line up.
+      await this.db.insert(schema.batchOutputLine).values({
+        line_id: transactionId,
+        batch_id: id,
+        item_id: dto.item_id,
+        output_type: dto.output_type || (isByProductRemoval ? 'BY_PRODUCT' : 'MAIN'),
+        cost_split_pct: '0',
+        quantity: dto.quantity.toString(),
+        uom: dto.uom,
+        computed_cost: isByProductRemoval ? (Number(dto.nrv_rate || 0) * dto.quantity).toString() : amount.toString(),
+        unit_cost: (isByProductRemoval ? Number(dto.nrv_rate || 0) : rate ?? 0).toString(),
+        warehouse_id: outputWarehouseId ?? null,
+      });
     } else if (dto.transaction_type === 'MORTALITY') {
       if (!dto.quantity) {
         throw new BadRequestException(
@@ -2452,7 +2922,8 @@ export class BatchService {
         const nbvShare = perUnitNca * dto.quantity;
         rate = perUnitNca;
         amount = -nbvShare;
-        await this.glPostingService.postBatchCostEntry({
+        // A herd carried at nil (the piglets of a farrowing) loses nothing to journal.
+        if (nbvShare >= 0.005) await this.glPostingService.postBatchCostEntry({
           tenantId,
           companyId: batch.company_id,
           transactionType:
@@ -2496,6 +2967,7 @@ export class BatchService {
             tenant_id: tenantId,
             company_id: batch.company_id,
             bio_asset_item_id: bioAssetSubjectItemId,
+            animal_id: dto.animal_id || null,
             entry_type: 'MORTALITY',
             document_no: batch.batch_no,
             batch_id: id,
@@ -2516,7 +2988,7 @@ export class BatchService {
         const unitCost = await this.computeRunningUnitCost(batch);
         rate = unitCost;
         amount = -(dto.quantity * unitCost);
-        await this.glPostingService.postBatchCostEntry({
+        if (Math.abs(amount) >= 0.005) await this.glPostingService.postBatchCostEntry({
           tenantId,
           companyId: batch.company_id,
           transactionType: 'MORTALITY',
@@ -2664,6 +3136,10 @@ export class BatchService {
       });
     }
 
+    if (mortality) {
+      await this.applyMortalityEffects(batch, dto, mortality, tenantId, userPayload);
+    }
+
     if (dto.treatment_detail) {
       const detail = dto.treatment_detail;
       await this.db.insert(schema.batchTreatmentDetail).values({
@@ -2745,7 +3221,8 @@ export class BatchService {
             }
           }
         }
-      } catch {
+      } catch (err) {
+        rethrowUnlessMockShape(err);
         // Fallback in unit test environments
       }
     }
@@ -3040,7 +3517,8 @@ export class BatchService {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       // Mock/test fallback
     }
 
@@ -3155,7 +3633,8 @@ export class BatchService {
         }
         return cursor;
       }
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       return batch.start_date || today;
     }
   }
@@ -3322,7 +3801,8 @@ export class BatchService {
           typical_duration_days: s.typical_duration_days,
         })),
       };
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       return null;
     }
   }
@@ -3392,12 +3872,14 @@ export class BatchService {
       let stageTransition: any = null;
       try {
         nextPendingDate = await this.getNextPendingDate(batch);
-      } catch {
+      } catch (err) {
+        rethrowUnlessMockShape(err);
         nextPendingDate = batch.start_date || dateStr;
       }
       try {
         stageTransition = await this.getStageTransitionInfo(batch);
-      } catch {
+      } catch (err) {
+        rethrowUnlessMockShape(err);
         stageTransition = null;
       }
 
@@ -3426,12 +3908,14 @@ export class BatchService {
     let stageTransition: any = null;
     try {
       nextPendingDate = await this.getNextPendingDate(batch);
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       nextPendingDate = batch.start_date || dateStr;
     }
     try {
       stageTransition = await this.getStageTransitionInfo(batch);
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       stageTransition = null;
     }
 
@@ -3627,6 +4111,11 @@ export class BatchService {
                 entered_text: row.entered_text || undefined,
                 lot_no: row.lot_no || undefined,
                 serial_no: row.serial_no || undefined,
+                // What the user chose when the draft was saved: the output item, the transfer's destination.
+                item_id: row.item_id || undefined,
+                destination_batch_id: row.destination_batch_id || undefined,
+                pool_animal_ids: parsePoolIds(row.pool_animal_ids),
+                reason_id: row.reason_id || undefined,
                 remarks: row.remarks || undefined,
               } as any,
               tenantId,
@@ -3875,7 +4364,8 @@ export class BatchService {
     let nextPendingDate = dateStr;
     try {
       nextPendingDate = await this.getNextPendingDate(batch);
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       nextPendingDate = batch.start_date || dateStr;
     }
 
@@ -3947,6 +4437,8 @@ export class BatchService {
       animal_code: string;
       is_posted: boolean;
       lines: Awaited<ReturnType<BatchService['buildDataEntryLines']>>['lines'];
+      // What an output entered for this animal will post as — semen, a farrowing, the weaning of her open litter.
+      output_event?: AnimalOutputEvent | null;
     };
     const stages: Array<{
       stage_id: string;
@@ -4073,11 +4565,13 @@ export class BatchService {
           animals.length,
         );
         dayOfStage = built.dayOfStage;
+        const hasOutputLine = (built.lines as Array<{ line_type: string }>).some((l) => l.line_type === 'OUTPUT');
         animalLines.push({
           animal_id: animal.animal_id,
           animal_code: animal.animal_code,
           is_posted: isStageLocked || fullyPostedAnimalSet.has(animal.animal_id),
           lines: built.lines,
+          output_event: hasOutputLine ? await animalOutputEvent(this.db, animal.animal_id, header.stage_id) : null,
         });
       }
 
@@ -4310,7 +4804,29 @@ export class BatchService {
             // Each animal's consumption is checked as it comes in and held; what the stage's animals took of an
             // activity is then issued together, as one ledger entry per activity.
             const collector: PendingConsumption[] = [];
-            for (const row of draftRows) {
+            // What moves an animal goes last: a weaning sends the sow to Dry Sow and a transfer takes the animal out
+            // of the batch, after which her other entries of the day no longer match where she is. So the day's
+            // feed, observations and the rest post first, their consumption is issued, and then the outputs and
+            // the transfers.
+            const lineTypeOf = new Map(activePairs.map(({ line }) => [line.line_id, line.line_type]));
+            // A death goes after everything else of the day: the animal's feed and observations for that day are
+            // real, and once she is recorded dead her other entries no longer match where she is.
+            const deathLineIds = new Set(
+              activePairs.filter(({ line }) => line.kpi_metric === 'MORTALITY_COUNT').map(({ line }) => line.line_id),
+            );
+            const movesLast = (row: { line_id: string }) =>
+              lineTypeOf.get(row.line_id) === 'OUTPUT' ||
+              lineTypeOf.get(row.line_id) === 'TRANSFER' ||
+              deathLineIds.has(row.line_id);
+            const ordered = [
+              ...draftRows.filter((row) => !movesLast(row)),
+              ...draftRows.filter((row) => lineTypeOf.get(row.line_id) === 'OUTPUT'),
+              ...draftRows.filter((row) => lineTypeOf.get(row.line_id) === 'TRANSFER'),
+              ...draftRows.filter((row) => deathLineIds.has(row.line_id)),
+            ];
+            const firstMover = ordered.findIndex(movesLast);
+            for (const [index, row] of ordered.entries()) {
+              if (index === firstMover) await this.batchDailyDataService.postCollected(collector.splice(0));
               await this.batchDailyDataService.postEntry(
                 batchId,
                 {
@@ -4324,6 +4840,11 @@ export class BatchService {
                   entered_text: row.entered_text || undefined,
                   lot_no: row.lot_no || undefined,
                   serial_no: row.serial_no || undefined,
+                  // What the user chose when the draft was saved: the output item, the transfer's destination.
+                  item_id: row.item_id || undefined,
+                  destination_batch_id: row.destination_batch_id || undefined,
+                  pool_animal_ids: parsePoolIds(row.pool_animal_ids),
+                reason_id: row.reason_id || undefined,
                   remarks: row.remarks || undefined,
                 } as any,
                 tenantId,
@@ -4343,6 +4864,9 @@ export class BatchService {
         }
       }
     }
+
+    // BBP-1: an animal held out of production more than 14 days without being culled is still eating — say so.
+    await this.raiseCullHoldAlerts(batch, targetAnimals, dateStr);
 
     // Determine if the entire stage should be locked:
     // If posting for all animals, always lock.
@@ -4458,12 +4982,11 @@ export class BatchService {
   }
 
   /**
-   * Reopen-only correction path — no automated ledger/GL/bio-asset reversal
-   * exists yet (flagged as its own, larger follow-up). Unlocking lets the
-   * stage/date accept writes again; the corrected re-entry, once re-posted,
-   * still re-runs its own dispatch exactly like a fresh entry — reconciling
-   * whatever the original (now-superseded) posting produced is a manual step,
-   * same as it always was before locking existed at all. Requires a reason so
+   * Reopens a posted stage-day for correction. What the day posted is reversed first — stock issued is returned at
+   * its own cost, journals are mirrored, the batch transactions are marked reversed — and the entries go back to
+   * drafts with their values, so the corrected day posts exactly once. Entries that cannot be reversed safely (a
+   * transfer, a recorded death, a bio-asset batch's output and cost) stay posted and are returned in `kept` with the
+   * reason. If anything cannot be reversed — output already used, say — nothing is changed. Requires a reason so
    * every reopen is explained in the audit trail.
    */
   async reopenStageDay(
@@ -4480,51 +5003,64 @@ export class BatchService {
       );
     }
     const batch = await this.findOne(batchId);
-    const [lock] = await this.db
-      .select()
-      .from(schema.batchDataEntryLock)
-      .where(
-        and(
-          eq(schema.batchDataEntryLock.batch_id, batchId),
-          eq(schema.batchDataEntryLock.stage_id, stageId),
-          eq(schema.batchDataEntryLock.entry_date, dateStr),
-        ),
-      )
-      .limit(1);
-    if (!lock || lock.status !== 'LOCKED') {
-      throw new BadRequestException('This stage/date is not currently locked.');
-    }
+    return withTenantTransaction(this.cls, async () => {
+      const [lock] = await this.db
+        .select()
+        .from(schema.batchDataEntryLock)
+        .where(
+          and(
+            eq(schema.batchDataEntryLock.batch_id, batchId),
+            eq(schema.batchDataEntryLock.stage_id, stageId),
+            eq(schema.batchDataEntryLock.entry_date, dateStr),
+          ),
+        )
+        .limit(1);
+      if (!lock || lock.status !== 'LOCKED') {
+        throw new BadRequestException('This stage/date is not currently locked.');
+      }
 
-    const now = toMysqlTimestamp();
-    await this.db
-      .update(schema.batchDataEntryLock)
-      .set({
+      const unposted = await this.dayReversal.unpostDay(
+        batchId, stageId, dateStr, reason, tenantId, userPayload?.userId,
+      );
+
+      const now = toMysqlTimestamp();
+      await this.db
+        .update(schema.batchDataEntryLock)
+        .set({
+          status: 'REOPENED',
+          reopened_by: userPayload?.userId || null,
+          reopened_at: now,
+          reopen_reason: reason,
+          updated_at: now,
+        })
+        .where(eq(schema.batchDataEntryLock.lock_id, lock.lock_id));
+
+      await this.auditService.log({
+        tenantId,
+        companyId: batch.company_id,
+        userId: userPayload?.userId,
+        action: 'UPDATE',
+        entityName: 'batch_data_entry_lock',
+        entityId: lock.lock_id,
+        oldValues: { status: 'LOCKED' },
+        newValues: { status: 'REOPENED', reopen_reason: reason, unposted: unposted.unposted, kept: unposted.kept.length },
+      });
+
+      // Stock returned to a silo changes its level.
+      if (unposted.consumption_reversed) {
+        await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
+      }
+
+      return {
+        batch_id: batchId,
+        stage_id: stageId,
+        entry_date: dateStr,
         status: 'REOPENED',
-        reopened_by: userPayload?.userId || null,
-        reopened_at: now,
         reopen_reason: reason,
-        updated_at: now,
-      })
-      .where(eq(schema.batchDataEntryLock.lock_id, lock.lock_id));
-
-    await this.auditService.log({
-      tenantId,
-      companyId: batch.company_id,
-      userId: userPayload?.userId,
-      action: 'UPDATE',
-      entityName: 'batch_data_entry_lock',
-      entityId: lock.lock_id,
-      oldValues: { status: 'LOCKED' },
-      newValues: { status: 'REOPENED', reopen_reason: reason },
+        unposted: unposted.unposted,
+        kept_posted: unposted.kept,
+      };
     });
-
-    return {
-      batch_id: batchId,
-      stage_id: stageId,
-      entry_date: dateStr,
-      status: 'REOPENED',
-      reopen_reason: reason,
-    };
   }
 
   /**
@@ -4581,6 +5117,10 @@ export class BatchService {
           qty_basis: string;
           expected_qty: number;
           already_entered_qty: number | null;
+          already_entered_item_id: string | null;
+          already_entered_destination: string | null;
+          entry_note: string | null;
+          is_entry_posted: boolean;
           std_rate: number | null;
         }>,
         dayOfStage,
@@ -4594,6 +5134,7 @@ export class BatchService {
         and(
           eq(schema.batchTransaction.batch_id, batchId),
           eq(schema.batchTransaction.transaction_date, dateStr),
+          isNull(schema.batchTransaction.reversed_at),
           ...(animalId
             ? [eq(schema.batchTransaction.animal_id, animalId)]
             : []),
@@ -4750,6 +5291,14 @@ export class BatchService {
         already_entered_qty: alreadyEntered,
         already_entered_lot: enteredEntry?.lot_no || enteredEntry?.serial_no || null,
         already_entered_serial: enteredEntry?.serial_no || null,
+        // An output's chosen item and a transfer's (or weaning's) destination, as the draft holds them.
+        already_entered_item_id: enteredEntry?.item_id || null,
+        already_entered_destination: enteredEntry?.destination_batch_id || null,
+        already_entered_pool: parsePoolIds(enteredEntry?.pool_animal_ids),
+        already_entered_reason_id: enteredEntry?.reason_id || null,
+        // What posting the entry did — "Farrowing recorded … lot LOT-00006", "Semen lot LOT-00007 …" — shown under it.
+        entry_note: enteredEntry?.posted ? enteredEntry.remarks || null : null,
+        is_entry_posted: Boolean(enteredEntry?.posted),
         std_rate: stdRate,
       };
     });
@@ -5532,6 +6081,22 @@ export class BatchService {
       created_by: userPayload?.userId || null,
     });
 
+    // The head on hand lives on the batch header and in the stage scheduler as well as in the bio-asset
+    // state. Mortality and transfers keep all three in step; a harvest used to lower only the state, so the
+    // batch kept claiming head it no longer held (closing quantity, location counts, the feed it is planned).
+    if (newQty > 0) {
+      await this.db
+        .update(schema.batchHeader)
+        .set({ closing_quantity: newQty.toString(), updated_at: toMysqlTimestamp() })
+        .where(eq(schema.batchHeader.batch_id, id));
+      if (batch.tracking_mode === 'BATCH_WISE' && batch.stage_id) {
+        await this.db
+          .update(schema.schedulerHeader)
+          .set({ animal_count: newQty.toString(), updated_at: toMysqlTimestamp() })
+          .where(and(eq(schema.schedulerHeader.batch_id, id), eq(schema.schedulerHeader.stage_id, batch.stage_id)));
+      }
+    }
+
     let closedNow = false;
     if (newQty <= 0) {
       closedNow = true;
@@ -5677,7 +6242,8 @@ export class BatchService {
             ),
           );
       }
-    } catch {
+    } catch (err) {
+      rethrowUnlessMockShape(err);
       feedItems = [];
     }
 
@@ -5695,7 +6261,8 @@ export class BatchService {
             };
         try {
           batch = await this.findOne(row.batch_id);
-        } catch {
+        } catch (err) {
+          rethrowUnlessMockShape(err);
           batch = { batch_id: row.batch_id, opening_quantity: 1 };
         }
 
@@ -5982,12 +6549,14 @@ export class BatchService {
         eq(schema.batchTransaction.item_id, schema.itemMaster.item_id),
       )
       .where(
+        // A reversed row (a reopened day, a reversed death) is not part of what happened.
         animalId
           ? and(
               eq(schema.batchTransaction.batch_id, batchId),
               eq(schema.batchTransaction.animal_id, animalId),
+              isNull(schema.batchTransaction.reversed_at),
             )
-          : eq(schema.batchTransaction.batch_id, batchId),
+          : and(eq(schema.batchTransaction.batch_id, batchId), isNull(schema.batchTransaction.reversed_at)),
       )
       .orderBy(schema.batchTransaction.transaction_date);
 

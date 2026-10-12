@@ -71,6 +71,7 @@ export const ITEM_SUBCATEGORY_CATALOG = [
   { key: 'BOAR_LIVESTOCK', parent: 'CAT-BIO-BREEDING', name: 'Boars' },
   { key: 'FINISHER_LIVESTOCK', parent: 'CAT-BIO-COMMERCIAL', name: 'Finisher Pigs' },
   { key: 'CARCASS', parent: 'CAT-BIO-COMMERCIAL', name: 'Carcass' },
+  { key: 'SEMEN', parent: 'CAT-BIO-BREEDING', name: 'Semen' },
 ] as const;
 
 export const ITEM_CATALOG_1: SeedItem[] = [
@@ -107,6 +108,8 @@ export const ITEM_CATALOG_2: SeedItem[] = [
       { key: 'BIO-SWINE-PIGLET', name: 'Weaned Feeder Piglet (7-10kg)', type: 'LIVESTOCK', cat: 'CAT-BIO-COMMERCIAL', sub: 'PIGLET_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '4200.0000', bio: true },
       { key: 'BIO-SWINE-FINISHER', name: 'Finished Market Porker (105kg Live)', type: 'LIVESTOCK', cat: 'CAT-BIO-COMMERCIAL', sub: 'FINISHER_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '12500.0000', bio: true },
       { key: 'LVS-DRESSED-PORK', name: 'Dressed Pork Carcass (Wholesale Cut)', type: 'FINISHED_GOODS', cat: 'CAT-BIO-COMMERCIAL', sub: 'CARCASS', uom: 'KG', val: 'FIFO', cost: '185.0000', bio: false },
+      // What a semen collection posts to stock: doses, lot-tracked (each collection is a lot with its own QR).
+      { key: 'FG-BOAR-SEMEN', name: 'BOAR semen', type: 'FINISHED_GOODS', cat: 'CAT-BIO-BREEDING', sub: 'SEMEN', uom: 'DOSE', val: 'FIFO', cost: '120.0000', bio: false, lot: true },
 ];
 
 /**

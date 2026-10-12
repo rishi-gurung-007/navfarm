@@ -269,6 +269,7 @@ describe('GoodsReceiptService', () => {
         where: (cond: unknown) => { capturedWhere ??= cond; return self; },
         limit: () => self,
         offset: () => self,
+        orderBy: () => self,
         for: () => self,
         then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
       };

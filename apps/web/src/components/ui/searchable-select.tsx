@@ -77,12 +77,20 @@ export function SearchableSelect({
     return "";
   };
 
-  // The open list shows code and name together; once a row is picked the field
-  // shows the name alone (the code when there is no name).
+  // Which of a row's parts is its name. Callers usually pass [code, name, …], so the second part; but a
+  // picker that labels its columns otherwise (Description, Tracking) says where the name is.
+  const nameColumn = useMemo(() => {
+    const headers = Array.isArray(columnHeaders) ? columnHeaders : columns?.map((c) => c.label);
+    const at = headers ? headers.findIndex((h) => /^(name|description)$/i.test(h.trim())) : -1;
+    return at >= 0 ? at : 1;
+  }, [columnHeaders, columns]);
+
+  // The open list shows every column together; once a row is picked the field
+  // shows the name alone (the first part when there is no name).
   const selectedRowLabel = (row: Row): string => {
     if (getLabelParts) {
       const parts = getLabelParts(row);
-      if (parts.length > 1) return parts[1] || parts[0] || defaultGetLabel(row);
+      if (parts.length > 1) return parts[nameColumn] || parts[0] || defaultGetLabel(row);
     }
     if (row.shortLabel != null && String(row.shortLabel) !== "") return String(row.shortLabel);
     if (row[labelKey] != null) return String(row[labelKey]);

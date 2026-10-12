@@ -13,6 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
+import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -445,27 +446,27 @@ export class StockTransferService {
 
       let qty_shipped = lineShipments.reduce((sum, e) => sum + Math.abs(Number(e.quantity) || 0), 0);
 
-      const goodReceipts = lineReceipts.filter(
-        (e) => e.external_reference_no !== 'DOA_IN_TRANSIT',
-      );
-      const doaReceipts = lineReceipts.filter(
-        (e) => e.external_reference_no === 'DOA_IN_TRANSIT',
-      );
-
-      let qty_received = goodReceipts.reduce((sum, e) => sum + Number(e.quantity || 0), 0);
-      let qty_doa = doaReceipts.reduce((sum, e) => sum + Number(e.quantity || 0), 0);
-
-      // If no DOA_IN_TRANSIT entry was isolated, check if externalReferenceNo was encoded as DOA:X
-      if (qty_doa === 0) {
-        for (const e of goodReceipts) {
-          if (e.external_reference_no?.startsWith('DOA:')) {
-            const parsed = Number(e.external_reference_no.split(':')[1]);
-            if (!isNaN(parsed) && parsed > 0) {
-              qty_doa += parsed;
-            }
-          }
+      // A receipt row is gross (good + DOA, DOA written off against it), a legacy good-only row with a
+      // `DOA:n` marker, or a legacy DOA-only twin — see receipt-doa.ts.
+      let qty_received = 0;
+      let twinDoa = 0;
+      let markerDoa = 0;
+      let grossDoa = 0;
+      for (const e of lineReceipts) {
+        const qty = Number(e.quantity || 0);
+        const parsed = parseReceiptDoa(e.external_reference_no);
+        if (parsed.kind === 'twin') {
+          twinDoa += qty;
+        } else if (parsed.kind === 'gross') {
+          qty_received += Math.max(0, qty - parsed.doa);
+          grossDoa += parsed.doa;
+        } else {
+          qty_received += qty;
+          if (parsed.kind === 'marker') markerDoa += parsed.doa;
         }
       }
+      // Legacy: when no twin row was isolated, the `DOA:n` marker carries the DOA quantity.
+      const qty_doa = grossDoa + (twinDoa > 0 ? twinDoa : markerDoa);
 
       const ordered = Number(line.quantity) || 0;
 
@@ -714,15 +715,15 @@ export class StockTransferService {
       : [];
     const userMap = new Map(users.map((u) => [u.user_id, u.full_name]));
 
-    // Deduplicate twin DOA entries: if a primary receipt already accounts for the DOA qty, skip the secondary DOA receipt entry
+    // Legacy receipts split the DOA onto a twin row: if a primary `DOA:n` receipt already accounts for it, skip the twin
     const primaryReceiptLineIds = new Set(
       receipts
-        .filter((r) => (r.external_reference_no || '').startsWith('DOA:'))
+        .filter((r) => parseReceiptDoa(r.external_reference_no).kind === 'marker')
         .map((r) => `${r.transfer_no}_${r.document_line_id}_${r.posting_date}`),
     );
 
     const filteredReceipts = receipts.filter((r) => {
-      const isDoaTwin = r.external_reference_no === 'DOA_IN_TRANSIT';
+      const isDoaTwin = parseReceiptDoa(r.external_reference_no).kind === 'twin';
       if (isDoaTwin && primaryReceiptLineIds.has(`${r.transfer_no}_${r.document_line_id}_${r.posting_date}`)) {
         return false;
       }
@@ -734,19 +735,7 @@ export class StockTransferService {
       const it = itemMap.get(r.item_id!);
       const authorName = (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
 
-      const isDoaTwin = r.external_reference_no === 'DOA_IN_TRANSIT';
-      let doa_qty = 0;
-      let good_qty = Number(r.quantity || 0);
-
-      if (isDoaTwin) {
-        good_qty = 0;
-        doa_qty = Number(r.quantity || 0);
-      } else if (r.external_reference_no?.startsWith('DOA:')) {
-        const parsed = Number(r.external_reference_no.split(':')[1]);
-        if (!isNaN(parsed) && parsed > 0) {
-          doa_qty = parsed;
-        }
-      }
+      const { good: good_qty, doa: doa_qty } = receiptSplit(Number(r.quantity || 0), r.external_reference_no);
 
       return {
         ledger_id: r.ledger_id,
@@ -1242,6 +1231,8 @@ export class StockTransferService {
             }
           }
 
+          // One receipt carries everything that arrived, so its serials are the good ones and the DOA ones.
+          const receiptSerials = [allocatedSerials, doaSerials].filter(Boolean).join(', ');
           itemsToReceive.push({
             line,
             receivedQty,
@@ -1249,7 +1240,7 @@ export class StockTransferService {
             doaRemarks,
             rate,
             lotNo: shipmentEntry?.lot_no || line.lot_no || undefined,
-            serialNo: allocatedSerials || shipmentEntry?.serial_no || line.serial_no || undefined,
+            serialNo: receiptSerials || shipmentEntry?.serial_no || line.serial_no || undefined,
             doaSerialNo: doaSerials || undefined,
           });
         }
@@ -1260,54 +1251,34 @@ export class StockTransferService {
       }
 
       for (const item of itemsToReceive) {
-        if (item.receivedQty > 0) {
-          const receipt = await this.ledgerService.writePositiveEntry({
-            tenantId,
-            companyId: transfer.company_id,
-            itemId: item.line.item_id,
-            documentType: 'STOCK_TRANSFER',
-            documentNo: transfer.transfer_no,
-            documentLineId: item.line.line_id,
-            postingDate: receiptPostingDate,
-            transactionType: 'TRANSFER_RECEIPT',
-            entryType: 'TRANSFER',
-            quantity: item.receivedQty,
-            uom: item.line.uom,
-            rate: item.rate,
-            lotNo: item.lotNo,
-            serialNo: item.serialNo,
-            warehouseId: transfer.to_warehouse_id,
-            userId: userPayload?.userId,
-            externalReferenceNo: item.doaQty > 0
-              ? `DOA:${item.doaQty}`
-              : (dto.remarks ? dto.remarks.slice(0, 50) : undefined),
-          });
-
-          await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
-        }
+        // One receipt for everything that arrived, DOA included. The DOA is then written off against
+        // this very receipt (not oldest-first across the location), so the receipt's remaining
+        // quantity is the good stock left and the loss is costed at what this transfer brought in.
+        const arrivedQty = item.receivedQty + item.doaQty;
+        const receipt = await this.ledgerService.writePositiveEntry({
+          tenantId,
+          companyId: transfer.company_id,
+          itemId: item.line.item_id,
+          documentType: 'STOCK_TRANSFER',
+          documentNo: transfer.transfer_no,
+          documentLineId: item.line.line_id,
+          postingDate: receiptPostingDate,
+          transactionType: 'TRANSFER_RECEIPT',
+          entryType: 'TRANSFER',
+          quantity: arrivedQty,
+          uom: item.line.uom,
+          rate: item.rate,
+          lotNo: item.lotNo,
+          serialNo: item.serialNo,
+          warehouseId: transfer.to_warehouse_id,
+          userId: userPayload?.userId,
+          externalReferenceNo: item.doaQty > 0
+            ? grossDoaRef(item.doaQty)
+            : (dto.remarks ? dto.remarks.slice(0, 50) : undefined),
+        });
+        await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
 
         if (item.doaQty > 0) {
-          const doaReceipt = await this.ledgerService.writePositiveEntry({
-            tenantId,
-            companyId: transfer.company_id,
-            itemId: item.line.item_id,
-            documentType: 'STOCK_TRANSFER',
-            documentNo: transfer.transfer_no,
-            documentLineId: item.line.line_id,
-            postingDate: receiptPostingDate,
-            transactionType: 'TRANSFER_RECEIPT',
-            entryType: 'TRANSFER',
-            quantity: item.doaQty,
-            uom: item.line.uom,
-            rate: item.rate,
-            lotNo: item.lotNo,
-            serialNo: item.doaSerialNo,
-            warehouseId: transfer.to_warehouse_id,
-            userId: userPayload?.userId,
-            externalReferenceNo: 'DOA_IN_TRANSIT',
-          });
-          await this.glPostingService.postInventoryLedgerEntry(doaReceipt, userPayload?.userId);
-
           const doaAdjustment = await this.ledgerService.writeNegativeEntry({
             tenantId,
             companyId: transfer.company_id,
@@ -1325,6 +1296,7 @@ export class StockTransferService {
             warehouseId: transfer.to_warehouse_id,
             userId: userPayload?.userId,
             externalReferenceNo: 'MRT-017',
+            sourceLedgerId: receipt.ledger_id,
           });
           await this.glPostingService.postInventoryLedgerEntry(doaAdjustment, userPayload?.userId);
         }
@@ -1472,6 +1444,7 @@ export class StockTransferService {
                 serialNo: allocatedSerials || undefined,
                 warehouseId: transfer.to_warehouse_id,
                 userId: userPayload?.userId,
+                sourceLedgerId: receipt.ledger_id,
               });
               await this.glPostingService.postInventoryLedgerEntry(loss, userPayload?.userId);
             }

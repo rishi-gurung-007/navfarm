@@ -41,6 +41,7 @@ import {
 import { api } from '@/services/api-client';
 import { API_ORIGIN } from '@/lib/api-client';
 import { getActiveCompanyId } from '@/hooks/useAuth';
+import { useSystemSchedulerPrompt } from './system-scheduler-prompt';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { InlineAlert } from '@/components/ui/alert';
@@ -56,6 +57,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage';
 import AnimalStageTransitionModal from '@/components/console/piggery/animal-stage-transition-modal';
 import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
+import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
@@ -91,6 +93,23 @@ function unwrap<T = any>(res: any): T {
 // (inventory/GL/animal-count) right before locking.
 const entryKey = (lineId: string, animalId?: string) =>
   animalId ? `${animalId}:${lineId}` : lineId;
+/** What an output entered for this animal will post as, in words. A sow's litter is a lot of a bio-asset item; any
+ *  other item she yields is ordinary output. */
+const outputEventLabel = (event: Row, bioItemChosen?: boolean): string => {
+  if (event.kind === 'SEMEN')
+    return 'Posts as a semen collection: doses into a lot, with its QR. Pool with other boars below to mix their semen into the same lot.';
+  if (!bioItemChosen)
+    return 'Choose a bio-asset (piglet) item for this to post as her litter; any other item is ordinary output.';
+  if (event.kind === 'FARROWING')
+    return 'Posts as a farrowing: the live-born piglets become a piglet lot.';
+  const lot = event.piglet_lot_no ? `, lot ${event.piglet_lot_no}` : '';
+  const onHand = event.piglets_on_hand != null ? ` — ${event.piglets_on_hand} on hand` : '';
+  return `Posts as the weaning of litter ${event.litter}${lot}${onHand}: losses are recorded as mortality.`;
+};
+/** A line that issues stock names the lot or serial it draws from. An output does not: its lot is made when it posts,
+ *  so it is never asked for one (a lot-tracked output item used to show the issue picker and send an old lot). */
+const drawsFromLots = (line: Row) =>
+  line.line_type !== 'OUTPUT' && Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
 const isTextCapture = (line: Row) =>
   line.line_type === 'DESCRIPTIVE' &&
   !!line.kpi_uom &&
@@ -100,6 +119,9 @@ const isTextCapture = (line: Row) =>
 // case (the animal ate/received the standard dose) is a single click of
 // Save instead of re-typing a number that's already shown one column over.
 // Text-capture lines have no numeric "expected" to seed a text box with.
+/** A death is entered against the animal that died: in the "All animals" view this line is a picker, not a number. */
+const isMortalityLine = (line: Row) => line.kpi_metric === 'MORTALITY_COUNT';
+
 const defaultEntryValue = (line: Row) => {
   if (line.allow_qty_edit === false) {
     return line.expected_qty != null ? String(line.expected_qty) : '';
@@ -107,6 +129,11 @@ const defaultEntryValue = (line: Row) => {
   if (line.already_entered_qty != null && line.already_entered_qty !== '') {
     return String(line.already_entered_qty);
   }
+  // A death is an event, not a standard: it starts at none, never at the line's expected figure.
+  if (isMortalityLine(line)) return '0';
+  // An output is what actually came out — a litter, the doses collected — never the line's standard. Prefilled, saving
+  // a stage's drafts would have recorded an output of the standard for every animal (a 1-piglet farrowing per sow).
+  if (line.line_type === 'OUTPUT') return '';
   if (!isTextCapture(line) && line.expected_qty != null) {
     return String(line.expected_qty);
   }
@@ -144,6 +171,7 @@ interface BatchMeta {
   mortalityCount: number;
   transferredCount: number;
   lobId: string | null;
+  breedId: string | null;
   /** BATCH_WISE (default) or ANIMAL_WISE — ANIMAL_WISE batches have no single
       current stage (animals can sit at different stages at once), so the
       entry screen below groups by stage instead of showing one flat table. */
@@ -185,6 +213,15 @@ export default function OperationalBatchDataEntry() {
     () => batches.find((b) => b.id === selectedBatchId) || batches[0],
     [batches, selectedBatchId],
   );
+  const schedulerPrompt = useSystemSchedulerPrompt();
+  /** Asks whether to copy the destination stage's system scheduler; null = the user backed out. */
+  const askSchedulerSource = (toStageCode: string) =>
+    schedulerPrompt.ask({
+      companyId: getActiveCompanyId(),
+      lobId: currentBatch?.lobId,
+      stageCodes: [toStageCode],
+      breedId: currentBatch?.breedId,
+    });
 
   // ── Scheduler-driven entry state — every activity comes from GET
   // /batch/:id/data-entry (the scheduler's due lines for this date), never
@@ -216,6 +253,39 @@ export default function OperationalBatchDataEntry() {
   const [dataEntryDestBatches, setDataEntryDestBatches] = useState<
     Record<string, string>
   >({});
+  // A boar's semen collection can be pooled with other boars: the other boars chosen on that row (animal ids), kept on
+  // the draft like the item and destination.
+  const [dataEntryPoolBoars, setDataEntryPoolBoars] = useState<
+    Record<string, string[]>
+  >({});
+  // "All animals" view, Mortality line: the animals picked as dead (animal ids), keyed like the entry values. Absent =
+  // untouched, so nothing is recorded for the line; present = every pending animal gets 1 (picked) or 0 (not).
+  const [mortalityPicks, setMortalityPicks] = useState<Record<string, string[]>>({});
+  // The Reason Master reason picked for each death, by entry key (a batch-wise line, or one animal's line); in the "All
+  // animals" view by `<all-key>|<animal id>` since each picked animal has its own.
+  const [mortalityReasons, setMortalityReasons] = useState<Record<string, string>>({});
+  // The item each OUTPUT entry takes out of the batch: the line's own unless the user picks another (any item —
+  // piglets of a sow, semen of a boar, whatever a batch-wise batch yields).
+  const [dataEntryOutputItems, setDataEntryOutputItems] = useState<
+    Record<string, string>
+  >({});
+  const [outputItemOptions, setOutputItemOptions] = useState<
+    Array<{ value: string; label: string; bio: boolean }>
+  >([]);
+  useEffect(() => {
+    api
+      .get('/item?isActive=true&limit=500')
+      .then((res: any) =>
+        setOutputItemOptions(
+          (unwrap<Row[]>(res) || []).map((i: Row) => ({
+            value: i.item_id,
+            label: i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_name,
+            bio: Boolean(i.is_biological_asset),
+          })),
+        ),
+      )
+      .catch(() => setOutputItemOptions([]));
+  }, []);
 
   const isAnimalWise =
     (currentBatch as any)?.trackingMode === 'ANIMAL_WISE' ||
@@ -227,6 +297,8 @@ export default function OperationalBatchDataEntry() {
 
   const [stageActionBusy, setStageActionBusy] = useState(false);
   const [stageActionError, setStageActionError] = useState('');
+  // What a reopen did: how many entries went back to drafts, and what it had to leave posted and why.
+  const [reopenNotice, setReopenNotice] = useState<{ unposted: number; kept: Array<{ activity_name: string; reason: string }> } | null>(null);
   const [reopenBoxOpen, setReopenBoxOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
 
@@ -605,6 +677,7 @@ export default function OperationalBatchDataEntry() {
             mortalityCount: 0,
             transferredCount: 0,
             lobId: b.lob_id ?? null,
+            breedId: b.breed_id ?? null,
             trackingMode: b.tracking_mode || 'BATCH_WISE',
           };
         });
@@ -690,6 +763,22 @@ export default function OperationalBatchDataEntry() {
         setLocations(unwrap<Row[]>(locationRes) || []);
 
         const values: Record<string, string> = {};
+        // What the saved drafts chose: an output's item, a transfer's (or weaning's) destination.
+        const initialItems: Record<string, string> = {};
+        const initialDests: Record<string, string> = {};
+        const initialPools: Record<string, string[]> = {};
+        const initialDead: Record<string, string[]> = {};
+        const initialReasons: Record<string, string> = {};
+        const rememberChoices = (line: Row, k: string) => {
+          if (Array.isArray(line.already_entered_pool) && line.already_entered_pool.length)
+            initialPools[k] = line.already_entered_pool;
+          if (line.line_type === 'OUTPUT')
+            initialItems[k] = line.already_entered_item_id || line.item_id || '';
+          if (line.already_entered_destination)
+            initialDests[k] = line.already_entered_destination;
+          if (line.already_entered_reason_id)
+            initialReasons[k] = line.already_entered_reason_id;
+        };
 
         if (isAnimalWise) {
           const stages: Row[] = schedData?.stages || [];
@@ -707,6 +796,7 @@ export default function OperationalBatchDataEntry() {
                 const enteredStr = defaultEntryValue(line);
                 const k = entryKey(line.line_id, animal.animal_id);
                 values[k] = enteredStr;
+                rememberChoices(line, k);
                 if (line.already_entered_lot) {
                   initialLots[k] = line.already_entered_lot;
                 }
@@ -717,6 +807,7 @@ export default function OperationalBatchDataEntry() {
                 // every animal. The first animal in the stage stands in as
                 // the template both here and in the broadcast row renderer.
                 if (animalIdx === 0) {
+                  rememberChoices(line, entryKey(line.line_id, '__ALL__'));
                   const pendingForAll = (stage.animals || []).filter((a: Row) => !a.is_posted).length || (stage.animals || []).length;
                   values[entryKey(line.line_id, '__ALL__')] =
                     enteredStr !== '' && isTotalBatch(line) && pendingForAll > 1
@@ -725,6 +816,23 @@ export default function OperationalBatchDataEntry() {
                   if (line.already_entered_lot) {
                     initialLots[entryKey(line.line_id, '__ALL__')] =
                       line.already_entered_lot;
+                  }
+                  if (isMortalityLine(line)) {
+                    // Deaths already saved for the stage's pending animals come back as the picked animals.
+                    const allKey = entryKey(line.line_id, '__ALL__');
+                    const entered = (stage.animals || []).filter((a: Row) =>
+                      !a.is_posted && (a.lines || []).some((l: Row) => l.line_id === line.line_id && l.already_entered_qty != null && l.already_entered_qty !== ''),
+                    );
+                    if (entered.length) {
+                      initialDead[allKey] = entered
+                        .filter((a: Row) => (a.lines || []).some((l: Row) => l.line_id === line.line_id && Number(l.already_entered_qty) >= 1))
+                        .map((a: Row) => a.animal_id);
+                    }
+                    values[allKey] = String((initialDead[allKey] || []).length);
+                    for (const a of entered) {
+                      const own = (a.lines || []).find((l: Row) => l.line_id === line.line_id);
+                      if (own?.already_entered_reason_id) initialReasons[`${allKey}|${a.animal_id}`] = own.already_entered_reason_id;
+                    }
                   }
                 }
               }
@@ -801,6 +909,7 @@ export default function OperationalBatchDataEntry() {
           const initialLots: Record<string, string> = {};
           for (const l of lines) {
             values[entryKey(l.line_id)] = defaultEntryValue(l);
+            rememberChoices(l, entryKey(l.line_id));
             if (l.already_entered_lot) {
               initialLots[entryKey(l.line_id)] = l.already_entered_lot;
             }
@@ -831,7 +940,11 @@ export default function OperationalBatchDataEntry() {
 
         setDataEntryValues(values);
         setDataEntryTexts({});
-        setDataEntryDestBatches({});
+        setDataEntryDestBatches(initialDests);
+        setDataEntryPoolBoars(initialPools);
+        setMortalityPicks(initialDead);
+        setMortalityReasons(initialReasons);
+        setDataEntryOutputItems(initialItems);
 
         // Dynamically update the batch stage from latest database record
         if (batchData?.batch_id) {
@@ -981,7 +1094,7 @@ export default function OperationalBatchDataEntry() {
     if (isTextCapture(line)) return !!dataEntryTexts[key];
     const rawValue = dataEntryValues[key];
     if (rawValue === undefined || rawValue === '') return false;
-    const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
+    const isTracked = drawsFromLots(line);
     if (isTracked) {
       if (line.is_serial_tracked && animalId === '__ALL__') {
         const pending = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
@@ -994,14 +1107,47 @@ export default function OperationalBatchDataEntry() {
     }
     if (line.line_type === 'TRANSFER' && !dataEntryDestBatches[key])
       return false;
+    // An output posts the item chosen for it — it cannot post without one.
+    if (line.line_type === 'OUTPUT' && !(dataEntryOutputItems[key] || line.item_id))
+      return false;
     return true;
   };
 
 
 
+  /** A death is recorded with its reason: what is still missing one, said in words, or null when all have it. */
+  const missingDeathReason = (): string | null => {
+    if (isAnimalWise) {
+      const animals: Row[] = selectedStage?.animals || [];
+      if (entryScope === 'ALL') {
+        for (const line of (animals[0]?.lines || []).filter(isMortalityLine)) {
+          const allKey = entryKey(line.line_id, '__ALL__');
+          const without = (mortalityPicks[allKey] || []).filter((id) => !mortalityReasons[`${allKey}|${id}`]);
+          if (without.length)
+            return `Select the reason for ${without.map((id) => animals.find((a) => a.animal_id === id)?.animal_code || id).join(', ')}.`;
+        }
+      } else {
+        const animal = animals.find((a) => a.animal_id === entryScope);
+        for (const line of (animal?.lines || []).filter(isMortalityLine)) {
+          const key = entryKey(line.line_id, entryScope);
+          if (Number(dataEntryValues[key]) > 0 && !mortalityReasons[key])
+            return `Select the reason ${animal?.animal_code} died.`;
+        }
+      }
+      return null;
+    }
+    for (const line of dataEntryLines.filter(isMortalityLine)) {
+      const key = entryKey(line.line_id, undefined);
+      if (Number(dataEntryValues[key]) > 0 && !mortalityReasons[key]) return 'Select the reason for the deaths.';
+    }
+    return null;
+  };
+
   // Collect and save all filled input fields as draft entries so they exist in batch_daily_data
   const saveDraftEntries = async (): Promise<number> => {
     if (!currentBatch) return 0;
+    const missingReason = missingDeathReason();
+    if (missingReason) throw new Error(missingReason);
     const buildPayload = (line: Row, key: string, animalId?: string): Row => {
       const payload: Row = {
         line_id: line.line_id,
@@ -1011,7 +1157,9 @@ export default function OperationalBatchDataEntry() {
       if (animalId) payload.animal_id = animalId;
       if (isTextCapture(line)) payload.entered_text = dataEntryTexts[key];
       else payload.entered_value = Number(dataEntryValues[key]);
-      const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
+      if (isMortalityLine(line) && payload.entered_value > 0 && mortalityReasons[key])
+        payload.reason_id = mortalityReasons[key];
+      const isTracked = drawsFromLots(line);
       if (isTracked) {
         if (line.is_serial_tracked) {
           const serialKey = animalId ? entryKey(line.line_id, animalId) : key;
@@ -1028,6 +1176,14 @@ export default function OperationalBatchDataEntry() {
       }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
+      if (line.line_type === 'OUTPUT') {
+        const chosen = dataEntryOutputItems[key];
+        if (chosen && chosen !== line.item_id) payload.item_id = chosen;
+        // A weaning entered as output may send the weaned piglets on to a batch.
+        if (dataEntryDestBatches[key]) payload.destination_batch_id = dataEntryDestBatches[key];
+        // A boar's collection pooled with other boars: one lot is mixed from all of them.
+        if (dataEntryPoolBoars[key]?.length) payload.pool_animal_ids = dataEntryPoolBoars[key];
+      }
       return payload;
     };
     const tasks: Promise<any>[] = [];
@@ -1043,6 +1199,28 @@ export default function OperationalBatchDataEntry() {
         );
         const animalIds = pendingAnimals.map((a: Row) => a.animal_id);
         for (const line of lines) {
+          // Each animal's output is its own event (a litter, a collection): it is entered per animal, never broadcast.
+          if (line.line_type === 'OUTPUT') continue;
+          if (isMortalityLine(line)) {
+            // A death names its animal: each pending animal gets 1 if picked, else 0. Never broadcast one number.
+            const dead = mortalityPicks[entryKey(line.line_id, '__ALL__')];
+            if (dead === undefined) continue;
+            animalIds.forEach((animalId: string) => {
+              tasks.push(
+                api.post(`/batch/${currentBatch.id}/daily-data`, {
+                  line_id: line.line_id,
+                  entry_date: selectedDate,
+                  draft: true,
+                  animal_id: animalId,
+                  entered_value: dead.includes(animalId) ? 1 : 0,
+                  ...(dead.includes(animalId) && mortalityReasons[`${entryKey(line.line_id, '__ALL__')}|${animalId}`]
+                    ? { reason_id: mortalityReasons[`${entryKey(line.line_id, '__ALL__')}|${animalId}`] }
+                    : {}),
+                }),
+              );
+            });
+            continue;
+          }
           if (!dataEntryCanSave(line, '__ALL__')) continue;
           const key = entryKey(line.line_id, '__ALL__');
           // A per-batch line holds the stage total here: each animal gets its share of it.
@@ -1212,6 +1390,9 @@ export default function OperationalBatchDataEntry() {
         setDataEntryTexts({});
         setDataEntryLotNos({});
         setDataEntryDestBatches({});
+        setDataEntryPoolBoars({});
+        setMortalityPicks({});
+        setMortalityReasons({});
         setSelectedDate(nextDate);
         loadPostedDates();
       }
@@ -1231,10 +1412,12 @@ export default function OperationalBatchDataEntry() {
     setStageActionBusy(true);
     setStageActionError('');
     try {
-      await api.post(
+      const res: any = await api.post(
         `/batch/${currentBatch.id}/stage/${selectedStageId}/reopen?date=${selectedDate}`,
         { reason: reopenReason },
       );
+      const done = res?.data ?? res;
+      setReopenNotice({ unposted: Number(done?.unposted ?? 0), kept: done?.kept_posted ?? [] });
       setReopenBoxOpen(false);
       setReopenReason('');
       loadDataEntry();
@@ -1245,6 +1428,11 @@ export default function OperationalBatchDataEntry() {
       setStageActionBusy(false);
     }
   };
+
+  // A reopen's result belongs to the stage and day it was made on.
+  useEffect(() => {
+    setReopenNotice(null);
+  }, [currentBatch?.id, selectedStageId, selectedDate]);
 
   const handleBulkStageTransition = async (animalIds: string[]) => {
     if (!animalIds.length || !bulkStageTransitionForm.to_stage_id) return;
@@ -1316,6 +1504,9 @@ export default function OperationalBatchDataEntry() {
       setDataEntryTexts({});
       setDataEntryLotNos({});
       setDataEntryDestBatches({});
+      setDataEntryPoolBoars({});
+      setMortalityPicks({});
+        setMortalityReasons({});
       setSelectedDate(nextDate);
       loadPostedDates();
       setTimeout(() => setSaveSuccessMsg(''), 5000);
@@ -1463,9 +1654,12 @@ export default function OperationalBatchDataEntry() {
         );
       }
 
+      const schedulerSource = await askSchedulerSource(changeStageForm.to_stage_code);
+      if (schedulerSource === null) return;
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: changeStageForm.to_stage_code,
         remarks: changeStageForm.remarks || undefined,
+        scheduler_source: schedulerSource,
       });
       setChangeStageOpen(false);
       setSaveSuccessMsg(
@@ -1484,9 +1678,12 @@ export default function OperationalBatchDataEntry() {
     setAutoTransitionSaving(true);
     setAutoTransitionError('');
     try {
+      const schedulerSource = await askSchedulerSource(stageTransition.next_stage.stage_code);
+      if (schedulerSource === null) return;
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: stageTransition.next_stage.stage_code,
         remarks: 'Automatic stage transition trigger (AUTO_BY_DAY)',
+        scheduler_source: schedulerSource,
       });
       setAutoTransitionModalOpen(false);
       setSaveSuccessMsg(
@@ -1586,9 +1783,29 @@ export default function OperationalBatchDataEntry() {
   ) => {
     const key = entryKey(line.line_id, animalId);
     const allowEdit = line.allow_qty_edit !== false;
-    const isRowDisabled = rowLocked || !allowEdit;
+    const isOutput = line.line_type === 'OUTPUT';
+    // Outputs are entered animal by animal (each is its own litter or collection), never for the whole stage at once.
+    const outputForAll = isOutput && animalId === '__ALL__';
+    // A death is picked from the stage's animals; the Actual is the number picked, never typed.
+    const mortalityForAll = isMortalityLine(line) && animalId === '__ALL__';
+    const deadPicked = mortalityPicks[key] || [];
+    const isRowDisabled = rowLocked || !allowEdit || outputForAll || mortalityForAll;
+    // What an output for this one animal posts as (the API decides; the same rule posts it).
+    // Once the entry is posted the row shows what it did (entry_note), not what a new entry would do.
+    const outputEvent: Row | null =
+      isOutput && !line.is_entry_posted && animalId && animalId !== '__ALL__'
+        ? (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.output_event ?? null
+        : null;
+    const chosenItemId = dataEntryOutputItems[key] ?? line.item_id ?? '';
+    const itemChoices =
+      line.item_id && !outputItemOptions.some((o) => o.value === line.item_id)
+        ? [{ value: line.item_id, label: line.item_label || line.item_id, bio: false }, ...outputItemOptions]
+        : outputItemOptions;
+    const chosenItem = itemChoices.find((o) => o.value === chosenItemId);
     const actualNumericVal =
-      line.is_serial_tracked && dataEntryValues[key] !== undefined
+      mortalityForAll
+        ? String(deadPicked.length)
+        : line.is_serial_tracked && dataEntryValues[key] !== undefined
         ? dataEntryValues[key]
         : !allowEdit && line.expected_qty != null
         ? String(line.expected_qty)
@@ -1599,9 +1816,148 @@ export default function OperationalBatchDataEntry() {
       <TableRow key={key}>
         <TableCell className="px-3 py-2" style={S.primary}>
           {line.activity_name}
+          {outputEvent && (
+            <span className="block text-[10px] font-normal" style={S.muted}>
+              {outputEventLabel(outputEvent, chosenItem?.bio)}
+            </span>
+          )}
+          {outputEvent?.kind === 'SEMEN' && !rowLocked && (() => {
+            // Other boars of this stage whose semen can be mixed into this lot. One with an entry of his own on this line
+            // is left out — his doses would be counted twice.
+            const picked = dataEntryPoolBoars[key] || [];
+            const others = (selectedStage?.animals || []).filter(
+              (a: Row) =>
+                a.animal_id !== animalId &&
+                a.output_event?.kind === 'SEMEN' &&
+                !a.is_posted &&
+                ((dataEntryValues[entryKey(line.line_id, a.animal_id)] ?? '') === '' || picked.includes(a.animal_id)),
+            );
+            if (!others.length) return null;
+            return (
+              <div className="mt-1.5 min-w-[200px]">
+                <EntityLookupField
+                  id={`pool-${key}`}
+                  label="Boars to pool"
+                  options={others.map((a: Row) => ({ animal_id: a.animal_id, code: a.animal_code, name: a.animal_code }))}
+                  value={picked}
+                  valueKey="animal_id"
+                  labelKeys={['code']}
+                  onChange={(next) =>
+                    setDataEntryPoolBoars((v) => ({ ...v, [key]: Array.isArray(next) ? next : next ? [next] : [] }))
+                  }
+                  multiple
+                  placeholder="Pool with other boars…"
+                />
+                {picked.length > 0 && (
+                  <p className="mt-1 text-[10px] leading-snug" style={S.muted}>
+                    One lot from {picked.length + 1} boars: the doses entered are the whole mix.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+          {outputForAll && (
+            <span className="block text-[10px] font-normal" style={S.muted}>
+              Enter outputs one animal at a time — pick the animal above.
+            </span>
+          )}
+          {mortalityForAll && (
+            <div className="mt-1.5 min-w-[200px]">
+              <EntityLookupField
+                id={`dead-${key}`}
+                label="Animals that died"
+                options={(selectedStage?.animals || [])
+                  .filter((a: Row) => !a.is_posted)
+                  .map((a: Row) => ({ animal_id: a.animal_id, code: a.animal_code, name: a.animal_code }))}
+                value={deadPicked}
+                valueKey="animal_id"
+                labelKeys={['code']}
+                onChange={(next) => {
+                  const ids = Array.isArray(next) ? next : next ? [next] : [];
+                  setMortalityPicks((v) => ({ ...v, [key]: ids }));
+                  setDataEntryValues((v) => ({ ...v, [key]: String(ids.length) }));
+                }}
+                multiple
+                disabled={rowLocked}
+                placeholder="Select the animals that died…"
+              />
+              <p className="mt-1 text-[10px] leading-snug" style={S.muted}>
+                Select each animal that died; the Actual is set from your selection.
+              </p>
+              {deadPicked.map((id) => {
+                const dead = (selectedStage?.animals || []).find((a: Row) => a.animal_id === id);
+                const reasonKey = `${key}|${id}`;
+                return (
+                  <div key={id} className="mt-1.5">
+                    <span className="block text-[10px] font-semibold" style={S.sub}>
+                      {dead?.animal_code || id} — reason for death
+                    </span>
+                    <ReasonSelect
+                      ariaLabel={`Reason ${dead?.animal_code || id} died`}
+                      category="MORTALITY"
+                      valueFormat="id"
+                      value={mortalityReasons[reasonKey] || ''}
+                      onChange={(val) => setMortalityReasons((v) => ({ ...v, [reasonKey]: val }))}
+                      onClear={() =>
+                        setMortalityReasons((v) => {
+                          const next = { ...v };
+                          delete next[reasonKey];
+                          return next;
+                        })
+                      }
+                      disabled={rowLocked}
+                      placeholder="Select the reason…"
+                      triggerClassName="nf-input-sm"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {isMortalityLine(line) && !mortalityForAll && Number(actualNumericVal) > 0 && (
+            <div className="mt-1.5 min-w-[200px]">
+              <span className="block text-[10px] font-semibold" style={S.sub}>
+                Reason for death
+              </span>
+              <ReasonSelect
+                ariaLabel="Reason for death"
+                category="MORTALITY"
+                valueFormat="id"
+                value={mortalityReasons[key] || ''}
+                onChange={(val) => setMortalityReasons((v) => ({ ...v, [key]: val }))}
+                onClear={() =>
+                  setMortalityReasons((v) => {
+                    const next = { ...v };
+                    delete next[key];
+                    return next;
+                  })
+                }
+                disabled={rowLocked}
+                placeholder="Select the reason…"
+                triggerClassName="nf-input-sm"
+              />
+            </div>
+          )}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
-          {line.item_label || '—'}
+          {isOutput && !rowLocked && !line.is_entry_posted && !outputForAll ? (
+            <div className="min-w-[180px]">
+              <SearchableSelect
+                ariaLabel="Output item"
+                value={chosenItemId}
+                onChange={(val) =>
+                  setDataEntryOutputItems((v) => ({ ...v, [key]: val }))
+                }
+                options={itemChoices}
+                placeholder="Choose the item taken out…"
+                searchPlaceholder="Search items…"
+              />
+            </div>
+          ) : isOutput && line.already_entered_item_id ? (
+            itemChoices.find((o) => o.value === line.already_entered_item_id)?.label || line.item_label || '—'
+          ) : (
+            line.item_label || '—'
+          )}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
           {line.uom || '—'}
@@ -1643,16 +1999,21 @@ export default function OperationalBatchDataEntry() {
             <div className="relative flex items-center">
               <input
                 type="number"
+                min={isMortalityLine(line) ? 0 : undefined}
+                max={isMortalityLine(line) && animalId ? 1 : undefined}
+                step={isMortalityLine(line) ? 1 : undefined}
                 value={actualNumericVal}
                 readOnly={line.is_serial_tracked}
                 onChange={(e) =>
                   setDataEntryValues((v) => ({ ...v, [key]: e.target.value }))
                 }
-                className={`${inputCls} ${!allowEdit || line.is_serial_tracked ? 'opacity-90 bg-[var(--surface-muted)] cursor-not-allowed pr-6' : ''}`}
+                className={`${inputCls} ${!allowEdit || line.is_serial_tracked || mortalityForAll ? 'opacity-90 bg-[var(--surface-muted)] cursor-not-allowed pr-6' : ''}`}
                 style={S.input}
                 disabled={isRowDisabled}
                 title={
-                  line.is_serial_tracked
+                  mortalityForAll
+                    ? 'Set automatically by the number of animals selected'
+                    : line.is_serial_tracked
                     ? 'Quantity is automatically set by the number of selected serial numbers'
                     : !allowEdit
                     ? 'Quantity edit disabled in scheduler'
@@ -1664,7 +2025,7 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
           )}
-          {Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked) && (
+          {drawsFromLots(line) && (
             <div className="mt-1">
               {broadcast && line.is_serial_tracked ? (() => {
                 const pendingStageAnimals = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
@@ -1747,6 +2108,35 @@ export default function OperationalBatchDataEntry() {
               />
             </div>
           )}
+          {outputEvent?.kind === 'WEANING' && outputEvent.piglet_batch_id && chosenItem?.bio && (
+            <div className="mt-1 min-w-[160px]">
+              <SearchableSelect
+                ariaLabel="Move weaned piglets to"
+                value={dataEntryDestBatches[key] ?? ''}
+                onChange={(val) =>
+                  setDataEntryDestBatches((v) => ({ ...v, [key]: val }))
+                }
+                onClear={() =>
+                  setDataEntryDestBatches((v) => {
+                    const next = { ...v };
+                    delete next[key];
+                    return next;
+                  })
+                }
+                options={batches
+                  .filter((b) => b.id !== currentBatch?.id && b.id !== outputEvent.piglet_batch_id)
+                  .map((b) => ({ value: b.id, label: b.code }))}
+                placeholder="Keep in their lot, or move to…"
+                searchPlaceholder="Search batches…"
+                disabled={rowLocked}
+              />
+            </div>
+          )}
+          {line.entry_note && (
+            <p className="mt-1 text-[10px] leading-snug" style={S.muted}>
+              {line.entry_note}
+            </p>
+          )}
         </TableCell>
       </TableRow>
     );
@@ -1805,7 +2195,7 @@ export default function OperationalBatchDataEntry() {
                 const v = Number(
                   dataEntryValues[entryKey(l.line_id, animalId)],
                 );
-                return sum + (Number.isFinite(v) ? v * (isTotalBatch(l) ? 1 : allViewAnimals) : 0);
+                return sum + (Number.isFinite(v) ? v * (isTotalBatch(l) || (animalId === '__ALL__' && isMortalityLine(l)) ? 1 : allViewAnimals) : 0);
               }, 0)
             : null;
           return (
@@ -2805,6 +3195,19 @@ export default function OperationalBatchDataEntry() {
                     </div>
                   )}
 
+                  {reopenNotice && (
+                    <div className="mb-2">
+                      <InlineAlert variant={reopenNotice.kept.length ? 'warning' : 'success'}>
+                        {reopenNotice.unposted} entr{reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.
+                        {reopenNotice.kept.length > 0 && (
+                          <>
+                            {' '}Left posted: {reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.
+                          </>
+                        )}
+                      </InlineAlert>
+                    </div>
+                  )}
+
                   <div
                     className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2"
                     style={S.surface}
@@ -2838,6 +3241,9 @@ export default function OperationalBatchDataEntry() {
                           </button>
                         ) : (
                           <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
+                            <p className="w-full text-[11px] sm:max-w-xs" style={S.muted}>
+                              Reopening reverses what this day posted — stock is returned and cost and journals are reversed — and puts the entries back to drafts so you can correct and post again. Transfers and recorded deaths stay posted.
+                            </p>
                             <div className="w-full sm:w-72">
                               <ReasonSelect
                                 ariaLabel="Reason for reopening"
@@ -3749,6 +4155,7 @@ export default function OperationalBatchDataEntry() {
           stageName={selectedStage?.stage_name}
         />
       )}
+      {schedulerPrompt.element}
     </div>
   );
 }

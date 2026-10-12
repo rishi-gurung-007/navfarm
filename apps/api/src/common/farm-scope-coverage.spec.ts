@@ -7,6 +7,7 @@ import { BatchController } from '../modules/production/batch/batch.controller';
 import { BatchDailyDataController } from '../modules/production/batch-daily-data/batch-daily-data.controller';
 import { BatchTransferController } from '../modules/production/batch/batch-transfer.controller';
 import { SchedulerHeaderController } from '../modules/production/scheduler-header/scheduler-header.controller';
+import { SystemSchedulerController } from '../modules/production/scheduler-header/system-scheduler.controller';
 import { ApprovalController } from '../modules/production/approval/approval.controller';
 import { AnimalController } from '../modules/piggery/animal/animal.controller';
 import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-medication-log.controller';
@@ -49,7 +50,7 @@ import { ResourceLedgerController } from '../modules/production/resource-ledger/
  * @UseGuards list via Nest's own GUARDS_METADATA.
  */
 const SCOPED = {
-  BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController,
+  BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController, SystemSchedulerController,
   ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
   GoodsReceiptController, StockAdjustmentController, StockTransferController,
   InventoryLedgerController, FeedForecastController, FeedAlertController,

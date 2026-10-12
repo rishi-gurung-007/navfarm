@@ -49,6 +49,7 @@ import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatQuantity } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
+import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
 
 const PAGE_SIZE = 25;
 
@@ -225,28 +226,6 @@ export default function BatchPanel() {
   const [acting, setActing] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'curves'>('overview');
 
-  // A batch split out of another can be merged back once the group is ready —
-  // every live animal returns to the parent and this child closes.
-  const [mergeTarget, setMergeTarget] = useState<any>(null);
-  const [mergeBusy, setMergeBusy] = useState(false);
-  const [mergeError, setMergeError] = useState('');
-
-  const confirmMerge = async () => {
-    if (!mergeTarget) return;
-    setMergeBusy(true);
-    setMergeError('');
-    try {
-      await api.post(`/batch-transfer/merge/${mergeTarget.batch_id}`, {
-        transfer_date: new Date().toISOString().slice(0, 10),
-      });
-      setMergeTarget(null);
-      load();
-    } catch (err: any) {
-      setMergeError(err?.message || 'Could not merge the group back.');
-    } finally {
-      setMergeBusy(false);
-    }
-  };
   const [closeModalOpen, setCloseModalOpen] = useState(false);
   const [closeError, setCloseError] = useState('');
   const [closeDate, setCloseDate] = useState(
@@ -287,6 +266,7 @@ export default function BatchPanel() {
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [stageForm, setStageForm] = useState<Row>({});
   const [stageSaving, setStageSaving] = useState(false);
+  const schedulerPrompt = useSystemSchedulerPrompt();
   const [stageError, setStageError] = useState('');
   const [stageOptions, setStageOptions] = useState<string[]>([]);
   const [stageOptionsLoading, setStageOptionsLoading] = useState(false);
@@ -1000,8 +980,21 @@ export default function BatchPanel() {
           throw new Error(
             'Select at least one animal before creating an Animal Wise batch. You can still save it as a draft without animals.',
           );
+        // A new batch's schedulers are created for the stages its animals
+        // are in — ask once, for all of them, whether to copy system schedulers.
+        const schedulerSource = editingBatchId
+          ? undefined
+          : await schedulerPrompt.ask({
+              companyId,
+              stageIds: animalCandidates
+                .filter((a) => selectedAnimalIds.has(a.animal_id))
+                .map((a) => a.current_stage_id),
+              breedId: header.breed_id,
+            });
+        if (schedulerSource === null) return;
         const animalWisePayload = {
           tracking_mode: 'ANIMAL_WISE',
+          scheduler_source: schedulerSource,
           animal_ids: [...selectedAnimalIds],
           company_id: companyId,
           lob_id: effectiveLobId,
@@ -1110,8 +1103,13 @@ export default function BatchPanel() {
         }
       }
 
+      const schedulerSource = editingBatchId
+        ? undefined
+        : await schedulerPrompt.ask({ companyId, stageIds: [header.stage_id], breedId: header.breed_id });
+      if (schedulerSource === null) return;
       const batchWisePayload = {
         company_id: companyId,
+        scheduler_source: schedulerSource,
         lob_id: effectiveLobId,
         operational_area_id: isOperationalScope
           ? activeArea?.area_id || undefined
@@ -1629,11 +1627,19 @@ export default function BatchPanel() {
           `Minimum duration of ${stageTransitionInfo.min_days_before_move} days is required for '${stageTransitionInfo.current_stage_name || viewing.current_stage_code}' before transition (currently on day ${stageTransitionInfo.days_in_stage}). Justification / Remarks are mandatory to override.`,
         );
       }
+      const schedulerSource = await schedulerPrompt.ask({
+        companyId: viewing.company_id,
+        lobId: viewing.lob_id,
+        stageCodes: [stageForm.to_stage_code],
+        breedId: viewing.breed_id,
+      });
+      if (schedulerSource === null) return;
       const result = await api.post(
         `/batch/${viewing.batch_id}/transfer-stage`,
         {
           to_stage_code: stageForm.to_stage_code,
           remarks: stageForm.remarks || undefined,
+          scheduler_source: schedulerSource,
         },
       );
       setStageModalOpen(false);
@@ -1787,19 +1793,6 @@ export default function BatchPanel() {
                       <StatusBadge status={row.status} />
                     </TableCell>
                     <TableCell className="text-right">
-                      {row.parent_batch_id && row.status === 'ACTIVE' && (
-                        <button
-                          onClick={() => {
-                            setMergeTarget(row);
-                            setMergeError('');
-                          }}
-                          title="Merge this group back into the batch it was split from"
-                          className="mr-1 rounded-lg px-2 py-1 text-[11px] font-semibold transition hover:bg-(--surface-raised)"
-                          style={S.accent}
-                        >
-                          Merge back
-                        </button>
-                      )}
                       <button
                         onClick={() => openView(row)}
                         title={t('blViewTitle')}
@@ -5083,31 +5076,7 @@ export default function BatchPanel() {
         </div>
       </Dialog>
 
-      <Dialog
-        open={!!mergeTarget}
-        onClose={() => setMergeTarget(null)}
-        title={`Merge ${mergeTarget?.batch_no ?? ''} back`}
-        maxWidth="sm"
-        footer={
-          <Button
-            size="sm"
-            className="nf-btn-primary"
-            onClick={confirmMerge}
-            disabled={mergeBusy}
-          >
-            {mergeBusy ? 'Merging…' : 'Merge back'}
-          </Button>
-        }
-      >
-        <div className="space-y-2 text-xs">
-          {mergeError && <p className="text-[var(--danger)]">{mergeError}</p>}
-          <p style={S.sub}>
-            Every live animal in this group returns to the batch it was split
-            from, and this batch closes. Each animal keeps its own stage history
-            — rejoining never rewrites where an animal has been.
-          </p>
-        </div>
-      </Dialog>
+      {schedulerPrompt.element}
     </div>
   );
 }

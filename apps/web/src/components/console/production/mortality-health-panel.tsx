@@ -17,10 +17,12 @@ import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
+import { ReasonSelect } from "@/components/ui/reason-select";
 
 type MortalityRecord = {
   id: string;
   record_date: string;
+  batch_id?: string;
   batch_no: string;
   rfid_tag?: string;
   animal_id?: string;
@@ -146,6 +148,13 @@ export default function MortalityHealthPanel() {
 
   // ── Dialogs ──
   const [mortalityDialogOpen, setMortalityDialogOpen] = useState(false);
+  // Deaths post to the batch, so the list is read back from it after a save rather than
+  // prepended locally; a failed save stays on screen with its message.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [mortalityError, setMortalityError] = useState("");
+  const [savingMortality, setSavingMortality] = useState(false);
+  const [mortalityReasonId, setMortalityReasonId] = useState("");
+  const [mortalityReasons, setMortalityReasons] = useState<Record<string, unknown>[]>([]);
   const [newMortality, setNewMortality] = useState<Partial<MortalityRecord>>({
     record_date: new Date().toISOString().slice(0, 10),
     head_count: 1,
@@ -285,6 +294,7 @@ export default function MortalityHealthPanel() {
                   mortalities.push({
                     id: t.transaction_id || `m-${Date.now()}`,
                     record_date: t.transaction_date || "",
+                    batch_id: b.batch_id,
                     batch_no: b.batch_no,
                     rfid_tag: t.animal_rfid_tag || t.animal_code || undefined,
                     animal_id: t.animal_id || undefined,
@@ -347,7 +357,16 @@ export default function MortalityHealthPanel() {
       .catch(() => {
         setLoading(false);
       });
-  }, []);
+  }, [reloadKey]);
+
+  useEffect(() => {
+    if (!mortalityDialogOpen) return;
+    const companyId = getActiveCompanyId();
+    if (!companyId) return;
+    api.get(`/reason?companyId=${companyId}&isActive=true&limit=100`)
+      .then((r: any) => setMortalityReasons(Array.isArray(r) ? r : (r?.data ?? [])))
+      .catch(() => setMortalityReasons([]));
+  }, [mortalityDialogOpen]);
 
   const animalLoadSequence = useRef(0);
   const loadModalAnimals = async (batchNo: string) => {
@@ -390,70 +409,74 @@ export default function MortalityHealthPanel() {
   };
 
   const handleSaveMortality = async () => {
-    if (!newMortality.cause_of_death) return;
+    if (!newMortality.cause_of_death || savingMortality) return;
     const batchObj = batches.find((b) => b.no === newMortality.batch_no) || batches[0];
+    if (!batchObj) {
+      setMortalityError("Choose a batch first.");
+      return;
+    }
     const selectedAnimals = Array.from(mortalityAnimalIds);
     // When specific animals are selected, they ARE the mortality count (one
     // dead animal per row) — the manually entered head_count is only used
     // for a whole-batch (unattributed) entry.
     const qty = selectedAnimals.length > 0 ? selectedAnimals.length : Number(newMortality.head_count) || 1;
-
-    // Cause, findings and disposal go to batch_mortality_detail as real fields;
-    // `remarks` stays a plain note.
-    const mortalityDetail = () => ({
-      cause_of_death: newMortality.cause_of_death?.trim() || undefined,
-      post_mortem_notes: newMortality.post_mortem_notes?.trim() || undefined,
-      disposal_method: newMortality.disposal_method?.trim() || undefined,
-    });
     const penNote = newMortality.pen_location?.trim();
 
-    if (batchObj) {
-      try {
-        if (selectedAnimals.length > 0) {
-          for (const animalId of selectedAnimals) {
-            await api.post(`/batch/${batchObj.id}/transaction`, {
-              transaction_date: newMortality.record_date || new Date().toISOString().slice(0, 10),
-              transaction_type: "MORTALITY",
-              quantity: 1,
-              amount: 0,
-              remarks: penNote ? `Recorded in ${penNote}` : null,
-              mortality_detail: mortalityDetail(),
-              animal_id: animalId,
-            });
-          }
-        } else {
-          await api.post(`/batch/${batchObj.id}/transaction`, {
-            transaction_date: newMortality.record_date || new Date().toISOString().slice(0, 10),
-            transaction_type: "MORTALITY",
-            quantity: qty,
-            amount: 0,
-            remarks: penNote ? `Recorded in ${penNote}` : null,
-            mortality_detail: mortalityDetail(),
-          });
-        }
-      } catch {}
+    setSavingMortality(true);
+    setMortalityError("");
+    try {
+      // One request: every animal is recorded dead, or none is (the batch rejects a
+      // death for an animal that is not live in it, or a head count on a batch that
+      // tracks registered animals).
+      await api.post(`/batch/${batchObj.id}/mortality`, {
+        transaction_date: newMortality.record_date || new Date().toISOString().slice(0, 10),
+        ...(selectedAnimals.length > 0 ? { animal_ids: selectedAnimals } : { quantity: qty }),
+        remarks: penNote ? `Recorded in ${penNote}` : undefined,
+        // Cause, findings and disposal go to batch_mortality_detail as real fields;
+        // `remarks` stays a plain note.
+        mortality_detail: {
+          cause_of_death: newMortality.cause_of_death?.trim() || undefined,
+          post_mortem_notes: newMortality.post_mortem_notes?.trim() || undefined,
+          disposal_method: newMortality.disposal_method?.trim() || undefined,
+          reason_id: mortalityReasonId || undefined,
+        },
+      });
+    } catch (err) {
+      setMortalityError(err instanceof Error ? err.message : "Mortality could not be recorded.");
+      setSavingMortality(false);
+      return;
     }
-
-    const tagLabel = selectedAnimals.length > 0
-      ? selectedAnimals.map((id) => modalAnimals.find((a) => a.animal_id === id)?.label || id).join(", ")
-      : "Unidentified / Litter";
-
-    const record: MortalityRecord = {
-      id: `m-${Date.now()}`,
-      record_date: newMortality.record_date || new Date().toISOString().slice(0, 10),
-      batch_no: newMortality.batch_no || (batchObj?.no ?? "BATCH-01"),
-      rfid_tag: tagLabel,
-      animal_id: selectedAnimals.length === 1 ? selectedAnimals[0] : undefined,
-      pen_location: newMortality.pen_location || "—",
-      head_count: qty,
-      cause_of_death: newMortality.cause_of_death || "—",
-      post_mortem_notes: newMortality.post_mortem_notes || "—",
-      disposal_method: newMortality.disposal_method || "—",
-      recorded_by: "—",
-    };
-    setMortalityList([record, ...mortalityList]);
+    setSavingMortality(false);
     setMortalityAnimalIds(new Set());
+    setMortalityReasonId("");
     setMortalityDialogOpen(false);
+    // Read the recorded deaths back from the batch instead of showing a local copy.
+    setReloadKey((k) => k + 1);
+  };
+
+  // C7: a death recorded in error is reversed — never edited. The API puts back everything the death posted.
+  const [reverseTarget, setReverseTarget] = useState<MortalityRecord | null>(null);
+  const [reverseReason, setReverseReason] = useState("");
+  const [reverseError, setReverseError] = useState("");
+  const [reversing, setReversing] = useState(false);
+  const handleReverseMortality = async () => {
+    if (!reverseTarget?.batch_id || reversing) return;
+    if (!reverseReason.trim()) {
+      setReverseError(t("mhReverseReason"));
+      return;
+    }
+    setReversing(true);
+    setReverseError("");
+    try {
+      await api.post(`/batch/${reverseTarget.batch_id}/mortality/${reverseTarget.id}/reverse`, { reason: reverseReason.trim() });
+    } catch (err) {
+      setReverseError(err instanceof Error ? err.message : "The death could not be reversed.");
+      setReversing(false);
+      return;
+    }
+    setReversing(false);
+    setReverseTarget(null);
+    setReloadKey((k) => k + 1);
   };
 
   const handleSaveTreatment = async () => {
@@ -635,7 +658,7 @@ export default function MortalityHealthPanel() {
         <div className="pb-1">
           {activeTab === "mortality" && (
             <button
-              onClick={() => { setMortalityAnimalIds(new Set()); loadModalAnimals(newMortality.batch_no || batches[0]?.no || ""); setMortalityDialogOpen(true); }}
+              onClick={() => { setMortalityAnimalIds(new Set()); setMortalityError(""); loadModalAnimals(newMortality.batch_no || batches[0]?.no || ""); setMortalityDialogOpen(true); }}
               className="nf-press flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3.5 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
               style={{ backgroundColor: "var(--accent)" }}
             >
@@ -686,6 +709,7 @@ export default function MortalityHealthPanel() {
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhPostMortemFindings")}</TableHead>
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhDisposalMethod")}</TableHead>
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhRecordedBy")}</TableHead>
+                  <TableHead className="py-2.5 px-3 font-semibold">{t("mhActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -715,6 +739,23 @@ export default function MortalityHealthPanel() {
                       </span>
                     </TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)]">{m.recorded_by}</TableCell>
+                    <TableCell className="py-2.5 px-3">
+                      {m.batch_id && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setReverseTarget(m);
+                            setReverseReason("");
+                            setReverseError("");
+                          }}
+                        >
+                          {t("mhReverse")}
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -836,11 +877,42 @@ export default function MortalityHealthPanel() {
 
       {/* ── MODAL: LOG MORTALITY ── */}
       <Dialog
+        open={!!reverseTarget}
+        onClose={() => setReverseTarget(null)}
+        title={t("mhReverseTitle")}
+        footer={
+          <Button onClick={handleReverseMortality} disabled={reversing} className="nf-btn-primary">
+            {reversing ? t("mhReversing") : t("mhReverseConfirm")}
+          </Button>
+        }
+      >
+        <div className="space-y-3 text-xs pt-2">
+          <p className="text-[var(--text-secondary)]">
+            {t("mhReverseBody", {
+              subject: reverseTarget?.rfid_tag
+                ? reverseTarget.rfid_tag
+                : `${reverseTarget?.head_count ?? ""} head of ${reverseTarget?.batch_no ?? ""}`,
+            })}
+          </p>
+          <Field label={t("mhReverseReason")} htmlFor="reverse-mortality-reason" required>
+            <input
+              id="reverse-mortality-reason"
+              type="text"
+              value={reverseReason}
+              onChange={(e) => setReverseReason(e.target.value)}
+              className="nf-input w-full"
+            />
+          </Field>
+          {reverseError && <p className="text-[var(--danger)]">{reverseError}</p>}
+        </div>
+      </Dialog>
+
+      <Dialog
         open={mortalityDialogOpen}
         onClose={() => setMortalityDialogOpen(false)}
         title={t("mhLogMortalityPostMortemEvent")}
         footer={
-          <Button onClick={handleSaveMortality} className="nf-btn-primary">
+          <Button onClick={handleSaveMortality} disabled={savingMortality} className="nf-btn-primary">
             {t("mhSaveMortalityEntry")}
           </Button>
         }
@@ -907,6 +979,27 @@ export default function MortalityHealthPanel() {
                 ))}
               </div>
             )}
+          </div>
+
+          {mortalityError && (
+            <div role="alert" className="rounded-[var(--radius-sm)] border px-3 py-2" style={{ borderColor: "#dc2626", color: "#dc2626" }}>
+              {mortalityError}
+            </div>
+          )}
+
+          <div>
+            <label className="font-semibold block mb-1" htmlFor="mortality-reason">{t("anpDisposalReason")}</label>
+            <ReasonSelect
+              id="mortality-reason"
+              ariaLabel={t("anpDisposalReason")}
+              value={mortalityReasonId}
+              valueFormat="id"
+              onChange={(val) => setMortalityReasonId(val)}
+              onClear={() => setMortalityReasonId("")}
+              category="MORTALITY"
+              placeholder={t("anpDisposalReasonNone") || "Select reason…"}
+              reasons={mortalityReasons as any}
+            />
           </div>
 
           <div>

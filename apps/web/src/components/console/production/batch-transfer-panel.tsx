@@ -58,6 +58,11 @@ export default function BatchTransferPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  // A batch-wise batch counts head and has no registered animals to pick; it moves a number.
+  const [headToMove, setHeadToMove] = useState("");
+  // Reversing a posted transfer moves the same animals (or head) straight back as a transfer of its own.
+  const [reversing, setReversing] = useState(false);
+  const [reverseError, setReverseError] = useState("");
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
   const [viewing, setViewing] = useState<Row | null>(null);
@@ -141,6 +146,7 @@ export default function BatchTransferPanel() {
     setReason("");
     setRemarks("");
     setSelected(new Set());
+    setHeadToMove("");
     setSearch("");
     setFormError("");
   };
@@ -158,7 +164,9 @@ export default function BatchTransferPanel() {
     setFormError("");
     if (!fromBatchId) return setFormError(t("btErrorNoSource"));
     if (!toBatchId) return setFormError(t("btErrorNoDestination"));
-    if (!wholeBatch && selected.size === 0) return setFormError(t("btErrorNoAnimals"));
+    if (headcountMode) {
+      if (!(Number(headToMove) > 0)) return setFormError("Enter how many head to move.");
+    } else if (!wholeBatch && selected.size === 0) return setFormError(t("btErrorNoAnimals"));
 
     setSaving(true);
     try {
@@ -166,8 +174,8 @@ export default function BatchTransferPanel() {
         company_id: companyId,
         to_batch_id: toBatchId,
         transfer_date: transferDate,
-        transfer_type: wholeBatch ? "FULL_BATCH" : "PARTIAL",
-        ...(wholeBatch ? {} : { animal_ids: [...selected] }),
+        transfer_type: headcountMode ? "PARTIAL" : wholeBatch ? "FULL_BATCH" : "PARTIAL",
+        ...(headcountMode ? { quantity: Number(headToMove) } : wholeBatch ? {} : { animal_ids: [...selected] }),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
         ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
       });
@@ -185,8 +193,27 @@ export default function BatchTransferPanel() {
     }
   };
 
+  const reverseViewing = async () => {
+    if (!viewing || reversing) return;
+    setReversing(true);
+    setReverseError("");
+    try {
+      const res = await api.post(`/batch-transfer/${viewing.transfer_id}/reverse`, {});
+      const saved = unwrap<Row>(res);
+      setNotice(`${viewing.transfer_no} reversed by ${saved?.transfer_no || "a new transfer"}.`);
+      setViewing(null);
+      await load();
+    } catch (err: any) {
+      setReverseError(err?.message || "The transfer could not be reversed.");
+    } finally {
+      setReversing(false);
+    }
+  };
+
   const batchNo = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || "—";
   const poolCount = pool.length;
+  const fromBatch = batches.find((b) => b.batch_id === fromBatchId);
+  const headcountMode = Boolean(fromBatchId) && fromBatch?.tracking_mode === "BATCH_WISE" && !poolLoading && pool.length === 0;
 
   return (
     <div className="space-y-6">
@@ -242,7 +269,7 @@ export default function BatchTransferPanel() {
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">
-                    {r.transfer_type === "FULL_BATCH" ? t("btWholeBatch") : t("btSelectedAnimals")}
+                    {r.transfer_basis === "HEADCOUNT" ? t("btHeadCount") : r.transfer_type === "FULL_BATCH" ? t("btWholeBatch") : t("btSelectedAnimals")}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
                     {Math.round(Number(r.head_count || 0))}
@@ -328,6 +355,24 @@ export default function BatchTransferPanel() {
             </div>
           </div>
 
+          {headcountMode && (
+            <label className="block">
+              <span className="nf-text-label">Head to move</span>
+              <input
+                type="number"
+                min={1}
+                step="any"
+                value={headToMove}
+                onChange={(e) => setHeadToMove(e.target.value)}
+                className="nf-input w-full text-sm"
+              />
+              <span className="mt-1 block text-xs text-[var(--text-muted)]">
+                {fromBatch?.batch_no} counts head rather than registered animals, so a number moves, with the average carrying value of that many head.
+              </span>
+            </label>
+          )}
+
+          {!headcountMode && (
           <fieldset className="space-y-2">
             <legend className="nf-text-label">{t("btScope")}</legend>
             <div className="flex flex-wrap gap-4">
@@ -345,8 +390,9 @@ export default function BatchTransferPanel() {
               {wholeBatch ? t("btWholeBatchHint") : t("btSelectedAnimalsHint")}
             </p>
           </fieldset>
+          )}
 
-          {!wholeBatch && (
+          {!headcountMode && !wholeBatch && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="nf-text-label">{t("btTransferableAnimals")}</span>
@@ -393,7 +439,7 @@ export default function BatchTransferPanel() {
 
       <Dialog
         open={Boolean(viewing)}
-        onClose={() => setViewing(null)}
+        onClose={() => { setViewing(null); setReverseError(""); }}
         title={viewing?.transfer_no || ""}
         description={
           viewing
@@ -405,15 +451,23 @@ export default function BatchTransferPanel() {
             : ""
         }
         maxWidth="md"
+        footer={
+          viewing?.status === "POSTED" && !String(viewing.reason || "").startsWith("REVERSAL OF ") ? (
+            <Button size="sm" variant="outline" disabled={reversing} onClick={reverseViewing}>
+              Reverse transfer
+            </Button>
+          ) : undefined
+        }
       >
-        {viewing && <TransferLines transferId={viewing.transfer_id} />}
+        {reverseError && <InlineAlert variant="danger">{reverseError}</InlineAlert>}
+        {viewing && <TransferLines transferId={viewing.transfer_id} headcount={viewing.transfer_basis === "HEADCOUNT"} />}
       </Dialog>
     </div>
   );
 }
 
 /** The animals on one transfer, fetched on open rather than carried in the list payload. */
-function TransferLines({ transferId }: { transferId: string }) {
+function TransferLines({ transferId, headcount }: { transferId: string; headcount?: boolean }) {
   const { t } = useLanguage();
   const [lines, setLines] = useState<Row[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -429,7 +483,7 @@ function TransferLines({ transferId }: { transferId: string }) {
 
   if (failed) return <ErrorState message={t("btFailedToLoad")} />;
   if (!lines) return <LoadingState label={t("btLoading")} />;
-  if (lines.length === 0) return <EmptyState title={t("btNoLines")} />;
+  if (lines.length === 0) return <EmptyState title={headcount ? "Moved by head count — no individual animals" : t("btNoLines")} />;
 
   return (
     <div className="max-h-80 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border)]">

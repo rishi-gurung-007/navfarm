@@ -9,7 +9,7 @@ import { CreateNumberSeriesDto, UpdateNumberSeriesDto, QueryNumberSeriesDto } fr
 import { CreateNoSeriesDto, UpdateNoSeriesDto } from '../../master-data/no-series/dto/no-series.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { formatSeriesCode, formatSeriesStem, nextSequence, nextSequenceInStem, segmentFields, assertCodeFits, parseSegment } from './code-format.util';
+import { formatSeriesCode, formatSeriesStem, nextSequence, nextSequenceInStem, segmentFields, assertCodeFits, parseSegment, describeSeriesPattern } from './code-format.util';
 import { MASTER_CODE_COLUMNS } from './master-code-columns';
 import { generateCompositeCode } from './composite-code.util';
 import { CodePreviewDto } from './dto/code-preview.dto';
@@ -147,8 +147,8 @@ export class NumberSeriesService {
    * icon's delete-really-means-deactivate convention every other master in
    * this app already follows — work for Number Series without a migration.
    */
-  private withActive<T extends { blocked: boolean | null }>(row: T): T & { is_active: boolean } {
-    return { ...row, is_active: !row.blocked };
+  private withActive<T extends { blocked: boolean | null }>(row: T): T & { is_active: boolean; pattern: string } {
+    return { ...row, is_active: !row.blocked, pattern: describeSeriesPattern(row as any) };
   }
 
   /**
@@ -1059,7 +1059,6 @@ export class NumberSeriesService {
       if (dto.separator !== undefined && dto.separator !== series.separator) changed.push('Separator');
       if (dto.seq_length !== undefined && dto.seq_length !== series.seq_length) changed.push('Sequence Length');
       if (dto.reset_frequency !== undefined && dto.reset_frequency !== series.reset_frequency) changed.push('Reset Frequency');
-      if (dto.allow_manual !== undefined && !!dto.allow_manual !== !!series.allow_manual) changed.push('Allow Manual');
       if (dto.code_segments !== undefined && !sameList(dto.code_segments?.length ? dto.code_segments : null, series.code_segments)) changed.push('Code Segments');
       if (dto.prefix_position !== undefined && (dto.prefix_position || 'END') !== (series.prefix_position || 'END')) changed.push('Prefix Position');
       if (dto.seq_separator !== undefined && (dto.seq_separator || null) !== (series.seq_separator || null)) changed.push('Sequence Separator');
@@ -1238,6 +1237,9 @@ export class NumberSeriesService {
     }
 
     const cleanPrefix = dto.prefix || dto.no_series_code || null;
+    // Series made before the form could compose a code carry no shape fields and
+    // are left as they were; anything sent from the form always names a separator.
+    if (dto.separator !== undefined || dto.code_segments !== undefined) this.assertSeriesHasIdentity(cleanPrefix, dto.code_segments);
     const newRecord = {
       id,
       tenant_id: tenantId || null,
@@ -1254,6 +1256,7 @@ export class NumberSeriesService {
       manual_nos: dto.manual_nos ?? false,
       last_no_used: dto.last_no_used || null,
       blocked: dto.blocked ?? false,
+      ...this.seriesShapeUpdates(dto),
       created_at: toMysqlTimestamp(),
       updated_at: toMysqlTimestamp(),
     };
@@ -1328,11 +1331,13 @@ export class NumberSeriesService {
       ));
     }
     if (filter) {
-      conditions.push(...listFilterConditions(schema.noSeries, filter));
+      const { pattern, ...rest } = filter;
+      conditions.push(...listFilterConditions(schema.noSeries, pattern === undefined ? rest : { ...rest, prefix: pattern }));
     }
     const limit = query?.limit ? Math.max(1, Number(query.limit)) : 100;
     const offset = query?.offset ? Math.max(0, Number(query.offset)) : 0;
-    const orderBy = listOrderBy(schema.noSeries, query, schema.noSeries.created_at);
+    // `pattern` is computed for display; sorting by it sorts by the stored prefix.
+    const orderBy = listOrderBy(schema.noSeries, query?.sort === 'pattern' ? { ...query, sort: 'prefix' } : query, schema.noSeries.created_at);
 
     const rows = conditions.length
       ? await this.db.select().from(schema.noSeries).where(and(...conditions)).orderBy(orderBy).limit(limit).offset(offset)
@@ -1869,6 +1874,40 @@ export class NumberSeriesService {
       .where(eq(schema.noSeries.id, id));
   }
 
+  /**
+   * The parts of a series' shape the /no-series screen can set beyond prefix and
+   * length: how the code is composed (segments, where the prefix sits, the two
+   * separators) and when the count restarts. Checked here, not only by the DTO,
+   * because a segment is a column name of another master that the generator
+   * reads at issue time — a typo would silently drop out of every code.
+   */
+  private seriesShapeUpdates(dto: {
+    separator?: string; seq_separator?: string; reset_frequency?: string; code_segments?: string[]; prefix_position?: string;
+  }): Partial<typeof schema.noSeries.$inferInsert> {
+    const out: Partial<typeof schema.noSeries.$inferInsert> = {};
+    if (dto.separator !== undefined) out.separator = dto.separator || '-';
+    if (dto.seq_separator !== undefined) out.seq_separator = dto.seq_separator || null;
+    if (dto.reset_frequency !== undefined) out.reset_frequency = dto.reset_frequency;
+    if (dto.prefix_position !== undefined) out.prefix_position = dto.prefix_position || 'END';
+    if (dto.code_segments !== undefined) {
+      const bad = dto.code_segments.filter((entry) => !/^[a-z][a-z0-9_]*(:(YEAR|DATE))?$/.test(entry));
+      if (bad.length) throw new BadRequestException(`Code segment ${bad.map((b) => `'${b}'`).join(', ')} is not a field name (optionally :YEAR or :DATE).`);
+      if (new Set(dto.code_segments.map((e) => e.split(':')[0])).size !== dto.code_segments.length) {
+        throw new BadRequestException('A field can appear only once in the code segments.');
+      }
+      if (dto.code_segments.length > 6) throw new BadRequestException('A code can be built from at most 6 fields.');
+      out.code_segments = dto.code_segments.length ? dto.code_segments : null;
+    }
+    return out;
+  }
+
+  /** A code needs something to tell one master's codes from another's: a prefix or at least one field. */
+  private assertSeriesHasIdentity(prefix: string | null | undefined, segments: unknown) {
+    if (!prefix && !segmentFields({ code_segments: segments }).length) {
+      throw new BadRequestException('Give the series a prefix or at least one field to build the code from.');
+    }
+  }
+
   async updateNoSeriesRow(id: string, dto: UpdateNoSeriesDto) {
     const existing = await this.findOneById(id);
 
@@ -1897,17 +1936,25 @@ export class NumberSeriesService {
         ['Prefix / Pattern', dto.no_series_code ?? dto.prefix],
         ['Sequence Length', dto.seq_length],
         ['Increment By', dto.increment_by],
-        ['Manual Numbers', dto.manual_nos],
+        ['Code Segments', dto.code_segments],
+        ['Prefix Position', dto.prefix_position],
+        ['Separator', dto.separator],
+        ['Sequence Separator', dto.seq_separator],
+        ['Reset Frequency', dto.reset_frequency],
         ['Last No. Used', dto.last_no_used],
         ['Default', dto.is_default],
       ];
       const attempted = structural.filter(([, v]) => v !== undefined).map(([label]) => label);
       const wouldChange =
         (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(existing.document_type ?? existing.master_type)) ||
-        ((dto.no_series_code ?? dto.prefix) !== undefined && (dto.no_series_code ?? dto.prefix) !== (existing.no_series_code ?? existing.prefix)) ||
+        ((dto.no_series_code ?? dto.prefix) !== undefined && ((dto.no_series_code ?? dto.prefix) || null) !== ((existing.no_series_code ?? existing.prefix) || null)) ||
         (dto.seq_length !== undefined && dto.seq_length !== existing.seq_length) ||
         (dto.increment_by !== undefined && dto.increment_by !== existing.increment_by) ||
-        (dto.manual_nos !== undefined && !!dto.manual_nos !== !!existing.manual_nos) ||
+        (dto.code_segments !== undefined && JSON.stringify(dto.code_segments.length ? dto.code_segments : null) !== JSON.stringify(existing.code_segments ?? null)) ||
+        (dto.prefix_position !== undefined && (dto.prefix_position || 'END') !== (existing.prefix_position || 'END')) ||
+        (dto.separator !== undefined && (dto.separator || '-') !== (existing.separator || '-')) ||
+        (dto.seq_separator !== undefined && (dto.seq_separator || null) !== (existing.seq_separator || null)) ||
+        (dto.reset_frequency !== undefined && dto.reset_frequency !== existing.reset_frequency) ||
         (dto.last_no_used !== undefined && dto.last_no_used !== existing.last_no_used) ||
         (dto.is_default !== undefined && !!dto.is_default !== !!existing.is_default);
       if (wouldChange) {
@@ -1945,6 +1992,14 @@ export class NumberSeriesService {
     if (dto.manual_nos !== undefined) updates.manual_nos = dto.manual_nos;
     if (dto.last_no_used !== undefined) updates.last_no_used = dto.last_no_used;
     if (dto.blocked !== undefined) updates.blocked = dto.blocked;
+    if (updates.prefix === '') { updates.prefix = null; updates.no_series_code = null; }
+    Object.assign(updates, this.seriesShapeUpdates(dto));
+    // Only when this edit touches what identifies the code: renaming or blocking a
+    // series that never had a prefix must stay possible.
+    if (dto.prefix !== undefined || dto.no_series_code !== undefined || dto.code_segments !== undefined) this.assertSeriesHasIdentity(
+      updates.prefix !== undefined ? updates.prefix : existing.prefix ?? existing.no_series_code,
+      updates.code_segments !== undefined ? updates.code_segments : existing.code_segments,
+    );
 
     const targetDocType = (updates.document_type ?? updates.master_type ?? existing.document_type ?? existing.master_type)?.toUpperCase()?.replaceAll('-', '_');
     // If setting this series as default, automatically uncheck is_default on any other series for the same master type in the SAME scope (company or tenant)

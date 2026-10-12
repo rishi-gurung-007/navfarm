@@ -13,7 +13,7 @@ describe('LocationService canonical hierarchy', () => {
   const txUpdate = jest.fn();
   const txDelete = jest.fn();
   const audit = { log: jest.fn() };
-  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn() };
+  const numberSeries = { generateNext: jest.fn(), lockSeries: jest.fn(), findDefaultSeriesByMaster: jest.fn(), manualCode: jest.fn() };
   // D9 (which item may live where) is SiloFeedService's rule, not
   // LocationService's — these tests only need to know it was asked, and
   // whether it allowed or refused, not the item logic behind that answer.
@@ -113,6 +113,27 @@ describe('LocationService canonical hierarchy', () => {
       max_capacity: 100, capacity_uom: 'HEAD',
     }, 'tenant-1')).rejects.toThrow(ConflictException);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('validates a typed code against the LOCATION master, whatever the default series is named', async () => {
+    // A series called NS-LOCATION is not a master: passing its code to manualCode()
+    // failed "Invalid master code." for every typed location code.
+    numberSeries.findDefaultSeriesByMaster.mockResolvedValueOnce({ code: 'NS-LOCATION' });
+    numberSeries.manualCode.mockResolvedValueOnce('LION_001');
+    selectResults.push(
+      [company], [farmType], [uom],
+      [{ location_id: 'loc-1', location_code: 'LION_001', location_type: 'FARM', location_level: 1 }],
+    );
+
+    const result = await service.create({
+      company_id: 'comp-1', location_code: 'LION_001',
+      location_name: 'LION farm', location_address: 'Farm Road', location_type: 'FARM',
+      max_capacity: 100, capacity_uom: 'HEAD',
+    }, 'tenant-1', { userId: 'user-1' });
+
+    expect(numberSeries.manualCode).toHaveBeenCalledWith('LOCATION', 'LION_001', 'tenant-1', 'comp-1', 'FARM');
+    expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    expect(result.location_code).toBe('LION_001');
   });
 
   it('generates FARM-001 for a root farm as a single location_master insert', async () => {
@@ -822,6 +843,22 @@ describe('LocationService canonical hierarchy', () => {
     expect(res[0].utilization_pct).toBe(10); // 2 / 20 = 10%
     expect(res[0].biosecurity_status).toBe('QUARANTINE_ACTIVE');
     expect(res[0].sick_animal_count).toBe(1);
+  });
+
+  it("counts a batch-wise batch's head on hand (closing), not what it opened with", async () => {
+    selectResults.push(
+      [{
+        location: { location_id: 'loc-pen-2', location_code: 'PEN-02', location_name: 'Pen 2', location_type: 'PEN', max_capacity: '100.0000', capacity_uom: 'HEAD', shed_id: null, last_cleaned_date: null, last_disinfected_date: null },
+        farm: { farm_name: 'Main Farm' },
+        shed: { shed_name: 'Shed' },
+      }],
+      [], // no registered animals
+      [{ batch_id: 'b-1', batch_no: 'B-1', location_id: 'loc-pen-2', shed_id: null, opening_quantity: '100.0000', closing_quantity: '58.0000' }],
+    );
+
+    const res = await service.getLocationOccupancy('tenant-1', 'comp-1');
+
+    expect(res[0].current_occupancy).toBe(58);
   });
 });
 

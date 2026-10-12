@@ -1718,6 +1718,12 @@ export function MasterDataTable({
         if (f.multiple && f.allOption && Array.isArray(v) && v.length === 1 && v[0] === String(f.allOption[f.entityValueKey || "id"])) {
           v = [];
         }
+        // A cleared Prefix / "Same as separator" has to reach the API as a
+        // clear: skipping an empty value would leave the old one in every code.
+        if (isNumberSeriesForm && editing && (f.key === "prefix" || f.key === "seq_separator") && (v === "" || v === undefined || v === null)) {
+          payload[f.key] = "";
+          continue;
+        }
         if (v === "" || v === undefined || v === null) continue;
         if (f.type === "number") v = Number(v);
         if (f.type === "json") {
@@ -2004,7 +2010,9 @@ export function MasterDataTable({
         .filter((c) => c.type === "select" || c.type === "select-entity" || c.type === "date" || c.key === firstTextField)
         .map((c) => ({ value: c.key, label: `${tLabel(c.label)} (${c.key})` }));
       if (!target) {
-        return <p className="py-2 text-xs" style={S.sub}>Choose what this series applies to first — the fields offered here are that master's own.</p>;
+        return <p className="py-2 text-xs" style={S.sub}>{masterKey
+          ? "This master has no fields a code can be built from — it uses the prefix and number only."
+          : "Choose what this series applies to first — the fields offered here are that master's own."}</p>;
       }
       if (f.type === "select") {
         return (

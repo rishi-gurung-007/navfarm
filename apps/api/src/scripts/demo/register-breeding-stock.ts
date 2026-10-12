@@ -39,7 +39,11 @@ type AnimalKind = 'SOW' | 'BOAR' | 'GILT';
  */
 const GILT_STAGES = ['GILT_GROWER', 'FLUSH', 'INSEMINATION'];
 const SOW_STAGES = ['GESTATION', 'FARROWING', 'LACTATION'];
-const BOAR_STAGES = ['BOAR_AI', 'GESTATION'];
+// A boar stands at Boar AI; Gestation is a sow stage (audit L2: the demo had boars in Gestation).
+const BOAR_STAGES = ['BOAR_AI'];
+
+/** How long before the batch window the breeding herd was bought (see the purchaseDate note below). */
+export const HERD_BOUGHT_DAYS_BEFORE_WINDOW = 24;
 
 /** Demo facts per animal kind — ages and teat counts, varied deterministically. */
 const ANIMAL_FACTS: Record<AnimalKind, { gender: 'F' | 'M'; itemCode: string; baseAgeWeeks: number; ageSpread: number; teats?: number }> = {
@@ -73,6 +77,9 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
   }
 
   const startDate = new Date(Date.now() - farm.volume.days * 86_400_000).toISOString().slice(0, 10);
+  // The herd is bought before the batch window opens: a sow cannot farrow before she was bought, and the
+  // breeding chapter needs a litter born, nursed and weaned between her purchase and today.
+  const purchaseDate = new Date(Date.parse(`${startDate}T00:00:00Z`) - HERD_BOUGHT_DAYS_BEFORE_WINDOW * 86_400_000).toISOString().slice(0, 10);
   const herd: Array<{ kind: AnimalKind; count: number }> = [
     { kind: 'SOW' as const, count: farm.volume.sows },
     { kind: 'GILT' as const, count: farm.volume.gilts },
@@ -85,11 +92,15 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
 
   // Which stage each animal stands in: dealt round-robin over the stages its kind
   // uses and the breed carries. A kind with no usable stage is left out.
+  // A boar stands under the farm's boar line when the sow line carries no boar
+  // stage (Z-Line-Sow has none): a sow breed cannot place a boar at Boar AI.
+  const breedOf = (kind: AnimalKind): DemoBreed =>
+    kind === 'BOAR' && !breed.lifecycleStages.has('BOAR_AI') && farm.boarBreed?.lifecycleStages.has('BOAR_AI') ? farm.boarBreed : breed;
   const stagesFor = (kind: AnimalKind): string[] =>
-    (kind === 'GILT' ? GILT_STAGES : kind === 'SOW' ? SOW_STAGES : BOAR_STAGES).filter((code) => breed.lifecycleStages.has(code));
+    (kind === 'GILT' ? GILT_STAGES : kind === 'SOW' ? SOW_STAGES : BOAR_STAGES).filter((code) => breedOf(kind).lifecycleStages.has(code));
   const usableHerd = herd.filter((h) => {
     if (stagesFor(h.kind).length) return true;
-    ctx.log(`${tag} breed ${breed.code} carries no lifecycle row for any ${h.kind.toLowerCase()} stage — no ${h.kind.toLowerCase()}s registered`);
+    ctx.log(`${tag} breed ${breedOf(h.kind).code} carries no lifecycle row for any ${h.kind.toLowerCase()} stage — no ${h.kind.toLowerCase()}s registered`);
     return false;
   });
   if (usableHerd.length === 0) return null;
@@ -119,7 +130,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         {
           company_id: ctx.companyId,
           warehouse_id: farm.farmId,
-          posting_date: startDate,
+          posting_date: purchaseDate,
           external_reference_no: receiptTag,
           remarks,
           lines,
@@ -194,16 +205,18 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
         {
           company_id: ctx.companyId,
           animal_type: kind,
-          breed_id: breed.breedId,
+          breed_id: breedOf(kind).breedId,
           gender: facts.gender,
           entry_type: 'PURCHASED_LOCAL',
-          entry_date: startDate,
-          age_at_entry_weeks: facts.baseAgeWeeks + (i % facts.ageSpread),
+          entry_date: purchaseDate,
+          // dob, not age_at_entry_weeks: the ANIMAL series takes its YEAR from dob
+          // (PIG-YYYY-SEQ, TDD row 7), and the service derives the age from it.
+          dob: new Date(Date.parse(`${purchaseDate}T00:00:00Z`) - (facts.baseAgeWeeks + (i % facts.ageSpread)) * 7 * 86_400_000).toISOString().slice(0, 10),
           source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
           item_id: itemRow.item_id,
           rfid_tag: tagNo,
           current_location_id: pens[(i - 1) % pens.length],
-          current_stage_id: breed.lifecycleStages.get(stageCode)!,
+          current_stage_id: breedOf(kind).lifecycleStages.get(stageCode)!,
           no_of_teats: facts.teats === undefined ? undefined : facts.teats + (i % 3),
         },
         ctx.tenantId,

@@ -34,6 +34,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import type { AnimalOption } from "../production/animal-multi-select";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 interface BatchProfile {
   id: string;
@@ -938,7 +939,7 @@ export default function StageWiseConsumptionOutputPanel() {
 
   const handleDeletePhoto = async (attachmentId: string) => {
     if (!selectedBatchId || !attachmentId) return;
-    if (!window.confirm("Are you sure you want to remove this photo attachment?")) return;
+    if (!(await confirmAction({ title: t("cfRemovePhotoTitle"), message: "Are you sure you want to remove this photo attachment?", tone: "danger" }))) return;
 
     try {
       await api.delete(`/batch/${selectedBatchId}/attachment/${attachmentId}`);

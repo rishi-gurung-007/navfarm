@@ -106,6 +106,13 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
       const refs: { registered?: string; countOnly: string[] } = { countOnly: [] };
       byFarm.set(farm.code, refs);
 
+      // The lean seed puts all its batches and animals on the one sow farm; the other farm stays a stocked
+      // store for the stock transfers to land in.
+      if (ctx.lean && farm.code !== 'MUL100') {
+        ctx.log(`${tag} lean seed — no animals or batches here (stock only)`);
+        continue;
+      }
+
       if (!breed) {
         ctx.log(`${tag} no active breed profile on this farm — no batches (nothing to grow a scheduler from)`);
         continue;

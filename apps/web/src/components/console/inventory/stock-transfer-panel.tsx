@@ -36,6 +36,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import ReceiveStockPanel from "./receive-stock-panel";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 const PAGE_SIZE = 25;
 
@@ -924,7 +925,11 @@ export default function StockTransferPanel() {
   };
 
   const handleCloseOrder = async (transferId: string) => {
-    if (!window.confirm("Are you sure you want to short-close this Transfer Order? Any remaining un-shipped balance will be cancelled.")) {
+    if (!(await confirmAction({
+      title: t("cfShortCloseTitle"),
+      message: "Any remaining un-shipped balance will be cancelled.",
+      tone: "danger",
+    }))) {
       return;
     }
     setClosing(true);
@@ -2750,7 +2755,8 @@ export default function StockTransferPanel() {
                           {(() => {
                             const rawReceipts = entries.filter((e) => e.transaction_type === "TRANSFER_RECEIPT");
 
-                            // Deduplicate twin DOA entries: if a primary receipt already accounts for the DOA qty, skip the secondary DOA receipt entry
+                            // Legacy receipts put the DOA on a twin row: if a primary `DOA:n` receipt already accounts for it, skip the twin.
+                            // Current receipts are one row for everything that arrived, tagged `Incl. DOA:n`.
                             const primaryDoaKeys = new Set(
                               rawReceipts
                                 .filter((r) => (r.external_reference_no || "").startsWith("DOA:"))
@@ -2792,7 +2798,8 @@ export default function StockTransferPanel() {
                                         {receipts.map((r, rIdx) => {
                                           const it = items.find((i) => i.item_id === r.item_id);
                                           let doaVal = 0;
-                                          if (r.external_reference_no?.startsWith("DOA:")) {
+                                          const grossDoa = r.external_reference_no?.startsWith("Incl. DOA:");
+                                          if (r.external_reference_no?.startsWith("DOA:") || grossDoa) {
                                             const parsed = Number(r.external_reference_no.split(":")[1]);
                                             if (!isNaN(parsed) && parsed > 0) doaVal = parsed;
                                           } else if (r.doa_quantity) {
@@ -2803,7 +2810,8 @@ export default function StockTransferPanel() {
                                           }
 
                                           const isDoaOnlyTwin = r.external_reference_no === "DOA_IN_TRANSIT";
-                                          const goodVal = isDoaOnlyTwin ? 0 : Number(r.quantity);
+                                          // A current receipt's quantity includes its DOA, which is written off against it.
+                                          const goodVal = isDoaOnlyTwin ? 0 : Math.max(0, Number(r.quantity) - (grossDoa ? doaVal : 0));
                                           const tracking = r.serial_no || r.lot_no || "—";
                                           const author = r.created_by_name || getUserDisplayName(r.created_by);
                                           const displayRemarks = doaVal > 0

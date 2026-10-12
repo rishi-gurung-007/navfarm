@@ -107,6 +107,7 @@ export async function buildDemoContext(
     demoFarms,
     volume,
     withBatches: true,
+    lean: false,
     log,
   };
 }

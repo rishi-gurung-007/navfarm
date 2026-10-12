@@ -8,9 +8,10 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, or, sql, isNull, gt, like, desc } from 'drizzle-orm';
+import { eq, and, inArray, or, sql, isNull, isNotNull, gt, like, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
+import { ModuleRef } from '@nestjs/core';
 import * as schema from '../../../core/database/schema';
 import { CreateBatchDailyDataDto } from './dto/batch-daily-data.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -18,9 +19,13 @@ import { BatchService, type UserContext } from '../batch/batch.service';
 import { BatchTransferService } from '../batch/batch-transfer.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { BreedingService } from '../../piggery/breeding/breeding.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { farmStoreOf } from '../../../common/farm-store';
+import { classifyPostedRow } from '../batch/batch-day-reversal';
+import { animalOutputEvent, outputEventForItem, parsePoolIds, type AnimalOutputEvent } from './animal-output-event';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
@@ -74,6 +79,9 @@ export class BatchDailyDataService {
     private readonly glPostingService: GlPostingService,
     private readonly movementLog: AnimalMovementLogService,
     private readonly siloFeedService: SiloFeedService,
+    // The breeding service is reached through the module reference, at the moment a farrowing or weaning is posted:
+    // it depends on the batch services that depend on this one, and a constructor reference would close the cycle.
+    private readonly moduleRef: ModuleRef,
     // POST Day consumption lowers the silo it drew from (Plan A Task 4), so
     // the farm's silo levels are re-checked afterwards (checkpoint 12).
     // Optional so a testing module that does not provide it still builds.
@@ -124,7 +132,13 @@ export class BatchDailyDataService {
         `Line '${dto.line_id}' does not belong to batch '${batchId}'.`,
       );
     }
-    if (line.lot_required && !dto.lot_no && !dto.serial_no) {
+    // Decision 8: an output is any item the farm takes out of the batch, chosen when it is entered; the line's own item
+    // is only the default. Every other kind of line posts the item it was set up with.
+    if (dto.item_id && line.line_type !== 'OUTPUT') {
+      throw new BadRequestException(`'${line.activity_name}' is not an output line — only an output takes an item chosen at entry.`);
+    }
+    // An output's lot is made when it posts, so only a line that draws stock is asked for one.
+    if (line.line_type !== 'OUTPUT' && line.lot_required && !dto.lot_no && !dto.serial_no) {
       // Only an item tracked by lot or serial has one to name: lines generated before this rule was
       // applied can carry lot_required on an untracked item, which is priced by its costing method alone.
       const [tracked] = line.item_id
@@ -154,6 +168,7 @@ export class BatchDailyDataService {
         shed_id: schema.batchHeader.shed_id,
         location_id: schema.batchHeader.location_id,
         batch_no: schema.batchHeader.batch_no,
+        costing_method: schema.batchHeader.costing_method,
         // The last resort when resolving where a consumption line draws its
         // stock from: a batch whose scheduler records no shed or pen still
         // belongs to a farm, and that farm's store is the right source.
@@ -249,9 +264,47 @@ export class BatchDailyDataService {
         existingValue === incomingValue &&
         (existingRow.entered_text || null) === (dto.entered_text || null) &&
         (existingRow.lot_no || null) === (dto.lot_no || null) &&
-        (existingRow.serial_no || null) === (dto.serial_no || null);
+        (existingRow.serial_no || null) === (dto.serial_no || null) &&
+        (existingRow.item_id || null) === (dto.item_id || null) &&
+        (existingRow.destination_batch_id || null) === (dto.destination_batch_id || null) &&
+        [...parsePoolIds(existingRow.pool_animal_ids)].sort().join(',') === [...(dto.pool_animal_ids ?? [])].sort().join(',');
       if (unchanged) {
         return this.findForDate(batchId, dto.entry_date, tenantId);
+      }
+      // Reopening a day reverses what it posted and puts the entries back to drafts, so a posted entry that arrives
+      // changed has an effect still standing. For the kinds a reopen leaves posted — a transfer, a recorded death,
+      // a bio-asset batch's output and cost — posting it again would count it twice; say so rather than do it.
+      // A farrowing or weaning posted from data entry has no batch transaction behind it — it is the litter's own record.
+      if (batchRow?.tracking_mode === 'ANIMAL_WISE' && line.line_type === 'OUTPUT' && existingRow.posting_reference) {
+        const [litter] = await this.db
+          .select({ farrow_id: schema.farrowingRecord.farrow_id })
+          .from(schema.farrowingRecord)
+          .where(eq(schema.farrowingRecord.farrow_id, existingRow.posting_reference))
+          .limit(1);
+        if (litter) {
+          throw new ConflictException(
+            `'${line.activity_name}' is already posted and it recorded a farrowing or weaning, so it cannot be changed in place. The litter has its own record on the Breeding screen.`,
+          );
+        }
+        const [collection] = await this.db
+          .select({ id: schema.semenBatch.semen_batch_id })
+          .from(schema.semenBatch)
+          .where(eq(schema.semenBatch.semen_batch_id, existingRow.posting_reference))
+          .limit(1);
+        if (collection) {
+          throw new ConflictException(
+            `'${line.activity_name}' is already posted and it recorded a semen collection, so it cannot be changed in place. The lot has its own record on the Breeding screen.`,
+          );
+        }
+      }
+      const verdict = classifyPostedRow(
+        { line_type: line.line_type, kpi_metric: line.kpi_metric, entered_value: existingRow.entered_value },
+        batchRow?.costing_method,
+      );
+      if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !verdict.reversible) {
+        throw new ConflictException(
+          `'${line.activity_name}' is already posted and ${verdict.reason}, so it cannot be changed in place.`,
+        );
       }
     }
 
@@ -276,6 +329,10 @@ export class BatchDailyDataService {
           entered_text: dto.entered_text || null,
           lot_no: dto.lot_no || null,
           serial_no: dto.serial_no || null,
+          item_id: dto.item_id || null,
+          destination_batch_id: dto.destination_batch_id || null,
+          pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          reason_id: dto.reason_id || null,
           posted: false,
           posting_reference: null,
           alert_triggered: false,
@@ -290,6 +347,10 @@ export class BatchDailyDataService {
             entered_text: dto.entered_text || null,
             lot_no: dto.lot_no || null,
             serial_no: dto.serial_no || null,
+            item_id: dto.item_id || null,
+            destination_batch_id: dto.destination_batch_id || null,
+            pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          reason_id: dto.reason_id || null,
             remarks: dto.remarks || null,
             updated_by: userPayload?.userId || null,
             updated_at: toMysqlTimestamp(),
@@ -309,29 +370,17 @@ export class BatchDailyDataService {
     switch (line.line_type) {
       case 'CONSUMPTION':
       case 'OUTPUT': {
-        let resolvedItemId = line.item_id;
-        if (!resolvedItemId && line.line_type === 'OUTPUT') {
-          const [matched] = await this.db
-            .select({ item_id: schema.itemMaster.item_id })
-            .from(schema.itemMaster)
-            .where(
-              and(
-                eq(schema.itemMaster.tenant_id, tenantId),
-                eq(schema.itemMaster.is_active, true),
-                or(
-                  like(schema.itemMaster.item_name, '%Piglet%'),
-                  eq(schema.itemMaster.item_type, 'LIVESTOCK'),
-                ),
-              ),
-            )
-            .orderBy(desc(schema.itemMaster.item_type))
-            .limit(1);
-          resolvedItemId = matched?.item_id || null;
-        }
+        // The line's own item, and only that. An OUTPUT line with no item used to take the first
+        // item named like "Piglet" or typed LIVESTOCK, so a semen collection or a manure line could
+        // be posted into stock as piglets. Lines are validated to carry an item when they are made;
+        // one that still has none is fixed, not guessed.
+        const resolvedItemId = (line.line_type === 'OUTPUT' && dto.item_id) || line.item_id;
         if (!resolvedItemId)
-          throw new ConflictException(
-            `'${line.activity_name}' has no item configured — fix the line before posting entries against it.`,
-          );
+          throw line.line_type === 'OUTPUT'
+            ? new BadRequestException(`Choose the item '${line.activity_name}' takes out of the batch.`)
+            : new ConflictException(
+                `'${line.activity_name}' has no item configured — fix the line before posting entries against it.`,
+              );
         if (dto.entered_value == null)
           throw new BadRequestException(
             'Enter a value for this line.',
@@ -341,6 +390,9 @@ export class BatchDailyDataService {
           .from(schema.itemMaster)
           .where(eq(schema.itemMaster.item_id, resolvedItemId))
           .limit(1);
+        if (dto.item_id && (!item || item.tenant_id !== tenantId || item.is_active === false)) {
+          throw new NotFoundException('The chosen output item was not found, or is no longer active.');
+        }
         // Feed and medicine come out of somewhere physical: the silo standing
         // at this batch's shed, or the farm store behind it. Only CONSUMPTION
         // draws stock down — an OUTPUT line puts stock IN and has no source to
@@ -382,6 +434,68 @@ export class BatchDailyDataService {
           }
           await this.postConsumptionGroup([pending]);
           return this.findForDate(batchId, dto.entry_date, tenantId);
+        }
+
+        // A sow's piglet output is a farrowing — or the weaning of the litter she is nursing — not stock arriving: it is
+        // recorded by the same posting the Breeding screen uses, so the litter, its piglet lot and the sow's parity
+        // are written once whichever screen it was entered on. Data entry carries the live-born count; stillborn,
+        // mummified and fostering are recorded on the Breeding screen.
+        const litter = await this.animalOutputEvent(line, header, dto, batchRow, item);
+        if (litter) {
+          const breeding = this.moduleRef.get(BreedingService, { strict: false });
+          // The boar's motility read the same day (a SEMEN_MOTILITY line) goes on the lot (G8). The day's outputs post
+          // after its readings, so a reading entered with the collection is already here.
+          const motility =
+            litter.kind === 'SEMEN' ? await this.sameDayReading(batchId, dto.animal_id!, dto.entry_date, 'SEMEN_MOTILITY') : null;
+          if (dto.pool_animal_ids?.length && litter.kind !== 'SEMEN') {
+            throw new BadRequestException('Only a boar\'s semen collection can be pooled with other boars.');
+          }
+          if (litter.kind === 'SEMEN' && dto.pool_animal_ids?.length) {
+            await this.assertPoolBoarsFree(line.line_id, dto.entry_date, dto.animal_id!, dto.pool_animal_ids);
+          }
+          const result: any =
+            litter.kind === 'SEMEN'
+              ? await breeding.recordSemenCollection(
+                  {
+                    boar_animal_id: dto.animal_id!,
+                    collection_date: dto.entry_date,
+                    doses_collected: dto.entered_value,
+                    // Any item the farm chose for semen: the line's.
+                    output_item_id: resolvedItemId,
+                    ...(dto.pool_animal_ids?.length ? { pool_boar_animal_ids: dto.pool_animal_ids } : {}),
+                    ...(motility != null ? { motility_pct: motility } : {}),
+                    notes: dto.remarks,
+                  } as any,
+                  tenantId,
+                  userPayload,
+                )
+              : litter.kind === 'FARROWING'
+              ? await breeding.recordFarrowing(
+                  {
+                    sow_animal_id: dto.animal_id!,
+                    farrowing_date: dto.entry_date,
+                    piglets_born_live: dto.entered_value,
+                    piglet_item_id: resolvedItemId,
+                    notes: dto.remarks,
+                  } as any,
+                  tenantId,
+                  userPayload,
+                )
+              : await breeding.recordWeaning(
+                  litter.farrow_id,
+                  {
+                    weaning_date: dto.entry_date,
+                    piglets_weaned: dto.entered_value,
+                    // Where the weaned piglets go, when the entry names a batch; else they stay in their lot.
+                    move_to_batch_id: dto.destination_batch_id,
+                  } as any,
+                  tenantId,
+                  userPayload,
+                );
+          posted = true;
+          postingReference = result.farrow_id ?? result.semen_batch_id;
+          dailyRemarks = [dto.remarks, result.message].filter(Boolean).join(' — ').slice(0, 500);
+          break;
         }
 
         // OUTPUT: stock comes in, there is nothing to draw — one entry, as it always was.
@@ -465,6 +579,15 @@ export class BatchDailyDataService {
           (line.kpi_metric === 'HEAD_COUNT' ||
             line.kpi_metric === 'MORTALITY_COUNT')
         ) {
+          if (
+            line.kpi_metric === 'MORTALITY_COUNT' &&
+            dto.animal_id &&
+            dto.entered_value > 1
+          ) {
+            throw new BadRequestException(
+              'One animal can die only once — enter 0 or 1 for it.',
+            );
+          }
           let newCount: number;
           if (line.kpi_metric === 'HEAD_COUNT') {
             newCount = dto.entered_value;
@@ -482,7 +605,9 @@ export class BatchDailyDataService {
             const [existing] = await this.db
               .select({ entered_value: schema.batchDailyData.entered_value })
               .from(schema.batchDailyData)
-              .where(existingWhere)
+              // A draft is only what the user typed so far: only a posted row is a death already recorded. Counting
+              // the draft made the post see no change (1 - 1) and record no death at all.
+              .where(and(existingWhere, eq(schema.batchDailyData.posted, true)))
               .limit(1);
             const previousEntered =
               existing?.entered_value != null
@@ -491,82 +616,49 @@ export class BatchDailyDataService {
             const delta = dto.entered_value - previousEntered;
             newCount = Math.max(0, Number(header.animal_count) - delta);
 
-            // Keep animal_register in step with the reported death count — without
-            // this, a stage transition re-derives animal_count from animal_register's
-            // own live count (createForStage()) and silently reverts the mortality
-            // this line just recorded. Only handles a net *increase* in deaths
-            // (delta > 0); a downward correction has no unambiguous animal to
-            // "revive" so animal_count above is still corrected, just not the registry.
+            // A reported death is a MORTALITY posting, not just a count: the batch
+            // transaction, closing quantity and cost write-off, and — for a named
+            // animal — the register flip and movement log, all come from
+            // addTransaction so every entry point records a death the same way.
+            // This line keeps the stage headcount itself (below), so the shared
+            // path is told not to touch it. Only a net increase in deaths posts;
+            // a downward correction has no unambiguous animal to revive, so it
+            // corrects animal_count alone — a death recorded in error is taken
+            // back by reversing it (BatchMortalityReversalService), naming it.
             const deathsToRecord = Math.round(delta);
-            // ANIMAL_WISE names the exact animal on the entry — mark it directly
-            // instead of FIFO-guessing which of the stage's animals died.
-            const dying = dto.animal_id
-              ? deathsToRecord > 0
-                ? [{ animal_id: dto.animal_id }]
-                : []
-              : deathsToRecord > 0
-                ? await this.db
-                    .select({ animal_id: schema.animalRegister.animal_id })
-                    .from(schema.animalRegister)
-                    .where(
-                      and(
-                        eq(schema.animalRegister.current_batch_id, batchId),
-                        eq(
-                          schema.animalRegister.current_stage_id,
-                          header.stage_id,
-                        ),
-                        eq(schema.animalRegister.is_active, true),
-                        sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
-                      ),
-                    )
-                    .orderBy(schema.animalRegister.created_at)
-                    .limit(deathsToRecord)
-                : [];
-            if (dying.length) {
-              await this.db
-                .update(schema.animalRegister)
-                .set({
-                  is_active: false,
-                  status: 'DEAD',
-                  disposal_type: 'DIED',
-                  disposal_date: dto.entry_date,
-                  updated_by: userPayload?.userId || null,
-                  updated_at: toMysqlTimestamp(),
-                })
-                .where(
-                  inArray(
-                    schema.animalRegister.animal_id,
-                    dying.map((a) => a.animal_id),
-                  ),
-                );
-
-              // AnimalService.dispose() logs MORTALITY on the same registry
-              // flip — this scheduler-driven path was silently skipping it,
-              // leaving these deaths invisible to the HISTORY/LOCATION tabs.
-              for (const dead of dying) {
-                await this.movementLog.record({
-                  tenantId,
-                  companyId: batchRow?.company_id,
-                  animalId: dead.animal_id,
-                  movementType: 'MORTALITY',
-                  eventDate: dto.entry_date,
-                  fromBatchId: batchId,
-                  fromStageId: header.stage_id,
-                  reason: 'Recorded via daily mortality count entry',
-                  userId: userPayload?.userId,
-                });
-              }
+            if (deathsToRecord > 0) {
+              await this.batchService.addTransaction(
+                batchId,
+                {
+                  transaction_date: dto.entry_date,
+                  transaction_type: 'MORTALITY',
+                  quantity: dto.animal_id ? 1 : deathsToRecord,
+                  uom: 'HEAD',
+                  animal_id: dto.animal_id,
+                  ...(dto.reason_id ? { mortality_detail: { reason_id: dto.reason_id } } : {}),
+                  remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
+                  // A named animal is counted by the register (the batch recounts its stages);
+                  // a head count keeps this line's own header.
+                  skip_scheduler_count: !dto.animal_id,
+                } as any,
+                tenantId,
+                userPayload,
+              );
             }
           }
-          await this.db
-            .update(schema.schedulerHeader)
-            .set({
-              animal_count: newCount.toString(),
-              updated_at: toMysqlTimestamp(),
-            })
-            .where(
-              eq(schema.schedulerHeader.scheduler_id, header.scheduler_id),
-            );
+          // Animal-wise mortality is the register's to count (above); writing a number derived
+          // from the header's own count here would put back whatever drift it carried.
+          if (!(line.kpi_metric === 'MORTALITY_COUNT' && dto.animal_id)) {
+            await this.db
+              .update(schema.schedulerHeader)
+              .set({
+                animal_count: newCount.toString(),
+                updated_at: toMysqlTimestamp(),
+              })
+              .where(
+                eq(schema.schedulerHeader.scheduler_id, header.scheduler_id),
+              );
+          }
         }
 
         // Transaction Ledger Structure (Row 11): Record DESCRIPTIVE entry into inventory_ledger only if non-zero value
@@ -748,60 +840,50 @@ export class BatchDailyDataService {
           throw new BadRequestException(
             'A transfer line needs a destination batch.',
           );
-        // Animal-wise entries already name the exact animal — that's the whole
-        // transfer, no FIFO guess needed. Whole-batch entries only say how many
-        // head to move, scoped to this line's own stage (an ANIMAL_WISE batch's
-        // other stages are none of this header's business).
-        let candidateIds: string[];
+        // An animal-wise batch names the exact animal on every entry (postEntry refuses an entry
+        // without one), so that animal is the whole transfer — nobody is picked on the farmer's
+        // behalf. A batch-wise batch holds no registered animals at all (a Count Only batch cannot),
+        // so there is nobody to pick: the line moves a number of head instead. The old
+        // oldest-registered-first guess could only ever run against a batch with no animals in it.
+        let transferResult;
         if (dto.animal_id) {
-          candidateIds = [dto.animal_id];
+          transferResult = await this.batchTransferService.create(
+            {
+              company_id: header.company_id,
+              to_batch_id: dto.destination_batch_id,
+              transfer_date: dto.entry_date,
+              transfer_type: 'PARTIAL',
+              animal_ids: [dto.animal_id],
+              reason: line.activity_name,
+              remarks: dto.remarks,
+              auto_triggers_stage: line.auto_triggers_stage,
+            } as any,
+            tenantId,
+            batchId,
+            userPayload,
+          );
         } else {
-          if (dto.entered_value == null && line.standard_qty == null) {
+          const head = dto.entered_value ?? (line.standard_qty != null ? Number(line.standard_qty) : null);
+          if (head == null || !(head > 0)) {
             throw new BadRequestException(
               "Enter how many head to move (or set the line's standard quantity).",
             );
           }
-          const headcount = Math.round(
-            dto.entered_value ?? Number(line.standard_qty),
-          );
-          // Auto-select the oldest still-in-this-batch animals up to the requested
-          // headcount — the schedule line only says how many move, not which ones;
-          // FIFO-by-registration is the same order the rest of the app already
-          // assumes when it doesn't have a farmer's explicit pick.
-          const candidates = await this.db
-            .select({ animal_id: schema.animalRegister.animal_id })
-            .from(schema.animalRegister)
-            .where(
-              and(
-                eq(schema.animalRegister.current_batch_id, batchId),
-                eq(schema.animalRegister.current_stage_id, header.stage_id),
-                eq(schema.animalRegister.is_active, true),
-              ),
-            )
-            .orderBy(schema.animalRegister.created_at)
-            .limit(headcount);
-          candidateIds = candidates.map((c) => c.animal_id);
-        }
-        if (!candidateIds.length) {
-          throw new ConflictException(
-            `No animals currently in batch '${batchId}' to transfer.`,
+          transferResult = await this.batchTransferService.create(
+            {
+              company_id: header.company_id,
+              to_batch_id: dto.destination_batch_id,
+              transfer_date: dto.entry_date,
+              transfer_type: 'PARTIAL',
+              quantity: head,
+              reason: line.activity_name,
+              remarks: dto.remarks,
+            } as any,
+            tenantId,
+            batchId,
+            userPayload,
           );
         }
-        const transferResult = await this.batchTransferService.create(
-          {
-            company_id: header.company_id,
-            to_batch_id: dto.destination_batch_id,
-            transfer_date: dto.entry_date,
-            transfer_type: 'PARTIAL',
-            animal_ids: candidateIds,
-            reason: line.activity_name,
-            remarks: dto.remarks,
-            auto_triggers_stage: line.auto_triggers_stage,
-          } as any,
-          tenantId,
-          batchId,
-          userPayload,
-        );
         posted = true;
         postingReference =
           (transferResult as any)?.transfer_id || dto.destination_batch_id;
@@ -837,6 +919,65 @@ export class BatchDailyDataService {
     return this.findForDate(batchId, dto.entry_date, tenantId);
   }
 
+  /**
+   * A boar pooled into a lot gives his semen to that lot: he cannot also have a collection of his own entered on the same
+   * line for the same day, or his doses would be counted twice.
+   */
+  private async assertPoolBoarsFree(lineId: string, entryDate: string, primaryId: string, poolIds: string[]) {
+    const others = [...new Set(poolIds)].filter((id) => id !== primaryId);
+    if (!others.length) return;
+    const own = await this.db
+      .select({ animal_id: schema.batchDailyData.animal_id, code: schema.animalRegister.animal_code })
+      .from(schema.batchDailyData)
+      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.batchDailyData.animal_id))
+      .where(
+        and(
+          eq(schema.batchDailyData.line_id, lineId),
+          eq(schema.batchDailyData.entry_date, entryDate),
+          inArray(schema.batchDailyData.animal_id, others),
+          isNotNull(schema.batchDailyData.entered_value),
+        ),
+      );
+    if (own.length) {
+      throw new ConflictException(
+        `${own.map((o) => o.code).join(', ')} already ${own.length === 1 ? 'has' : 'have'} a collection of their own on this line for ${entryDate}. Clear it, or leave ${own.length === 1 ? 'him' : 'them'} out of the pool, so the doses are not counted twice.`,
+      );
+    }
+  }
+
+  /**
+   * Whether an OUTPUT line recorded against an animal is a breeding event — a semen collection, a farrowing or a
+   * weaning (see animal-output-event.ts, which the data-entry screen asks too). Anything else is ordinary output.
+   */
+  private async animalOutputEvent(
+    line: typeof schema.schedulerLine.$inferSelect,
+    header: typeof schema.schedulerHeader.$inferSelect,
+    dto: CreateBatchDailyDataDto,
+    batchRow: { tracking_mode?: string | null } | undefined,
+    item: typeof schema.itemMaster.$inferSelect | undefined,
+  ): Promise<AnimalOutputEvent | null> {
+    if (line.line_type !== 'OUTPUT' || batchRow?.tracking_mode !== 'ANIMAL_WISE' || !dto.animal_id) return null;
+    return outputEventForItem(await animalOutputEvent(this.db, dto.animal_id, header.stage_id ?? null), item);
+  }
+
+  /** An animal's reading of one KPI on a day, from its data entry (posted or still a draft). */
+  private async sameDayReading(batchId: string, animalId: string, date: string, metric: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ value: schema.batchDailyData.entered_value })
+      .from(schema.batchDailyData)
+      .innerJoin(schema.schedulerLine, eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id))
+      .where(
+        and(
+          eq(schema.batchDailyData.batch_id, batchId),
+          eq(schema.batchDailyData.animal_id, animalId),
+          eq(schema.batchDailyData.entry_date, date),
+          eq(schema.schedulerLine.kpi_metric, metric),
+        ),
+      )
+      .limit(1);
+    return row?.value != null ? Number(row.value) : null;
+  }
+
   /** Writes the day's row for an entry — posted or not — and its audit line. */
   private async recordEntry(args: {
     entryId: string;
@@ -867,6 +1008,10 @@ export class BatchDailyDataService {
         entered_text: dto.entered_text || null,
         lot_no: dto.lot_no || null,
         serial_no: dto.serial_no || null,
+        item_id: dto.item_id || null,
+        destination_batch_id: dto.destination_batch_id || null,
+        pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          reason_id: dto.reason_id || null,
         posted,
         posting_reference: postingReference,
         alert_triggered: alertTriggered,
@@ -881,6 +1026,10 @@ export class BatchDailyDataService {
           entered_text: dto.entered_text || null,
           lot_no: dto.lot_no || null,
           serial_no: dto.serial_no || null,
+          item_id: dto.item_id || null,
+          destination_batch_id: dto.destination_batch_id || null,
+          pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          reason_id: dto.reason_id || null,
           posted,
           posting_reference: postingReference,
           alert_triggered: alertTriggered,
@@ -1119,27 +1268,8 @@ export class BatchDailyDataService {
   }
 
   /** The farm's own active store, first by code — the one the feed forecast reports. */
-  private async storeOfFarm(farmId: string | null): Promise<string | null> {
-    if (!farmId) return null;
-    const [store] = await this.db
-      .select({ location_id: schema.locationMaster.location_id })
-      .from(schema.locationMaster)
-      .where(
-        and(
-          eq(schema.locationMaster.location_type, 'STORE'),
-          eq(schema.locationMaster.is_active, true),
-          isNull(schema.locationMaster.deleted_at),
-          or(
-            eq(schema.locationMaster.farm_id, farmId),
-            eq(schema.locationMaster.parent_location_id, farmId),
-          ),
-        ),
-      )
-      // First by code, as the feed forecast picks a farm's store, so a farm
-      // that somehow carries two draws on the one the forecast reports.
-      .orderBy(schema.locationMaster.location_code)
-      .limit(1);
-    return store?.location_id ?? null;
+  private storeOfFarm(farmId: string | null): Promise<string | null> {
+    return farmStoreOf(this.db, farmId);
   }
 
   /**

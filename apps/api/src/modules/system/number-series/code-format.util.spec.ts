@@ -1,4 +1,4 @@
-import { formatSeriesCode, formatSeriesStem, nextSequenceInStem, normalizeSegment, assertCodeFits, CodeTooLongError, formatDateSegment } from './code-format.util';
+import { formatSeriesCode, formatSeriesStem, nextSequenceInStem, normalizeSegment, assertCodeFits, CodeTooLongError, formatDateSegment, describeSeriesPattern } from './code-format.util';
 
 const NOW = new Date('2026-09-08T12:00:00Z');
 const series = (over: Partial<any> = {}): any => ({
@@ -55,6 +55,24 @@ describe('code-format', () => {
     it('treats null and undefined as absent rather than "NULL"', () => {
       expect(normalizeSegment(null)).toBe('');
       expect(normalizeSegment(undefined)).toBe('');
+    });
+  });
+
+  describe('a location series with a prefix', () => {
+    const loc = series({ prefix: 'LOC', separator: '/', seq_separator: '-', code_segments: ['parent_location_id', 'location_type'] });
+
+    it('names a root location by the prefix, not its type', () => {
+      expect(formatSeriesCode(loc, 2, NOW, { location_type: 'LOC' })).toBe('LOC-002');
+      expect(formatSeriesCode(loc, 2, NOW, { location_type: 'FARM' })).toBe('LOC-002');
+    });
+
+    it('leaves the prefix off a child, which is named by its parent', () => {
+      expect(formatSeriesCode(loc, 1, NOW, { parent_location_id: 'LOC-001', location_type: 'SHED' })).toBe('LOC-001/SHED-001');
+      expect(formatSeriesCode(loc, 1, NOW, { parent_location_id: 'LOC-001/SHED-001', location_type: 'PEN' })).toBe('LOC-001/SHED-001/PEN-001');
+    });
+
+    it('describes both shapes', () => {
+      expect(describeSeriesPattern(loc)).toBe('LOC-000 · {parent_location}/{location_type}-000');
     });
   });
 
@@ -163,5 +181,21 @@ describe('code-format', () => {
     it('does not throw when the column width is unknown', () => {
       expect(assertCodeFits('ANYTHING-001', undefined)).toBe('ANYTHING-001');
     });
+  });
+});
+
+describe('describeSeriesPattern', () => {
+  const base = { prefix: null, separator: '-', seq_length: 3, code_segments: null, prefix_position: 'END', seq_separator: null };
+
+  it('shows a plain prefix and the sequence as zeros', () => {
+    expect(describeSeriesPattern({ ...base, prefix: 'SUP' })).toBe('SUP-000');
+  });
+
+  it('shows a date segment as the date it stands for, ahead of the START prefix position', () => {
+    expect(describeSeriesPattern({ ...base, prefix: 'PIG', seq_length: 4, code_segments: ['dob:YEAR'], prefix_position: 'START' })).toBe('PIG-YYYY-0000');
+  });
+
+  it('shows referenced fields in braces and honours the sequence separator', () => {
+    expect(describeSeriesPattern({ ...base, separator: '/', seq_separator: '-', code_segments: ['parent_location_id', 'location_type'] })).toBe('{parent_location}/{location_type}-000');
   });
 });

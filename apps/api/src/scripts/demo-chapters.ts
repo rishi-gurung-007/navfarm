@@ -14,12 +14,15 @@
  *   pnpm nx run api:db-demo-chapters -- --apply --force-on-existing
  *   pnpm nx run api:db-demo-chapters -- --apply --volume=full
  *   pnpm nx run api:db-demo-chapters -- --apply --no-batches   # masters, stock and registered animals only
+ *   pnpm nx run api:db-demo-chapters -- --apply --lean         # MUL100 only: 2 Animal Wise + 2 Batch Wise batches
  *
  * `--volume` picks how much data each of the nine farms gets:
  *   standard (default) — Rishi's full numbers on POR100/RIC100/VIL100, lighter
  *                        on the other four sow farms, minimum on AI100/LEX100;
  *   full               — Rishi's full numbers on every sow farm;
- *   light              — the quickest pass that still exercises every write path.
+ *   light              — the quickest pass that still exercises every write path;
+ *   lean (`--lean`)    — the smallest set that runs the whole flow: one sow farm, two Animal Wise and two
+ *                        Batch Wise batches, a handful of animals. Meant for learning how the flow fits together.
  */
 import { eq, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
@@ -38,26 +41,31 @@ import { approvalsChapter } from './demo/chapters/06-approvals';
 import { feedPlanningChapter } from './demo/chapters/07-feed-planning';
 import { bioAssetExitChapter } from './demo/chapters/08-bio-asset-exit';
 import { costingScenariosChapter } from './demo/chapters/09-costing-scenarios';
+import { batchTransfersChapter } from './demo/chapters/10-batch-transfers';
+import { stockTransfersChapter } from './demo/chapters/11-stock-transfers';
+import { mortalityChapter } from './demo/chapters/12-mortality';
 import { VOLUME_PROFILES, type VolumeProfileName } from './demo/farms';
 import type { DemoChapter, DemoContext } from './demo/chapter';
 
 /** Chapters that post against batches — left out by `--no-batches`. */
-const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit']);
+const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit', '10-batch-transfers', '12-mortality']);
 
 /** Chapters that touch no batch and are safe to run again on a tenant that already has its own batches. */
 const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios']);
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, costingScenariosChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, inventoryChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter];
 
-function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName; noBatches: boolean } {
+function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName; noBatches: boolean; lean: boolean } {
   let apply = false;
   let chapter: string | undefined;
   let forceOnExisting = false;
   let volume: VolumeProfileName = 'standard';
   let noBatches = false;
+  let lean = false;
   for (const arg of argv) {
     if (arg === '--apply') apply = true;
     else if (arg === '--no-batches') noBatches = true;
+    else if (arg === '--lean') { lean = true; volume = 'lean'; }
     else if (arg === '--force-on-existing') forceOnExisting = true;
     else if (arg.startsWith('--chapter=')) chapter = arg.slice('--chapter='.length);
     else if (arg.startsWith('--volume=')) {
@@ -66,9 +74,9 @@ function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnE
         throw new Error(`Unknown volume '${value}'. Use one of: ${VOLUME_PROFILES.join(', ')}.`);
       }
       volume = value;
-    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing, --no-batches, --volume=<${VOLUME_PROFILES.join('|')}>.`);
+    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --force-on-existing, --no-batches, --lean, --volume=<${VOLUME_PROFILES.join('|')}>.`);
   }
-  return { apply, chapter, forceOnExisting, volume, noBatches };
+  return { apply, chapter, forceOnExisting, volume, noBatches, lean };
 }
 
 async function resolveTenantDbForGuard(app: Awaited<ReturnType<typeof bootApp>>) {
@@ -89,7 +97,7 @@ const DEMO_TENANT_CODE = 'devco';
 type MySql2MasterDb = MySql2Database<typeof masterSchema>;
 
 async function main() {
-  const { apply, chapter: only, forceOnExisting, volume, noBatches } = parseArgs(process.argv.slice(2));
+  const { apply, chapter: only, forceOnExisting, volume, noBatches, lean } = parseArgs(process.argv.slice(2));
 
   const app = await bootApp();
   const log = (line: string) => console.log(line);
@@ -111,6 +119,7 @@ async function main() {
 
     ctx = await buildDemoContext(app, log, volume);
     ctx.withBatches = !noBatches;
+    ctx.lean = lean;
 
     // Without batches there is nothing for daily entries, breeding, approvals or the bio-asset exit to act on.
     const runnable = CHAPTERS.filter((c) => (!only || c.name === only) && !(noBatches && BATCH_CHAPTERS.has(c.name)));

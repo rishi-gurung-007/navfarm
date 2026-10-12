@@ -298,7 +298,9 @@ export class LocationService {
     // location, the sibling count it guards) stays locked until the insert
     // below commits — two concurrent creates cannot produce the same code.
     const locationCode = dto.location_code?.trim()
-      ? await this.numberSeriesService.manualCode(seriesCode, dto.location_code, tenantId, companyId, typeCode)
+      // manualCode() takes the MASTER ('LOCATION'), not the series code: the series
+      // found above may be named anything (NS-LOCATION), and that is not a master.
+      ? await this.numberSeriesService.manualCode('LOCATION', dto.location_code, tenantId, companyId, typeCode)
       : await this.generateLocationCode(seriesCode, locationType, tenantId, companyId, parent, tx);
 
     // location_code is varchar(255). A deep hierarchical tree (each level
@@ -1584,9 +1586,13 @@ export class LocationService {
         location_id: schema.batchHeader.location_id,
         shed_id: schema.batchHeader.shed_id,
         opening_quantity: schema.batchHeader.opening_quantity,
+        closing_quantity: schema.batchHeader.closing_quantity,
       })
       .from(schema.batchHeader)
-      .where(and(...batchConditions));
+      // Only a batch-wise batch is a head count with no animal rows. An animal-wise batch's animals are
+      // already counted one by one from the register above; adding its opening quantity as well counted
+      // each of them twice, and neither figure came down with a death or a transfer.
+      .where(and(...batchConditions, eq(schema.batchHeader.tracking_mode, 'BATCH_WISE')));
 
     // Group counts by location
     const animalCountMap: Record<string, number> = {};
@@ -1605,7 +1611,8 @@ export class LocationService {
     for (const b of batches) {
       const locId = b.location_id || b.shed_id;
       if (locId) {
-        batchCountMap[locId] = (batchCountMap[locId] || 0) + Number(b.opening_quantity || 0);
+        // The head on hand now (closing), falling back to what the batch opened with before anything moved.
+        batchCountMap[locId] = (batchCountMap[locId] || 0) + Number(b.closing_quantity ?? b.opening_quantity ?? 0);
       }
     }
 

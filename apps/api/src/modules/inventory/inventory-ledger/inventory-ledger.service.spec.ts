@@ -1,5 +1,5 @@
 import { InventoryLedgerService } from './inventory-ledger.service';
-import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { MySqlDialect, QueryBuilder } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
 
@@ -43,6 +43,49 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
     // spread either — that would silently backdate the reversal to look as if
     // it were written when the original entry was.
     expect(insertedValues[0].created_at).not.toBe('2026-09-14 08:00:00');
+  });
+});
+
+describe('InventoryLedgerService reversePositiveEntry', () => {
+  const receipt = (over: object = {}) => ({
+    ledger_id: 'in-1', tenant_id: 'tenant-1', entry_type: 'POSITIVE', transaction_type: 'OUTPUT', item_code: 'WEANER',
+    document_no: 'BATCH-1', quantity: '8.0000', amount: '80.0000', remaining_quantity: '8.0000', lot_no: 'LOT-1',
+    warehouse_id: 'store-1', created_at: '2026-10-01 08:00:00', entry_no: 'E-1', ...over,
+  });
+  const run = async (original: object | undefined, reversed: object[] = []) => {
+    const inserted: any[] = [];
+    const updated: any[] = [];
+    const db: any = {
+      select: jest.fn()
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => (original ? [original] : []) }) }) })
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => reversed }) }) })
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [{ ledger_id: 'reversal-1' }] }) }) }),
+      insert: jest.fn(() => ({ values: async (v: any) => { inserted.push(v); } })),
+      update: jest.fn(() => ({ set: (v: any) => ({ where: async () => { updated.push(v); } }) })),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+    return { call: () => service.reversePositiveEntry('in-1', 'tenant-1', 'user-1'), inserted, updated };
+  };
+
+  it('writes an outbound reversal for the same item, lot and location, and closes the receipt’s layer', async () => {
+    const { call, inserted, updated } = await run(receipt());
+    await call();
+    expect(inserted[0]).toMatchObject({ entry_type: 'NEGATIVE', transaction_type: 'REVERSAL', quantity: '-8', amount: '-80', lot_no: 'LOT-1', warehouse_id: 'store-1', external_reference_no: 'in-1', remaining_quantity: null });
+    expect(inserted[0]).not.toHaveProperty('entry_no');
+    expect(inserted[0]).not.toHaveProperty('created_at');
+    expect(updated[0]).toEqual({ remaining_quantity: '0' });
+  });
+
+  it('refuses once any of the stock has been drawn on', async () => {
+    const { call, inserted } = await run(receipt({ remaining_quantity: '5.0000' }));
+    await expect(call()).rejects.toThrow('already been used or moved');
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('refuses something that is not an inbound entry, and a receipt already reversed', async () => {
+    await expect((await run(receipt({ entry_type: 'NEGATIVE' }))).call()).rejects.toThrow('Only an existing inbound entry');
+    await expect((await run(receipt(), [{ ledger_id: 'rev' }])).call()).rejects.toThrow('already been reversed');
+    await expect((await run(undefined)).call()).rejects.toThrow('Only an existing inbound entry');
   });
 });
 
@@ -288,6 +331,30 @@ describe('Inventory FIFO', () => {
     expect(applications).toHaveLength(0);
   });
 
+  it('draws only from the named receipt when one is given, leaving older receipts untouched', async () => {
+    let layerQuery: any;
+    const layers = [
+      { ledger_id: 'older', quantity: '100', remaining_quantity: '100', rate: '20', amount: '2000', warehouse_id: 'w' },
+      { ledger_id: 'named', quantity: '10', remaining_quantity: '10', rate: '30', amount: '300', warehouse_id: 'w' },
+    ];
+    // The test double returns whatever layers it holds; the query is what must carry the restriction.
+    const { db } = costingDb({ layers: [layers[1]], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    const result = await service.applyFifo({ ...params, quantity: 10, sourceLedgerId: 'named' }, db);
+    expect(layerQuery.sql).toContain('`ledger_id` = ?');
+    expect(layerQuery.params).toContain('named');
+    // Costed at the named receipt's own rate (30), not the older receipt's (20).
+    expect(result.totalCost).toBe(300);
+    expect(layers[0].remaining_quantity).toBe('100');
+  });
+
+  it('refuses a draw bigger than the named receipt holds, instead of falling back to older receipts', async () => {
+    const { db, applications } = costingDb({ layers: [{ ledger_id: 'named', quantity: '10', remaining_quantity: '4', rate: '30', amount: '300', warehouse_id: 'w' }] });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo({ ...params, quantity: 10, sourceLedgerId: 'named' }, db)).rejects.toThrow(/Insufficient stock/);
+    expect(applications).toHaveLength(0);
+  });
+
   it('restricts source layers to the issuing company', async () => {
     let layerQuery: any;
     const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
@@ -337,6 +404,19 @@ describe('InventoryLedgerService farm scope', () => {
     const where = renderedWhere();
     expect(where).toContain('location_master lf');
     expect(where).toMatch(/warehouse_id` is null.*batch_header b/s);
+  });
+
+  it('counts each entry\'s own lot lines — the subquery is tied to the entry, not to the lot-line table itself', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+    await service.findAll({} as any, 'tenant-1');
+
+    // Rendered the way the query runs it: in a single-table select Drizzle drops the table prefix from
+    // columns inside a raw SQL field, so `where ledger_id = ledger_id` would compare the line table with
+    // itself and give every entry the total number of lot lines in the table.
+    const fields = (mockDb.select.mock.calls as any[][])[0][0];
+    const text = new QueryBuilder().select(fields).from(schema.inventoryLedger).toSQL().sql;
+    expect(text).toMatch(/from `inventory_ledger_line` (\w+) where \1\.`?ledger_id`? = `inventory_ledger`\.`ledger_id`/);
   });
 
   it('returns every ledger row when no farm is selected', async () => {

@@ -2,6 +2,7 @@ import { PartialType, OmitType } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../common/master-list-query';
+import { KPI_METRICS } from '../../production/scheduler-header/dto/scheduler-header.dto';
 
 export const LINE_TYPES = ['CONSUMPTION', 'OUTPUT', 'DESCRIPTIVE', 'OVERHEAD', 'RESOURCE', 'TRANSFER'] as const;
 export const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'] as const;
@@ -40,7 +41,9 @@ export class CreateActivityDto {
   @IsOptional() @IsIn(OCCURRENCES) default_occurrence?: (typeof OCCURRENCES)[number];
   @IsOptional() @IsIn(QTY_BASES) default_qty_basis?: (typeof QTY_BASES)[number];
   @IsOptional() @IsIn(OUTPUT_BASES) default_output_basis?: (typeof OUTPUT_BASES)[number];
-  @IsOptional() @IsString() @MaxLength(50) default_kpi_metric?: string;
+  // A metric the scheduler knows. 'BCS' was stored here once, which no scheduler line accepts, and the
+  // form quietly turned it into BODY_WEIGHT — a body-condition score recorded as kilograms.
+  @IsOptional() @IsIn(KPI_METRICS as unknown as string[]) default_kpi_metric?: string;
   @IsOptional() @IsIn(CAPTURE_PERS) default_capture_per?: (typeof CAPTURE_PERS)[number];
   @IsOptional() @IsString() @MaxLength(30) default_overhead_category?: string;
   @IsOptional() @IsString() @MaxLength(20) default_gl_account?: string;

@@ -11,6 +11,9 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
+import { BreedingService } from '../../piggery/breeding/breeding.service';
+const breedingMock = { recordFarrowing: jest.fn(), recordWeaning: jest.fn(), recordSemenCollection: jest.fn() };
+
 describe('BatchDailyDataService', () => {
   let service: BatchDailyDataService;
   let batchService: BatchService;
@@ -125,6 +128,7 @@ describe('BatchDailyDataService', () => {
           },
         },
         { provide: BatchTransferService, useValue: { create: jest.fn() } },
+        { provide: BreedingService, useValue: breedingMock },
         { provide: GlPostingService, useValue: {} },
         {
           provide: AnimalMovementLogService,
@@ -617,7 +621,7 @@ describe('BatchDailyDataService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('marks the exact named animal dead for a MORTALITY_COUNT entry, without touching other animals at the stage', async () => {
+    it('posts the exact named animal as a MORTALITY through the batch path for a MORTALITY_COUNT entry, leaving the stage headcount to the register', async () => {
       const mortLine = {
         line_id: 'line-mort',
         scheduler_id: 'sched-1',
@@ -710,14 +714,354 @@ describe('BatchDailyDataService', () => {
           entry_date: '2026-09-08',
           entered_value: 1,
           animal_id: 'a-1',
+          reason_id: 'reason-mrt-001',
         } as any,
         'tenant-123',
       );
 
-      expect(mockDbUpdate).toHaveBeenCalledWith(expect.anything());
-      const animalUpdate = updateSets.find((v) => v.status === 'DEAD');
-      expect(animalUpdate).toBeDefined();
+      // The register flip, movement log, batch count and write-off are addTransaction's job now.
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          transaction_type: 'MORTALITY',
+          quantity: 1,
+          animal_id: 'a-1',
+          transaction_date: '2026-09-08',
+          // The reason picked at entry goes to the death, which records it on the animal.
+          mortality_detail: { reason_id: 'reason-mrt-001' },
+          skip_scheduler_count: false, // a named animal is counted by the register, not by this line
+        }),
+        'tenant-123',
+        undefined,
+      );
+      expect(updateSets.find((v) => v.status === 'DEAD')).toBeUndefined();
+      expect(updateSets.find((v) => v.animal_count !== undefined)).toBeUndefined();
       delete (mockDb as any).update;
+    });
+  });
+
+  describe("a sow's piglet output", () => {
+    const outLine = { line_id: 'line-out', scheduler_id: 'sched-1', is_active: true, line_type: 'OUTPUT', item_id: 'item-piglet', lot_required: false, activity_name: 'Piglet Output (Live Born)' };
+    const hdr = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', stage_id: 'st-farrow', animal_count: '2' };
+    const lim = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+    const piglet = { item_id: 'item-piglet', item_type: 'LIVESTOCK', is_biological_asset: true, uom_primary: 'HEAD' };
+    // line, header, batch, [the animal named], lock, idempotency, item, then what sowLitterEvent reads
+    const arrange = (animal: object, stageForm: string, openLitter: object[]) => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([outLine]))
+        .mockReturnValueOnce(lim([hdr]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([])) // lock
+        .mockReturnValueOnce(lim([])) // idempotency
+        .mockReturnValueOnce(lim([piglet])) // item
+        .mockReturnValueOnce(lim([animal])) // gender and parity
+        .mockReturnValueOnce(lim(openLitter)); // an open litter makes it a weaning, wherever she is
+      if (!openLitter.length) mockDbSelect.mockReturnValueOnce(lim([{ data_entry_form: stageForm }]));
+      mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+    };
+    const post = () => service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'sow-1', entered_value: 11 } as any, 'tenant-123', { userId: 'u1' });
+
+    beforeEach(() => {
+      breedingMock.recordFarrowing.mockReset().mockResolvedValue({ farrow_id: 'f-1', message: 'Farrowing recorded: 11 live piglets.' });
+      breedingMock.recordWeaning.mockReset().mockResolvedValue({ farrow_id: 'f-1', message: 'Weaning recorded.' });
+      breedingMock.recordSemenCollection.mockReset().mockResolvedValue({ semen_batch_id: 'sb-1', message: 'Semen collection logged.' });
+    });
+
+    it('is a farrowing on a stage whose data-entry form is FARROWING: the Breeding screen’s posting, with the line’s item as the piglet item', async () => {
+      arrange({ gender: 'F', parity_count: 1 }, 'FARROWING', []);
+      await post();
+      expect(breedingMock.recordFarrowing).toHaveBeenCalledWith(
+        expect.objectContaining({ sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 11, piglet_item_id: 'item-piglet' }),
+        'tenant-123',
+        { userId: 'u1' },
+      );
+      expect(batchService.addTransaction).not.toHaveBeenCalled(); // no OUTPUT into the sow’s own batch
+    });
+
+    it('is the weaning of the litter she still nurses even on the farrowing stage — she cannot farrow again before it', async () => {
+      arrange({ gender: 'F', parity_count: 1 }, 'FARROWING', [{ farrow_id: 'f-9' }]);
+      await post();
+      expect(breedingMock.recordWeaning).toHaveBeenCalledWith('f-9', expect.objectContaining({ piglets_weaned: 11 }), 'tenant-123', { userId: 'u1' });
+      expect(breedingMock.recordFarrowing).not.toHaveBeenCalled();
+    });
+
+    it('is the weaning of the litter she is nursing on any other stage', async () => {
+      arrange({ gender: 'F', parity_count: 1 }, 'STANDARD', [{ farrow_id: 'f-9' }]);
+      await post();
+      expect(breedingMock.recordWeaning).toHaveBeenCalledWith('f-9', { weaning_date: '2026-10-09', piglets_weaned: 11 }, 'tenant-123', { userId: 'u1' });
+      expect(breedingMock.recordFarrowing).not.toHaveBeenCalled();
+    });
+
+    it('will not change a posted farrowing in place, and says it is the litter’s record', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([outLine]))
+        .mockReturnValueOnce(lim([hdr]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([])) // lock
+        .mockReturnValueOnce(lim([{ entry_id: 'x', posted: true, posting_reference: 'f-1', entered_value: '9.000000', entered_text: null, lot_no: null, serial_no: null }]))
+        .mockReturnValueOnce(lim([{ farrow_id: 'f-1' }])); // the reference is a farrowing record
+      await expect(post()).rejects.toThrow('recorded a farrowing or weaning, so it cannot be changed in place');
+      expect(breedingMock.recordFarrowing).not.toHaveBeenCalled();
+    });
+
+    it('is ordinary output when there is no litter to wean', async () => {
+      arrange({ gender: 'F', parity_count: 1 }, 'STANDARD', []);
+      (batchService.addTransaction as jest.Mock).mockResolvedValue({ transactions: [] });
+      await post();
+      expect(breedingMock.recordFarrowing).not.toHaveBeenCalled();
+      expect(breedingMock.recordWeaning).not.toHaveBeenCalled();
+      expect(breedingMock.recordSemenCollection).not.toHaveBeenCalled();
+      expect(batchService.addTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('is a semen collection for a boar, of whatever item the line names — the Breeding screen’s posting', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([{ ...outLine, item_id: 'item-semen', activity_name: 'Boar Semen Collection' }]))
+        .mockReturnValueOnce(lim([hdr]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([])) // lock
+        .mockReturnValueOnce(lim([])) // idempotency
+        .mockReturnValueOnce(lim([{ item_id: 'item-semen', item_type: 'RAW_MATERIAL', is_biological_asset: false, uom_primary: 'DOSE' }]))
+        .mockReturnValueOnce(lim([{ gender: 'M', parity_count: 0 }]))
+        .mockReturnValueOnce({ from: () => ({ innerJoin: () => ({ where: () => ({ limit: () => Promise.resolve([{ value: '82.5' }]) }) }) }) }) // same-day motility
+        .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+
+      await service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'boar-1', entered_value: 40 } as any, 'tenant-123', { userId: 'u1' });
+
+      expect(breedingMock.recordSemenCollection).toHaveBeenCalledWith(
+        expect.objectContaining({ boar_animal_id: 'boar-1', collection_date: '2026-10-09', doses_collected: 40, output_item_id: 'item-semen', motility_pct: 82.5 }),
+        'tenant-123',
+        { userId: 'u1' },
+      );
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+    });
+
+    // Pooled semen: the entry is made against one boar and names the others whose semen is mixed into the same lot.
+    describe('a boar’s collection pooled with other boars', () => {
+      const semenLine = { ...outLine, item_id: 'item-semen', activity_name: 'Boar Semen Collection' };
+      const semenItem = { item_id: 'item-semen', item_type: 'FINISHED_GOODS', is_biological_asset: false, uom_primary: 'DOSE' };
+      /** What the guard reads: the pooled boars' own entries on this line and day. */
+      const ownEntries = (found: object[]) => ({ from: () => ({ innerJoin: () => ({ where: () => Promise.resolve(found) }) }) });
+      /** `guard` is what the pooled-boar check reads; null when the entry names no pool, so the check never runs. */
+      const arrangeBoar = (guard: object[] | null) =>
+        mockDbSelect
+          .mockReturnValueOnce(lim([semenLine]))
+          .mockReturnValueOnce(lim([hdr]))
+          .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+          .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+          .mockReturnValueOnce(lim([])) // lock
+          .mockReturnValueOnce(lim([])) // idempotency
+          .mockReturnValueOnce(lim([semenItem]))
+          .mockReturnValueOnce(lim([{ gender: 'M', parity_count: 0 }]))
+          .mockReturnValueOnce({ from: () => ({ innerJoin: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }) }) // same-day motility
+          .mockReturnValueOnce(guard ? ownEntries(guard) : { from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) })
+          .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+      const postPooled = (over: object = {}) =>
+        service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'boar-1', entered_value: 40, pool_animal_ids: ['boar-2'], ...over } as any, 'tenant-123', { userId: 'u1' });
+
+      it('makes one collection with the other boars named, so one lot is mixed from all of them', async () => {
+        arrangeBoar([]);
+        await postPooled();
+        expect(breedingMock.recordSemenCollection).toHaveBeenCalledTimes(1);
+        expect(breedingMock.recordSemenCollection).toHaveBeenCalledWith(
+          expect.objectContaining({ boar_animal_id: 'boar-1', doses_collected: 40, output_item_id: 'item-semen', pool_boar_animal_ids: ['boar-2'] }),
+          'tenant-123',
+          { userId: 'u1' },
+        );
+      });
+
+      it('names no pool on an ordinary single-boar collection', async () => {
+        arrangeBoar(null);
+        await postPooled({ pool_animal_ids: undefined });
+        expect(breedingMock.recordSemenCollection.mock.calls[0][0]).not.toHaveProperty('pool_boar_animal_ids');
+      });
+
+      it('is refused when a pooled boar already has a collection of his own on this line and day — his doses would count twice', async () => {
+        arrangeBoar([{ animal_id: 'boar-2', code: 'B-2' }]);
+        await expect(postPooled()).rejects.toThrow('B-2 already has a collection of their own');
+        expect(breedingMock.recordSemenCollection).not.toHaveBeenCalled();
+      });
+
+      it('cannot be asked of an output that is not a boar’s semen', async () => {
+        arrange({ gender: 'F', parity_count: 1 }, 'FARROWING', []);
+        await expect(
+          service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'sow-1', entered_value: 11, pool_animal_ids: ['boar-2'] } as any, 'tenant-123', { userId: 'u1' }),
+        ).rejects.toThrow('Only a boar');
+        expect(breedingMock.recordFarrowing).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  // Decision 8 / Phase 7: the item an output takes out of the batch is chosen when it is entered.
+  describe('the output item chosen at entry', () => {
+    const lim = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+    const hdr = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', stage_id: 'st-boar', animal_count: '1' };
+    const outLine = { line_id: 'line-out', scheduler_id: 'sched-1', is_active: true, line_type: 'OUTPUT', item_id: null, lot_required: true, activity_name: 'Boar Semen Collection' };
+
+    beforeEach(() => {
+      breedingMock.recordSemenCollection.mockReset().mockResolvedValue({ semen_batch_id: 'sb-1', message: 'Semen lot LOT-00007.' });
+      breedingMock.recordWeaning.mockReset().mockResolvedValue({ farrow_id: 'f-1', message: 'Weaning recorded.' });
+    });
+
+    it('posts the item the entry names when the line has none — and asks no lot of an output, whose lot is made at posting', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([outLine]))
+        .mockReturnValueOnce(lim([hdr]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'STANDARD' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' }]))
+        .mockReturnValueOnce(lim([])) // lock
+        .mockReturnValueOnce(lim([])) // idempotency
+        .mockReturnValueOnce(lim([{ item_id: 'item-semen', tenant_id: 'tenant-123', is_active: true, is_biological_asset: false, uom_primary: 'DOSE' }]))
+        .mockReturnValueOnce(lim([{ gender: 'M', parity_count: 0 }]))
+        .mockReturnValueOnce({ from: () => ({ innerJoin: () => ({ where: () => ({ limit: () => Promise.resolve([{ value: '82.5' }]) }) }) }) }) // same-day motility
+        .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+
+      await service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'boar-1', entered_value: 30, item_id: 'item-semen' } as any, 'tenant-123', { userId: 'u1' });
+
+      expect(breedingMock.recordSemenCollection).toHaveBeenCalledWith(
+        expect.objectContaining({ boar_animal_id: 'boar-1', doses_collected: 30, output_item_id: 'item-semen' }),
+        'tenant-123',
+        { userId: 'u1' },
+      );
+    });
+
+    it('refuses an item from another tenant, or one no longer active', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([outLine]))
+        .mockReturnValueOnce(lim([hdr]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' }]))
+        .mockReturnValueOnce(lim([]))
+        .mockReturnValueOnce(lim([]))
+        .mockReturnValueOnce(lim([{ item_id: 'item-x', tenant_id: 'other-tenant', is_active: true }]));
+      await expect(
+        service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'boar-1', entered_value: 30, item_id: 'item-x' } as any, 'tenant-123'),
+      ).rejects.toThrow('The chosen output item was not found');
+      expect(breedingMock.recordSemenCollection).not.toHaveBeenCalled();
+    });
+
+    it('takes no item chosen at entry on a line that is not an output', async () => {
+      mockDbSelect.mockReturnValueOnce(lim([{ ...outLine, line_type: 'CONSUMPTION', item_id: 'item-feed', activity_name: 'Morning Feed' }])).mockReturnValueOnce(lim([hdr]));
+      await expect(
+        service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-09', animal_id: 'boar-1', entered_value: 2, item_id: 'item-semen' } as any, 'tenant-123'),
+      ).rejects.toThrow("'Morning Feed' is not an output line");
+    });
+
+    it('sends the weaned piglets to the batch a weaning entry names', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([{ ...outLine, item_id: 'item-piglet', lot_required: false, activity_name: 'Piglet Output' }]))
+        .mockReturnValueOnce(lim([{ ...hdr, stage_id: 'st-lact' }]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'S-1', current_batch_id: 'batch-1', current_stage_id: 'st-lact' }]))
+        .mockReturnValueOnce(lim([]))
+        .mockReturnValueOnce(lim([]))
+        .mockReturnValueOnce(lim([{ item_id: 'item-piglet', is_biological_asset: true, uom_primary: 'HEAD' }]))
+        .mockReturnValueOnce(lim([{ gender: 'F', parity_count: 1 }]))
+        .mockReturnValueOnce(lim([{ farrow_id: 'f-9', parity_number: 2, piglet_lot_no: null, piglet_batch_id: null }]))
+        .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+
+      await service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-11-06', animal_id: 'sow-1', entered_value: 10, destination_batch_id: 'b-weaners' } as any, 'tenant-123', { userId: 'u1' });
+
+      expect(breedingMock.recordWeaning).toHaveBeenCalledWith(
+        'f-9',
+        expect.objectContaining({ weaning_date: '2026-11-06', piglets_weaned: 10, move_to_batch_id: 'b-weaners' }),
+        'tenant-123',
+        { userId: 'u1' },
+      );
+    });
+  });
+
+  describe('TRANSFER lines', () => {
+    const transferLine = { line_id: 'line-xfer', scheduler_id: 'sched-1', is_active: true, line_type: 'TRANSFER', item_id: null, lot_required: false, activity_name: 'Move to growers', standard_qty: null, auto_triggers_stage: false };
+    const xferHeader = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', stage_id: 'st-1', animal_count: '50' };
+    const lim = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+    const selects = (trackingMode: string, extra: any[] = []) => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([transferLine])) // line
+        .mockReturnValueOnce(lim([xferHeader])) // header
+        .mockReturnValueOnce(lim([{ tracking_mode: trackingMode, company_id: 'comp-1' }])); // batch
+      for (const rows of extra) mockDbSelect.mockReturnValueOnce(lim(rows));
+      mockDbSelect
+        .mockReturnValueOnce(lim([])) // stage/date lock
+        .mockReturnValueOnce(lim([])) // idempotency
+        .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // findForDate
+    };
+    let transfers: { create: jest.Mock };
+    beforeEach(() => {
+      transfers = (service as any).batchTransferService;
+      transfers.create.mockReset().mockResolvedValue({ transfer_id: 'tr-1' });
+    });
+
+    it('keeps the destination of a TRANSFER saved as a draft, so posting the day still knows where the head go', async () => {
+      selects('BATCH_WISE');
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => { inserted.push(v); return { onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) }; }),
+      });
+      await service.postEntry('batch-1', { line_id: 'line-xfer', entry_date: '2026-10-01', entered_value: 5, destination_batch_id: 'batch-2', draft: true } as any, 'tenant-123');
+      expect(inserted[0]).toMatchObject({ posted: false, destination_batch_id: 'batch-2', item_id: null });
+      expect(transfers.create).not.toHaveBeenCalled();
+    });
+
+    it('asks for the item when an OUTPUT line has none and the entry names none, instead of posting the first livestock item it finds', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(lim([{ ...transferLine, line_id: 'line-out', line_type: 'OUTPUT', item_id: null, activity_name: 'Boar Semen Collection' }]))
+        .mockReturnValueOnce(lim([xferHeader]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'BATCH_WISE', company_id: 'comp-1' }]))
+        .mockReturnValueOnce(lim([])) // lock
+        .mockReturnValueOnce(lim([])); // idempotency
+      await expect(
+        service.postEntry('batch-1', { line_id: 'line-out', entry_date: '2026-10-01', entered_value: 40 } as any, 'tenant-123'),
+      ).rejects.toThrow("Choose the item 'Boar Semen Collection' takes out of the batch.");
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+    });
+
+    it('will not change a posted death or transfer in place — a reopen leaves them posted, so a re-post would count them twice', async () => {
+      const death = { ...transferLine, line_id: 'line-death', line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT', activity_name: 'Daily Mortality Check' };
+      mockDbSelect
+        .mockReturnValueOnce(lim([death]))
+        .mockReturnValueOnce(lim([xferHeader]))
+        .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
+        .mockReturnValueOnce(lim([{ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' }]))
+        .mockReturnValueOnce(lim([])) // lock (reopened)
+        .mockReturnValueOnce(lim([{ entry_id: 'x', posted: true, entered_value: '1.000000', entered_text: null, lot_no: null, serial_no: null }])); // already posted: 1 death
+
+      await expect(
+        service.postEntry('batch-1', { line_id: 'line-death', entry_date: '2026-10-01', animal_id: 'a-7', entered_value: 0 } as any, 'tenant-123'),
+      ).rejects.toThrow("'Daily Mortality Check' is already posted and it recorded a death (one recorded in error is reversed on the Mortality & Health panel), so it cannot be changed in place.");
+      expect(batchService.addTransaction).not.toHaveBeenCalled();
+    });
+
+    it('moves exactly the named animal of an animal-wise batch — nobody is picked for the farmer', async () => {
+      selects('ANIMAL_WISE', [[{ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' }]]);
+
+      await service.postEntry('batch-1', { line_id: 'line-xfer', entry_date: '2026-10-01', animal_id: 'a-7', destination_batch_id: 'batch-2' } as any, 'tenant-123');
+
+      const [dto] = transfers.create.mock.calls[0];
+      expect(dto.animal_ids).toEqual(['a-7']);
+      expect(dto.quantity).toBeUndefined();
+    });
+
+    it('moves a head count out of a batch-wise batch, which has no animals to pick', async () => {
+      selects('BATCH_WISE');
+
+      await service.postEntry('batch-1', { line_id: 'line-xfer', entry_date: '2026-10-01', entered_value: 12, destination_batch_id: 'batch-2' } as any, 'tenant-123');
+
+      const [dto, , fromBatch] = transfers.create.mock.calls[0];
+      expect(fromBatch).toBe('batch-1');
+      expect(dto).toMatchObject({ quantity: 12, transfer_type: 'PARTIAL', to_batch_id: 'batch-2' });
+      expect(dto.animal_ids).toBeUndefined();
+    });
+
+    it('asks how many head when a batch-wise line gives neither a value nor a standard quantity', async () => {
+      selects('BATCH_WISE');
+      await expect(
+        service.postEntry('batch-1', { line_id: 'line-xfer', entry_date: '2026-10-01', destination_batch_id: 'batch-2' } as any, 'tenant-123'),
+      ).rejects.toThrow('how many head');
+      expect(transfers.create).not.toHaveBeenCalled();
     });
   });
 

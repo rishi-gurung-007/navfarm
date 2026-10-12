@@ -64,6 +64,30 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list[list.length - 1]).toBe('demo-chapters.ts');
   });
 
+  it('the full preset runs the nine-farm masters, every chapter with batches, then the reconciliation', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'full' });
+    const list = scripts(plan);
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    expect(list).toContain('seed-documented-reasons.ts');
+    expect(list.indexOf('seed-nine-farm-demo.ts')).toBeGreaterThan(list.indexOf('seed-farm-masters.ts'));
+    expect(list.indexOf('seed-nine-farm-demo.ts')).toBeLessThan(list.indexOf('stamp-master-nob-lob.ts'));
+    expect(list.indexOf('demo-chapters.ts')).toBe(list.length - 2);
+    expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
+    expect(plan.find((s) => s.script === 'demo-chapters.ts')!.args).not.toContain('--no-batches');
+  });
+
+  it('the lean preset runs the two-farm masters, the chapters with --lean, then the reconciliation', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'lean' });
+    const list = scripts(plan);
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).toContain('seed-documented-reasons.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toContain('--lean');
+    expect(chapters.args).not.toContain('--no-batches');
+    expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
+  });
+
   it('the small preset seeds no batches; other runs still do', () => {
     const small = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }).pop()!;
     expect(small.args).toContain('--no-batches');

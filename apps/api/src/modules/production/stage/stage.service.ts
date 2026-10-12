@@ -184,6 +184,7 @@ export class StageService {
       alt_trigger_condition: dto.alt_trigger_condition || null,
       required_kpi_to_pass: dto.required_kpi_to_pass ? JSON.stringify(dto.required_kpi_to_pass) : null,
       data_entry_form: dto.data_entry_form || 'STANDARD',
+      applicable_gender: dto.applicable_gender ?? null,
       scheduler_auto_create: dto.scheduler_auto_create ?? true,
       show_on_animal_card: dto.show_on_animal_card ?? true,
       icon_code: dto.icon_code || null,
@@ -333,6 +334,7 @@ export class StageService {
     if (dto.alt_trigger_condition !== undefined) updates.alt_trigger_condition = dto.alt_trigger_condition;
     if (dto.required_kpi_to_pass !== undefined) updates.required_kpi_to_pass = JSON.stringify(dto.required_kpi_to_pass);
     if (dto.data_entry_form !== undefined) updates.data_entry_form = dto.data_entry_form;
+    if (dto.applicable_gender !== undefined) updates.applicable_gender = dto.applicable_gender;
     if (dto.scheduler_auto_create !== undefined) updates.scheduler_auto_create = dto.scheduler_auto_create;
     if (dto.show_on_animal_card !== undefined) updates.show_on_animal_card = dto.show_on_animal_card;
     if (dto.icon_code !== undefined) updates.icon_code = dto.icon_code;

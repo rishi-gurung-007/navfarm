@@ -151,6 +151,37 @@ export function formatSeriesCode(
 }
 
 /**
+ * A series' shape as a person reads it, for the Number Series screen: the
+ * literal prefix as is, a referenced field in braces, a date part as the date
+ * it stands for, and the sequence as zeros. LOCATION reads
+ * `{parent_location}/{location_type}-000`, ANIMAL `PIG-YYYY-0000`. The same
+ * ordering rules as formatSeriesStem, so the label cannot drift from the code.
+ */
+export function describeSeriesPattern(
+  series: Pick<CodeSeriesFormat, 'prefix' | 'separator' | 'seq_length' | 'code_segments' | 'prefix_position' | 'seq_separator'> & { no_series_code?: string | null },
+): string {
+  const separator = series.separator || '-';
+  const prefix = normalizeSegment(series.prefix || series.no_series_code);
+  // The prefix names a root location only, so it is its own shape, not part of
+  // the child's: `LOC-000 · {parent_location}/{location_type}-000`.
+  if (prefix && segmentFields(series).includes('parent_location_id')) {
+    const child = describeSeriesPattern({ ...series, prefix: null, no_series_code: null });
+    return `${prefix}${series.seq_separator || separator}${'0'.repeat(Math.max(series.seq_length, 1))} · ${child}`;
+  }
+  const parts: string[] = [];
+  if (prefix && series.prefix_position === 'START') parts.push(prefix);
+  for (const entry of segmentFields(series)) {
+    const { field, part } = parseSegment(entry);
+    parts.push(part === DATE_PART.DATE ? 'YYYYMMDD' : part === DATE_PART.YEAR ? 'YYYY' : `{${field.replace(/_id$/, '')}}`);
+  }
+  if (prefix && series.prefix_position !== 'START') parts.push(prefix);
+  const stem = parts.join(separator);
+  if (series.seq_length <= 0 && stem) return stem;
+  const tail = '0'.repeat(Math.max(series.seq_length, 1));
+  return stem ? `${stem}${series.seq_separator || separator}${tail}` : tail;
+}
+
+/**
  * Everything before the sequence — the part that repeats for every record
  * sharing the same segments. `FARM002-SHED` is the stem of `FARM002-SHED-001`.
  *
@@ -167,7 +198,15 @@ export function formatSeriesStem(
   const parts: string[] = [];
   const configured = segmentFields(series);
 
-  const prefix = normalizeSegment(series.prefix || series.no_series_code);
+  // A child location is named by its parent — LOC-001/SHED-001. The series'
+  // prefix names a root location only, so it is left out once a parent is there
+  // to name it (LOC-001/SHED/LOC-001 would be the result otherwise).
+  const hasParentSegment = configured.includes('parent_location_id');
+  const namedByParent = hasParentSegment && !!segmentValues['parent_location_id'];
+  const prefix = namedByParent ? '' : normalizeSegment(series.prefix || series.no_series_code);
+  // ...and a root, with no parent to name it, is the prefix alone whatever type
+  // the caller passed (a seed hands over FARM, the screen hands over LOC).
+  if (hasParentSegment && !namedByParent && prefix) return prefix;
   if (prefix && series.prefix_position === 'START' && !parts.includes(prefix)) parts.push(prefix);
 
   for (const entry of configured) {

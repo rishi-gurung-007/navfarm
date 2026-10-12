@@ -22,6 +22,7 @@ import {
 import { api } from "@/lib/api-client";
 import { resolveLobFamily } from "@/lib/lob";
 import { useLanguage } from "@/hooks/useLanguage";
+import { showToast } from "@/components/ui/toast";
 
 interface OperationalArea {
   area_id: string;
@@ -133,7 +134,7 @@ export default function OperationalAreasPage() {
   const handleCreateArea = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.area_code || !form.area_name || !form.nob_id || !form.lob_id) {
-      alert("Please fill all required fields.");
+      showToast.error("Please fill all required fields.");
       return;
     }
 
@@ -153,7 +154,7 @@ export default function OperationalAreasPage() {
         handleEnterArea(created as OperationalArea);
       }
     } catch (err: any) {
-      alert(err?.message || "Failed to create operational area");
+      showToast.error(err?.message || "Failed to create operational area");
     } finally {
       setSubmitting(false);
     }

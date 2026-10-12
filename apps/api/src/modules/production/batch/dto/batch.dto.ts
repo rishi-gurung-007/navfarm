@@ -17,6 +17,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { SCHEDULER_SOURCES } from '../../scheduler-header/dto/scheduler-header.dto';
+import type { SchedulerSource } from '../../scheduler-header/dto/scheduler-header.dto';
 
 const COSTING_METHODS = ['STANDARD', 'FIFO', 'BIO_ASSET'] as const;
 const DISPOSAL_TYPES = ['HARVEST', 'SOLD'] as const;
@@ -214,6 +216,16 @@ export class CreateBatchDto {
 
   @ApiProperty({
     description:
+      "The user's answer when a system scheduler matched the batch's stage: SYSTEM copies its activities, EMPTY starts the scheduler empty. Omitted, a matching system scheduler is copied; with none, the breed lifecycle fills it.",
+    enum: SCHEDULER_SOURCES,
+    required: false,
+  })
+  @IsIn(SCHEDULER_SOURCES)
+  @IsOptional()
+  scheduler_source?: SchedulerSource;
+
+  @ApiProperty({
+    description:
       'Shed UUID (optional — set exactly one of shed_id/location_id, or neither)',
     required: false,
   })
@@ -346,6 +358,26 @@ export class TransferStageDto {
   @IsString()
   @IsOptional()
   remarks?: string;
+
+  @ApiProperty({
+    description:
+      'Date the move happened (not in the future). Omit for today. The minimum-days check and the movement history use it.',
+    example: '2026-10-09',
+    required: false,
+  })
+  @IsDateString()
+  @IsOptional()
+  transfer_date?: string;
+
+  @ApiProperty({
+    description:
+      "The user's answer when a system scheduler matched the destination stage: SYSTEM copies its activities, EMPTY starts the stage's scheduler empty.",
+    enum: SCHEDULER_SOURCES,
+    required: false,
+  })
+  @IsIn(SCHEDULER_SOURCES)
+  @IsOptional()
+  scheduler_source?: SchedulerSource;
 }
 
 export class ReopenStageDayDto {
@@ -410,6 +442,15 @@ export class MortalityDetailDto {
   @IsString()
   @IsOptional()
   disposal_method?: string;
+
+  @ApiProperty({
+    description:
+      'Reason Master row (category MORTALITY). Stored on the animal as its disposal reason; for a whole-batch entry it fills cause_of_death when that is blank.',
+    required: false,
+  })
+  @IsUUID()
+  @IsOptional()
+  reason_id?: string;
 }
 
 /**
@@ -606,6 +647,52 @@ export class AddBatchTransactionDto {
   @Type(() => TreatmentDetailDto)
   @IsOptional()
   treatment_detail?: TreatmentDetailDto;
+}
+
+/**
+ * One death event: either the animals that died (animal-wise batch) or a head
+ * count (batch-wise). Posted atomically — every animal or none.
+ */
+export class ReverseMortalityDto {
+  @ApiProperty({ description: 'Why the death is being reversed — kept on the audit trail and the animal\'s movement log', example: 'Recorded against the wrong sow' })
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}
+
+export class RecordMortalityDto {
+  @ApiProperty({ description: 'Date of death', example: '2026-10-09' })
+  @IsDateString()
+  transaction_date: string;
+
+  @ApiProperty({
+    description: 'Animals that died — required for an animal-wise batch',
+    required: false,
+    type: [String],
+  })
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  animal_ids?: string[];
+
+  @ApiProperty({
+    description: 'Head count — batch-wise batches only; ignored when animal_ids is given',
+    required: false,
+  })
+  @IsNumber()
+  @IsOptional()
+  quantity?: number;
+
+  @ApiProperty({ description: 'Remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+
+  @ApiProperty({ required: false, type: MortalityDetailDto })
+  @ValidateNested()
+  @Type(() => MortalityDetailDto)
+  @IsOptional()
+  mortality_detail?: MortalityDetailDto;
 }
 
 export class BatchOutputLineInput {
@@ -984,6 +1071,25 @@ export class CreateBatchTransferDto {
   remarks?: string;
 
   @ApiProperty({
+    description:
+      'Head to move between two batch-wise (head-count) batches, which have no registered animals. Use instead of animal_ids. Moves the average carrying value of the head with them; bio-asset batches only.',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  quantity?: number;
+
+  @ApiProperty({
+    description:
+      "Stage the animals enter in the destination batch. Omit to keep each animal's own stage when the destination is an animal-wise batch (a batch-wise destination moves them to its stage). Applies only to a transfer that posts immediately — a draft does not store it.",
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID()
+  to_stage_id?: string;
+
+  @ApiProperty({
     description: 'Post immediately instead of leaving the transfer in DRAFT',
     required: false,
     default: true,
@@ -1008,74 +1114,18 @@ export class CreateBatchTransferDto {
   @IsOptional()
   @IsBoolean()
   skip_movement_log?: boolean;
+
 }
 
-export class SplitBatchDto {
+export class ReverseBatchTransferDto {
   @ApiProperty({
-    description:
-      'Animals to hold back — the ones not ready to move on with the rest of the cohort',
-    type: [String],
-  })
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsUUID('4', { each: true })
-  animal_ids: string[];
-
-  @ApiProperty({
-    description: 'Date the group was split out',
-    example: '2026-09-01',
-  })
-  @IsDateString()
-  @IsNotEmpty()
-  transfer_date: string;
-
-  @ApiProperty({
+    description: 'Date the animals moved back. Omit for today; not before the transfer being reversed, not in the future.',
     required: false,
-    description:
-      'Stage the split group holds at. Defaults to the stage the parent is leaving; set it to send them back a stage (a failed pregnancy scan returns a sow to service).',
+    example: '2026-10-10',
   })
   @IsOptional()
-  @IsString()
-  hold_stage_code?: string;
-
-  @ApiProperty({ required: false, description: 'Pen the group moves to' })
-  @IsOptional()
-  @IsUUID()
-  to_location_id?: string;
-
-  @ApiProperty({
-    required: false,
-    description:
-      'Batch number for the child. Derived from the parent when omitted.',
-  })
-  @IsOptional()
-  @IsString()
-  child_batch_no?: string;
-
-  @ApiProperty({ required: false, example: 'PREGNANCY_FAILED' })
-  @IsOptional()
-  @IsString()
-  reason?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  remarks?: string;
-}
-
-export class MergeBatchDto {
-  @ApiProperty({
-    description: 'Date the group rejoined the cohort',
-    example: '2026-10-01',
-  })
   @IsDateString()
-  @IsNotEmpty()
-  transfer_date: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  reason?: string;
+  transfer_date?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

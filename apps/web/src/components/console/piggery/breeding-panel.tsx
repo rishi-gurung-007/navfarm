@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
+import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
@@ -55,6 +56,12 @@ export function BreedingPanel() {
   const [semenBatches, setSemenBatches] = useState<Row[]>([]);
   const [animals, setAnimals] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
+  // The piglet item is picked where the farrowing is recorded (any bio-asset item the farm uses for piglets), and the
+  // weaned piglets are sent on to a batch or a stage: nothing about either is fixed.
+  const [pigletItems, setPigletItems] = useState<Row[]>([]);
+  const [stages, setStages] = useState<Row[]>([]);
+  // Any item the farm uses for semen: nothing is fixed.
+  const [semenItems, setSemenItems] = useState<Row[]>([]);
 
   // Modals
   const [showMatingModal, setShowMatingModal] = useState(false);
@@ -103,35 +110,44 @@ export function BreedingPanel() {
     sow_animal_id: "",
     breeding_id: "",
     farrowing_date: new Date().toISOString().slice(0, 10),
-    piglets_born_live: "12",
-    piglets_stillborn: "1",
-    piglets_mummified: "0",
-    avg_birth_weight_kg: "1.45",
+    piglets_born_live: "",
+    piglets_stillborn: "",
+    piglets_mummified: "",
+    avg_birth_weight_kg: "",
     total_litter_weight_kg: "",
     farrowing_status: "NORMAL",
-    foster_received: "0",
-    fostered_out: "0",
+    foster_received: "",
+    fostered_out: "",
+    piglet_item_id: "",
+    piglet_stage_id: "",
     notes: "",
   });
 
   const [weanForm, setWeanForm] = useState({
     weaning_date: new Date().toISOString().slice(0, 10),
-    piglets_weaned: "11",
-    avg_weaning_weight_kg: "7.50",
+    piglets_weaned: "",
+    avg_weaning_weight_kg: "",
     cost_per_piglet: "",
+    move_to_batch_id: "",
+    move_to_stage_code: "",
     notes: "",
   });
 
+  // No pre-filled figures: doses and costs are whatever was collected and spent, entered by whoever knows.
   const [semenForm, setSemenForm] = useState({
-    boar_animal_id: "",
+    // The boars the lot is collected from, in the order chosen: the first is its main boar, and with more than one the
+    // semen is pooled — mixed into one lot.
+    boar_animal_ids: [] as string[],
     collection_date: new Date().toISOString().slice(0, 10),
-    doses_collected: "40",
-    amortisation_period: "150",
-    feed_cost_period: "200",
-    drug_cost_period: "50",
-    overhead_cost_period: "100",
-    doses_used_internal: "30",
-    doses_sold: "10",
+    doses_collected: "",
+    output_item_id: "",
+    amortisation_period: "",
+    feed_cost_period: "",
+    drug_cost_period: "",
+    overhead_cost_period: "",
+    volume_ml: "",
+    motility_pct: "",
+    concentration_m_per_ml: "",
     notes: "",
   });
 
@@ -155,6 +171,9 @@ export function BreedingPanel() {
       setSemenBatches(unwrap<Row[]>(sRes) || []);
       setAnimals(unwrap<Row[]>(aRes) || []);
       setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
+      api.get("/item?itemType=LIVESTOCK&isActive=true&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset))).catch(() => setPigletItems([]));
+      api.get("/stage?limit=100").then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => setStages([]));
+      api.get("/item?isActive=true&limit=200").then((r) => setSemenItems(unwrap<Row[]>(r) || [])).catch(() => setSemenItems([]));
     } catch (e: any) {
       setError(e.message || t("brpErrorLoadFailed"));
     } finally {
@@ -263,19 +282,25 @@ export function BreedingPanel() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post("/piggery/breeding/farrowing", {
-        ...farrowForm,
+      const num = (v: string) => (v === "" ? undefined : Number(v));
+      const res: any = await api.post("/piggery/breeding/farrowing", {
+        sow_animal_id: farrowForm.sow_animal_id,
+        breeding_id: farrowForm.breeding_id || undefined,
+        farrowing_date: farrowForm.farrowing_date,
+        farrowing_status: farrowForm.farrowing_status,
         piglets_born_live: Number(farrowForm.piglets_born_live) || 0,
-        piglets_stillborn: Number(farrowForm.piglets_stillborn) || 0,
-        piglets_mummified: Number(farrowForm.piglets_mummified) || 0,
-        avg_birth_weight_kg: Number(farrowForm.avg_birth_weight_kg) || 1.4,
-        total_litter_weight_kg: farrowForm.total_litter_weight_kg
-          ? Number(farrowForm.total_litter_weight_kg)
-          : undefined,
-        foster_received: Number(farrowForm.foster_received) || 0,
-        fostered_out: Number(farrowForm.fostered_out) || 0,
+        piglets_stillborn: num(farrowForm.piglets_stillborn),
+        piglets_mummified: num(farrowForm.piglets_mummified),
+        // A weight is sent only when someone measured it; a blank used to become 1.4 kg.
+        avg_birth_weight_kg: num(farrowForm.avg_birth_weight_kg),
+        total_litter_weight_kg: num(farrowForm.total_litter_weight_kg),
+        foster_received: num(farrowForm.foster_received),
+        fostered_out: num(farrowForm.fostered_out),
+        piglet_item_id: farrowForm.piglet_item_id || undefined,
+        piglet_stage_id: farrowForm.piglet_stage_id || undefined,
+        notes: farrowForm.notes || undefined,
       });
-      setSuccess(t("brpSuccessFarrowingRecorded"));
+      setSuccess(res?.data?.message || res?.message || t("brpSuccessFarrowingRecorded"));
       setShowFarrowModal(false);
       await loadData();
     } catch (err: any) {
@@ -291,18 +316,20 @@ export function BreedingPanel() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.patch(
+      const res: any = await api.patch(
         `/piggery/breeding/farrowing/${selectedFarrow.farrow_id}/weaning`,
         {
-          ...weanForm,
+          weaning_date: weanForm.weaning_date,
           piglets_weaned: Number(weanForm.piglets_weaned) || 0,
-          avg_weaning_weight_kg: Number(weanForm.avg_weaning_weight_kg) || 7,
-          cost_per_piglet: weanForm.cost_per_piglet
-            ? Number(weanForm.cost_per_piglet)
-            : undefined,
+          // Sent only when weighed; a blank used to become 7 kg.
+          avg_weaning_weight_kg: weanForm.avg_weaning_weight_kg === "" ? undefined : Number(weanForm.avg_weaning_weight_kg),
+          cost_per_piglet: weanForm.cost_per_piglet ? Number(weanForm.cost_per_piglet) : undefined,
+          move_to_batch_id: weanForm.move_to_batch_id || undefined,
+          move_to_stage_code: weanForm.move_to_stage_code || undefined,
+          notes: weanForm.notes || undefined,
         }
       );
-      setSuccess(t("brpSuccessWeaningRecorded"));
+      setSuccess(res?.data?.message || res?.message || t("brpSuccessWeaningRecorded"));
       setShowWeanModal(false);
       await loadData();
     } catch (err: any) {
@@ -314,21 +341,33 @@ export function BreedingPanel() {
 
   const handleCreateSemen = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!semenForm.boar_animal_ids.length) {
+      setError("Choose at least one boar.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await api.post("/piggery/breeding/semen-collection", {
-        ...semenForm,
+      const num = (v: string) => (v === "" ? undefined : Number(v));
+      const [mainBoar, ...pooled] = semenForm.boar_animal_ids;
+      const res: any = await api.post("/piggery/breeding/semen-collection", {
+        boar_animal_id: mainBoar,
+        ...(pooled.length ? { pool_boar_animal_ids: pooled } : {}),
+        collection_date: semenForm.collection_date,
         doses_collected: Number(semenForm.doses_collected) || 1,
-        amortisation_period: Number(semenForm.amortisation_period) || 0,
-        feed_cost_period: Number(semenForm.feed_cost_period) || 0,
-        drug_cost_period: Number(semenForm.drug_cost_period) || 0,
-        overhead_cost_period: Number(semenForm.overhead_cost_period) || 0,
-        doses_used_internal: Number(semenForm.doses_used_internal) || 0,
-        doses_sold: Number(semenForm.doses_sold) || 0,
+        output_item_id: semenForm.output_item_id || undefined,
+        amortisation_period: num(semenForm.amortisation_period),
+        feed_cost_period: num(semenForm.feed_cost_period),
+        drug_cost_period: num(semenForm.drug_cost_period),
+        overhead_cost_period: num(semenForm.overhead_cost_period),
+        volume_ml: num(semenForm.volume_ml),
+        motility_pct: num(semenForm.motility_pct),
+        concentration_m_per_ml: num(semenForm.concentration_m_per_ml),
+        notes: semenForm.notes || undefined,
       });
-      setSuccess(t("brpSuccessSemenLogged"));
+      setSuccess(res?.data?.message || res?.message || t("brpSuccessSemenLogged"));
       setShowSemenModal(false);
+      setSemenForm((f) => ({ ...f, boar_animal_ids: [] }));
       await loadData();
     } catch (err: any) {
       setError(err.message || t("brpErrorSemenFailed"));
@@ -713,11 +752,22 @@ export function BreedingPanel() {
                     semenBatches.map((s) => (
                       <tr key={s.semen_batch_id} className="hover:bg-[var(--surface-raised)] transition-colors">
                         <td className="py-3.5 px-4 font-semibold" style={S.primary}>
-                          {s.boar_code}
-                          <span className="block text-xs font-normal" style={S.sub}>{t("brpTagOnly", { tag: s.boar_tag || "--" })}</span>
+                          {s.pooled ? (s.boars || []).map((b: Row) => b.boar_code).join(" + ") : s.boar_code}
+                          {s.pooled ? (
+                            <span className="block text-xs font-normal" style={S.sub}>
+                              Pooled lot · {(s.boars || []).length} boars mixed
+                            </span>
+                          ) : (
+                            <span className="block text-xs font-normal" style={S.sub}>{t("brpTagOnly", { tag: s.boar_tag || "--" })}</span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 font-mono text-xs" style={S.sub}>
                           {s.collection_date}
+                          {s.lot_no && (
+                            <span className="block" style={S.primary}>
+                              {s.lot_no}{s.expiry_date ? ` · exp ${String(s.expiry_date).slice(0, 10)}` : ""}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 font-bold" style={S.accent}>
                           {t("brpDosesCount", { count: s.doses_collected })}
@@ -859,11 +909,14 @@ export function BreedingPanel() {
                       onChange={(e) => setMatingForm({ ...matingForm, semen_lot_id: e.target.value })}
                     >
                       <option value="">{t("brpSelectSemenLot")}</option>
-                      {semenBatches.map((sb) => (
-                        <option key={sb.semen_batch_id} value={sb.semen_batch_id}>
-                          {t("brpSemenLotOptionLabel", { boar: sb.boar_code, date: sb.collection_date })}
-                        </option>
-                      ))}
+                      {semenBatches.map((sb) => {
+                        const left = Number(sb.doses_collected) - Number(sb.doses_used_internal || 0) - Number(sb.doses_sold || 0);
+                        return (
+                          <option key={sb.semen_batch_id} value={sb.semen_batch_id} disabled={left <= 0}>
+                            {t("brpSemenLotOptionLabel", { boar: sb.pooled ? (sb.boars || []).map((b: Row) => b.boar_code).join(" + ") : sb.boar_code, date: sb.collection_date })}{sb.pooled ? " · pooled" : ""} · {sb.lot_no ?? "no lot"} · {left} doses left
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <div>
@@ -1179,6 +1232,46 @@ export function BreedingPanel() {
                 </div>
               </div>
 
+              <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={S.surface}>
+                <p className="text-xs font-semibold" style={S.primary}>Piglet lot</p>
+                <p className="text-[11px]" style={S.sub}>
+                  The live piglets are held as a lot of a bio-asset item in a batch of their own, which you can move on to any stage or batch. Leave the item empty to record the litter only.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-item">Piglet item</label>
+                    <select
+                      id="piglet-item"
+                      className="nf-input w-full text-sm"
+                      style={S.input}
+                      value={farrowForm.piglet_item_id}
+                      onChange={(e) => setFarrowForm({ ...farrowForm, piglet_item_id: e.target.value })}
+                    >
+                      <option value="">No piglet lot</option>
+                      {pigletItems.map((i) => (
+                        <option key={i.item_id} value={i.item_id}>{i.item_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-stage">Piglets start in stage</label>
+                    <select
+                      id="piglet-stage"
+                      className="nf-input w-full text-sm"
+                      style={S.input}
+                      value={farrowForm.piglet_stage_id}
+                      onChange={(e) => setFarrowForm({ ...farrowForm, piglet_stage_id: e.target.value })}
+                      disabled={!farrowForm.piglet_item_id}
+                    >
+                      <option value="">The sow’s own stage</option>
+                      {stages.map((st) => (
+                        <option key={st.stage_id} value={st.stage_id}>{st.stage_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnSaving") : t("brpBtnSaveFarrowing")}
@@ -1251,6 +1344,51 @@ export function BreedingPanel() {
                 </div>
               </div>
 
+              {selectedFarrow.piglet_batch_id && (
+                <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={S.surface}>
+                  <p className="text-xs font-semibold" style={S.primary}>
+                    Piglet lot {selectedFarrow.piglet_lot_no}
+                  </p>
+                  <p className="text-[11px]" style={S.sub}>
+                    Piglets of the lot not weaned are recorded as lost before weaning. Send the weaned piglets to a batch, or on to a stage, or leave them where they are and transfer them later.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-batch">Move to batch</label>
+                      <select
+                        id="wean-batch"
+                        className="nf-input w-full text-sm"
+                        style={S.input}
+                        value={weanForm.move_to_batch_id}
+                        onChange={(e) => setWeanForm({ ...weanForm, move_to_batch_id: e.target.value, move_to_stage_code: "" })}
+                      >
+                        <option value="">Stay in the lot’s batch</option>
+                        {batches
+                          .filter((b) => b.tracking_mode === "BATCH_WISE" && b.costing_method === "BIO_ASSET" && b.batch_id !== selectedFarrow.piglet_batch_id)
+                          .map((b) => (
+                            <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-stage">Or move the lot to stage</label>
+                      <select
+                        id="wean-stage"
+                        className="nf-input w-full text-sm"
+                        style={S.input}
+                        value={weanForm.move_to_stage_code}
+                        onChange={(e) => setWeanForm({ ...weanForm, move_to_stage_code: e.target.value, move_to_batch_id: "" })}
+                      >
+                        <option value="">No stage change</option>
+                        {stages.map((st) => (
+                          <option key={st.stage_id} value={st.stage_code}>{st.stage_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end pt-2">
                 <Button type="submit" size="sm" disabled={submitting}>
                   {submitting ? t("brpBtnSaving") : t("brpBtnSaveWeaning")}
@@ -1281,22 +1419,29 @@ export function BreedingPanel() {
               </button>
             </div>
             <form onSubmit={handleCreateSemen} className="space-y-3">
+              {/* One or several boars, picked like any master: several pool their semen into one lot. */}
               <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBoarAnimal")}</label>
-                <select
-                  className="nf-input w-full text-sm"
-                  style={S.input}
-                  value={semenForm.boar_animal_id}
-                  onChange={(e) => setSemenForm({ ...semenForm, boar_animal_id: e.target.value })}
-                  required
-                >
-                  <option value="">{t("brpSelectBoar")}</option>
-                  {boars.map((b) => (
-                    <option key={b.animal_id} value={b.animal_id}>
-                      {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") })}
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="semen-boars">{t("brpLabelBoarAnimal")}</label>
+                <EntityLookupField
+                  id="semen-boars"
+                  label="Boars"
+                  options={boars.map((b) => ({
+                    animal_id: b.animal_id,
+                    code: b.animal_code,
+                    name: t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") }),
+                  }))}
+                  value={semenForm.boar_animal_ids}
+                  valueKey="animal_id"
+                  labelKeys={["code", "name"]}
+                  onChange={(next) => setSemenForm({ ...semenForm, boar_animal_ids: Array.isArray(next) ? next : next ? [next] : [] })}
+                  multiple
+                  placeholder={t("brpSelectBoar")}
+                />
+                <p className="text-[11px] mt-1" style={S.muted}>
+                  {semenForm.boar_animal_ids.length > 1
+                    ? `One pooled lot from ${semenForm.boar_animal_ids.length} boars: the doses entered below are the whole mix, and the cost is what every one of them cost. The first boar chosen is the lot's main boar.`
+                    : "Choose one boar, or several to mix their semen into one lot."}
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1325,8 +1470,46 @@ export function BreedingPanel() {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="semen-item">Semen item</label>
+                <select
+                  id="semen-item"
+                  className="nf-input w-full text-sm"
+                  style={S.input}
+                  value={semenForm.output_item_id}
+                  onChange={(e) => setSemenForm({ ...semenForm, output_item_id: e.target.value })}
+                >
+                  <option value="">Record the collection only</option>
+                  {semenItems.map((i) => (
+                    <option key={i.item_id} value={i.item_id}>{i.item_name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] mt-1" style={S.muted}>
+                  Choosing an item posts the doses to the boar’s farm store as a lot of it, with a QR for the lot (boar, batch, lot number, collection date, doses and expiry).
+                </p>
+              </div>
+
+              {/* Quality read at collection (G8): kept on the lot and printed on its QR. */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-volume">Volume (ml)</label>
+                  <input id="semen-volume" type="number" min="0" step="0.1" className="nf-input w-full text-xs" style={S.input} value={semenForm.volume_ml} onChange={(e) => setSemenForm({ ...semenForm, volume_ml: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-motility">Motility (%)</label>
+                  <input id="semen-motility" type="number" min="0" max="100" step="0.1" className="nf-input w-full text-xs" style={S.input} value={semenForm.motility_pct} onChange={(e) => setSemenForm({ ...semenForm, motility_pct: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-concentration">Concentration (M/ml)</label>
+                  <input id="semen-concentration" type="number" min="0" step="1" className="nf-input w-full text-xs" style={S.input} value={semenForm.concentration_m_per_ml} onChange={(e) => setSemenForm({ ...semenForm, concentration_m_per_ml: e.target.value })} />
+                </div>
+              </div>
+
               <div className="p-3 rounded-[var(--radius-md)] border space-y-2" style={S.raised}>
                 <div className="text-xs font-semibold" style={S.primary}>{t("brpLabelPeriodRunningCosts")}</div>
+                <p className="text-[11px]" style={S.muted}>
+                  Leave these empty to have them worked out from what was posted for the boar since his last collection: his own feed and medicine, his overheads and his share of his batch's, and his amortisation.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[11px]" style={S.muted}>{t("brpLabelAmortisation")}</label>

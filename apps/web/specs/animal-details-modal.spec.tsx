@@ -32,7 +32,6 @@ describe('AnimalDetailsModal', () => {
     status: 'ACTIVE',
     dob: '2025-01-01',
     entry_date: '2025-01-15',
-    current_weight_kg: '185.5',
     acquisition_cost: '450.00',
     book_value: '400.00',
     current_stage_code: 'LACTATION',
@@ -133,9 +132,35 @@ describe('AnimalDetailsModal', () => {
     },
   ];
 
+  // What GET /animal/:id/activity returns: weights recorded in daily data, not a field on the register row.
+  const mockActivity = {
+    weights: [{ date: '2026-10-01', value: 24 }, { date: '2026-10-08', value: 185.5 }],
+    condition_scores: [{ date: '2026-10-08', value: 3.5 }],
+    current_weight_kg: 185.5,
+    current_weight_date: '2026-10-08',
+    first_weight_kg: 24,
+    first_weight_date: '2026-10-01',
+    adg_g_per_day: 23071,
+    latest_condition_score: 3.5,
+    consumption: {
+      by_item: [{ item_id: 'i-1', item_code: 'FD-1', item_name: 'Lactation Meal', item_type: 'FEED', uom: 'KG', quantity: 25, cost: 31.25, last_date: '2026-10-08' }],
+      recent: [],
+    },
+    mortality: null,
+    semen_lots: [],
+  };
+
+  // The movement log: the one source of the animal's moves, a batch's own cascade and a death included.
+  const mockMovementLog = [
+    { movement_id: 'm-1', movement_type: 'ASSIGN', event_date: '2026-10-07', from_stage_code: null, to_stage_code: 'FARROWING', to_batch_no: 'BATCH-000001', last_date: null, reason: null },
+    { movement_id: 'm-2', movement_type: 'STAGE_CHANGE', event_date: '2026-10-09', from_stage_code: 'FARROWING', to_stage_code: 'LACTATION', to_batch_no: 'BATCH-000001', last_date: '2026-10-07', reason: 'Litter weaned' },
+  ];
+
   beforeEach(() => {
     jest.clearAllMocks();
     (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url === '/animal/animal-1/activity') return Promise.resolve(mockActivity);
+      if (url === '/animal/animal-1/movement-log') return Promise.resolve(mockMovementLog);
       if (url === '/animal/animal-1') return Promise.resolve(mockAnimal);
       if (url === '/animal/animal-1/breeding') return Promise.resolve(mockBreeding);
       if (url === '/animal/animal-1/medications') return Promise.resolve(mockMedications);
@@ -161,6 +186,48 @@ describe('AnimalDetailsModal', () => {
       expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0);
       expect(screen.getByText('185.5 kg')).toBeTruthy();
       expect(screen.getByText('$400.00')).toBeTruthy();
+    });
+  });
+
+  it('shows weights and daily gain from what was recorded, and invents no birth weight or target', async () => {
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByText('Weight History'));
+
+    await waitFor(() => {
+      expect(screen.getByText('23071 g/d')).toBeTruthy();
+      expect(screen.getByText('Between 2026-10-01 and 2026-10-08')).toBeTruthy();
+      expect(screen.getByText('24.0 kg')).toBeTruthy();
+      expect(screen.getByText('3.5', { selector: 'span' })).toBeTruthy();
+    });
+    expect(screen.queryByText(/Within Expected Curve/)).toBeNull();
+    expect(screen.queryByText(/~1.40 kg/)).toBeNull();
+    expect(screen.queryByText(/180–240 kg/)).toBeNull();
+  });
+
+  it('builds the Movement tab from the movement log', async () => {
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByText('Movement / Transfers'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Assigned to batch')).toBeTruthy();
+      expect(screen.getByText('Stage change: LACTATION')).toBeTruthy();
+      expect(screen.getByText(/FARROWING → LACTATION · Litter weaned/)).toBeTruthy();
+    });
+  });
+
+  it('shows what the animal consumed on the Health tab', async () => {
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByText('Health & Treatments'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Feed & Medicine Consumed')).toBeTruthy();
+      expect(screen.getByText('Lactation Meal')).toBeTruthy();
     });
   });
 

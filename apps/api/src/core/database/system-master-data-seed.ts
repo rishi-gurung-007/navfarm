@@ -496,9 +496,10 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   // entered late used to be stamped with the year of typing.
   { series_code: 'ANIMAL', series_name: 'Animal Code', document_type: 'ANIMAL', nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', prefix: 'PIG', separator: '-', seq_length: 4, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['dob:YEAR'], prefix_position: 'START' },
   // "/" between the levels of the path and "-" before the number, so the code
-  // reads as a path ending in a count — FARM-001/SHED-001/PEN-001 — and a
-  // first-level location, having no parent to name, is simply FARM-001.
-  { series_code: 'LOCATION', series_name: 'Location Code', document_type: 'LOCATION', separator: '/', seq_separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['parent_location_id', 'location_type'] },
+  // reads as a path ending in a count — LOC-001/SHED-001/PEN-001. The prefix
+  // names a first-level location, which has no parent to name it (LOC-001); a
+  // child takes its parent's code and its own type instead (formatSeriesStem).
+  { series_code: 'LOCATION', series_name: 'Location Code', document_type: 'LOCATION', prefix: 'LOC', separator: '/', seq_separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, code_segments: ['parent_location_id', 'location_type'] },
   // TDD row 75: "Lifecycle ID, should be auto-fetched using a (breed data)".
   // Breed and stage together say what the row is for — LARGE_WHITE-GESTATION —
   // and the number distinguishes the period ranges within that pair, of which a
@@ -533,6 +534,8 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   { series_code: 'ITEM_SERIAL', series_name: 'Serial Number Series', document_type: 'SERIAL', prefix: 'SN', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
   // Item Application tracking series (readable FIFO application id, e.g. APP-00001)
   { series_code: 'ITEM_APPLICATION', series_name: 'Item Application Series', document_type: 'APPLICATION', prefix: 'APP', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
+  // QR pack numbers (audit I3): issued from the series, not MAX(pack_no)+1, so two packs at once cannot share one.
+  { series_code: 'QR_PACK', series_name: 'QR Pack Number Series', document_type: 'QR_PACK', prefix: 'PACK', separator: '-', seq_length: 6, reset_frequency: 'NEVER', allow_manual: false },
 ];
 
 /**
