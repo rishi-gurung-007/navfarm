@@ -107,4 +107,25 @@ describe("operational areas — LOB picker", () => {
       company_id: "company-1",
     });
   });
+
+  // Client ruling, 12 Oct: an area never copies master data, so the form no
+  // longer offers a "pre-seed from" source and the payload carries none.
+  it("offers no pre-seed source and posts none", async () => {
+    (api.post as jest.Mock).mockResolvedValue({ area_id: "area-1", company_id: "company-1" });
+    await openCreateModal();
+    await screen.findByPlaceholderText("e.g. PIG-UNIT-01");
+    expect(screen.queryByText(/Pre-Seed/i)).toBeNull();
+    expect(screen.queryByText("Tenant Master Data")).toBeNull();
+    expect(screen.queryByText("Blank Setup")).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. PIG-UNIT-01"), { target: { value: "pig-north" } });
+    fireEvent.change(screen.getByPlaceholderText("e.g. Piggery Breeding Unit"), { target: { value: "North Piggery" } });
+    await waitFor(() => {
+      const label = screen.getByText("Line of Business (LOB) *");
+      expect((label.parentElement!.querySelector("select") as HTMLSelectElement).value).toBe(LOB_PIGGERY);
+    });
+    fireEvent.click(screen.getByText(/Create & Enter Area/));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect((api.post as jest.Mock).mock.calls[0][1]).not.toHaveProperty("preseed_source");
+  });
 });

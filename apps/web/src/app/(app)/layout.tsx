@@ -316,7 +316,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("dashboard"),       href: "/dashboard",      icon: LayoutDashboard },
       { label: t("execDashboard"),   href: "/executive-dashboard", icon: Gauge },
       { label: t("companies"),       href: "/companies",      icon: Building2 },
-      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
+      // No Master Data at tenant level (client ruling, 12 Oct): it is managed
+      // inside a company or an operational area.
       { label: t("teamManagement"),  href: "/users",          icon: Users },
       { label: t("auditLedger"),     href: "/audit",          icon: History },
       { label: t("notifications"),   href: "/notifications",  icon: Bell, activePrefix: "/notifications" },

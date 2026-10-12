@@ -80,7 +80,9 @@ export function planTemplateCopies(sets: TemplateRows[], companyId: string): Tem
   return ordered;
 }
 
-/** Must be called inside the same transaction that creates the company.
+/** NOT called on company creation any more (client ruling, 12 Oct: new companies
+ * and areas start with blank master data). Kept for the seed/repair scripts.
+ * Must be called inside the same transaction that creates the company.
  * Never call this as a repeated sync: subsequent template edits are independent. */
 export async function copyCompanyMasterTemplates(tx: Pick<MySql2Database<typeof schema>, 'select' | 'insert' | 'update'>, tenantId: string, companyId: string): Promise<number> {
   const copies = await loadCompanyTemplateCopies(tx, tenantId, companyId);

@@ -5,7 +5,7 @@ jest.mock('../../core/company/copy-master-templates', () => ({
   copyCompanyMasterTemplates: jest.fn(),
 }));
 
-describe('SetupWizardService company template adoption', () => {
+describe('SetupWizardService blank company start', () => {
   const tenantId = 'tenant-1';
   const placeholderId = '00000000-0000-0000-0000-000000000000';
 
@@ -51,8 +51,8 @@ describe('SetupWizardService company template adoption', () => {
     (templateCopies.copyCompanyMasterTemplates as jest.Mock).mockReset();
   });
 
-  it('copies tenant master templates when onboarding claims the placeholder company', async () => {
-    const { service, tx } = makeService({
+  it('copies no tenant master templates when onboarding claims the placeholder company (client ruling, 12 Oct)', async () => {
+    const { service } = makeService({
       company_id: placeholderId,
       tenant_id: tenantId,
       company_code: 'PLACEHOLDER',
@@ -62,7 +62,7 @@ describe('SetupWizardService company template adoption', () => {
 
     await service.saveStep1Profile(profile);
 
-    expect(copy).toHaveBeenCalledWith(tx, tenantId, placeholderId);
+    expect(copy).not.toHaveBeenCalled();
   });
 
   it('does not copy templates again when an established company profile is edited', async () => {

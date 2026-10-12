@@ -117,6 +117,14 @@ describe('Sidebar consistency across workspace scopes', () => {
    * the Inventory "Feed Alerts" tab that used to link them is gone. The routes
    * worked if typed; they could not be found.
    */
+  /** Client ruling, 12 Oct: master data is managed inside a company or an operational area. */
+  it('has no Master Data in the tenant workspace, and keeps it in company and operational ones', () => {
+    const scopes = navByScope();
+    expect([...scopes.TENANT.keys()]).not.toContain('/master-data');
+    expect([...scopes.COMPANY.keys()]).toContain('/master-data');
+    expect([...scopes.OPERATIONAL.keys()]).toContain('/master-data');
+  });
+
   it('lists Alerts and Approvals in the company workspace too', () => {
     const scopes = navByScope();
     const company = [...scopes.COMPANY.keys()];

@@ -42,12 +42,6 @@ export class OperationalAreaController {
     return this.areaService.delete(id, req.user?.sub);
   }
 
-  @Post('preseed-company/:companyId')
-  @RequirePermission('MASTER_DATA', 'OPERATIONAL_AREA', 'create')
-  async preseedCompany(@Param('companyId') companyId: string) {
-    return this.areaService.preseedCompanyMasterDataFromTenant(companyId);
-  }
-
   @Get(':id/settings')
   @RequirePermission('MASTER_DATA', 'OPERATIONAL_AREA', 'view')
   async getSettings(@Param('id') id: string) {
