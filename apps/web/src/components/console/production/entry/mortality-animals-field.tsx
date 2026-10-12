@@ -79,7 +79,10 @@ export function MortalityAnimalsField({
   picks,
   onChange,
   disabled,
+  fixedLabel,
 }: {
+  /** Animal-wise: the entry's own animal, so there is nothing to choose - just its weight and reason. */
+  fixedLabel?: string;
   animals: MortalityCandidate[];
   required: number;
   picks: MortalityPick[];
@@ -119,7 +122,7 @@ export function MortalityAnimalsField({
     onChange(picks.map((p, i) => (i === index ? { ...p, ...change } : p)));
   const visible = filterMortalityCandidates(animals, search);
   const labelOf = (p: MortalityPick, i: number) =>
-    countOnly ? t("deMortDeadN", { n: String(i + 1) }) : animals.find((a) => a.animal_id === p.animal_id)?.animal_code ?? p.animal_id;
+    fixedLabel ?? (countOnly ? t("deMortDeadN", { n: String(i + 1) }) : animals.find((a) => a.animal_id === p.animal_id)?.animal_code ?? p.animal_id);
 
   return (
     <div className="mt-1">
@@ -138,7 +141,7 @@ export function MortalityAnimalsField({
         open={open}
         onClose={() => setOpen(false)}
         title={t("deMortTitle")}
-        description={t(countOnly ? "deMortCountHelp" : "deMortHelp", { required: String(required) })}
+        description={fixedLabel ? t("deMortAnimalHelp", { animal: fixedLabel }) : t(countOnly ? "deMortCountHelp" : "deMortHelp", { required: String(required) })}
         presentation="modal"
         footer={
           <Button type="button" size="sm" onClick={() => setOpen(false)}>

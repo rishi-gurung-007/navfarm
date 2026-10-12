@@ -193,12 +193,14 @@ export class BatchDailyDataService {
         `Batch '${batchId}' is Animal Wise — choose an animal for data entry.`,
       );
     }
+    let entryAnimal: typeof schema.animalRegister.$inferSelect | undefined;
     if (dto.animal_id) {
       const [animal] = await this.db
         .select()
         .from(schema.animalRegister)
         .where(eq(schema.animalRegister.animal_id, dto.animal_id))
         .limit(1);
+      entryAnimal = animal;
       if (!animal)
         throw new NotFoundException(`Animal '${dto.animal_id}' not found.`);
       if (animal.current_batch_id !== batchId) {
@@ -283,7 +285,7 @@ export class BatchDailyDataService {
 
     // Whole-batch MORTALITY_COUNT on a batch with registered animals: the entry must name which animals died.
     // Checked before anything is written, draft or post, so a bad choice changes nothing.
-    const mortality = await this.planMortality({ batchId, dto, line, header, existingRow, tenantId });
+    const mortality = await this.planMortality({ batchId, dto, line, header, existingRow, tenantId, entryAnimal });
 
     // Draft save — records the value for later without touching inventory,
     // GL, animal_count, or a transfer. Nothing here dispatches until this
@@ -1478,13 +1480,14 @@ export class BatchDailyDataService {
     header: typeof schema.schedulerHeader.$inferSelect;
     existingRow: typeof schema.batchDailyData.$inferSelect | undefined;
     tenantId: string;
+    entryAnimal?: { animal_code: string; notes: string | null };
   }): Promise<{ supplied: boolean; entries: MortalityEntry[] } | null> {
-    const { batchId, dto, line, header, existingRow, tenantId } = args;
-    const applies = line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT' && !dto.animal_id;
+    const { batchId, dto, line, header, existingRow, tenantId, entryAnimal } = args;
+    const applies = line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT';
     if (!applies) {
       if (dto.mortality_animals !== undefined) {
         throw new BadRequestException(
-          'Animals that died are named only on the mortality count line of a whole-batch entry.',
+          'Animals that died are named only on the mortality count line.',
         );
       }
       return null;
@@ -1494,9 +1497,14 @@ export class BatchDailyDataService {
       return { supplied: false, entries: [] };
     }
 
-    const alive = await this.aliveAnimals(batchId, header.stage_id);
     const previous = existingRow?.posted && existingRow.entered_value != null ? Number(existingRow.entered_value) : 0;
     const newDeaths = Math.max(0, Math.round(dto.entered_value - previous));
+    // Animal-wise (Rishi, 13 Oct): the entry already names its animal; its death still needs a weight and a reason.
+    if (dto.animal_id) {
+      return this.planAnimalWiseMortality({ dto, line, newDeaths, tenantId, companyId: header.company_id, animal: entryAnimal });
+    }
+
+    const alive = await this.aliveAnimals(batchId, header.stage_id);
     // Registered: every death is a named animal, so more deaths than animals alive is refused, not capped.
     // Count-only: there is no animal to name, but each death still needs its dead weight and reason.
     const registered = alive.length > 0;
@@ -1512,16 +1520,7 @@ export class BatchDailyDataService {
       | undefined;
     const supplied = chosen !== undefined;
     if (!chosen && !dto.draft && required > 0) {
-      const stored = await this.db
-        .select()
-        .from(schema.batchMortalityAnimal)
-        .where(
-          and(
-            eq(schema.batchMortalityAnimal.line_id, line.line_id),
-            eq(schema.batchMortalityAnimal.entry_date, dto.entry_date),
-            eq(schema.batchMortalityAnimal.posted, false),
-          ),
-        );
+      const stored = await this.storedDraft(line.line_id, dto.entry_date, null);
       if (stored.length) {
         chosen = stored.map((r) => ({
           animal_id: r.animal_id,
@@ -1551,21 +1550,7 @@ export class BatchDailyDataService {
     }
     const aliveById = new Map(alive.map((a) => [a.animal_id, a]));
     const seen = new Set<string>();
-    const reasonIds = [...new Set(chosen.map((c) => c.reason_id).filter((id): id is string => !!id))];
-    const reasons = reasonIds.length
-      ? await this.db
-          .select()
-          .from(schema.reasonMaster)
-          .where(
-            and(
-              inArray(schema.reasonMaster.reason_id, reasonIds),
-              eq(schema.reasonMaster.tenant_id, tenantId),
-              eq(schema.reasonMaster.is_active, true),
-              ...masterScopeConditions(this.cls, schema.reasonMaster, header.company_id),
-            ),
-          )
-      : [];
-    const reasonById = new Map(reasons.map((r) => [r.reason_id, r]));
+    const reasonById = await this.mortalityReasons(chosen, tenantId, header.company_id);
 
     const entries: MortalityEntry[] = [];
     for (const [i, c] of chosen.entries()) {
@@ -1589,41 +1574,133 @@ export class BatchDailyDataService {
         }
         who = `dead animal ${i + 1}`;
       }
-      const weight = Number(c.dead_weight_kg);
-      if (!Number.isFinite(weight) || weight <= 0) {
-        throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${who}.`);
-      }
-      const text = c.reason_text?.trim() || null;
-      if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
-        throw new BadRequestException(
-          `Give ${who} a reason from the Reason Master, or type one - not both, not neither.`,
-        );
-      }
-      let label: string;
-      if (c.reason_id) {
-        const reason = reasonById.get(c.reason_id);
-        if (!reason) {
-          throw new BadRequestException(`Reason '${c.reason_id}' is not available in this workspace.`);
-        }
-        if (reason.category !== 'MORTALITY') {
-          throw new BadRequestException(
-            `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY - a death needs a mortality reason.`,
-          );
-        }
-        label = reason.reason_name;
-      } else {
-        label = text!;
-      }
-      entries.push({
-        animal_id: animal?.animal_id ?? null,
-        dead_weight_kg: Math.round(weight * 1000) / 1000,
-        reason_id: c.reason_id ?? null,
-        reason_text: text,
-        reason_label: label,
-        notes: animal?.notes ?? null,
-      });
+      entries.push(this.mortalityEntry(c, who, reasonById, animal?.animal_id ?? null, animal?.notes ?? null));
     }
     return { supplied: supplied || entries.length > 0, entries };
+  }
+
+  /**
+   * An animal-wise mortality entry: one animal, so it adds at most one death, and that death needs its dead weight
+   * and reason like any other. The choice may omit animal_id (the entry's own) but may not name another animal.
+   */
+  private async planAnimalWiseMortality(args: {
+    dto: CreateBatchDailyDataDto;
+    line: { line_id: string };
+    newDeaths: number;
+    tenantId: string;
+    companyId: string;
+    animal?: { animal_code: string; notes: string | null };
+  }): Promise<{ supplied: boolean; entries: MortalityEntry[] }> {
+    const { dto, line, newDeaths, tenantId, companyId, animal } = args;
+    const animalId = dto.animal_id!;
+    if (newDeaths > 1) {
+      throw new BadRequestException(`An animal-wise mortality entry records one animal - enter 1, not ${newDeaths}.`);
+    }
+    let chosen = dto.mortality_animals as
+      | Array<{ animal_id?: string | null; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
+      | undefined;
+    const supplied = chosen !== undefined;
+    if (!chosen && !dto.draft && newDeaths > 0) {
+      const stored = await this.storedDraft(line.line_id, dto.entry_date, animalId);
+      if (stored.length) {
+        chosen = stored.map((r) => ({ animal_id: r.animal_id, dead_weight_kg: Number(r.dead_weight_kg), reason_id: r.reason_id, reason_text: r.reason_text }));
+      }
+    }
+    if (!chosen) {
+      if (!dto.draft && newDeaths > 0) {
+        throw new BadRequestException('Enter the dead weight and the reason for the animal that died.');
+      }
+      return { supplied: false, entries: [] };
+    }
+    if (chosen.length !== newDeaths) {
+      throw new BadRequestException(
+        newDeaths === 0
+          ? 'This entry records no new death, so no dead weight or reason is taken.'
+          : 'Give exactly one dead weight and reason for the animal that died.',
+      );
+    }
+    if (chosen.some((c) => c.animal_id && c.animal_id !== animalId)) {
+      throw new BadRequestException('An animal-wise entry records the death of its own animal only.');
+    }
+    const reasonById = await this.mortalityReasons(chosen, tenantId, companyId);
+    const entries = chosen.map((c) => this.mortalityEntry(c, `animal '${animal?.animal_code ?? animalId}'`, reasonById, animalId, animal?.notes ?? null));
+    return { supplied: supplied || entries.length > 0, entries };
+  }
+
+  /** The not-yet-posted choice saved with a draft; animal-wise drafts are kept per animal. */
+  private storedDraft(lineId: string, date: string, animalId: string | null) {
+    return this.db
+      .select()
+      .from(schema.batchMortalityAnimal)
+      .where(
+        and(
+          eq(schema.batchMortalityAnimal.line_id, lineId),
+          eq(schema.batchMortalityAnimal.entry_date, date),
+          eq(schema.batchMortalityAnimal.posted, false),
+          ...(animalId ? [eq(schema.batchMortalityAnimal.animal_id, animalId)] : []),
+        ),
+      );
+  }
+
+  private async mortalityReasons(chosen: Array<{ reason_id?: string | null }>, tenantId: string, companyId: string) {
+    const reasonIds = [...new Set(chosen.map((c) => c.reason_id).filter((id): id is string => !!id))];
+    const reasons = reasonIds.length
+      ? await this.db
+          .select()
+          .from(schema.reasonMaster)
+          .where(
+            and(
+              inArray(schema.reasonMaster.reason_id, reasonIds),
+              eq(schema.reasonMaster.tenant_id, tenantId),
+              eq(schema.reasonMaster.is_active, true),
+              ...masterScopeConditions(this.cls, schema.reasonMaster, companyId),
+            ),
+          )
+      : [];
+    return new Map(reasons.map((r) => [r.reason_id, r]));
+  }
+
+  /** One death checked for its weight and reason (a mortality reason by id, or typed text - exactly one). */
+  private mortalityEntry(
+    c: { dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null },
+    who: string,
+    reasonById: Map<string, typeof schema.reasonMaster.$inferSelect>,
+    animalId: string | null,
+    notes: string | null,
+  ): MortalityEntry {
+    const weight = Number(c.dead_weight_kg);
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${who}.`);
+    }
+    const text = c.reason_text?.trim() || null;
+    if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
+      throw new BadRequestException(
+        `Give ${who} a reason from the Reason Master, or type one - not both, not neither.`,
+      );
+    }
+    let label: string;
+    if (c.reason_id) {
+      const reason = reasonById.get(c.reason_id);
+      if (!reason) {
+        throw new BadRequestException(`Reason '${c.reason_id}' is not available in this workspace.`);
+      }
+      if (reason.category !== 'MORTALITY') {
+        throw new BadRequestException(
+          `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY - a death needs a mortality reason.`,
+        );
+      }
+      label = reason.reason_name;
+    } else {
+      label = text!;
+    }
+    return {
+      animal_id: animalId,
+      dead_weight_kg: Math.round(weight * 1000) / 1000,
+      reason_id: c.reason_id ?? null,
+      reason_text: text,
+      reason_label: label,
+      notes,
+    };
   }
 
   /** Replaces the line's not-yet-posted choice for the date with this one (a draft), or records it as posted. */
@@ -1638,6 +1715,7 @@ export class BatchDailyDataService {
     userId?: string;
   }) {
     const { tenantId, companyId, batchId, line, dto, entries, posted, userId } = args;
+    // Animal-wise entries share the line and date across animals: replace only this animal's draft.
     await this.db
       .delete(schema.batchMortalityAnimal)
       .where(
@@ -1645,6 +1723,7 @@ export class BatchDailyDataService {
           eq(schema.batchMortalityAnimal.line_id, line.line_id),
           eq(schema.batchMortalityAnimal.entry_date, dto.entry_date),
           eq(schema.batchMortalityAnimal.posted, false),
+          ...(dto.animal_id ? [eq(schema.batchMortalityAnimal.animal_id, dto.animal_id)] : []),
         ),
       );
     if (!entries.length) return;

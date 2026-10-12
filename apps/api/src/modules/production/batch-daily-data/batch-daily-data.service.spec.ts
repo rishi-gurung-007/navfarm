@@ -739,6 +739,7 @@ describe('BatchDailyDataService', () => {
         }),
       });
       (mockDb as any).update = mockDbUpdate;
+      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
 
       await service.postEntry(
         'batch-1',
@@ -747,6 +748,8 @@ describe('BatchDailyDataService', () => {
           entry_date: '2026-09-08',
           entered_value: 1,
           animal_id: 'a-1',
+          // Rishi, 13 Oct: an animal-wise death carries its dead weight and reason too.
+          mortality_animals: [{ dead_weight_kg: 10, reason_text: 'Crushed' }],
         } as any,
         'tenant-123',
       );
@@ -755,6 +758,7 @@ describe('BatchDailyDataService', () => {
       const animalUpdate = updateSets.find((v) => v.status === 'DEAD');
       expect(animalUpdate).toBeDefined();
       delete (mockDb as any).update;
+      delete (mockDb as any).delete;
     });
   });
 

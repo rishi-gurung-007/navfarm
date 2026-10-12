@@ -243,21 +243,44 @@ export default function OperationalBatchDataEntry() {
    * The deaths this line adds for the value typed and what is entered for them so far. A batch with registered
    * animals names each animal; a count-only batch gives one weight-and-reason row per death.
    */
-  const mortalityNeed = (line: Row) => {
+  const mortalityNeed = (line: Row, animalId?: string) => {
+    if (isAnimalWise) {
+      // Animal-wise (Rishi, 13 Oct): the entry names its animal, whose death needs a weight and reason too. The
+      // "All animals" view would post the same count to every animal, so a death is entered on its own animal only.
+      if (!animalId || line.line_type !== 'DESCRIPTIVE' || line.kpi_metric !== 'MORTALITY_COUNT') return null;
+      const key = entryKey(line.line_id, animalId);
+      const raw = dataEntryValues[key];
+      const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), 0);
+      if (animalId === '__ALL__') return { kind: 'ALL' as const, key, required, picks: [] as MortalityPick[], animals: [], label: '' };
+      const label = (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.animal_code ?? '';
+      return { kind: 'ANIMAL' as const, key, required, picks: countOnlyPicks(dataEntryMortality[key] ?? [], Math.min(required, 1)), animals: [], label };
+    }
     const info = mortalityInfo[line.line_id];
-    if (isAnimalWise || !info) return null;
+    if (!info) return null;
     const key = entryKey(line.line_id, undefined);
     const raw = dataEntryValues[key];
     const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), info.already_posted);
     const picks = dataEntryMortality[key] ?? draftPicks(info);
-    return { info, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks };
+    return { kind: 'BATCH' as const, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks, animals: info.animals, label: '' };
   };
-  const mortalityIncomplete = dataEntryLines.some((line) => {
-    const need = mortalityNeed(line);
-    return !!need && !mortalityPicksComplete(need.picks, need.required);
-  });
+  /** True when the line needs nothing more for its deaths (or is not a mortality line). */
+  const mortalityOk = (need: ReturnType<typeof mortalityNeed>) => {
+    if (!need || need.required <= 0) return true;
+    if (need.kind === 'ALL' || (need.kind === 'ANIMAL' && need.required > 1)) return false;
+    return mortalityPicksComplete(need.picks, need.required);
+  };
+  const mortalityIncomplete = dataEntryLines.some((line) => !mortalityOk(mortalityNeed(line)));
   const selectedStage = dataEntryStages.find(
     (s) => s.stage_id === selectedStageId,
+  );
+  // Animal-wise: Post would drop a mortality line that cannot be saved, so it waits until the death is complete.
+  const awScopeLines: Row[] = isAnimalWise && selectedStage
+    ? (entryScope === 'ALL'
+        ? selectedStage.animals?.[0]?.lines
+        : selectedStage.animals?.find((a: Row) => a.animal_id === entryScope)?.lines) ?? []
+    : [];
+  const awMortalityIncomplete = awScopeLines.some(
+    (line) => !mortalityOk(mortalityNeed(line, entryScope === 'ALL' ? '__ALL__' : entryScope)),
   );
   const [serialModalLine, setSerialModalLine] = useState<Row | null>(null);
 
@@ -1024,10 +1047,7 @@ export default function OperationalBatchDataEntry() {
     if (isTextCapture(line)) return !!dataEntryTexts[key];
     const rawValue = dataEntryValues[key];
     if (rawValue === undefined || rawValue === '') return false;
-    if (!animalId) {
-      const need = mortalityNeed(line);
-      if (need && !mortalityPicksComplete(need.picks, need.required)) return false;
-    }
+    if (!mortalityOk(mortalityNeed(line, animalId))) return false;
     const isTracked = Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
     if (isTracked) {
       if (line.is_serial_tracked && animalId === '__ALL__') {
@@ -1075,10 +1095,8 @@ export default function OperationalBatchDataEntry() {
       }
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
-      if (!animalId) {
-        const need = mortalityNeed(line);
-        if (need && need.required > 0) payload.mortality_animals = mortalityPayload(need.picks);
-      }
+      const need = mortalityNeed(line, animalId);
+      if (need && need.kind !== 'ALL' && need.required > 0) payload.mortality_animals = mortalityPayload(need.picks);
       const bags = dataEntryEmptyBags[key];
       if (line.is_bagged_feed && bags !== undefined && bags !== '' && Number.isInteger(Number(bags)) && Number(bags) >= 0) {
         payload.empty_bags = Number(bags);
@@ -1782,12 +1800,20 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
           )}
-          {!animalId && (() => {
-            const need = mortalityNeed(line);
+          {(() => {
+            const need = mortalityNeed(line, animalId);
             if (!need || need.required <= 0) return null;
+            if (need.kind === 'ALL' || (need.kind === 'ANIMAL' && need.required > 1)) {
+              return (
+                <p className="mt-1 text-xs font-medium text-red-600" data-testid="mortality-animal-wise-blocked">
+                  {t(need.kind === 'ALL' ? 'deMortAllAnimals' : 'deMortOneAnimal')}
+                </p>
+              );
+            }
             return (
               <MortalityAnimalsField
-                animals={need.info.animals}
+                animals={need.animals}
+                fixedLabel={need.kind === 'ANIMAL' ? need.label || t('deMortThisAnimal') : undefined}
                 required={need.required}
                 picks={need.picks}
                 onChange={(next) => setDataEntryMortality((v) => ({ ...v, [need.key]: next }))}
@@ -2643,6 +2669,7 @@ export default function OperationalBatchDataEntry() {
 
                       const isPostDisabled =
                         stageActionBusy ||
+                        awMortalityIncomplete ||
                         isFutureDate ||
                         (entryScope !== 'ALL' ? isCurrentAnimalPosted : areAllAnimalsPosted);
 
@@ -2665,7 +2692,9 @@ export default function OperationalBatchDataEntry() {
                           onClick={handlePostStageDay}
                           disabled={isPostDisabled}
                           title={
-                            isFutureDate
+                            awMortalityIncomplete
+                              ? t('deMortPostBlocked')
+                              : isFutureDate
                               ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
                               : isCurrentAnimalPosted
                                 ? `Data entry for animal ${currentAnimal?.animal_code} is already posted on this date.`

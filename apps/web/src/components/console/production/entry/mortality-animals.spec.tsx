@@ -156,4 +156,15 @@ describe('MortalityAnimalsField', () => {
     fireEvent.change(screen.getByLabelText('Dead animal 2 - Dead weight (kg)'), { target: { value: '14' } });
     expect(onChange).toHaveBeenCalledWith([rows[0], expect.objectContaining({ animal_id: '', dead_weight_kg: '14' })]);
   });
+
+  it('animal-wise: asks the entry\'s own animal for its weight and reason, with nothing to choose', () => {
+    const onChange = jest.fn();
+    const rows = countOnlyPicks([], 1);
+    render(<MortalityAnimalsField animals={[]} required={1} picks={rows} onChange={onChange} fixedLabel="PIG-0007" />);
+    fireEvent.click(screen.getByTestId('mortality-animals-button'));
+    expect(screen.getByText('Enter the dead weight and the reason for PIG-0007.')).toBeTruthy();
+    expect(screen.queryByLabelText('Search by tag or animal ID')).toBeNull();
+    fireEvent.change(screen.getByLabelText('PIG-0007 - Dead weight (kg)'), { target: { value: '9' } });
+    expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ animal_id: '', dead_weight_kg: '9' })]);
+  });
 });

@@ -208,6 +208,33 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     expect(updates.find((u) => u.table === 'scheduler_header')!.set.animal_count).toBe('8');
   });
 
+  it('animal-wise: the death of the entry\'s animal needs its dead weight and reason, and is stored against it', async () => {
+    rows.batch_header = [{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', batch_no: 'B-1', farm_id: 'farm-1' }];
+    rows.animal_register = [{ ...animal(A1, 'PIG-1'), current_batch_id: 'batch-1', current_stage_id: 'stage-1' }];
+    const aw = (dto: Record<string, unknown>) => post({ animal_id: A1, ...dto });
+    await expect(aw({ entered_value: 1 })).rejects.toThrow(/dead weight and the reason for the animal that died/);
+    await expect(aw({ entered_value: 2, mortality_animals: [{ dead_weight_kg: 9, reason_id: R1 }] })).rejects.toThrow(/records one animal/);
+    await expect(aw({ entered_value: 1, mortality_animals: [{ animal_id: A2, dead_weight_kg: 9, reason_id: R1 }] })).rejects.toThrow(/its own animal only/);
+    await expect(aw({ entered_value: 1, mortality_animals: [{ dead_weight_kg: 9 }] })).rejects.toThrow(/Give animal 'PIG-1' a reason/);
+    expect(updates).toHaveLength(0);
+
+    await aw({ entered_value: 1, mortality_animals: [{ dead_weight_kg: 9.25, reason_text: 'Crushed' }] });
+    const died = animalUpdates();
+    expect(died).toHaveLength(1);
+    expect(died[0].set).toMatchObject({ status: 'DEAD', disposal_reason_id: null, notes: 'Cause of death: Crushed' });
+    expect(movementLog.record.mock.calls[0][0]).toMatchObject({ animalId: A1, reason: 'Crushed', remarks: 'Dead weight 9.25 kg' });
+    const detail = inserts.find((i) => i.table === 'batch_mortality_animal')!.values;
+    expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_text, d.posted])).toEqual([[A1, '9.25', 'Crushed', true]]);
+  });
+
+  it('animal-wise: a zero entry asks for nothing', async () => {
+    rows.batch_header = [{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', batch_no: 'B-1', farm_id: 'farm-1' }];
+    rows.animal_register = [{ ...animal(A1, 'PIG-1'), current_batch_id: 'batch-1', current_stage_id: 'stage-1' }];
+    await post({ animal_id: A1, entered_value: 0 });
+    expect(animalUpdates()).toHaveLength(0);
+    expect(inserts.some((i) => i.table === 'batch_mortality_animal')).toBe(false);
+  });
+
   it('refuses animals named on a line that is not the mortality count', async () => {
     rows.scheduler_line = [{ ...line, kpi_metric: 'BODY_WEIGHT' }];
     await expect(post({ entered_value: 1, mortality_animals: [dead(A1)] })).rejects.toThrow(BadRequestException);
