@@ -50,9 +50,11 @@ describe('KPI alert period and the extra KPI line keys', () => {
     expect(out.kpi_alert_period).toBeNull();
   });
 
-  it('rejects a period outside DAILY/WEEKLY (Monthly was removed)', async () => {
+  it('rejects a period outside DAILY/WEEKLY; a stored MONTHLY is read as WEEKLY (Monthly was removed)', async () => {
     await expect(pipe.transform({ ...base, kpi_alert_period: 'YEARLY' }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
-    await expect(pipe.transform({ ...base, kpi_alert_period: 'MONTHLY' }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
+    const out: any = await pipe.transform({ ...base, kpi_alert_period: 'MONTHLY', kpi_thresholds: [{ ...line, kpi_period: 'MONTHLY' }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
+    expect(out.kpi_alert_period).toBe('WEEKLY');
+    expect(out.kpi_thresholds[0].kpi_period).toBe('WEEKLY');
   });
 
   it('accepts a per-line kpi_period and tolerance, and keeps them', async () => {
@@ -67,7 +69,6 @@ describe('KPI alert period and the extra KPI line keys', () => {
 
   it.each([
     [{ kpi_period: 'YEARLY' }],
-    [{ kpi_period: 'MONTHLY' }],
     [{ from_day: 0 }],
     [{ from_day: 1.5 }],
     [{ to_day: 0 }],
