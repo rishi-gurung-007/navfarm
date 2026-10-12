@@ -68,10 +68,9 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     fireEvent.click(within(stacked).getByRole("button", { name: "KPI period" }));
     fireEvent.click(screen.getAllByRole("option", { name: "Weekly" }).find((o) => !o.closest("select"))!);
 
-    // The line period is empty, so it shows (and follows) the header period.
+    // The line shows the header period as a real selected value (not an empty placeholder).
     const linePeriod = stacked.querySelector("select[id$='-kpi_period']") as HTMLSelectElement;
-    expect(linePeriod.value).toBe("");
-    expect(linePeriod.options[0].textContent).toBe("Weekly");
+    expect(linePeriod.value).toBe("WEEKLY");
     fireEvent.change(within(stacked).getByRole("spinbutton", { name: "Tolerance (%)" }), { target: { value: "5" } });
     fireEvent.change(stacked.querySelector("select[id$='-tolerance_type']") as HTMLSelectElement, { target: { value: "UPPER" } });
 
@@ -84,7 +83,7 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     const payload = (api.post as jest.Mock).mock.calls[0][1];
     expect(payload.kpi_alert_period).toBe("WEEKLY");
     expect(payload.kpi_thresholds[0]).toMatchObject({ lower_limit: 400, upper_limit: 600, average_value: 500, tolerance_pct: 5, tolerance_type: "UPPER" });
-    expect(payload.kpi_thresholds[0].kpi_period ?? "").toBe("");
+    expect(payload.kpi_thresholds[0].kpi_period).toBe("WEEKLY");
   });
 
   it("sends a line's own period when one is chosen", async () => {
@@ -100,5 +99,31 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     expect((api.post as jest.Mock).mock.calls[0][1].kpi_thresholds[0].kpi_period).toBe("MONTHLY");
+  });
+
+  it("new lines get the header period; a header change moves lines that follow it, not lines changed by hand", async () => {
+    render(<LanguageProvider><MasterDataTable config={config} /></LanguageProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Test Lifecycle" }));
+    fireEvent.click(await screen.findByRole("button", { name: "KPIs & Alerts" }));
+    const stacked = await screen.findByRole("dialog", { name: "KPIs & Alerts" });
+    const header = () => within(stacked).getByRole("button", { name: "KPI period" });
+    const pickHeader = (label: string) => {
+      fireEvent.click(header());
+      fireEvent.click(screen.getAllByRole("option", { name: label }).find((o) => !o.closest("select"))!);
+    };
+    const periods = () => Array.from(stacked.querySelectorAll("select[id$='-kpi_period']")).map((s) => (s as HTMLSelectElement).value);
+
+    pickHeader("Daily");
+    fireEvent.click(within(stacked).getByRole("button", { name: "Add" }));
+    fireEvent.click(within(stacked).getByRole("button", { name: "Add more" }));
+    expect(periods()).toEqual(["DAILY", "DAILY"]);
+
+    // Second line chosen by hand.
+    fireEvent.change(stacked.querySelectorAll("select[id$='-kpi_period']")[1] as HTMLSelectElement, { target: { value: "MONTHLY" } });
+    pickHeader("Weekly");
+    expect(periods()).toEqual(["WEEKLY", "MONTHLY"]);
+    // A line added after the change starts on the new header value.
+    fireEvent.click(within(stacked).getByRole("button", { name: "Add more" }));
+    expect(periods()).toEqual(["WEEKLY", "MONTHLY", "WEEKLY"]);
   });
 });

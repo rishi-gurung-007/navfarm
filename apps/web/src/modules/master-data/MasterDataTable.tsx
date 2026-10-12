@@ -1588,6 +1588,22 @@ export function MasterDataTable({
     }
     setForm((prev) => {
     const next = { ...prev, [key]: value };
+    // A jsonRow column with defaultFromField (KPI Period on a lifecycle KPI line) follows its header field: a
+    // line still on the previous header value, or empty, moves to the new one; a line set by hand keeps its own.
+    for (const jf of config.fields) {
+      const followers = (jf.jsonRow || []).filter((c) => c.defaultFromField === key);
+      if (!followers.length || typeof next[jf.key] !== "string" || !next[jf.key]) continue;
+      try {
+        const parsed = JSON.parse(next[jf.key]);
+        if (!Array.isArray(parsed)) continue;
+        const before = String(prev[key] ?? "");
+        next[jf.key] = JSON.stringify(parsed.map((r: Row) => {
+          const out = { ...r };
+          for (const c of followers) if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
+          return out;
+        }));
+      } catch { /* not a row list: nothing to follow with */ }
+    }
     // Storage Location duplicated Location Type (STORE/SILO were already
     // choices there) and confused users into thinking they were two separate
     // decisions, so the field itself is hidden (configs.ts) and its value is
@@ -1775,6 +1791,15 @@ export function MasterDataTable({
             v = JSON.parse(v);
           } catch {
             throw new Error(`"${f.label}" must be valid JSON.`);
+          }
+          // A line still showing its header's value (older rows saved empty) is saved with that value explicitly.
+          const inheriting = (f.jsonRow || []).filter((c) => c.defaultFromField && form[c.defaultFromField]);
+          if (inheriting.length && Array.isArray(v)) {
+            v = v.map((r: Row) => {
+              const out = { ...r };
+              for (const c of inheriting) if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
+              return out;
+            });
           }
         }
         payload[f.key] = v;
@@ -2331,7 +2356,7 @@ export function MasterDataTable({
                       // different answers, and its Triggered by — which decides
                       // what the scheduler counts from — could be nonsense.
                       <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
-                        value={String(row[col.key] ?? "")}
+                        value={String(row[col.key] || (col.defaultFromField ? form[col.defaultFromField] ?? "" : ""))}
                         onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
                         <option value="">{(() => {
                           const inherited = col.defaultFromField ? String(form[col.defaultFromField] ?? "") : "";
@@ -2362,7 +2387,7 @@ export function MasterDataTable({
                   </button>)}
             </div>
           ))}
-          {!fieldDisabled && <button type="button" onClick={() => write([...rows, {}])}
+          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && form[c.defaultFromField]).map((c) => [c.key, String(form[c.defaultFromField!])]))])}
             className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold" style={S.surface}>
             <Plus className="mr-1 inline h-3 w-3" />{rows.length ? t("mdAddMore") : t("mdAdd")}
           </button>}

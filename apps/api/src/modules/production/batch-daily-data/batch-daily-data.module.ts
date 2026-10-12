@@ -4,6 +4,7 @@ import { BatchDailyDataService } from './batch-daily-data.service';
 import { BatchModule } from '../batch/batch.module';
 import { JournalModule } from '../../finance/journal/journal.module';
 import { SiloFeedModule } from '../../inventory/silo-feed/silo-feed.module';
+import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 import { FeedAlertModule } from '../../inventory/feed-alert/feed-alert.module';
 
 @Module({
@@ -15,6 +16,7 @@ import { FeedAlertModule } from '../../inventory/feed-alert/feed-alert.module';
   controllers: [BatchDailyDataController],
   providers: [
     BatchDailyDataService,
+    LifecycleKpiEvaluator,
     { provide: 'BATCH_DAILY_DATA_POSTER', useExisting: BatchDailyDataService },
   ],
   exports: [BatchDailyDataService, 'BATCH_DAILY_DATA_POSTER'],

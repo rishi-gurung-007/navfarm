@@ -23,6 +23,7 @@ import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
+import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
@@ -81,6 +82,8 @@ export class BatchDailyDataService {
     // the farm's silo levels are re-checked afterwards (checkpoint 12).
     // Optional so a testing module that does not provide it still builds.
     @Optional() private readonly feedAlerts?: FeedAlertService,
+    // Breed lifecycle KPI limits/tolerances, checked alongside the schedule-line limits above. Optional like feedAlerts.
+    @Optional() private readonly lifecycleKpi?: LifecycleKpiEvaluator,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -831,6 +834,12 @@ export class BatchDailyDataService {
       alertNote,
       remarks: dailyRemarks,
     });
+
+    // The stage's lifecycle KPIs (limits / tolerance) are checked in addition to the schedule-line limit above.
+    // evaluateSafely never throws, so a failure here cannot undo or block the entry that was just saved.
+    if (this.lifecycleKpi && line.kpi_metric && dto.entered_value != null) {
+      await this.lifecycleKpi.evaluateSafely(batchId, tenantId, dto.entry_date, [line.kpi_metric]);
+    }
 
     // CONSUMPTION re-checks the silo levels in postConsumptionGroup. Of the lines that reach here only OUTPUT
     // moves item stock; the rest (overhead, resources, animal transfers) leave every silo where it was. This
