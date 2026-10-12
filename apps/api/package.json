@@ -200,6 +200,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-departments.ts"
         }
       },
+      "db-seed-feed-mill-demo": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-feed-mill-demo.ts"
+        }
+      },
       "db-seed-test-masters": {
         "executor": "nx:run-commands",
         "cache": false,

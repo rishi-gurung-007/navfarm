@@ -68,6 +68,18 @@ tenant and company are stamped on every row. References to rows outside the copi
 if they exist in the target database, mapped by code, otherwise set to empty or the dependent row is skipped and
 listed. Transactions, users, roles and other companies are never touched. Local database host only.
 
+### Demo feed mill (MILL, BINs, BIN Diet Assignments)
+A company with no feed mill shows empty Location (MILL/BIN) and BIN Diet Assignment screens. This creates only what is
+missing: the MILL and BIN location types, `MILL-001` (238,000 KG/day: 178,000 bulk + 60,000 bagged), `MILL-001/BIN-001..004`
+(30,000 KG each, BULK; the last one BAGGED if the company has a Bagged feed item) and one BIN Diet Assignment per BIN for
+today..today+27, taking the feed items of the company's active breed lifecycle stages round-robin (only active items with an
+explicit Bulk/Bagged type and a Diet No qualify; others are listed as notes). A second run plans nothing. Plan / `--verify`
+(writes, rolls back) / `--apply` as above; local database host only.
+```
+pnpm nx run api:db-seed-feed-mill-demo -- --tenant ppl --company 00000000-0000-0000-0000-000000000000 --apply
+```
+Also run it for devco/TRIPLEC before cloning, so the clones include the mill.
+
 ### Clone the whole company, operations included (`--with-operational`)
 Add `--with-operational` to copy not just the masters but the company's operational data as well: batches and every
 `batch_*` table, schedulers, animals and breeding, stock (inventory ledger, goods receipts, adjustments, transfers,
