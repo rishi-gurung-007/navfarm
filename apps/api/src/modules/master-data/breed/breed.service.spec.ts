@@ -411,6 +411,24 @@ describe('BreedService', () => {
       expect(JSON.parse(inserted.kpi_thresholds)[0]).toMatchObject({ uom: 'G', average_value: 500 });
     });
 
+    it.each([
+      [{ tolerance_pct: 5 }, 'go together'],
+      [{ tolerance_type: 'UPPER' }, 'go together'],
+      [{ tolerance_pct: 5, tolerance_type: 'UPPER', average_value: null }, 'Average Value'],
+    ])('refuses an incomplete KPI tolerance %j', async (extra, message) => {
+      const row = { metric_code: 'ADG', breed_id: 'breed-1', stage_id: 'stage-1', lifecycle_id: 'lc-1' };
+      const chain: any = { then: (res: any, rej: any) => Promise.resolve([row]).then(res, rej) };
+      for (const k of ['from', 'where', 'limit', 'leftJoin', 'orderBy']) chain[k] = jest.fn().mockReturnValue(chain);
+      mockDbSelect.mockReturnValue(chain);
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      const line = { metric: 'ADG', lower_limit: 400, upper_limit: 600, average_value: 500, severity: 'WARNING', ...extra };
+      await expect(service.createLifecycleStage(
+        { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, kpi_thresholds: [line] } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      )).rejects.toThrow(message);
+    });
+
     // Found on the test server (Porta Farm): a lifecycle row listed fine but
     // opening it said "Master record is not available in this workspace" — the
     // create wrote no company/nob/lob, so enforceMasterRequest refused the row

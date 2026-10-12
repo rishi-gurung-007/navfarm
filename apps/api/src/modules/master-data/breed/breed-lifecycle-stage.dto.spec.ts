@@ -53,4 +53,23 @@ describe('KPI alert period and the extra KPI line keys', () => {
   it('rejects a period outside DAILY/WEEKLY/MONTHLY', async () => {
     await expect(pipe.transform({ ...base, kpi_alert_period: 'YEARLY' }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
   });
+
+  it('accepts a per-line kpi_period and tolerance, and keeps them', async () => {
+    const out: any = await pipe.transform({ ...base, kpi_thresholds: [{ ...line, kpi_period: 'MONTHLY', tolerance_pct: 5, tolerance_type: 'UPPER' }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
+    expect(out.kpi_thresholds[0]).toMatchObject({ kpi_period: 'MONTHLY', tolerance_pct: 5, tolerance_type: 'UPPER' });
+  });
+
+  it('treats blank line period and tolerance as absent', async () => {
+    const out: any = await pipe.transform({ ...base, kpi_thresholds: [{ ...line, kpi_period: '', tolerance_pct: '', tolerance_type: '' }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto });
+    expect(out.kpi_thresholds[0]).toMatchObject({ kpi_period: null, tolerance_pct: null, tolerance_type: null });
+  });
+
+  it.each([
+    [{ kpi_period: 'YEARLY' }],
+    [{ tolerance_pct: -1, tolerance_type: 'UPPER' }],
+    [{ tolerance_pct: 101, tolerance_type: 'UPPER' }],
+    [{ tolerance_pct: 5, tolerance_type: 'MIDDLE' }],
+  ])('rejects %j', async (extra) => {
+    await expect(pipe.transform({ ...base, kpi_thresholds: [{ ...line, ...extra }] }, { type: 'body', metatype: CreateBreedLifecycleStageDto })).rejects.toThrow();
+  });
 });

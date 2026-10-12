@@ -522,6 +522,8 @@ const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : va
  * @IsIn can't see a row added after the API started. Either limit may be
  * left open, not both.
  */
+export const KPI_TOLERANCE_TYPES = ['UPPER', 'LOWER'] as const;
+
 export class KpiThresholdRowDto {
   @ApiProperty({ description: 'A kpi_metric_master metric_code' })
   @IsString()
@@ -556,6 +558,28 @@ export class KpiThresholdRowDto {
   @IsString()
   @IsOptional()
   uom?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, enum: ['DAILY', 'WEEKLY', 'MONTHLY'], description: "This KPI's own period; empty means use the header KPI period" })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY'])
+  kpi_period?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Tolerance around average_value, 0 to 100 percent' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  tolerance_pct?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, enum: KPI_TOLERANCE_TYPES, description: 'UPPER alerts above average + tolerance, LOWER below average - tolerance' })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_TOLERANCE_TYPES)
+  tolerance_type?: string | null;
 }
 
 export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY', 'MONTHLY'] as const;

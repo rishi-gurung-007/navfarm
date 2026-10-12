@@ -808,6 +808,12 @@ export class BreedService {
     tenantId: string,
   ) {
     for (const row of dto.kpi_thresholds || []) {
+      if ((row.tolerance_pct == null) !== (row.tolerance_type == null)) {
+        throw new BadRequestException(`KPI ${row.metric}: Tolerance (%) and Tolerance Type go together; set both or neither.`);
+      }
+      if (row.tolerance_pct != null && row.average_value == null) {
+        throw new BadRequestException(`KPI ${row.metric}: a tolerance is measured around the Average Value, so enter one.`);
+      }
       if (row.lower_limit == null && row.upper_limit == null) {
         throw new BadRequestException(`KPI ${row.metric} needs a Lower Limit, an Upper Limit, or both.`);
       }

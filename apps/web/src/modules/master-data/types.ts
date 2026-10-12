@@ -46,6 +46,8 @@ export interface MasterDataField {
   /** Edited in a stacked dialog opened from the record dialog's header ("KPIs & Alerts"), not in the form grid. Still part of the form state and payload. */
   subDialog?: boolean;
   placeholder?: string;
+  /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
+  defaultFromField?: string;
   helpText?: string;
   /** Static dropdown options, for type: "select" */
   options?: SelectOption[];

@@ -2333,7 +2333,11 @@ export function MasterDataTable({
                       <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
                         value={String(row[col.key] ?? "")}
                         onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
-                        <option value="">{col.placeholder || t("selectPlaceholder")}</option>
+                        <option value="">{(() => {
+                          const inherited = col.defaultFromField ? String(form[col.defaultFromField] ?? "") : "";
+                          const inheritedLabel = (col.options || []).find((o) => o.value === inherited)?.label;
+                          return inheritedLabel ? tLabel(inheritedLabel) : (col.placeholder || t("selectPlaceholder"));
+                        })()}</option>
                         {(col.options || []).map((o) => <option key={o.value} value={o.value}>{tLabel(o.label)}</option>)}
                       </select>
                     ) : (

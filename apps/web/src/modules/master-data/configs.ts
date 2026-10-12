@@ -1350,17 +1350,22 @@ const breedLifecycleStage: MasterDataConfig = {
       jsonRow: [
         { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
         { key: "uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
+        // Left empty, a line follows the header's KPI period (shown as the
+        // placeholder), so changing the header moves every line not set by hand.
+        { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })) },
         { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
         { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
         { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
+        { key: "tolerance_pct", label: "Tolerance (%)", type: "number", step: "0.01", min: 0, max: 100 },
+        { key: "tolerance_type", label: "Tolerance Type", type: "select", options: [{ value: "UPPER", label: "Upper" }, { value: "LOWER", label: "Lower" }] },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
       ],
-      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold.",
+      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold. Tolerance is measured around the Average Value; KPI Period defaults to the header period.",
     },
     {
       key: "kpi_alert_period", label: "KPI period", type: "select", subDialog: true,
       options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
-      helpText: "How often the KPI alerts for this lifecycle row are looked at.",
+      helpText: "Default KPI period for the lines below; a line can set its own.",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a
