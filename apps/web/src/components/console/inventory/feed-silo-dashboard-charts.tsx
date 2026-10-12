@@ -73,6 +73,8 @@ export function FeedSiloDashboardCharts({
   const balances = prepareBalanceSeries(balanceSeries);
   const demand = [...demandSeries].sort((a, b) => a.date.localeCompare(b.date));
   const runDown = balances.find((point) => point.runDown) ?? null;
+  const highest = Math.max(0, capacityKg ?? 0, aboveThresholdKg ?? 0, ...balances.map((point) => Number(point.closingKg) || 0));
+  const yMax = highest > 0 ? Math.ceil((highest * 1.08) / 1000) * 1000 : 1000;
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -80,6 +82,7 @@ export function FeedSiloDashboardCharts({
         <CardHeader className="p-4 pb-2">
           <CardTitle>{t("fsdProjectedBalanceChart")}</CardTitle>
           <div className="flex flex-wrap gap-3 text-xs text-(--text-secondary)">
+            <LegendMark color="var(--info)" label={t("fsdProjectedClosingKg")} />
             {belowFeedLevelKg !== null && <LegendMark color="var(--warning)" label={t("fsdBelowFeedLevel")} />}
             {aboveThresholdKg !== null && <LegendMark color="var(--accent)" label={t("fsdAboveThreshold")} />}
             {capacityKg !== null && <LegendMark color="var(--text-muted)" label={t("fsdCapacity")} />}
@@ -93,13 +96,15 @@ export function FeedSiloDashboardCharts({
                 <LineChart data={balances} margin={{ top: 12, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="date" tickFormatter={formatDateShort} tick={tick} minTickGap={24} tickMargin={6} />
-                  <YAxis tick={tick} width={64} tickFormatter={(value) => Number(value).toLocaleString("en-US")} />
+                  {/* Headroom above the highest line, so a balance at capacity does not sit on the frame. */}
+                  <YAxis tick={tick} width={64} domain={[0, yMax]} allowDataOverflow={false} tickFormatter={(value) => Number(value).toLocaleString("en-US")} />
                   <Tooltip contentStyle={tooltipStyle} labelFormatter={(value) => formatDateShort(String(value))} />
                   {belowFeedLevelKg !== null && <ReferenceLine y={belowFeedLevelKg} stroke="var(--warning)" strokeDasharray="4 4" />}
                   {aboveThresholdKg !== null && <ReferenceLine y={aboveThresholdKg} stroke="var(--accent)" strokeDasharray="4 4" />}
-                  {capacityKg !== null && <ReferenceLine y={capacityKg} stroke="var(--text-muted)" strokeDasharray="2 4" />}
+                  <Line type="monotone" dataKey="closingKg" name={t("fsdProjectedClosingKg")} stroke="var(--info)" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
+                  {/* Drawn after the balance line so it stays visible when the silo is full. */}
+                  {capacityKg !== null && <ReferenceLine y={capacityKg} stroke="var(--text-muted)" strokeWidth={1.5} strokeDasharray="2 4" ifOverflow="extendDomain" />}
                   {runDown && <ReferenceDot x={runDown.date} y={0} r={5} fill="var(--danger)" stroke="var(--surface)" />}
-                  <Line type="monotone" dataKey="closingKg" name={t("fsdProjectedClosingKg")} stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -126,7 +131,8 @@ export function FeedSiloDashboardCharts({
                 <BarChart data={demand} margin={{ top: 12, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="date" tickFormatter={formatDateShort} tick={tick} minTickGap={24} tickMargin={6} />
-                  <YAxis tick={tick} width={64} tickFormatter={(value) => Number(value).toLocaleString("en-US")} />
+                  {/* Headroom above the highest line, so a balance at capacity does not sit on the frame. */}
+                  <YAxis tick={tick} width={64} domain={[0, yMax]} allowDataOverflow={false} tickFormatter={(value) => Number(value).toLocaleString("en-US")} />
                   <Tooltip contentStyle={tooltipStyle} labelFormatter={(value) => formatDateShort(String(value))} />
                   <Bar dataKey="currentDietKg" stackId="diet" name={t("fsdCurrentDietDemand")} fill="var(--accent)" />
                   <Bar dataKey="nextDietKg" stackId="diet" name={t("fsdNextDietDemand")} fill="var(--warning)" />
