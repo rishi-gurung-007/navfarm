@@ -4743,6 +4743,8 @@ export class BatchService {
       return {
         line_id: line.line_id,
         line_type: line.line_type,
+        // Data Entry groups a mortality line by it and asks for the dead animals' weight and reason (12 Oct).
+        kpi_metric: line.kpi_metric ?? null,
         activity_name: line.activity_name,
         item_id: line.item_id,
         item_description: line.item_description,

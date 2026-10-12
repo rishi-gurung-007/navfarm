@@ -4632,7 +4632,7 @@ export const translations = {
     deMortOther: "Other — type the reason",
     deMortOtherText: "Type the reason",
     deMortDone: "Done",
-    deMortPostBlocked: "Choose the animals that died, with the dead weight and the reason for each, before posting.",
+    deMortPostBlocked: "Enter the dead weight and the reason for each death (and choose the animals, where registered) before posting.",
     deMortTooMany: "{{required}} deaths entered, but only {{alive}} registered animals are alive at this stage. Correct the count.",
     deMortCountButton: "Dead weight and reason ({{chosen}}/{{required}})",
     deMortCountHelp: "The mortality count adds {{required}} death(s). Enter the dead weight and the reason for each dead animal.",
