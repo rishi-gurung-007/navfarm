@@ -4217,15 +4217,36 @@ export class BatchService {
       (a) => !alreadyPostedAnimalIds.has(a.animal_id),
     );
 
+    // Every animal already posted (one at a time, or by an import) but the stage never locked: the day would
+    // stay "next pending" for good (13 Oct). Posting the stage then checks every animal's mandatory entries and
+    // locks it; only an already-locked stage is refused.
+    let lockOnly = false;
     if (!animalId && remainingAnimals.length === 0) {
-      throw new BadRequestException(
-        `All animals in this stage have already been posted on ${dateStr}.`,
-      );
+      const [existingLock] = await this.db
+        .select({ status: schema.batchDataEntryLock.status })
+        .from(schema.batchDataEntryLock)
+        .where(
+          and(
+            eq(schema.batchDataEntryLock.batch_id, batchId),
+            eq(schema.batchDataEntryLock.stage_id, stageId),
+            eq(schema.batchDataEntryLock.entry_date, dateStr),
+            eq(schema.batchDataEntryLock.status, 'LOCKED'),
+          ),
+        )
+        .limit(1);
+      if (existingLock) {
+        throw new BadRequestException(
+          `All animals in this stage have already been posted on ${dateStr}.`,
+        );
+      }
+      lockOnly = true;
     }
 
     const targetAnimals = animalId
       ? allStageAnimals.filter((a) => a.animal_id === animalId)
-      : remainingAnimals;
+      : lockOnly
+        ? allStageAnimals
+        : remainingAnimals;
 
     const [header] = await this.db
       .select()

@@ -884,6 +884,44 @@ describe('BatchService', () => {
       expect(result.target_animal_count).toBe(1); // Only targeted a-2
     });
 
+    // 13 Oct: every animal posted (one at a time, or by the demo seed) but the stage never locked left the date
+    // "next pending" for good. Posting the stage now checks every animal's mandatory entries and locks it.
+    const lockOnlyChain = (existingLock: unknown[]) => {
+      // A locked stage stops at the lock read, so only the first three reads are queued for it.
+      const full = existingLock.length === 0;
+      const mandatoryLine = { line_id: 'line-feed', scheduler_id: 'sched-1', is_active: true, occurrence: 'DAILY', start_day: 1, end_day: null, is_mandatory: true, activity_name: 'Feed' };
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ animal_id: 'a-1', animal_code: 'PIG-0001' }, { animal_id: 'a-2', animal_code: 'PIG-0002' }]) }) }) // live animals
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ animal_id: 'a-1', posted: true }, { animal_id: 'a-2', posted: true }]) }) }) // both posted
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(existingLock) }) }) }); // stage lock
+      if (!full) return;
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1', effective_from: '2026-09-01', animal_count: '2' }]) }) }) }) // scheduler header
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([mandatoryLine]) }) }) // due lines
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ line_id: 'line-feed', animal_id: 'a-1' }, { line_id: 'line-feed', animal_id: 'a-2' }]) }) }) // mandatory present for both
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // no drafts
+    };
+
+    it('locks a stage whose animals are all posted but which was never locked', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce(animalWiseBatch as any);
+      lockOnlyChain([]);
+      const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }) });
+
+      const result = await service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' });
+
+      expect(result.status).toBe('LOCKED');
+      expect(onDuplicateKeyUpdate).toHaveBeenCalled();
+    });
+
+    it('still refuses a stage that is already locked with every animal posted', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce(animalWiseBatch as any);
+      lockOnlyChain([{ status: 'LOCKED' }]);
+      await expect(
+        service.postStageDay('batch-1', 'stage-flush', '2026-09-11', 'tenant-123', { userId: 'user-1' }),
+      ).rejects.toThrow('All animals in this stage have already been posted on 2026-09-11.');
+    });
+
     it('reopen requires a reason', async () => {
       await expect(
         service.reopenStageDay(

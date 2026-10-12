@@ -49,6 +49,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { BatchDailyDataService } from '../../../modules/production/batch-daily-data/batch-daily-data.service';
+import { BatchService } from '../../../modules/production/batch/batch.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
@@ -451,7 +452,12 @@ export const dailyEntriesChapter: DemoChapter = {
         postedCount += 1;
       } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT') {
         const value = isGrasmereHeadcountBatch(batch.remarks) ? mortalityDays(day) : 0;
-        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value, ...(animalId ? { animal_id: animalId } : {}) }, ctx.tenantId, actor);
+        // Every death carries its dead weight and reason (Rishi, 12-13 Oct); the headcount batch has no registered
+        // animals, so none is named.
+        const mortality_animals = value > 0
+          ? Array.from({ length: value }, () => ({ dead_weight_kg: 18 + day, reason_text: 'Found dead in pen (demo)' }))
+          : undefined;
+        await entries.postEntry(batch.batch_id, { line_id: line.line_id, entry_date: date, entered_value: value, ...(mortality_animals ? { mortality_animals } : {}), ...(animalId ? { animal_id: animalId } : {}) }, ctx.tenantId, actor);
         postedCount += 1;
       } else if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'BODY_WEIGHT') {
         const isReg = registeredBatches.has(batch.batch_id);
@@ -463,7 +469,44 @@ export const dailyEntriesChapter: DemoChapter = {
       }
     }
 
-    ctx.log(`04-daily-entries: posted ${postedCount} entr(ies), skipped ${skippedCount} line-day(s) (window ${firstDay} … ${yesterdayHarare})`);
+    // ── 5. Post each day, as Data Entry's Post button does. postEntry records a line; only the day post writes
+    // the batch_data_entry_lock that moves the next pending date on. Without it every seeded batch stayed on its
+    // start date (13 Oct). Dates go in order; a day that cannot post (a mandatory line deliberately left missing)
+    // stops that batch there, which is the backlog the demo shows.
+    const batchService = ctx.app.get(BatchService);
+    const lockRows = await db
+      .select({ batch_id: schema.batchDataEntryLock.batch_id, stage_id: schema.batchDataEntryLock.stage_id, entry_date: schema.batchDataEntryLock.entry_date })
+      .from(schema.batchDataEntryLock)
+      .where(and(inArray(schema.batchDataEntryLock.batch_id, batches.map((b) => b.batch_id)), eq(schema.batchDataEntryLock.status, 'LOCKED')));
+    const locked = new Set(lockRows.map((l) => `${l.batch_id}|${l.stage_id}|${String(l.entry_date).slice(0, 10)}`));
+    let lockedCount = 0;
+    for (const batch of batches) {
+      const start = String(batch.start_date ?? '').slice(0, 10);
+      const stageIds = batch.tracking_mode === 'ANIMAL_WISE'
+        ? [...animalsByBatchStage.keys()].filter((k) => k.startsWith(`${batch.batch_id}|`)).map((k) => k.split('|')[1])
+        : [];
+      dates: for (const date of days) {
+        if (start && date < start) continue;
+        try {
+          if (batch.tracking_mode === 'ANIMAL_WISE') {
+            for (const stageId of stageIds) {
+              if (locked.has(`${batch.batch_id}|${stageId}|${date}`)) continue;
+              await batchService.postStageDay(batch.batch_id, stageId, date, ctx.tenantId, actor as any);
+              lockedCount += 1;
+            }
+          } else {
+            if (lockRows.some((l) => l.batch_id === batch.batch_id && String(l.entry_date).slice(0, 10) === date)) continue;
+            await batchService.postBatchDay(batch.batch_id, date, ctx.tenantId, actor as any);
+            lockedCount += 1;
+          }
+        } catch (err) {
+          ctx.log(`  ${batch.batch_no} ${date}: day not posted — ${(err as Error).message}`);
+          break dates;
+        }
+      }
+    }
+
+    ctx.log(`04-daily-entries: posted ${postedCount} entr(ies), skipped ${skippedCount} line-day(s), posted ${lockedCount} day(s) (window ${firstDay} … ${yesterdayHarare})`);
   },
 };
 

@@ -1215,7 +1215,8 @@ export default function OperationalBatchDataEntry() {
       }
     } else {
       const pendingCount = stageAnimals.filter((a: Row) => !a.is_posted).length;
-      if (stageAnimals.length > 0 && pendingCount === 0) {
+      // Every animal posted but the stage never locked: posting locks it, so the date can move on (13 Oct).
+      if (stageAnimals.length > 0 && pendingCount === 0 && selectedStage?.lock_status === 'LOCKED') {
         const msg = `All animals in this stage have already been posted on ${selectedDate}.`;
         setStageActionError(msg);
         setSaveErrorMsg(msg);
@@ -2666,12 +2667,14 @@ export default function OperationalBatchDataEntry() {
                       const currentAnimal = stageAnimals.find((a) => a.animal_id === entryScope);
                       const isCurrentAnimalPosted = entryScope !== 'ALL' && Boolean(currentAnimal?.is_posted);
                       const areAllAnimalsPosted = stageAnimals.length > 0 && pendingAnimalsCount === 0;
+                      // All animals posted but no stage lock: Post locks the stage day, so it stays enabled.
+                      const needsStageLock = areAllAnimalsPosted && selectedStage?.lock_status !== 'LOCKED';
 
                       const isPostDisabled =
                         stageActionBusy ||
                         awMortalityIncomplete ||
                         isFutureDate ||
-                        (entryScope !== 'ALL' ? isCurrentAnimalPosted : areAllAnimalsPosted);
+                        (entryScope !== 'ALL' ? isCurrentAnimalPosted : areAllAnimalsPosted && !needsStageLock);
 
                       let postButtonLabel = 'Post Stage Data';
                       if (isFutureDate) {
@@ -2680,6 +2683,8 @@ export default function OperationalBatchDataEntry() {
                         postButtonLabel = isCurrentAnimalPosted
                           ? `Already Posted (${currentAnimal?.animal_code || 'Animal'})`
                           : `Post Data (${currentAnimal?.animal_code || 'Animal'})`;
+                      } else if (needsStageLock) {
+                        postButtonLabel = t('deLockStageDay');
                       } else if (areAllAnimalsPosted) {
                         postButtonLabel = 'All Animals Posted';
                       } else if (postedAnimalsCount > 0) {
