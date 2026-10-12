@@ -80,6 +80,13 @@ module.exports = (phase) => ({
   turbopack: {
     root: join(__dirname, '../..'),
   },
+  // The /api/v1 rewrite is a proxy with a 30 s default timeout. Provisioning a
+  // tenant (create its database, run every tenant migration) takes longer on the
+  // test server, and the proxy answered a bare 21-byte "Internal Server Error"
+  // while the API was still working (12 Oct). Five minutes covers it.
+  experimental: {
+    proxyTimeout: 300_000,
+  },
   async redirects() {
     return LEGACY_ROUTE_REDIRECTS.map(([source, destination]) => ({
       source,
