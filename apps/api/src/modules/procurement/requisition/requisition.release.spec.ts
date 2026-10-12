@@ -6,7 +6,7 @@
  * release and release never bypasses approval; a rejected document returns to
  * Open for correction; a person may not approve a manually created requisition
  * they created (that rule lives in the feed handler already — here it is the
- * common document's turn); Purchase release records BC_PENDING without any
+ * common document's turn); Purchase release (12 Oct) records no BC handoff at all, without any
  * external call, Store release starts an internal transfer (TRANSFER_OPEN +
  * a transfer-order identity); a user who may approve the requisition releases
  * it, Purchase and Store alike (Rishi, 5 Oct — replaces the 1 Oct
@@ -210,17 +210,18 @@ describe('common requisition release — authorization (decisions, 1 Oct)', () =
     expect(writes()).toEqual([]);
   });
 
-  it('a Purchase release records BC_PENDING and never claims a sync', async () => {
+  // Rishi, 12 Oct: a Purchase release happens in NAVFarm only — no BC handoff; the PO number is linked afterwards.
+  it('a Purchase release is recorded in NAVFarm only, with no Business Central handoff', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'BC_PENDING', released_by: 'u-proc' }]]],
+      [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'NOT_APPLICABLE', released_by: 'u-proc' }]]],
       [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
     const result = await as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', PROCUREMENT));
     expect(result.fulfilment_status).toBe('NOT_APPLICABLE');
-    expect(result.integration_status).toBe('BC_PENDING');
+    expect(result.integration_status).toBe('NOT_APPLICABLE');
     const set = writes().find((e) => e.op === 'update')!.set;
-    expect(set).toMatchObject({ document_status: 'RELEASED', integration_status: 'BC_PENDING' });
+    expect(set).toMatchObject({ document_status: 'RELEASED', integration_status: 'NOT_APPLICABLE' });
   });
 
   // P1 follow-up item 4 — Rishi, 5 Oct (decisions.md "Common requisition:
@@ -309,14 +310,14 @@ describe('common requisition release — Part E: Store release creates its stock
 
   it('a Purchase release creates no transfer', async () => {
     const { service, as, writes, stockTransfers } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'BC_PENDING', released_by: 'u-proc' }]]],
+      [schema.requisition, [[PURCHASE_ROW], [{ ...PURCHASE_ROW, document_status: 'RELEASED', integration_status: 'NOT_APPLICABLE', released_by: 'u-proc' }]]],
       [schema.requisitionLine, [LINES]],
       [schema.userRoleAssignment, [[{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]]],
     ]));
     await as(STORE_SCOPE, () => service.release('req-po', 'tenant-1', PROCUREMENT));
     expect(stockTransfers.create).not.toHaveBeenCalled();
     const set = writes().find((e) => e.op === 'update')!.set;
-    expect(set).toMatchObject({ integration_status: 'BC_PENDING' });
+    expect(set).toMatchObject({ integration_status: 'NOT_APPLICABLE' });
   });
 });
 

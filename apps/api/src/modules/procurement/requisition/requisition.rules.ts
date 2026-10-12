@@ -418,7 +418,9 @@ export function releaseTransition(row: ReleaseState): {
     approval_status: 'APPROVED', // unchanged by release, written explicitly
     document_status: 'RELEASED',
     fulfilment_status: isPurchase ? 'NOT_APPLICABLE' : 'TRANSFER_OPEN',
-    integration_status: isPurchase ? 'BC_PENDING' : 'NOT_APPLICABLE',
+    // Rishi, 12 Oct: a Purchase release happens in NAVFarm only — no Business Central handoff is recorded;
+    // the PO number is linked afterwards (Link PO).
+    integration_status: 'NOT_APPLICABLE',
   };
 }
 

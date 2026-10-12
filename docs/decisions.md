@@ -3489,3 +3489,10 @@ MILL_MANAGER reach any user holding the role. Seeded for new companies; existing
 ## 2026-10-12 — Departments (Rishi)
 
 Managed in Company Settings > Departments; server script creates Stores / Farm Operations / Feed Mill per company and assigns existing users without a department by user type (Mill Manager role → Feed Mill; Farm Manager/Standard User → Farm Operations; admins → Stores).
+
+## 2026-10-12 — Purchase requisition release stays in NAVFarm (Rishi)
+
+A Purchase requisition's Release is recorded in NAVFarm only: Document Released, no "BC pending" handoff is
+recorded. The PO number is linked afterwards with Link PO (the Business Central purchase order number, typed in).
+The PO number is not the GRN number; a GRN (Inventory > GRN) records goods received and is not linked to the
+requisition today.
