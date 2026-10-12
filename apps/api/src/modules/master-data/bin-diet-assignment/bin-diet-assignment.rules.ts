@@ -18,7 +18,8 @@ export type FeedForm = 'BULK' | 'BAGGED';
 export function feedFormFromItemType(code?: string | null, name?: string | null): FeedForm | null {
   const normalizedCode = (code ?? '').trim().toUpperCase();
   if (!normalizedCode.includes('FEED')) return null;
-  const value = `${normalizedCode} ${(name ?? '').trim().toUpperCase()}`;
+  // '_' is a word character, so FEED_BULK never matched \bBULK\b; treat _ and - as separators (12 Oct).
+  const value = `${normalizedCode} ${(name ?? '').trim().toUpperCase()}`.replace(/[_-]+/g, ' ');
   if (/\bBULK\b/.test(value)) return 'BULK';
   if (/\bBAG(?:GED)?\b/.test(value)) return 'BAGGED';
   return null;

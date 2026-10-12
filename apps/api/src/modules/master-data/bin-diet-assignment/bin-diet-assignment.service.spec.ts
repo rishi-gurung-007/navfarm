@@ -11,6 +11,10 @@ describe('BIN Diet Assignment rules', () => {
     expect(feedFormFromItemType('FEED BULK', 'Feed')).toBe('BULK');
     expect(feedFormFromItemType('FEED BAG', 'Bagged Feed')).toBe('BAGGED');
     expect(feedFormFromItemType('FEED', 'Feed')).toBeNull();
+    // 12 Oct: item type CODES use underscores; the name alone must not be needed.
+    expect(feedFormFromItemType('FEED_BULK', 'Feed')).toBe('BULK');
+    expect(feedFormFromItemType('FEED_BAG', null)).toBe('BAGGED');
+    expect(feedFormFromItemType('FEED-BAGGED', '')).toBe('BAGGED');
   });
 
   it('requires an active FEED item with a Diet No.', () => {
