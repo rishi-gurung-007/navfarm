@@ -825,6 +825,7 @@ describe('Part E Task 3 — options and display names', () => {
     selectResults.push(
       [],
       [],
+      [],
       [{ cost_center_id: 'cc-farm', cost_center_code: 'FARM', cost_center_name: 'Farm Operations' }],
       [{ email: 'rudo@triplec.local', full_name: 'Rudo Moyo', department_id: 'cc-farm', direct_transfer_allowed: 1 }],
     );
@@ -844,10 +845,14 @@ describe('Part E Task 3 — options and display names', () => {
     selectResults.push(
       [{ item_id: 'i1', item_code: 'IT-1', item_name: 'Bolts', uom_primary: 'EA' }],
       [{ location_id: 'st', location_code: 'F1/STORE', location_name: 'Store', location_type: 'STORE', farm_id: 'f1' }],
+      // Main / Farm Location (12 Oct): every FARM the caller may open, beyond the requisition's own farm.
+      [{ location_id: 'f1', location_code: 'F1', location_name: 'Farm 1', location_type: 'FARM', farm_id: 'f1' },
+       { location_id: 'f2', location_code: 'F2', location_name: 'Farm 2', location_type: 'FARM', farm_id: 'f2' }],
       [{ cost_center_id: 'cc', cost_center_code: 'D-1', cost_center_name: 'Stores' }],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    const out = await service.options({ company_id: 'co-1' }, TENANT);
+    const out = await service.options({ company_id: 'co-1', farm_id: 'f1' }, TENANT);
+    expect(out.farms.map((f) => f.location_code)).toEqual(['F1', 'F2']);
     expect(out.items.map((i) => i.item_code)).toEqual(['IT-1']);
     expect(out).not.toHaveProperty('resources');
     expect(out.locations.map((l) => l.location_type)).toEqual(['STORE']);

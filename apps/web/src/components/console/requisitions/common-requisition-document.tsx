@@ -121,8 +121,8 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
     </Field>
   );
   const locChoices = locations.map((l) => ({ value: l.location_id, label: l.location_code }));
-  const farmChoices = locations
-    .filter((location) => location.location_type === "FARM")
+  // Every Farm the user may open (options.farms), not only the requisition's own; older APIs fall back to the locations.
+  const farmChoices = (options?.farms ?? locations.filter((location) => location.location_type === "FARM"))
     .map((location) => ({ value: location.location_id, label: location.location_code }));
   const deptChoices = departments.map((d) => ({ value: d.cost_center_id, label: `${d.cost_center_code} — ${d.cost_center_name}` }));
 

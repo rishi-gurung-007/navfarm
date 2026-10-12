@@ -512,6 +512,23 @@ export class RequisitionService {
       .from(schema.locationMaster)
       .where(and(...locationConditions))
       .orderBy(schema.locationMaster.location_code);
+    // Main / Farm Location (Rishi, 12 Oct): every Farm-type location the caller may open, not only the
+    // requisition's own farm — the sub-location list above stays narrowed to that farm.
+    const farmConditions: SQL[] = [
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.company_id, query.company_id),
+      eq(schema.locationMaster.is_active, true),
+      isNull(schema.locationMaster.deleted_at),
+      eq(schema.locationMaster.location_type, 'FARM'),
+    ];
+    if (lobScope.restricted && lobScope.lobId) farmConditions.push(or(eq(schema.locationMaster.lob_id, lobScope.lobId), isNull(schema.locationMaster.lob_id))!);
+    const userFarm = farmScope(this.cls).farmId;
+    if (userFarm) farmConditions.push(eq(schema.locationMaster.location_id, userFarm));
+    const farms = await this.db
+      .select({ location_id: schema.locationMaster.location_id, location_code: schema.locationMaster.location_code, location_name: schema.locationMaster.location_name, location_type: schema.locationMaster.location_type, farm_id: schema.locationMaster.farm_id })
+      .from(schema.locationMaster)
+      .where(and(...farmConditions))
+      .orderBy(schema.locationMaster.location_code);
     const departments = await this.db
       .select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_code: schema.costCenterMaster.cost_center_code, cost_center_name: schema.costCenterMaster.cost_center_name })
       .from(schema.costCenterMaster)
@@ -544,7 +561,7 @@ export class RequisitionService {
       }
     }
     // No resources: no line may name one (Rishi, 5 Oct — Service lines are Description + Qty only).
-    return { items, locations, departments, may_direct_transfer: mayDirectTransfer, requester };
+    return { items, locations, farms, departments, may_direct_transfer: mayDirectTransfer, requester };
   }
 
   /**

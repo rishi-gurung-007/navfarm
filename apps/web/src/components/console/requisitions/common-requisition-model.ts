@@ -114,6 +114,8 @@ export interface CommonRequisitionView {
 export interface CommonRequisitionOptions {
   items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
+  /** Every Farm-type location the user may open — the Main / Farm Location choices (12 Oct). */
+  farms?: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   departments: { cost_center_id: string; cost_center_code: string; cost_center_name: string }[];
   /** WP1c: the signed-in user's own Direct Transfer right (User Setup). */
   may_direct_transfer?: boolean;
