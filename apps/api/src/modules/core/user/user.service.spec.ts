@@ -16,7 +16,7 @@ describe('UserService user-type hierarchy', () => {
   const set = jest.fn();
   const values = jest.fn();
   const selectChain: any = {};
-  for (const m of ['from', 'where', 'limit', 'innerJoin', 'offset']) selectChain[m] = () => selectChain;
+  for (const m of ['from', 'where', 'limit', 'innerJoin', 'offset', 'orderBy']) selectChain[m] = () => selectChain;
   selectChain.then = (resolve: any, reject: any) => Promise.resolve(selectResults.shift() ?? []).then(resolve, reject);
   const writeChain: any = {
     set: (v: unknown) => { set(v); return writeChain; },
@@ -51,7 +51,7 @@ describe('UserService user-type hierarchy', () => {
     full_name: 'New User',
     email: 'new.user@example.test',
     password: 'longenough1',
-    ...(!user_type || user_type === 'STANDARD_USER' ? { farm_id: FARM } : {}),
+    ...(!user_type || user_type === 'FARM_MANAGER' || user_type === 'STANDARD_USER' ? { farm_id: FARM } : {}),
     ...(user_type ? { user_type } : {}),
   });
 
@@ -75,8 +75,8 @@ describe('UserService user-type hierarchy', () => {
       expect(update.map((e) => e.property)).toContain('user_type');
     });
 
-    it('accepts a known user_type', async () => {
-      const errors = await validate(plainToInstance(UpdateUserDto, { user_type: 'OPERATIONAL_ADMIN' }));
+    it('accepts FARM_MANAGER as a known user_type', async () => {
+      const errors = await validate(plainToInstance(UpdateUserDto, { user_type: 'FARM_MANAGER' }));
       expect(errors).toHaveLength(0);
     });
   });
@@ -99,6 +99,25 @@ describe('UserService user-type hierarchy', () => {
       queueUser(target(type, 'created'));
       await expect(service.create(createDto(type), requester('COMPANY_ADMIN'))).resolves.toMatchObject({ user_type: type });
       expect(values).toHaveBeenCalledWith(expect.objectContaining({ user_type: type }));
+    });
+
+    it('lets an OPERATIONAL_ADMIN create a FARM_MANAGER bound to one active farm', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('FARM_MANAGER', 'created'));
+
+      await expect(service.create(createDto('FARM_MANAGER'), requester('OPERATIONAL_ADMIN')))
+        .resolves.toMatchObject({ user_type: 'FARM_MANAGER' });
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ user_type: 'FARM_MANAGER', farm_id: FARM }));
+    });
+
+    it('requires a farm when creating a FARM_MANAGER', async () => {
+      const dto = createDto('FARM_MANAGER');
+      delete dto.farm_id;
+      selectResults.push([{ tenant_id: TENANT }]);
+      await expect(service.create(dto, requester('OPERATIONAL_ADMIN')))
+        .rejects.toThrow(new BadRequestException('A farm manager must be assigned to a farm.'));
     });
 
     it('defaults an omitted user_type to STANDARD_USER, not the legacy STAFF', async () => {
@@ -176,6 +195,117 @@ describe('UserService user-type hierarchy', () => {
     it('still refuses self-deactivation', async () => {
       queueUser(target('TENANT_ADMIN', 'requester-1'));
       await expect(service.update('requester-1', { is_active: false }, requester('TENANT_ADMIN'))).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('WP1c — the Direct Transfer right (User Setup, never self-service)', () => {
+    /** findById's enrich does companies, farms, areas, roles — the farms read is not skipped for a farm-bound fixture. */
+    const queueFarmUser = (row: object) => selectResults.push([row], [], [], [], []);
+
+    it('forbids a user granting themselves the right', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      await expect(service.update('requester-1', { direct_transfer_allowed: true }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(new ForbiddenException('You cannot change your own Direct Transfer right.'));
+      expect(set).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin grant another user the right, written and audited', async () => {
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM });
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM });
+      await service.update('target-1', { direct_transfer_allowed: true }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith({ direct_transfer_allowed: true });
+    });
+
+    it('lets an admin revoke another user the right', async () => {
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM, direct_transfer_allowed: true });
+      selectResults.push([{ tenant_id: TENANT }]); // the target's company is in reach
+      queueFarmUser({ ...target('STANDARD_USER'), farm_id: FARM, direct_transfer_allowed: true });
+      await service.update('target-1', { direct_transfer_allowed: false }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith({ direct_transfer_allowed: false });
+    });
+
+    it('stores the right at create time (default false)', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create(createDto('STANDARD_USER'), requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ direct_transfer_allowed: false }));
+    });
+
+    it('stores direct_transfer_allowed=true when the creator supplies it', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([]);
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create({ ...createDto('STANDARD_USER'), direct_transfer_allowed: true }, requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ direct_transfer_allowed: true }));
+    });
+  });
+
+  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+    const departmentRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-1', tenant_id: TENANT, company_id: COMPANY,
+      cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
+    });
+
+    it('refuses a department_id that is not an active DEPARTMENT cost center of the company', async () => {
+      selectResults.push([{ tenant_id: TENANT }]); // the named company is in the requester's tenant
+      selectResults.push([{ location_id: FARM }]); // standard user needs its farm
+      selectResults.push([departmentRow({ cost_center_type: 'FARM' })]);
+      await expect(service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(values).not.toHaveBeenCalled();
+    });
+
+    it('refuses a department belonging to another company', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([departmentRow({ company_id: '99999999-9999-4999-8999-999999999999' })]);
+      await expect(service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(BadRequestException);
+      expect(values).not.toHaveBeenCalled();
+    });
+
+    it('stores a valid department identity on the created user', async () => {
+      selectResults.push([{ tenant_id: TENANT }]);
+      selectResults.push([{ location_id: FARM }]);
+      selectResults.push([departmentRow()]);
+      selectResults.push([]); // no existing email
+      queueUser(target('STANDARD_USER', 'created'));
+      await service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN'));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
+    });
+
+    it('refuses an update that names a non-DEPARTMENT cost center', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      selectResults.push([departmentRow({ cost_center_type: 'PROJECT' })]);
+      await expect(service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
+        .rejects.toThrow(BadRequestException);
+      expect(set).not.toHaveBeenCalled();
+    });
+
+    it('writes a valid department identity through the update path', async () => {
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      selectResults.push([departmentRow()]);
+      queueUser(target('COMPANY_ADMIN', 'requester-1'));
+      await service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN'));
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
+    });
+  });
+
+  describe('team directory — department name from department_id', () => {
+    it('lists the department name joined from the cost centre, null when there is no id', async () => {
+      const rows = [
+        { ...target('STANDARD_USER', 'u-1'), department: 'legacy text', department_id: 'cc-1' },
+        { ...target('STANDARD_USER', 'u-2'), department: 'Legacy only', department_id: null },
+      ];
+      // users, then enrich(): companies, areas, roles, departments (no farm_id, so no farms read)
+      selectResults.push(rows, [], [], [], [{ cost_center_id: 'cc-1', cost_center_name: 'Stores' }]);
+      const list = await service.findAll({} as any);
+      expect(list[0]).toEqual(expect.objectContaining({ department_id: 'cc-1', department_name: 'Stores', department: 'legacy text' }));
+      expect(list[1]).toEqual(expect.objectContaining({ department_id: null, department_name: null, department: 'Legacy only' }));
     });
   });
 

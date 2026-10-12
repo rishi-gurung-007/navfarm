@@ -1,22 +1,32 @@
 import React from 'react';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import FeedForecastPanel from '../src/components/console/inventory/feed-forecast-panel';
 import { api } from '../src/services/api-client';
 import { getActiveWorkspaceScope } from '../src/hooks/useAuth';
+import { getForecastWindow } from '../src/components/console/inventory/feed-forecast-window';
+jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
+import { showToast } from '../src/components/ui/toast';
+beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
 
-jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn() } }));
+jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), delete: jest.fn() } }));
 // A stable `t`: the effects must not depend on its identity (the tRef pattern).
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
 });
-jest.mock('../src/hooks/useAuth', () => ({ getActiveWorkspaceScope: jest.fn() }));
+let mockCanSaveRun = true;
+jest.mock('../src/hooks/useAuth', () => ({
+  getActiveWorkspaceScope: jest.fn(),
+  getStoredUser: jest.fn(() => ({ userType: 'STANDARD_USER' })),
+  hasPermission: jest.fn(() => mockCanSaveRun),
+}));
 // The farm list and choice belong to the shared hook (use-feed-farm.spec.tsx); here it is a fixed answer.
 let mockFarm: any;
 jest.mock('../src/components/console/inventory/use-feed-farm', () => ({ useFeedFarm: () => mockFarm }));
 
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
+const remove = api.delete as jest.Mock;
 const mockScope = getActiveWorkspaceScope as jest.Mock;
 
 const FARMS = [
@@ -35,31 +45,57 @@ const forecastResponse = {
     farm: { id: 'farm-vil100', code: 'VIL100', name: 'VILLA FRANCA FARM' },
     rows: [
       {
-        key: 'b10|item-1|VIL100/STORE-001|2026-09-25', batchId: 'b10', batchNo: 'BATCH-000010', shedCode: '', stageCode: 'WEANER',
-        itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, heads: 58, perDayIntakeKg: 127,
-        intakeKg: 127, daysOfStock: 108, sharedBatchCount: 3, indicative: false,
-        runDownDate: null, refillDate: null, requiredOn: null, overdue: false,
+        key: 'b10|item-1|VIL100/STORE-001|2026-09-25', farmId: 'farm-vil100', batchId: 'b10', batchGroupId: 'b10', batchNo: 'BATCH-000010', shedId: null, shedCode: '', stageCode: 'WEANER',
+        itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store',
+        sourceLocationId: 'store-1', currentItemId: null, currentItemNo: null, currentItemName: null, feedType: 'BAGGED',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 35525.6, openingSystemBalanceKg: 35525.6, confirmedReceiptsKg: 0,
+        heads: 58, feedRateKg: 2.19, perDayIntakeKg: 127, intakeKg: 127, dailyUseKg: 127, projectedClosingBalanceKg: 35398.6,
+        recommendedQtyKg: 0, firstShortageDate: null, deliveryDate: null, daysOfStock: 108, sharedBatchCount: 3, indicative: false, runDownDate: null,
       },
       {
-        key: 'b20|item-2|VIL100/SILO-002|2026-09-25', batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
-        itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002',
-        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, heads: 40, perDayIntakeKg: 100,
-        intakeKg: 100, daysOfStock: 2, sharedBatchCount: 1, indicative: true,
-        runDownDate: '2026-09-26', refillDate: '2026-09-24', requiredOn: '2026-09-22', overdue: true,
+        key: 'b20|item-2|VIL100/SILO-002|2026-09-25', farmId: 'farm-vil100', batchId: 'b20', batchGroupId: 'b20', batchNo: 'BATCH-000020', shedId: 'shed-1', shedCode: 'SHED-1', stageCode: 'DRY_SOW',
+        itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002', sourceName: 'Dry sow silo',
+        sourceLocationId: 'silo-2', currentItemId: 'item-2', currentItemNo: 'FEED-DS', currentItemName: 'Dry Sow Gestation Mash (14% CP)', feedType: 'BULK',
+        date: '2026-09-25', dateTo: '2026-09-25', days: 1, currentInventoryKg: 200, openingSystemBalanceKg: 200, confirmedReceiptsKg: 0,
+        heads: 40, feedRateKg: 2.5, perDayIntakeKg: 100, intakeKg: 100, dailyUseKg: 100, projectedClosingBalanceKg: 100,
+        recommendedQtyKg: 0, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-26', daysOfStock: 2, sharedBatchCount: 1, indicative: true, runDownDate: '2026-09-26',
       },
     ],
-    stages: [
-      { batchId: 'b20', batchNo: 'BATCH-000020', shedCode: 'SHED-1', currentStageCode: 'DRY_SOW', currentFrom: '2026-09-01', currentTo: '2026-09-07',
-        nextStageCode: 'FLUSH', nextFrom: '2026-09-08', nextTo: '2026-09-21', stageChangeEarliest: null, stageChangeDate: '2026-09-08', stageChangeOverdue: true },
+    sourceBalances: [
+      { date: '2026-09-25', sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sourceName: 'Main store', locationId: 'store-1', itemId: 'item-1', itemNo: 'FEED-WG', itemName: 'Weaner Grower Mash (18% CP)', currentItemId: null, currentItemNo: null, currentItemName: null, openingSystemBalanceKg: 35525.6, confirmedReceiptKg: 0, dailyUseKg: 127, projectedClosingBalanceKg: 35398.6, recommendedQtyKg: 0, firstShortageDate: null, deliveryDate: null, runDownDate: null },
+      { date: '2026-09-25', sourceType: 'SILO', sourceCode: 'VIL100/SILO-002', sourceName: 'Dry sow silo', locationId: 'silo-2', itemId: 'item-2', itemNo: 'FEED-DS', itemName: 'Dry Sow Gestation Mash (14% CP)', currentItemId: 'item-2', currentItemNo: 'FEED-DS', currentItemName: 'Dry Sow Gestation Mash (14% CP)', openingSystemBalanceKg: 200, confirmedReceiptKg: 0, dailyUseKg: 100, projectedClosingBalanceKg: 100, recommendedQtyKg: 0, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-26', runDownDate: '2026-09-26' },
     ],
     flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'BATCH-000010' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'BATCH-000010' }],
   },
 };
 
-function routedGet(over?: { feedForecast?: () => Promise<any>; periods?: () => Promise<any> }) {
+const currentRunResponse = {
+  success: true,
+  data: {
+    run_id: 'run-current', run_code: 'RUN-VIL100-20260925-001', version: 1,
+    output_snapshot: {
+      display: {
+        ...forecastResponse.data,
+        filters: { planningDate: '2026-09-25', from: '2026-09-25', to: '2026-10-02', view: 'CUSTOM', periodId: null },
+      },
+    },
+  },
+};
+
+function routedGet(over?: {
+  feedForecast?: () => Promise<any>;
+  current?: () => Promise<any>;
+  periods?: () => Promise<any>;
+  runs?: () => Promise<any>;
+  preview?: () => Promise<any>;
+}) {
   return (url: string) => {
     if (url.startsWith('/feed-forecast/periods')) return over?.periods ? over.periods() : Promise.resolve({ success: true, data: [] });
+    if (url.startsWith('/feed-forecast/runs/current')) return over?.current ? over.current() : Promise.resolve(currentRunResponse);
+    if (url.startsWith('/feed-forecast/runs')) return over?.runs ? over.runs() : Promise.resolve({ success: true, data: [] });
+    if (url.startsWith('/feed-requisition/from-run/')) return over?.preview ? over.preview() : Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: null, lines: [],
+    } });
     return over?.feedForecast ? over.feedForecast() : Promise.resolve(forecastResponse);
   };
 }
@@ -69,14 +105,69 @@ describe('FeedForecastPanel — admin', () => {
   beforeEach(() => {
     get.mockReset().mockImplementation(routedGet());
     post.mockReset();
+    remove.mockReset();
     mockScope.mockReset().mockReturnValue('COMPANY');
+    mockCanSaveRun = true;
     mockFarm = adminFarm();
   });
 
-  it("renders the field specification's 12 columns in order (D33)", async () => {
+  it('opens a saved run named by ?runId= through the existing run-by-id endpoint (A6)', async () => {
+    window.history.pushState({}, '', '/inventory/feed-forecast?tab=forecast&runId=run-old');
+    const base = routedGet();
+    get.mockImplementation((url: string) => url === '/feed-forecast/runs/run-old'
+      ? Promise.resolve({ success: true, data: { ...currentRunResponse.data, run_id: 'run-old', run_code: 'RUN-OLD', farm_id: 'farm-vil100' } })
+      : base(url));
+    try {
+      render(<FeedForecastPanel />);
+      await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
+      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  it('keeps the ?runId= run on screen when the current-run load resolves after it (A6 race)', async () => {
+    window.history.pushState({}, '', '/inventory/feed-forecast?tab=forecast&runId=run-old');
+    const base = routedGet();
+    let resolveCurrent: (v: any) => void = () => undefined;
+    const currentPromise = new Promise((resolve) => { resolveCurrent = resolve; });
+    get.mockImplementation((url: string) => {
+      if (url === '/feed-forecast/runs/run-old') {
+        const display = currentRunResponse.data.output_snapshot.display;
+        const oldDisplay = { ...display, rows: display.rows.map((row) => ({ ...row, itemName: `OLD RUN ${row.itemName}` })) };
+        return Promise.resolve({ success: true, data: { ...currentRunResponse.data, run_id: 'run-old', run_code: 'RUN-OLD', farm_id: 'farm-vil100', output_snapshot: { display: oldDisplay } } });
+      }
+      if (url.startsWith('/feed-forecast/runs/current')) return currentPromise;
+      return base(url);
+    });
+    try {
+      render(<FeedForecastPanel />);
+      await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
+      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+      expect((await screen.findAllByText(/OLD RUN Weaner/)).length).toBeGreaterThan(0);
+      resolveCurrent(currentRunResponse);
+      await currentPromise;
+      for (let i = 0; i < 5; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Return to current calculation' })).toBeTruthy());
+      expect(screen.getAllByText(/OLD RUN Weaner/).length).toBeGreaterThan(0);
+      expect(screen.queryAllByText(/^Weaner Grower Mash/)).toHaveLength(0);
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  it("renders the fourteen static row-70 columns plus one dated projected-closing column", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(12);
+    // 18 static columns (Stage added beside Batch, Rishi 10 Oct); both fixture rows fall on 25/09/26, so there is one date column.
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(18 + 1);
+  });
+
+  it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table', { name: 'ffGridLabel' });
+    await waitFor(() => expect(getForecastWindow('farm-vil100')).toEqual({ farmId: 'farm-vil100', from: '2026-09-25', to: '2026-10-02' }));
+    expect(getForecastWindow('farm-oth')).toBeNull();
   });
 
   it('never fetches the farm list itself: the shared hook owns it (A3)', async () => {
@@ -85,20 +176,25 @@ describe('FeedForecastPanel — admin', () => {
     expect(get.mock.calls.some(([url]) => String(url).startsWith('/location'))).toBe(false);
   });
 
-  it('shows Overdue and Indicative, uses a dash beyond the horizon, and keeps Stages as a tab', async () => {
+  it('removes the non-workbook Stages tab and keeps the forecast grid visible', async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    expect(within(table).getByText('ffOverdue')).toBeTruthy();
-    expect(within(table).getByText('ffIndicative')).toBeTruthy();
-    // "Shared by" was a badge in the Source cell, and went with it (D33).
-    expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
-    expect(within(table).queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
-    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
-    // D34: the wastage note is gone — neither client document has wastage.
-    expect(screen.queryByText(/ffWastage/)).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'ffTabStages:{"count":1}' }));
-    expect(screen.getByRole('table', { name: 'ffStagesTitle' })).toBeTruthy();
-    expect(screen.queryByRole('table', { name: 'ffGridLabel' })).toBeNull();
+    expect(within(table).queryByText('ffOverdue')).toBeNull();
+    expect(screen.queryByRole('tab', { name: /ffTabStages/ })).toBeNull();
+    expect(screen.queryByRole('table', { name: 'ffStagesTitle' })).toBeNull();
+    expect(table).toBeTruthy();
+  });
+
+  it('shows the complete farm calculation without Shed, Silo, Batch, Feed Item or Bulk/Bagged result filters', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table', { name: 'ffGridLabel' });
+    expect(screen.queryByLabelText('ffFilterShed')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterSilo')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterBatch')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterFeedItem')).toBeNull();
+    expect(screen.queryByLabelText('ffFilterFeedType')).toBeNull();
+    expect(within(screen.getByRole('table', { name: 'ffGridLabel' })).getByText('BATCH-000010')).toBeTruthy();
+    expect(within(screen.getByRole('table', { name: 'ffGridLabel' })).getByText('BATCH-000020')).toBeTruthy();
   });
 
   it('shows the farm chosen in the shared hook and hands a new choice back to it (A4)', async () => {
@@ -110,15 +206,15 @@ describe('FeedForecastPanel — admin', () => {
     expect(mockFarm.setFarmId).toHaveBeenCalledWith('farm-oth');
   });
 
-  it('shows default dates before the first answer arrives (A11)', () => {
+  it('waits for the API farm-local dates before showing the initial window', () => {
     get.mockImplementation(() => new Promise(() => undefined));
     render(<FeedForecastPanel />);
-    const planning = (screen.getByLabelText('ffPlanningDate') as HTMLInputElement).value;
-    expect(planning).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect((screen.getByLabelText('ffDateFrom') as HTMLInputElement).value).toBe(planning);
-    expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).not.toBe('');
+    expect((screen.getByLabelText('ffPlanningDate') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('ffDateFrom') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('ffDateTo') as HTMLInputElement).value).toBe('');
   });
 
+  // 27 Sep review: one row on wide screens. 10 Oct: from xl (1280px) up; below that the row wraps, because at 1024px the Calculate button overlapped Date To.
   it('keeps the filters on one row and the date pair together (review, 27 Sep)', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
@@ -127,45 +223,135 @@ describe('FeedForecastPanel — admin', () => {
     // Date From and Date To share a container, so a wrap can never leave "Date To" alone.
     expect(from.closest('div')!.parentElement).toBe(to.closest('div')!.parentElement);
     const row = screen.getByLabelText('ffPlanningDate').closest('[class*="flex-wrap"]')!;
-    expect(row.className).toContain('lg:flex-nowrap');
+    expect(row.className).toContain('xl:flex-nowrap');
   });
 
-  it('fetches once on mount and once more after a date changes, without looping', async () => {
+  it('loads the saved snapshot on mount and filter edits do not recalculate', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    expect(forecastCalls()).toHaveLength(1);
+    expect(forecastCalls()).toHaveLength(0);
     const input = screen.getByLabelText('ffDateFrom') as HTMLInputElement;
     const next = new Date(`${input.value}T00:00:00Z`);
     next.setUTCDate(next.getUTCDate() + 1);
     fireEvent.change(input, { target: { value: next.toISOString().slice(0, 10) } });
-    await waitFor(() => expect(forecastCalls()).toHaveLength(2));
     await new Promise((r) => setTimeout(r, 20));
-    expect(forecastCalls()).toHaveLength(2);
+    expect(forecastCalls()).toHaveLength(0);
   });
 
-  it('first asks for the Custom view with no dates, so the API plans from the farm\'s today (D16)', async () => {
+  it('starts empty and calculates only when Calculate is pressed', async () => {
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
     render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    expect(forecastCalls()).toHaveLength(0);
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    const calculateButton = within(controlRow).getByRole('button', { name: 'ffCalculate' });
+    fireEvent.click(calculateButton);
     await screen.findByRole('table');
     expect(forecastCalls()[0][0]).toBe('/feed-forecast?farmId=farm-vil100&view=CUSTOM');
+    expect(within(controlRow).getByRole('button', { name: 'ffSaveRun' })).toBeTruthy();
+  });
+
+  it('shows Create Feed Requisition for a saved shortage with no linked requisition', async () => {
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: null,
+      lines: [{ destination_location_id: 'silo-2', item_id: 'item-2', quantity_kg: 3000 }],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    expect(within(controlRow).getByRole('button', { name: 'rqCreateFromSaved' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
+  });
+
+  it('replaces creation with View Requisition when the saved calculation already has one', async () => {
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: 'req-existing', lines: [],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    expect(within(controlRow).getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+  });
+
+  it('keeps View Requisition available without calculation-create authority', async () => {
+    mockCanSaveRun = false;
+    get.mockImplementation(routedGet({ preview: () => Promise.resolve({ success: true, data: {
+      runId: 'run-current', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: 'req-existing', lines: [],
+    } }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+  });
+
+  it('shows no requisition action when the saved calculation has no shortage or linked requisition', async () => {
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
   });
 
   it('sends a picked planning date as the as-of date', async () => {
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
     render(<FeedForecastPanel />);
-    await screen.findByRole('table');
+    await screen.findByText('ffCalculatePrompt');
     fireEvent.change(screen.getByLabelText('ffPlanningDate'), { target: { value: '2026-09-22' } });
+    expect(forecastCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
     await waitFor(() => expect(forecastCalls().some(([url]) => url.includes('planningDate=2026-09-22'))).toBe(true));
   });
 
+  it('does not persist a run on load or filter changes; Save Run posts the exact displayed filters', async () => {
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
+    post.mockResolvedValue({ success: true, data: { runId: 'run-1', runCode: 'FFR-farm-vil100-000001', version: 1 } });
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    expect(post).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('ffDateFrom'), { target: { value: '2026-09-26' } });
+    expect(forecastCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    await screen.findByRole('table');
+    expect(post).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'ffSaveRun' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-forecast/runs', {
+      farmId: 'farm-vil100', planningDate: '2026-09-25', view: 'CUSTOM',
+      from: '2026-09-26', to: '2026-10-02',
+    }));
+    await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('ffRunSaved:{"code":"FFR-farm-vil100-000001","version":1}'));
+  });
+
+  it('keeps run history visible but hides Save Run without create authority', async () => {
+    mockCanSaveRun = false;
+    render(<FeedForecastPanel />);
+
+    await screen.findByRole('table');
+    expect(screen.getByText('ffRunHistory:{"count":0}')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'ffSaveRun' })).toBeNull();
+  });
+
+  it('archives the current calculation and returns to the empty state', async () => {
+    remove.mockResolvedValue({ success: true });
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    fireEvent.click(screen.getByRole('button', { name: 'ffDeleteCalculation' }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('/feed-forecast/runs/run-current'));
+    expect(await screen.findByText('ffCalculatePrompt')).toBeTruthy();
+    expect(showToast.success).toHaveBeenCalledWith('ffCalculationDeleted');
+  });
+
   it('does not crash when the response has rows but no flags array', async () => {
-    get.mockImplementation(routedGet({ feedForecast: () => Promise.resolve({ success: true, data: { ...forecastResponse.data, flags: undefined } }) }));
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ ...currentRunResponse, data: { ...currentRunResponse.data, output_snapshot: { display: { ...forecastResponse.data, flags: undefined, filters: currentRunResponse.data.output_snapshot.display.filters } } } }) }));
     render(<FeedForecastPanel />);
     expect(await screen.findByRole('table')).toBeTruthy();
   });
 
   it('shows the API error and hides the table', async () => {
-    get.mockImplementation(routedGet({ feedForecast: () => Promise.reject({ message: 'Farm not found.' }) }));
+    get.mockImplementation(routedGet({ current: () => Promise.reject({ message: 'Farm not found.' }) }));
     render(<FeedForecastPanel />);
-    await screen.findByText('Farm not found.');
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Farm not found.'));
     expect(screen.queryByRole('table')).toBeNull();
   });
 
@@ -187,22 +373,22 @@ describe('FeedForecastPanel — admin', () => {
     expect(forecastCalls()).toHaveLength(0);
   });
 
-  it('collects the notes in one collapsed panel', async () => {
+  it('collects the notes behind a compact dialog action', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     expect(screen.getByText('ffNotesTitle:{"count":2}')).toBeTruthy();
-    expect(document.querySelector('details')!.open).toBe(false);
+    expect(screen.getByRole('button', { name: 'ffNotesTitle:{"count":2}' })).toBeTruthy();
   });
 
   it('says nothing is forecast before the planning date when the range ends before it (Q7)', async () => {
-    get.mockImplementation(routedGet({ feedForecast: () => Promise.resolve({ success: true, data: { ...forecastResponse.data, from: '2026-09-10', to: '2026-09-20', forecastFrom: null, rows: [], stages: [], flags: [] } }) }));
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ ...currentRunResponse, data: { ...currentRunResponse.data, output_snapshot: { display: { ...currentRunResponse.data.output_snapshot.display, from: '2026-09-10', to: '2026-09-20', forecastFrom: null, rows: [], flags: [], filters: { ...currentRunResponse.data.output_snapshot.display.filters, from: '2026-09-10', to: '2026-09-20' } } } } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     expect(screen.getByText(/ffNoteRangeBeforePlanning/)).toBeTruthy();
   });
 
   it('notes that rows start at the planning date when the range only partly precedes it', async () => {
-    get.mockImplementation(routedGet({ feedForecast: () => Promise.resolve({ success: true, data: { ...forecastResponse.data, from: '2026-09-20', to: '2026-09-30', forecastFrom: '2026-09-25' } }) }));
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ ...currentRunResponse, data: { ...currentRunResponse.data, output_snapshot: { display: { ...currentRunResponse.data.output_snapshot.display, from: '2026-09-20', to: '2026-09-30', forecastFrom: '2026-09-25', filters: { ...currentRunResponse.data.output_snapshot.display.filters, from: '2026-09-20', to: '2026-09-30' } } } } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     expect(screen.getByText(/ffNoteRangeStartsAtPlanning/)).toBeTruthy();
@@ -217,7 +403,7 @@ describe('FeedForecastPanel — admin', () => {
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
     await waitFor(() => expect(get.mock.calls.some(([url]) => url === '/feed-forecast/periods?farmId=farm-vil100')).toBe(true));
     const select = screen.getByLabelText('ffReportingPeriod') as HTMLSelectElement;
-    expect(within(select).getByText('ffPeriodOption:{"code":"2026-09","from":"30/08/26","to":"26/09/26"}')).toBeTruthy();
+    expect(await within(select).findByText('ffPeriodOption:{"code":"2026-09","from":"30/08/26","to":"26/09/26"}')).toBeTruthy();
   });
 
   it('offers to generate the business year when there are no periods, then reloads (Q9)', async () => {
@@ -225,8 +411,9 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    fireEvent.click(await screen.findByRole('button', { name: /ffGeneratePeriods/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/reporting-period/generate', { business_year_start: 2026 }));
+    expect(screen.getByRole('button', { name: /ffGenerateDraftPeriods/ })).toBeTruthy();
   });
 
   it('disables Generate Periods in the tenant-wide workspace and says why', async () => {
@@ -234,7 +421,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    expect(((await screen.findByRole('button', { name: /ffGeneratePeriods/ })) as HTMLButtonElement).disabled).toBe(true);
+    expect(((await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ })) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('ffGenerateNeedsCompany')).toBeTruthy();
   });
 
@@ -243,8 +430,8 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'PERIOD' } });
-    fireEvent.click(await screen.findByRole('button', { name: /ffGeneratePeriods/ }));
-    await screen.findByText('Forbidden.');
+    fireEvent.click(await screen.findByRole('button', { name: /ffGenerateDraftPeriods/ }));
+    await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Forbidden.'));
     expect(screen.getByRole('table')).toBeTruthy();
   });
 

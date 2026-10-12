@@ -23,6 +23,19 @@ const MOVED_TO_FEED_PLANNING = [
 const REDUNDANT = ["storage_name"];
 
 describe("D32 — the Location form no longer edits per-farm feed settings", () => {
+  it("preserves the complete approved Location field set while settings move", () => {
+    expect(locationConfig.fields.map((field) => field.key)).toEqual([
+      "nob_id", "lob_id", "company_id", "location_code", "location_type", "location_name", "location_address", "parent_location_id",
+      "location_level", "department_id", "cost_center_id", "area_size", "area_unit", "max_capacity", "capacity_uom",
+      "mill_daily_capacity_ton", "mill_hourly_capacity_ton", "mill_bulk_daily_allocation_ton",
+      "mill_bagged_daily_allocation_ton", "bin_capacity_ton", "bin_feed_type", "storage_type",
+      "silo_capacity_kg", "silo_capacity_uom", "silo_reorder_days", "low_level_kg", "high_level_kg", "silo_feed_type",
+      "attached_sheds",
+      // W4G2 (11 Oct): silo read-only facts, Master Setup rows 13-20.
+      "silo_feed_item", "available_stock_kg", "system_balance_kg", "last_approved_count_kg", "last_approved_count_at", "last_feed_receipt_date", "first_shortage_date", "next_diet_change_date",
+      "downtime_days_required", "gps_latitude", "gps_longitude",
+    ]);
+  });
   it.each([...MOVED_TO_FEED_PLANNING, ...REDUNDANT])("has no %s field at all", (key) => {
     expect(locationConfig.fields.find((field) => field.key === key)).toBeUndefined();
   });
@@ -49,5 +62,23 @@ describe("D32 — the Location form no longer edits per-farm feed settings", () 
       "location_code", "location_name", "location_type", "parent_location_id",
       "silo_capacity_kg", "low_level_kg", "high_level_kg", "attached_sheds", "storage_type",
     ]));
+  });
+});
+
+describe("Requisition r15 — Feed Type lives on the SILO record", () => {
+  const field = locationConfig.fields.find((f) => f.key === "silo_feed_type")!;
+  it("is a Bulk/Bagged select shown for SILO only", () => {
+    expect(field.type).toBe("select");
+    expect(field.label).toBe("Feed Type");
+    expect((field.options as { value: string }[]).map((o) => o.value)).toEqual(["BULK", "BAGGED"]);
+    expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: "SILO" }] });
+  });
+});
+
+describe("Department on a location", () => {
+  const field = locationConfig.fields.find((f) => f.key === "department_id")!;
+  it("is hidden from the Location form and table (Rishi, 12 Oct)", () => {
+    expect(field.hideInForm).toBe(true);
+    expect(field.hideInTable).toBe(true);
   });
 });

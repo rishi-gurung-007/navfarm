@@ -56,6 +56,8 @@ describe('GoodsReceiptService', () => {
   // The other branch of the same re-read: a SILO destination routes through
   // SiloFeedService instead of short-circuiting.
   const siloWarehouse = () => found({ location_id: 'wh-1', location_type: 'SILO', location_name: 'Feed Silo 01' });
+  // Checkpoint 47: the item-kind read a SILO destination makes (select .. leftJoin .. where, no limit).
+  const itemTypes = (...rows: any[]) => ({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }) });
   const mockAssertCanReceive = jest.fn();
   const mockWritePositiveEntry = jest.fn();
 
@@ -144,6 +146,7 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
+      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'CONS-1', type_code: 'CONSUMABLE', type_name: 'Consumable' }));
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
@@ -159,11 +162,24 @@ describe('GoodsReceiptService', () => {
       expect(result.status).toBe('POSTED');
     });
 
+    it('refuses a GRN of a FEED item into a SILO, before the item-per-silo check or any posting (checkpoint 47)', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(siloWarehouse());
+      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'FEED-R1', type_code: 'FEED-001', type_name: 'Feed' }));
+
+      await expect(service.post('gr-3', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(/feed item.*only through the Transfer Order receipt/);
+      expect(mockAssertCanReceive).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+      expect(mockWritePositiveEntry).not.toHaveBeenCalled();
+    });
+
     it('aborts the post before the DRAFT -> POSTED claim when SiloFeedService refuses the item', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any);
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
+      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'CONS-1', type_code: 'CONSUMABLE', type_name: 'Consumable' }));
       mockAssertCanReceive.mockRejectedValue(new BadRequestException(
         "Cannot post this GRN — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
       ));
@@ -235,22 +251,20 @@ describe('GoodsReceiptService', () => {
 
     it('still posts when the re-check itself throws', async () => {
       const cls = transactionCls(mockDb);
-      const alertRules = { ensureDefaultRules: jest.fn().mockRejectedValue(new Error('alert_rule is locked')) };
-      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, alertRules as any);
+      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, {} as any);
       const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
       await build(feedAlerts, cls);
       postedReceipt();
-      // The hook's own read of the receipt warehouse: a silo on farm-1, so it goes on to evaluate that farm.
+      // The hook's own read of the receipt warehouse fails: the receipt is already posted and must stay posted.
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([{ location_id: 'wh-1', location_type: 'SILO', farm_id: 'farm-1', company_id: 'comp-1' }]),
+          where: jest.fn().mockRejectedValue(new Error('alert_rule is locked')),
         }),
       });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
       expect(result.status).toBe('POSTED');
-      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('comp-1', 'tenant-123');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
     });
   });

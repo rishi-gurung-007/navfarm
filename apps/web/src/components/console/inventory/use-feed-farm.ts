@@ -40,7 +40,10 @@ export function loadFeedFarms(user: { userId?: string } | null): Promise<FeedFar
     const promise = api.get("/feed-forecast/farms").then((res: any) => {
       // A proxy error page or a contract change can hand back a non-array body.
       const raw = res?.data ?? res;
-      return Array.isArray(raw) ? (raw as FeedFarm[]) : [];
+      return Array.isArray(raw)
+        ? [...(raw as FeedFarm[])].sort((a, b) =>
+            a.code.localeCompare(b.code) || a.name.localeCompare(b.name) || a.farmId.localeCompare(b.farmId))
+        : [];
     });
     promise.catch(() => {
       if (cache?.promise === promise) cache = null;

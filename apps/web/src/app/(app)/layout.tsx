@@ -18,6 +18,7 @@ import {
   Wheat,
   Pill,
   CheckSquare,
+  ClipboardList,
   Settings,
   AlertTriangle,
   Package,
@@ -49,6 +50,10 @@ import { ThemeIconButton } from "../../components/shell/ThemeIconButton";
 import { resolveLobFamily } from "@/lib/lob";
 import { LIVESTOCK_SECTIONS } from "@/components/console/livestock/livestock-page-shell";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
+
+/** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
+const sortCountries = (rows: any) =>
+  Array.isArray(rows) ? [...rows].sort((a, b) => String(a.country_name ?? "").localeCompare(String(b.country_name ?? ""))) : rows;
 
 export default function ConsoleLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const router = useRouter();
@@ -161,7 +166,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         api.get("/timezone").then((r: any) => r?.data ?? r).catch(() => []),
         // /country now answers with the shared list envelope, like every
         // other master; take the rows out of it.
-        api.get("/country").then((r: any) => r?.data ?? r).catch(() => []),
+        api.get("/country?limit=500").then((r: any) => sortCountries(r?.data ?? r)).catch(() => []),
         api.get("/setup/wizard/nobs").then((r: any) => r?.data ?? r).catch(() => []),
       ]);
       setLanguages(langList);
@@ -288,7 +293,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
     { label: t("invFeedForecast"), href: "/inventory/feed-forecast" },
-    { label: t("invRequisitions"), href: "/inventory/requisitions" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
     { label: t("invTransfers"), href: "/inventory/transfers" },
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
@@ -316,7 +320,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("dashboard"),       href: "/dashboard",      icon: LayoutDashboard },
       { label: t("execDashboard"),   href: "/executive-dashboard", icon: Gauge },
       { label: t("companies"),       href: "/companies",      icon: Building2 },
-      { label: t("masterData"),      href: "/master-data",    icon: Database, activePrefix: "/master-data", children: masterDataChildren, flyout: true },
+      // No Master Data at tenant level (client ruling, 12 Oct): it is managed
+      // inside a company or an operational area.
       { label: t("teamManagement"),  href: "/users",          icon: Users },
       { label: t("auditLedger"),     href: "/audit",          icon: History },
       { label: t("notifications"),   href: "/notifications",  icon: Bell, activePrefix: "/notifications" },
@@ -338,6 +343,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
+      { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
@@ -363,7 +370,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         children: [
           { label: t("companySettings"), href: "/company/settings" },
           { label: t("navInventorySetup"), href: "/settings/inventory-setup" },
-          { label: tLabel("Reporting Periods"), href: "/settings/reporting-periods" },
         ],
       },
     ];
@@ -411,6 +417,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         children: livestockChildren,
       },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
+      { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },

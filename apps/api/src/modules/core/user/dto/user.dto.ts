@@ -53,6 +53,11 @@ export class CreateUserDto {
   @IsOptional()
   department?: string;
 
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
   @ApiProperty({ description: 'Job designation', required: false, example: 'Senior Farm Manager' })
   @IsString()
   @IsOptional()
@@ -67,6 +72,11 @@ export class CreateUserDto {
   @IsUUID()
   @IsOptional()
   farm_id?: string;
+
+  @ApiProperty({ description: 'Direct Transfer right (WP1c): User Setup grants it; the requisition reads only this', required: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  direct_transfer_allowed?: boolean;
 
   @ApiProperty({ description: 'Operational areas the user works in (replaces the current set on update)', required: false, type: [String] })
   @IsArray()
@@ -102,6 +112,11 @@ export class UpdateUserDto {
   @IsOptional()
   department?: string;
 
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
   @ApiProperty({ description: 'Job designation', required: false, example: 'Senior Farm Manager' })
   @IsString()
   @IsOptional()
@@ -116,6 +131,11 @@ export class UpdateUserDto {
   @IsUUID()
   @IsOptional()
   farm_id?: string;
+
+  @ApiProperty({ description: 'Direct Transfer right (WP1c): User Setup grants it; the requisition reads only this', required: false, default: false })
+  @IsBoolean()
+  @IsOptional()
+  direct_transfer_allowed?: boolean;
 
   @ApiProperty({ description: 'Operational areas the user works in; replaces the current set', required: false, type: [String] })
   @IsArray()

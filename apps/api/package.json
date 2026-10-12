@@ -12,6 +12,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/verify-demo-master-integrity.ts"
         }
       },
+      "db-backfill-feed-forecast-requisition": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/backfill-feed-forecast-requisition.ts"
+        }
+      },
       "db-seed-documented-reasons": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -121,6 +129,14 @@
           "command": "node --import tsx src/scripts/seed-piggery-two-batches.ts"
         }
       },
+      "db-seed-feed-mill-location-types": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/seed-feed-mill-location-types.ts"
+        }
+      },
       "db-seed-farm-locations": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -142,6 +158,86 @@
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-production-permissions.ts"
+        }
+      },
+      "db-align-requisition-permissions": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-requisition-permissions.ts"
+        }
+      },
+      "db-fill-service-line-descriptions": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/fill-service-line-descriptions.ts"
+        }
+      },
+      "db-split-comma-serial-layers": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/split-comma-serial-layers.ts"
+        }
+      },
+      "db-fix-requisition-farm": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-requisition-farm.ts"
+        }
+      },
+      "db-seed-mill-manager-role": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-mill-manager-role.ts"
+        }
+      },
+      "db-seed-departments": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-departments.ts"
+        }
+      },
+      "db-seed-feed-mill-demo": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-feed-mill-demo.ts"
+        }
+      },
+      "db-seed-test-masters": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-test-masters.ts"
+        }
+      },
+      "db-fix-feed-requisition-received": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/fix-feed-requisition-received.ts"
+        }
+      },
+      "db-align-requisition-demo-data": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-requisition-demo-data.ts"
         }
       },
       "db-assign-operator-operational-area": {
@@ -174,6 +270,22 @@
         "options": {
           "cwd": "apps/api",
           "command": "node --import tsx src/scripts/align-stages-to-tdd.ts"
+        }
+      },
+      "db-recompute-transfer-status": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/recompute-transfer-status.ts"
+        }
+      },
+      "db-align-feed-tdd": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-feed-tdd.ts"
         }
       },
       "db-fix-batch-000001-vitamin-line": {
@@ -581,6 +693,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/schedule": "^6.1.3",
     "@nestjs/swagger": "^11.4.6",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",

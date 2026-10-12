@@ -96,7 +96,7 @@ function SearchableEntityPanel({
     inputRef.current?.focus({ preventScroll: true });
     if (selectedIdx >= 0 && listRef.current) {
       const activeEl = listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[selectedIdx];
-      activeEl?.scrollIntoView({ block: "nearest" });
+      activeEl?.scrollIntoView?.({ block: "nearest" });
     }
   }, []);
 
@@ -300,14 +300,14 @@ export interface SearchableEntitySelectProps {
   options: Row[];
   valueKey: string;
   getLabel: (row: Row) => string;
+  /** Controls only the closed trigger text. The open option remains the full
+   * searchable label so users can identify similarly coded records. */
+  getSelectedLabel?: (row: Row) => string;
   /** One option row's columns, in order — the open list renders them as aligned
    * columns instead of one joined line. Omitted, the list stays single-column
-   * on `getLabel`, so every existing call site is unaffected. */
+   * on `getLabel`, so every existing call site is unaffected. The closed trigger
+   * uses the field/column meaning to choose code, description, or name. */
   getLabelParts?: (row: Row) => string[];
-  /** What the trigger shows once an option is picked. The open list shows code and
-   * name side by side to help find a row; the field itself shows one value. Omitted,
-   * it is the name (the second column), or the whole label when there are no columns. */
-  getSelectedLabel?: (row: Row) => string;
   columnHeaders?: string[];
   disabled?: boolean;
   loading?: boolean;
@@ -335,8 +335,8 @@ export function SearchableEntitySelect({
   options,
   valueKey,
   getLabel,
-  getLabelParts,
   getSelectedLabel,
+  getLabelParts,
   columnHeaders,
   disabled,
   loading = false,
@@ -357,12 +357,29 @@ export function SearchableEntitySelect({
   useEffect(() => { if (unavailable) setOpen(false); }, [unavailable]);
 
   const selected = options.find((o) => String(o[valueKey]) === String(value));
-  const selectedLabelOf = (row: Row): string => {
-    if (getSelectedLabel) return getSelectedLabel(row);
-    const parts = getLabelParts?.(row);
-    if (parts && parts.length > 1) return parts[1] || parts[0] || getLabel(row);
-    return getLabel(row);
-  };
+  const selectedText = selected ? (() => {
+    if (getSelectedLabel) return getSelectedLabel(selected);
+    if (!getLabelParts) return getLabel(selected);
+
+    const parts = getLabelParts(selected);
+    if (!columnHeaders?.length) return parts[1] || parts[0] || getLabel(selected);
+    const normalizedHeaders = columnHeaders.map((header) => header.trim().toLowerCase());
+    const codeIndex = normalizedHeaders.findIndex((header) => /\b(code|no\.?|number)\b/.test(header));
+    const descriptionIndex = normalizedHeaders.findIndex((header) => /\b(description|desc)\b/.test(header));
+    const nameIndex = normalizedHeaders.findIndex((header) => /\bname\b/.test(header));
+    const field = ariaLabel.trim().toLowerCase();
+
+    if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
+    if (/\b(description|desc)\b/.test(field)) {
+      const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
+      if (index >= 0) return parts[index] || getLabel(selected);
+    }
+
+    // A generic entity field (Item, Supplier, Farm...) displays its human
+    // name/description after selection, while the open list retains all parts.
+    const humanIndex = nameIndex >= 0 ? nameIndex : descriptionIndex;
+    return humanIndex >= 0 ? parts[humanIndex] || getLabel(selected) : getLabel(selected);
+  })() : null;
 
   return (
     <Popover
@@ -393,7 +410,7 @@ export function SearchableEntitySelect({
             ...triggerStyle,
           }}
         >
-          {loading ? "Loading records…" : selected ? selectedLabelOf(selected) : placeholder}
+          {loading ? "Loading records…" : selected ? selectedText : placeholder}
         </button>
       )}
     >

@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { assertCompanyInScope, farmScope, locationOnFarm, locationReferenceScopeConditions, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
-import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto, ReceiveStockTransferDto, ShipStockTransferDto } from './dto/stock-transfer.dto';
+import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto, PostShipmentDto, PostReceiptDto, PostDirectTransferDto, ReceiveStockTransferDto, ShipStockTransferDto } from './dto/stock-transfer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
@@ -14,6 +14,34 @@ import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
+import { OPEN_TRANSFER_STATUSES, transferStatusFor, assertTrackingForShipment, serialsForReceipt, splitAmount, assertFeedReceiptLine, receiptVariance } from './transfer-execution.rules';
+
+/**
+ * W2T: what a feed receipt checks per transfer line (FeedRequisitionService
+ * builds it). A common requisition or hand-made transfer passes none, so its
+ * receipt keeps today's rules and only records the variance.
+ */
+export interface SourceLink {
+  source_requisition_id: string | null;
+  source_requisition_no: string | null;
+  source_requisition_kind: 'FEED' | 'COMMON' | null;
+  source_consolidation_id: string | null;
+  source_consolidation_no: string | null;
+  source_loading_sheet_id: string | null;
+  source_loading_sheet_no: string | null;
+  source_loading_sheets: Array<{ loading_sheet_id: string; loading_sheet_no: string; requisition_line_id: string | null }>;
+}
+const EMPTY_SOURCE_LINK: SourceLink = {
+  source_requisition_id: null, source_requisition_no: null, source_requisition_kind: null,
+  source_consolidation_id: null, source_consolidation_no: null,
+  source_loading_sheet_id: null, source_loading_sheet_no: null, source_loading_sheets: [],
+};
+
+export interface FeedReceiptControls {
+  bagSizeKg: number;
+  lines: Map<string, { label: string; feedType: string | null; loadingSheetId: string | null; loadingSheetNo: string | null }>;
+}
+import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -75,39 +103,123 @@ export class StockTransferService {
         'Destination location',
       );
 
-      const transferId = randomUUID();
-      const transferNo = await this.db.transaction(async (tx) => {
-        const no = await this.generateTransferNo(tenantId, dto.company_id, tx);
-        await tx.insert(schema.stockTransfer).values({
-          transfer_id: transferId,
-          tenant_id: tenantId,
-          company_id: dto.company_id,
-          transfer_no: no,
-          posting_date: dto.posting_date,
-          from_warehouse_id: dto.from_warehouse_id,
-          to_warehouse_id: dto.to_warehouse_id,
-          remarks: dto.remarks || null,
-          status: 'DRAFT',
-          created_by: userPayload?.userId || null,
-          updated_by: userPayload?.userId || null,
-        });
-        return no;
-      });
-
-      await this.insertLines(transferId, dto.lines);
-
-      await this.auditService.log({
-        tenantId,
-        companyId: dto.company_id,
-        userId: userPayload?.userId,
-        action: 'CREATE',
-        entityName: 'stock_transfer',
-        entityId: transferId,
-        newValues: { transfer_no: transferNo, ...dto },
-      });
-
-      return this.findOne(transferId);
+      const created = await this.createRecord(dto, tenantId, userPayload);
+      return this.findOne(created.transfer_id);
     });
+  }
+
+  /**
+   * Internal feed release path. The feed service owns the surrounding tenant
+   * transaction so every grouped transfer and its link either commits together
+   * or disappears together. This method deliberately refuses standalone use.
+   */
+  async createForFeedRelease(
+    dto: CreateStockTransferDto,
+    tenantId: string,
+    userPayload?: { userId?: string; userType?: string; email?: string },
+  ): Promise<{ transfer_id: string; transfer_no: string }> {
+    if (this.cls.get('tenantPostingTransaction') !== true) {
+      throw new Error('Feed release transfers must be created inside the feed requisition transaction.');
+    }
+    assertCompanyInScope(farmScope(this.cls), dto.company_id);
+    if (dto.lines.some((line) => !line.requisition_line_id)) {
+      throw new BadRequestException('Every feed release transfer line must include requisition_line_id.');
+    }
+
+    const context = await this.loadFeedReleaseContext(dto, tenantId);
+    const active = (row: any) => row?.is_active === true && row?.status === 'ACTIVE' && !row?.deleted_at;
+    if (!context.source || context.source.location_type !== 'BIN' || !active(context.source)) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must be an active BIN.`);
+    }
+    if (context.source.tenant_id !== tenantId || context.source.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must belong to company ${dto.company_id}.`);
+    }
+    if (!context.mill || context.mill.location_type !== 'MILL' || !active(context.mill)
+      || context.mill.tenant_id !== tenantId || context.mill.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must have an active MILL parent.`);
+    }
+    if (!context.destination || !['SILO', 'STORE'].includes(context.destination.location_type) || !active(context.destination)) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must be an active SILO or STORE.`);
+    }
+    if (context.destination.tenant_id !== tenantId || context.destination.company_id !== dto.company_id) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to company ${dto.company_id}.`);
+    }
+    // Feed requisitions use farm_id as the canonical farm location. Older
+    // drafts may not populate the optional common-requisition field.
+    const requisitionFarmId = context.requisition.main_location_id ?? context.requisition.farm_id;
+    if (!requisitionFarmId
+      || (context.destination.parent_location_id !== requisitionFarmId && context.destination.farm_id !== requisitionFarmId)) {
+      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to requisition farm ${requisitionFarmId ?? '(missing)'}.`);
+    }
+
+    return this.createRecord(dto, tenantId, userPayload);
+  }
+
+  private async loadFeedReleaseContext(dto: CreateStockTransferDto, tenantId: string) {
+    const lineIds = dto.lines.map((line) => line.requisition_line_id!);
+    const requisitions = await this.db
+      .select({
+        line_id: schema.requisitionLine.line_id,
+        requisition_id: schema.requisition.requisition_id,
+        tenant_id: schema.requisition.tenant_id,
+        company_id: schema.requisition.company_id,
+        main_location_id: schema.requisition.main_location_id,
+        farm_id: schema.requisition.farm_id,
+      })
+      .from(schema.requisitionLine)
+      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(and(
+        inArray(schema.requisitionLine.line_id, lineIds),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, dto.company_id),
+        isNull(schema.requisition.deleted_at),
+      ));
+    const requisitionIds = new Set(requisitions.map((row) => row.requisition_id));
+    if (requisitions.length !== lineIds.length || requisitionIds.size !== 1) {
+      throw new BadRequestException('Every feed transfer line must belong to the same active feed requisition.');
+    }
+
+    const selectLocation = async (locationId: string) => {
+      const [row] = await this.db.select().from(schema.locationMaster).where(and(
+        eq(schema.locationMaster.location_id, locationId),
+        eq(schema.locationMaster.tenant_id, tenantId),
+        isNull(schema.locationMaster.deleted_at),
+      )).limit(1);
+      return row;
+    };
+    const source = await selectLocation(dto.from_warehouse_id);
+    const mill = source?.parent_location_id ? await selectLocation(source.parent_location_id) : undefined;
+    const destination = await selectLocation(dto.to_warehouse_id);
+    return { requisition: requisitions[0], source, mill, destination };
+  }
+
+  private async createRecord(dto: CreateStockTransferDto, tenantId: string, userPayload?: { userId?: string }) {
+    const transferId = randomUUID();
+    const transferNo = await this.generateTransferNo(tenantId, dto.company_id, this.db);
+    await this.db.insert(schema.stockTransfer).values({
+      transfer_id: transferId,
+      tenant_id: tenantId,
+      company_id: dto.company_id,
+      transfer_no: transferNo,
+      posting_date: dto.posting_date,
+      from_warehouse_id: dto.from_warehouse_id,
+      to_warehouse_id: dto.to_warehouse_id,
+      remarks: dto.remarks || null,
+      status: 'DRAFT',
+      created_by: userPayload?.userId || null,
+      updated_by: userPayload?.userId || null,
+    });
+    await this.insertLines(transferId, dto.lines);
+    await this.auditService.log({
+      tenantId,
+      companyId: dto.company_id,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'stock_transfer',
+      entityId: transferId,
+      newValues: { transfer_no: transferNo, ...dto },
+    });
+    return { transfer_id: transferId, transfer_no: transferNo };
   }
 
   private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
@@ -141,6 +253,7 @@ export class StockTransferService {
           lot_no: line.lot_no || null,
           serial_no: line.serial_no || null,
           remarks: finalRemarks,
+          requisition_line_id: line.requisition_line_id ?? null,
         };
       })
     );
@@ -153,8 +266,9 @@ export class StockTransferService {
    * draft's quantities and post it, draining the source farm's warehouse. So
    * farm, LOB and company sit on from_warehouse_id only.
    */
-  private async loadForMutation(id: string, tenantId: string) {
+  private async loadForMutation(id: string, tenantId: string, requisitionExecution = false) {
     const scope = farmScope(this.cls);
+    const locationScope = requisitionExecution ? [] : locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id);
     const [transfer] = await this.db
       .select()
       .from(schema.stockTransfer)
@@ -162,7 +276,7 @@ export class StockTransferService {
         eq(schema.stockTransfer.transfer_id, id),
         eq(schema.stockTransfer.tenant_id, tenantId),
         isNull(schema.stockTransfer.deleted_at),
-        ...locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id),
+        ...locationScope,
         ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
       ))
       .for('update');
@@ -555,8 +669,82 @@ export class StockTransferService {
 
     const ledgerEntries = await this.getLedgerHistory(transfer.transfer_no, transfer.company_id, transfer.tenant_id);
     const enrichedLines = this.enrichLinesWithQuantities(lines, ledgerEntries, transfer.status);
+    const [shipped, received] = await Promise.all([
+      this.shippedQuantities(id, transfer.tenant_id),
+      this.receivedQuantities(id, transfer.tenant_id),
+    ]);
+    const source = (await this.sourceLinks([id], transfer.tenant_id)).get(id) ?? EMPTY_SOURCE_LINK;
+    return {
+      ...transfer,
+      ...source,
+      lines: enrichedLines.map((line: any) => ({
+        ...line,
+        qty_shipped: shipped.get(line.line_id) ?? 0,
+        qty_received: received.get(line.line_id) ?? 0,
+      })),
+      ledgerEntries,
+    };
+  }
 
-    return { ...transfer, lines: enrichedLines, ledgerEntries };
+  /**
+   * W2T / W9 (cp 43, Req r136): the requisition a transfer fulfils, through
+   * stock_transfer_line.requisition_line_id — its id, no. and kind (FEED or
+   * COMMON), and for feed the Mill Consolidation Sheet and loading sheet(s).
+   * A hand-made transfer has no requisition line and gets EMPTY_SOURCE_LINK.
+   */
+  private async sourceLinks(transferIds: string[], tenantId: string): Promise<Map<string, SourceLink>> {
+    const out = new Map<string, SourceLink>();
+    if (!transferIds.length) return out;
+    const rows = await this.db
+      .select({
+        transfer_id: schema.stockTransferLine.transfer_id,
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+        requisition_id: schema.requisition.requisition_id,
+        req_no: schema.requisition.req_no,
+        doc_type: schema.requisition.doc_type,
+        consolidation_id: schema.feedConsolidation.consolidation_id,
+        consolidation_no: schema.feedConsolidation.consolidation_no,
+        loading_sheet_id: schema.feedLoadingSheet.loading_sheet_id,
+        loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
+      })
+      .from(schema.stockTransferLine)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
+      .innerJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
+      .innerJoin(schema.requisition, and(
+        eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id),
+        eq(schema.requisition.tenant_id, tenantId),
+        eq(schema.requisition.company_id, schema.stockTransfer.company_id),
+      ))
+      .leftJoin(schema.feedConsolidation, and(
+        eq(schema.feedConsolidation.consolidation_id, schema.requisition.feed_consolidation_id),
+        eq(schema.feedConsolidation.tenant_id, tenantId),
+        eq(schema.feedConsolidation.company_id, schema.stockTransfer.company_id),
+      ))
+      .leftJoin(schema.feedLoadingSheet, and(
+        eq(schema.feedLoadingSheet.requisition_line_id, schema.stockTransferLine.requisition_line_id),
+        eq(schema.feedLoadingSheet.tenant_id, tenantId),
+        eq(schema.feedLoadingSheet.company_id, schema.stockTransfer.company_id),
+      ))
+      .where(and(inArray(schema.stockTransferLine.transfer_id, transferIds), eq(schema.stockTransfer.tenant_id, tenantId)));
+    for (const r of rows) {
+      const link = out.get(r.transfer_id) ?? {
+        source_requisition_id: r.requisition_id,
+        source_requisition_no: r.req_no,
+        source_requisition_kind: r.doc_type === 'FEED' ? 'FEED' : 'COMMON',
+        source_consolidation_id: r.consolidation_id ?? null,
+        source_consolidation_no: r.consolidation_no ?? null,
+        source_loading_sheet_id: null,
+        source_loading_sheet_no: null,
+        source_loading_sheets: [],
+      } as SourceLink;
+      if (r.loading_sheet_id && !link.source_loading_sheets.some((ls) => ls.loading_sheet_id === r.loading_sheet_id)) {
+        link.source_loading_sheets.push({ loading_sheet_id: r.loading_sheet_id, loading_sheet_no: r.loading_sheet_no!, requisition_line_id: r.requisition_line_id });
+        link.source_loading_sheet_id ??= r.loading_sheet_id;
+        link.source_loading_sheet_no ??= r.loading_sheet_no;
+      }
+      out.set(r.transfer_id, link);
+    }
+    return out;
   }
 
   async findAll(query: QueryStockTransferDto, tenantId: string) {
@@ -604,12 +792,14 @@ export class StockTransferService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(schema.stockTransfer)
       .where(and(...conditions))
       .limit(limit)
       .offset(offset);
+    const links = await this.sourceLinks(rows.map((r: any) => r.transfer_id), tenantId);
+    return rows.map((r: any) => ({ ...r, ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK) }));
   }
 
   async getPendingReceipts(query: QueryStockTransferDto, tenantId: string) {
@@ -771,16 +961,103 @@ export class StockTransferService {
     }
   }
 
+  /** Shipment numbers already posted against the transfer, oldest first. */
+  private async shipmentNos(transferId: string, tenantId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ shipment_no: schema.transferShipment.shipment_no })
+      .from(schema.transferShipment)
+      .where(and(
+        eq(schema.transferShipment.transfer_id, transferId),
+        eq(schema.transferShipment.tenant_id, tenantId),
+        isNull(schema.transferShipment.deleted_at),
+      ))
+      .orderBy(schema.transferShipment.shipment_no);
+    return rows.map((r) => r.shipment_no);
+  }
+
+  /**
+   * Once any shipment exists the order is fixed (Part E Task 4b): an edit
+   * replaces the lines with new ids and orphans the shipment/receipt lines,
+   * or moves the destination after the stock has left; a cancel leaves the
+   * stock in In Transit with no reversal. The events are read, not only the
+   * status, so a DRAFT row written before statuses followed events is
+   * refused too.
+   */
+  private async assertNotShipped(transfer: { transfer_id: string; transfer_no: string }, tenantId: string, action: 'edited' | 'cancelled') {
+    const shipped = await this.shipmentNos(transfer.transfer_id, tenantId);
+    if (shipped.length > 0) {
+      throw new BadRequestException(
+        `Stock Transfer ${transfer.transfer_no} cannot be ${action} — stock has already shipped on ${shipped.join(', ')}. ` +
+        'Receive what was shipped; the order can no longer change.',
+      );
+    }
+  }
+
+  /**
+   * A further shipment or receipt may be posted while the transfer is open:
+   * DRAFT, IN_TRANSIT or PARTIALLY_RECEIVED (Part E Task 4b). assertDraft
+   * stays for the edits that must stop once stock has moved.
+   */
+  private assertOpen(transfer: { status: string; transfer_no?: string }) {
+    if (!(OPEN_TRANSFER_STATUSES as readonly string[]).includes(transfer.status)) {
+      const name = transfer.transfer_no ? `Stock Transfer ${transfer.transfer_no}` : 'Stock Transfer';
+      throw new BadRequestException(`${name} cannot take a further shipment or receipt — it is already ${transfer.status}.`);
+    }
+  }
+
+  /**
+   * Write the status the events now imply (transferStatusFor), inside the
+   * event's own transaction. POSTED carries the same posted_at / posted_by
+   * stamping postDirectTransfer has always used. The row is already locked
+   * by loadForMutation; the open-status guard on the UPDATE is the same
+   * claim discipline as the old DRAFT -> POSTED claim.
+   */
+  private async writeEventStatus(
+    id: string,
+    lines: Array<{ line_id: string; quantity: unknown }>,
+    shipped: Map<string, number>,
+    received: Map<string, number>,
+    userPayload?: any,
+  ) {
+    const status = transferStatusFor(lines.map((l) => ({
+      ordered: Number(l.quantity),
+      shipped: shipped.get(l.line_id) ?? 0,
+      received: received.get(l.line_id) ?? 0,
+    })));
+    const set: Record<string, unknown> = {
+      status,
+      updated_by: userPayload?.userId || null,
+      updated_at: toMysqlTimestamp(),
+    };
+    if (status === 'POSTED') {
+      set.posted_at = toMysqlTimestamp();
+      set.posted_by = userPayload?.userId || null;
+    }
+    const [claim] = await this.db
+      .update(schema.stockTransfer)
+      .set(set as any)
+      .where(and(eq(schema.stockTransfer.transfer_id, id), inArray(schema.stockTransfer.status, [...OPEN_TRANSFER_STATUSES])));
+    if (claim.affectedRows === 0) {
+      throw new BadRequestException('Stock Transfer cannot take this event — it was already posted or cancelled by another request.');
+    }
+    return status;
+  }
+
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
-      this.assertDraft(transfer);
 
       // Both warehouses, changed or not, against create()'s rules. The source
       // staying on the editor's farm is also what keeps the edited transfer
       // visible to them whatever to_warehouse_id becomes.
       const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
       const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
+      // M6 (fix round 1): the cheap, event-based refusal first — if stock has
+      // already shipped the edit is refused outright, so there is no reason
+      // to also validate warehouses the caller may be trying to change.
+      // Reads only below; nothing is written before both refusals.
+      await this.assertNotShipped(transfer, tenantId, 'edited');
+      this.assertDraft(transfer);
       await this.assertWarehouses(fromWarehouseId, toWarehouseId);
 
       const updates: any = {
@@ -796,6 +1073,28 @@ export class StockTransferService {
         .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
 
       if (dto.lines) {
+        // Fix round 2, Important (coordinator, 4 Oct): round 1's position
+        // (line_no) inference was unsound — insertLines always assigns
+        // line_no = idx + 1 with no item cross-check, so a reorder swaps two
+        // lines' links, a removal from the front/middle hands the survivor a
+        // stranger's FK, and a front-insertion misattributes two links while
+        // silently dropping a third. That trades a loud NULL for a silent
+        // wrong FK (shipped/received quantities posted to the wrong
+        // requisition line) — worse, not better. There is no sound inference
+        // here: only the caller knows which incoming line is which. So this
+        // refuses instead: if the transfer carries ANY requisition_line_id
+        // today, every replacement line must supply its own; an ordinary
+        // hand-made transfer (no links anywhere) is unaffected.
+        const existingLinks = await this.db
+          .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id })
+          .from(schema.stockTransferLine)
+          .where(eq(schema.stockTransferLine.transfer_id, id));
+        const hasExistingLinks = existingLinks.some((l) => l.requisition_line_id);
+        if (hasExistingLinks && dto.lines.some((line) => !line.requisition_line_id)) {
+          throw new BadRequestException(
+            `Stock Transfer ${transfer.transfer_no} came from a requisition release; every replacement line must supply its requisition_line_id.`,
+          );
+        }
         await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
         await this.insertLines(id, dto.lines);
       }
@@ -818,6 +1117,7 @@ export class StockTransferService {
   async remove(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
+      await this.assertNotShipped(transfer, tenantId, 'cancelled');
       this.assertDraft(transfer);
       const deletedTime = toMysqlTimestamp();
 
@@ -841,83 +1141,557 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * P1 follow-up I1 (Rishi, 4 and 5 Oct): a transfer created by a requisition's
+   * Release is posted from the requisition only. There the From department
+   * ships and the requester receives. The generic stock-transfer posting
+   * routes call this first, and so do PUT and DELETE, because editing or
+   * cancelling the transfer would change what the requisition ships and
+   * receives behind its back. postShipment and postReceipt do not, because
+   * RequisitionService.ship and receive call them after their own checks. A
+   * transfer is linked when any line carries a requisition_line_id, the same
+   * test update() applies to replacement lines.
+   */
+  async assertNotRequisitionTransfer(id: string, tenantId: string): Promise<void> {
+    const [linked] = await this.db
+      .select({
+        requisition_line_id: schema.stockTransferLine.requisition_line_id,
+        transfer_no: schema.stockTransfer.transfer_no,
+        req_no: schema.requisition.req_no,
+      })
+      .from(schema.stockTransferLine)
+      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
+      .leftJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
+      .leftJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+      .where(and(
+        eq(schema.stockTransferLine.transfer_id, id),
+        eq(schema.stockTransfer.tenant_id, tenantId),
+        sql`${schema.stockTransferLine.requisition_line_id} IS NOT NULL`,
+      ))
+      .limit(1);
+    if (linked) {
+      throw new BadRequestException(
+        `Stock Transfer ${linked.transfer_no} belongs to requisition ${linked.req_no ?? '(unknown)'}; post its shipment and receipt from the requisition.`,
+      );
+    }
+  }
+
   async post(id: string, tenantId: string, userPayload?: any) {
-    const posted = await withTenantTransaction(this.cls, async () => {
-      const transfer = await this.loadForMutation(id, tenantId);
-      this.assertDraft(transfer);
+    // Compatibility wrapper (Task 10): the atomic one-step posting is now a
+    // direct transfer — one shipment covering every line plus its matching
+    // receipt, in one transaction — through the same services a partial
+    // shipment or receipt uses. The DRAFT claim stays, so the old race
+    // protections hold.
+    return this.postDirectTransfer(id, { posting_date: new Date().toISOString().slice(0, 10), lines: [] }, tenantId, userPayload);
+  }
 
-      // The source with the caller's full scope, farm included — posting drains
-      // it. (This used to drop farmId for both warehouses.)
-      await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
-
-      if (!transfer.lines || transfer.lines.length === 0) {
-        throw new BadRequestException('Cannot post a Transfer Order with no lines.');
+  /**
+   * Transfer a draft's lines with their already-assigned lot/serial (Task 10):
+   * the events carry identity, the order line stays the contract. Lines with
+   * no event in this call are simply not shipped yet — partial by design.
+   */
+  async postShipment(id: string, dto: PostShipmentDto, tenantId: string, userPayload?: any, requisitionExecution = false) {
+    const result = await withTenantTransaction(this.cls, async () => {
+      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
+      this.assertOpen(transfer);
+      if (transfer.from_warehouse_id === transfer.to_warehouse_id) {
+        throw new BadRequestException('A transfer needs two different warehouses.');
       }
-
-      // Before the DRAFT -> POSTED claim: a refusal here must leave the transfer
-      // a draft the farm can correct, which is also the order every other check
-      // in this method already follows.
+      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
-      // Claim the DRAFT -> POSTED transition atomically before writing any
-      // ledger/GL entries — see goods-receipt.service.ts's post() for the full
-      // rationale (closes both the double-post race and the "retry after a
-      // partial failure duplicates the successful lines" hole).
-      const [claim] = await this.db
-        .update(schema.stockTransfer)
-        .set({
-          status: 'POSTED',
-          posted_at: toMysqlTimestamp() as any,
-          posted_by: userPayload?.userId || null,
-          updated_by: userPayload?.userId || null,
-        })
-        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
-
-      if (claim.affectedRows === 0) {
-        throw new BadRequestException('Transfer Order cannot be posted — it was already posted by another request.');
+      this.assertDistinctLines(dto.lines, 'shipment');
+      // Cumulative shipped quantities per line, from the events so far.
+      const shippedByLine = await this.shippedQuantities(id, tenantId);
+      const eventLines: Array<{ line: typeof schema.stockTransferLine.$inferSelect; qty: number; balance: number; lotNo?: string; serialNo?: string }> = [];
+      for (const input of dto.lines) {
+        const line = transfer.lines.find((l) => l.line_id === input.line_id);
+        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`);
+        const alreadyShipped = shippedByLine.get(line.line_id) ?? 0;
+        // Bounds run in the line's own UOM: the ordered quantity is the line,
+        // already-shipped comes from the events.
+        this.assertShipment(Number(line.quantity), alreadyShipped, input.quantity, line);
+        eventLines.push({ line, qty: input.quantity, balance: Number(line.quantity) - alreadyShipped, lotNo: line.lot_no ?? undefined, serialNo: line.serial_no ?? undefined });
+      }
+      // WP1c: a tracked item (is_lot_tracked / is_serial_tracked on the
+      // Item Master) refuses shipment without its lot/serial assignment. Load
+      // the flags once, per distinct item, so a line's assignment and qty
+      // cannot disagree (the hole the WP1c ruled was closed).
+      const itemFlags = new Map<string, { isLotTracked: boolean; isSerialTracked: boolean }>();
+      if (eventLines.some((e) => e.line.item_id)) {
+        const itemIds = [...new Set(eventLines.map((e) => e.line.item_id).filter((v): v is string => Boolean(v)))];
+        const flags = await this.db
+          .select({ item_id: schema.itemMaster.item_id, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked })
+          .from(schema.itemMaster)
+          .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)));
+        for (const f of flags) itemFlags.set(f.item_id, { isLotTracked: Boolean(f.is_lot_tracked), isSerialTracked: Boolean(f.is_serial_tracked) });
       }
 
-      for (const line of transfer.lines) {
-        const { shipment, receipt } = await this.ledgerService.writeTransferEntries({
-          tenantId,
-          companyId: transfer.company_id,
-          itemId: line.item_id,
-          documentNo: transfer.transfer_no,
-          documentLineId: line.line_id,
-          postingDate: transfer.posting_date,
-          quantity: Number(line.quantity),
+      const shipmentId = randomUUID();
+      const shipmentNo = await this.nextEventNo(transfer.company_id, tenantId, 'SH');
+      await this.db.insert(schema.transferShipment).values({
+        shipment_id: shipmentId,
+        tenant_id: tenantId,
+        transfer_id: id,
+        shipment_no: shipmentNo,
+        shipment_date: dto.posting_date,
+        status: 'POSTED',
+        created_by: userPayload?.userId || null,
+      });
+      // Enforce before anything is written: a tracked item's lot/serial
+      // assignment must exist and cover the shipped quantity exactly.
+      // WP4a fix round 1: the ONE tracking rule (also the requisition's Item
+      // Tracking route's) — a serial-tracked line ships its whole balance with
+      // exactly one serial per unit.
+      for (const { line, qty, balance, lotNo, serialNo } of eventLines) {
+        const flags = itemFlags.get(line.item_id ?? '');
+        if (flags?.isLotTracked || flags?.isSerialTracked) {
+          assertTrackingForShipment(flags, { lot_no: lotNo ?? null, serial_no: serialNo ?? null }, qty, balance);
+        }
+      }
+
+      for (const { line, qty, lotNo, serialNo } of eventLines) {
+        // Out of the source only; the destination leg is the receipt's (Part E Task 4).
+        // WP4a fix round 1: a serial-tracked line leaves as one ledger row per
+        // serial — each a FIFO draw of exactly that unit from the From location
+        // (strict, writeTransferShipment) — and the shipment line records the
+        // identities those rows were written with, so the receipt copies exactly
+        // what left. A lot is FIFO-filtered to the line's lot and recorded from
+        // its ledger row the same way.
+        const serials = itemFlags.get(line.item_id ?? '')?.isSerialTracked
+          ? String(serialNo ?? '').split(',').map((v) => v.trim()).filter(Boolean)
+          : [];
+        const draws = serials.length > 0 ? serials.map((sn) => ({ quantity: 1, serialNo: sn as string | undefined })) : [{ quantity: qty, serialNo }];
+        const entries: Array<{ lot_no?: string | null; serial_no?: string | null }> = [];
+        for (const draw of draws) {
+          const shipmentEntry = await this.ledgerService.writeTransferShipment({
+            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: shipmentNo, documentLineId: line.line_id,
+            postingDate: dto.posting_date, quantity: draw.quantity, uom: line.uom, fromWarehouseId: transfer.from_warehouse_id,
+            lotNo, serialNo: draw.serialNo, userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
+          entries.push({ lot_no: shipmentEntry?.lot_no, serial_no: shipmentEntry?.serial_no });
+        }
+        const recorded = (key: 'lot_no' | 'serial_no', requested: string | undefined) => {
+          const values = entries.map((e) => (e[key] === undefined ? requested : e[key])).filter((v): v is string => Boolean(v));
+          return values.length ? [...new Set(values)].join(',') : null;
+        };
+        await this.db.insert(schema.transferShipmentLine).values({
+          shipment_id: shipmentId,
+          line_id: line.line_id,
+          quantity: String(qty),
           uom: line.uom,
-          fromWarehouseId: transfer.from_warehouse_id,
-          toWarehouseId: transfer.to_warehouse_id,
-          lotNo: line.lot_no || undefined,
-          serialNo: line.serial_no || undefined,
-          userId: userPayload?.userId,
+          lot_no: recorded('lot_no', lotNo),
+          serial_no: serials.length > 0 ? recorded('serial_no', undefined) ?? serials.join(',') : recorded('serial_no', serialNo),
         });
-
-        // Both legs post to GL independently (each carries its own
-        // transaction_type — TRANSFER_SHIPMENT / TRANSFER_RECEIPT — so
-        // gl_mapping_master resolves them separately, typically via an
-        // inventory-in-transit clearing account).
-        await this.glPostingService.postInventoryLedgerEntry(shipment, userPayload?.userId);
-        await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
       }
+
+      // Status follows the event (Part E Task 4b): shipped so far plus this
+      // shipment, against what has been received.
+      const shippedAfter = new Map(shippedByLine);
+      for (const { line, qty } of eventLines) shippedAfter.set(line.line_id, (shippedAfter.get(line.line_id) ?? 0) + qty);
+      const status = await this.writeEventStatus(id, transfer.lines, shippedAfter, await this.receivedQuantities(id, tenantId), userPayload);
 
       await this.auditService.log({
         tenantId,
         companyId: transfer.company_id,
         userId: userPayload?.userId,
         action: 'POST',
+        entityName: 'transfer_shipment',
+        entityId: shipmentId,
+        newValues: { shipment_no: shipmentNo, transfer_no: transfer.transfer_no, lines: eventLines.length, status },
+      });
+      // Part E Task 7: a requisition linked to this transfer follows its events.
+      await syncRequisitionFulfilment(this.db, id);
+      return { shipment_id: shipmentId, shipment_no: shipmentNo, transfer_id: id, lines: eventLines.map((e) => ({ line_id: e.line.line_id, qty_shipped: e.qty })) };
+    });
+    return result;
+  }
+
+  /**
+   * Receive against a shipment (Task 10). The receipt is bound to its shipment,
+   * so a receipt cannot precede shipment structurally. Each line is bounded
+   * twice: by what THIS shipment carried on that line less the receipts
+   * already posted against the same shipment line, and by the whole line's
+   * shipped-minus-received. Lot/serial identity is copied from the shipment
+   * event, never re-typed. The receipt that closes a shipment line takes the
+   * line's remaining shipped value, so Inventory in Transit nets to zero.
+   */
+  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any, requisitionExecution = false, feedControls?: FeedReceiptControls) {
+    return withTenantTransaction(this.cls, async () => {
+      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
+      this.assertOpen(transfer);
+      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+
+      const [shipment] = await this.db.select().from(schema.transferShipment)
+        .where(and(
+          eq(schema.transferShipment.shipment_id, dto.shipment_id),
+          eq(schema.transferShipment.transfer_id, id),
+          eq(schema.transferShipment.tenant_id, tenantId),
+          isNull(schema.transferShipment.deleted_at),
+        ))
+        .limit(1);
+      if (!shipment) throw new NotFoundException(`Shipment '${dto.shipment_id}' does not belong to ${transfer.transfer_no}.`);
+
+      this.assertDistinctLines(dto.lines, 'receipt');
+      const shippedByLine = await this.shippedQuantities(id, tenantId);
+      const receivedByLine = await this.receivedQuantities(id, tenantId);
+      const shipmentLines = await this.db.select().from(schema.transferShipmentLine)
+        .where(eq(schema.transferShipmentLine.shipment_id, dto.shipment_id));
+      const receivedOnShipment = await this.receivedAgainstShipment(dto.shipment_id, tenantId);
+
+      const receiptId = randomUUID();
+      const receiptNo = await this.nextEventNo(transfer.company_id, tenantId, 'RC');
+      const receiptControls = new Map<string, { previouslyReceived: number; shipped: number; varianceQty: number | null }>();
+      await this.db.insert(schema.transferReceipt).values({
+        receipt_id: receiptId,
+        tenant_id: tenantId,
+        transfer_id: id,
+        shipment_id: dto.shipment_id,
+        receipt_no: receiptNo,
+        receipt_date: dto.posting_date,
+        status: 'POSTED',
+        created_by: userPayload?.userId || null,
+      });
+      for (const input of dto.lines) {
+        const shipmentLine = shipmentLines.find((sl) => sl.line_id === input.line_id);
+        if (!shipmentLine) {
+          // A line the shipment never carried is exactly "receipt before
+          // shipment" — whether or not the order happens to hold such a line.
+          throw new BadRequestException(`Line ${input.line_id} was not on shipment ${shipment.shipment_no}; a receipt cannot precede its shipment.`);
+        }
+        const line = transfer.lines.find((l) => l.line_id === input.line_id);
+        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`);
+        const alreadyShipped = shippedByLine.get(line.line_id) ?? 0;
+        const alreadyReceived = receivedByLine.get(line.line_id) ?? 0;
+        // Over-receipt is measured against what has shipped, never the order.
+        // The same 1e-9 tolerance as the shipment-level bound just below (and
+        // assertShipment) — alreadyShipped sums real event rows in JS float
+        // arithmetic, so closing a line shipped as e.g. 0.6 + 0.7 must not
+        // read as short of 0.7 remaining (fix round 1, Important 1).
+        if (input.quantity > alreadyShipped - alreadyReceived + 1e-9) {
+          throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
+        }
+        // ...and against THIS shipment: a receipt cannot draw on what another
+        // shipment carried (Part E Task 4, fix round 1).
+        const prior = receivedOnShipment.get(shipmentLine.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+        const leftOnShipment = Number(shipmentLine.quantity) - prior.qty;
+        if (input.quantity > leftOnShipment + 1e-9) {
+          throw new BadRequestException(`Receipt quantity exceeds what shipment ${shipment.shipment_no} has left to receive on this line (${leftOnShipment}).`);
+        }
+        // W2T: variance = shipped − (previously received + this posting). Over-receipt
+        // never gets here (refused above, decisions.md 10 Oct). A feed line must
+        // explain a shortfall, count its bags if BAGGED and name its delivery note.
+        const control = feedControls?.lines.get(line.line_id);
+        if (!control && input.bag_count != null) {
+          throw new BadRequestException('A bag count applies only to a BAGGED feed receipt line; remove it from this line.');
+        }
+        const varianceQty = control
+          ? assertFeedReceiptLine({
+            label: control.label, shipped: alreadyShipped, previouslyReceived: alreadyReceived, quantity: input.quantity,
+            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null,
+            varianceReason: input.variance_reason ?? null, deliveryNoteNo: input.delivery_note_no ?? null,
+          })
+          : receiptVariance(alreadyShipped, alreadyReceived, input.quantity);
+        receiptControls.set(line.line_id, { previouslyReceived: alreadyReceived, shipped: alreadyShipped, varianceQty });
+        // Into the destination only, at the rate the shipment carried out (Part E Task 4).
+        // The receipt that closes the shipment line takes its remaining value
+        // instead, so per-unit rounding never strands a residue in In Transit.
+        const rate = await this.ledgerService.transferShipmentRate({ tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id });
+        const closesShipmentLine = input.quantity >= leftOnShipment - 1e-9;
+        const amount = closesShipmentLine
+          ? await this.ledgerService.transferShipmentRemainingValue({
+            tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id, receiptNos: prior.receiptNos,
+          })
+          : undefined;
+        // WP4a: several serials on one shipment line land as one layer PER
+        // SERIAL (qty 1 each, the Goods Receipt's shape) — a single layer named
+        // "SN1,SN2" matched no consumer. A partial receipt takes the next
+        // serials not yet received on this shipment line.
+        const shippedSerials = String(shipmentLine.serial_no ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+        let receivedSerialNo = shipmentLine.serial_no;
+        if (shippedSerials.length > 1) {
+          const serials = serialsForReceipt(shipmentLine.serial_no, prior.qty, input.quantity);
+          const amounts = splitAmount(amount ?? input.quantity * rate, serials.length);
+          for (const [i, serialNo] of serials.entries()) {
+            const entry = await this.ledgerService.writeTransferReceipt({
+              tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
+              postingDate: dto.posting_date, quantity: 1, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount: amounts[i],
+              lotNo: shipmentLine.lot_no ?? undefined, serialNo, userId: userPayload?.userId,
+            });
+            await this.glPostingService.postInventoryLedgerEntry(entry, userPayload?.userId);
+          }
+          receivedSerialNo = serials.join(',');
+        } else {
+          const receiptEntry = await this.ledgerService.writeTransferReceipt({
+            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
+            postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount,
+            lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
+          });
+          await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
+        }
+        await this.db.insert(schema.transferReceiptLine).values({
+          receipt_id: receiptId,
+          shipment_line_id: shipmentLine.shipment_line_id,
+          line_id: line.line_id,
+          quantity: String(input.quantity),
+          uom: line.uom,
+          // Identity copied from the shipment, never re-typed (spec) — for a
+          // multi-serial line, the serials this receipt actually carried.
+          lot_no: shipmentLine.lot_no,
+          serial_no: receivedSerialNo,
+          variance_qty: String(varianceQty),
+          variance_reason: input.variance_reason?.trim() || null,
+          bag_count: control?.feedType === 'BAGGED' ? input.bag_count ?? null : null,
+          delivery_note_no: input.delivery_note_no?.trim() || null,
+          loading_sheet_id: control?.loadingSheetId ?? null,
+          loading_sheet_no: control?.loadingSheetNo ?? null,
+        });
+      }
+
+      // Status follows the event (Part E Task 4b): received so far plus this
+      // receipt, against everything shipped.
+      const receivedAfter = new Map(receivedByLine);
+      for (const l of dto.lines) receivedAfter.set(l.line_id, (receivedAfter.get(l.line_id) ?? 0) + l.quantity);
+      const status = await this.writeEventStatus(id, transfer.lines, shippedByLine, receivedAfter, userPayload);
+
+      await this.auditService.log({
+        tenantId,
+        companyId: transfer.company_id,
+        userId: userPayload?.userId,
+        action: 'POST',
+        entityName: 'transfer_receipt',
+        entityId: receiptId,
+        newValues: { receipt_no: receiptNo, shipment_no: shipment.shipment_no, lines: dto.lines.length, status },
+      });
+      // Part E Task 7: a requisition linked to this transfer follows its events.
+      await syncRequisitionFulfilment(this.db, id);
+      // Requisition row 150: the silo balance after this receipt, for the Farm
+      // Manager to confirm. Feed receipts only; the line's unit at the destination.
+      const balanceAfter = new Map<string, number>();
+      if (feedControls) {
+        for (const l of dto.lines) {
+          const line = transfer.lines.find((tl) => tl.line_id === l.line_id)!;
+          const rows = await this.ledgerService.getStockBalance({ companyId: transfer.company_id, warehouseId: transfer.to_warehouse_id, itemId: line.item_id } as any, tenantId);
+          const onHand = rows.filter((r: any) => r.item_id === line.item_id && r.uom === line.uom).reduce((sum: number, r: any) => sum + Number(r.on_hand_qty), 0);
+          balanceAfter.set(l.line_id, Math.round(onHand * 10000) / 10000);
+        }
+      }
+      return {
+        receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id,
+        lines: dto.lines.map((l) => ({
+          line_id: l.line_id,
+          qty_received: l.quantity,
+          ...(feedControls ? {
+            qty_shipped: receiptControls.get(l.line_id)?.shipped ?? null,
+            previously_received: receiptControls.get(l.line_id)?.previouslyReceived ?? null,
+            variance_qty: receiptControls.get(l.line_id)?.varianceQty ?? null,
+            silo_balance_after: balanceAfter.get(l.line_id) ?? null,
+          } : {}),
+        })),
+      };
+    });
+  }
+
+  /**
+   * Direct Transfer (Task 10): a selected shipment and its matching receipt in
+   * ONE transaction. It calls the same posting pieces as the staged path —
+   * it is not a second implementation — and because shipment and receipt
+   * happen together, the receipt can never precede its shipment.
+   */
+  async postDirectTransfer(id: string, dto: PostDirectTransferDto, tenantId: string, userPayload?: any) {
+    const transfer = await withTenantTransaction(this.cls, async () => {
+      const row = await this.loadForMutation(id, tenantId);
+      if (dto.lines.length === 0 && row.status !== 'DRAFT') {
+        throw new BadRequestException(`Stock Transfer ${row.transfer_no} cannot be posted in one step — it is already ${row.status}.`);
+      }
+      this.assertOpen(row);
+      if (row.from_warehouse_id === row.to_warehouse_id) {
+        throw new BadRequestException('A transfer needs two different warehouses.');
+      }
+      await this.assertWarehouses(row.from_warehouse_id, row.to_warehouse_id);
+      if (dto.lines.length === 0) {
+        // The one-step whole-order post (post(), or Direct Transfer with no
+        // lines) ships and receives every line in full, so it only fits a
+        // DRAFT with no events. Without this it failed later on the balance
+        // ("exceeds the remaining balance to ship"), which did not say why.
+        const shipped = await this.shipmentNos(id, tenantId);
+        if (shipped.length > 0) {
+          throw new BadRequestException(
+            `Stock Transfer ${row.transfer_no} cannot be posted in one step — it already has shipment ${shipped.join(', ')}. ` +
+            'Receive against the shipment, or post the remaining quantity with Direct Transfer.',
+          );
+        }
+      }
+      await this.assertSiloDestination(row, row.lines, tenantId);
+      if (!row.lines || row.lines.length === 0) {
+        throw new BadRequestException('Cannot post a Stock Transfer with no lines.');
+      }
+
+      // Empty lines = every line, full quantity: the legacy atomic post.
+      const inputs = dto.lines.length > 0
+        ? dto.lines
+        : row.lines.map((l) => ({ line_id: l.line_id, quantity: Number(l.quantity) }));
+
+      const shippedByLine = await this.shippedQuantities(id, tenantId);
+      const receivedByLine = await this.receivedQuantities(id, tenantId);
+      for (const input of inputs) {
+        const line = row.lines.find((l) => l.line_id === input.line_id);
+        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${row.transfer_no}.`);
+        this.assertShipment(Number(line.quantity), shippedByLine.get(line.line_id) ?? 0, input.quantity, line);
+        const remainingToReceive = (shippedByLine.get(line.line_id) ?? 0) + input.quantity - (receivedByLine.get(line.line_id) ?? 0);
+        // Same 1e-9 tolerance as postReceipt's identical bound (fix round 1,
+        // Important 1): shippedByLine/receivedByLine sum real event rows in
+        // JS float arithmetic.
+        if (input.quantity > remainingToReceive + 1e-9) {
+          throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
+        }
+      }
+
+      // Ship, then receive, inside this same transaction.
+      const shipment = await this.postShipment(id, {
+        posting_date: dto.posting_date,
+        lines: inputs.map((l) => ({ line_id: l.line_id, quantity: l.quantity })),
+        remarks: dto.remarks,
+      }, tenantId, userPayload);
+      const receipt = await this.postReceipt(id, {
+        posting_date: dto.posting_date,
+        shipment_id: shipment.shipment_id,
+        lines: inputs.map((l) => ({ line_id: l.line_id, quantity: l.quantity })),
+        remarks: dto.remarks,
+      }, tenantId, userPayload);
+
+      // No claim of its own any more (Part E Task 4b): postShipment and
+      // postReceipt each write the status their event implies, so a full
+      // direct transfer ends POSTED (stamped) through postReceipt, and a
+      // partial one ends PARTIALLY_RECEIVED, open for further events.
+      const after = await this.findOne(id);
+
+      await this.auditService.log({
+        tenantId,
+        companyId: row.company_id,
+        userId: userPayload?.userId,
+        action: 'POST',
         entityName: 'stock_transfer',
         entityId: id,
-        newValues: { status: 'POSTED' },
+        newValues: { status: after.status, shipment_no: shipment.shipment_no, receipt_no: receipt.receipt_no },
       });
-
-      return this.findOne(id);
+      return after;
     });
-    // Ruling M6: once per posting, after the transaction above has committed,
-    // and never able to fail it. Both ends — a transfer out of a silo lowers it.
-    await this.feedAlerts?.evaluateLevelsSafely([posted.from_warehouse_id, posted.to_warehouse_id], tenantId);
-    return posted;
+    await this.feedAlerts?.evaluateLevelsSafely([transfer.from_warehouse_id, transfer.to_warehouse_id], tenantId);
+    return transfer;
+  }
+
+  /** Cumulative shipped quantity per transfer line, from the event rows. */
+  private async shippedQuantities(transferId: string, tenantId: string): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({ line_id: schema.transferShipmentLine.line_id, qty: schema.transferShipmentLine.quantity })
+      .from(schema.transferShipmentLine)
+      .innerJoin(schema.transferShipment, eq(schema.transferShipmentLine.shipment_id, schema.transferShipment.shipment_id))
+      .where(and(
+        eq(schema.transferShipment.transfer_id, transferId),
+        eq(schema.transferShipment.tenant_id, tenantId),
+        isNull(schema.transferShipment.deleted_at),
+      ));
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
+    return map;
+  }
+
+  /**
+   * Receipts already posted against one shipment, per shipment line: the
+   * received quantity and the receipt numbers (their ledger rows carry the
+   * value already taken out of In Transit).
+   */
+  private async receivedAgainstShipment(shipmentId: string, tenantId: string): Promise<Map<string, { qty: number; receiptNos: string[] }>> {
+    const rows = await this.db
+      .select({
+        shipment_line_id: schema.transferReceiptLine.shipment_line_id,
+        qty: schema.transferReceiptLine.quantity,
+        receipt_no: schema.transferReceipt.receipt_no,
+      })
+      .from(schema.transferReceiptLine)
+      .innerJoin(schema.transferReceipt, eq(schema.transferReceiptLine.receipt_id, schema.transferReceipt.receipt_id))
+      .where(and(
+        eq(schema.transferReceipt.shipment_id, shipmentId),
+        eq(schema.transferReceipt.tenant_id, tenantId),
+        isNull(schema.transferReceipt.deleted_at),
+      ));
+    const map = new Map<string, { qty: number; receiptNos: string[] }>();
+    for (const r of rows) {
+      if (!r.shipment_line_id) continue;
+      const entry = map.get(r.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+      entry.qty += Number(r.qty);
+      if (r.receipt_no) entry.receiptNos.push(r.receipt_no);
+      map.set(r.shipment_line_id, entry);
+    }
+    return map;
+  }
+
+  /**
+   * One event names a line once. The bounds read the cumulative quantities
+   * once, before the loop, so a repeated line id would pass each check on its
+   * own and together exceed them (Part E Task 4, fix round 1).
+   */
+  private assertDistinctLines(lines: Array<{ line_id: string }>, event: 'shipment' | 'receipt'): void {
+    const seen = new Set<string>();
+    for (const l of lines) {
+      if (seen.has(l.line_id)) {
+        throw new BadRequestException(`Line ${l.line_id} appears more than once in this ${event}; enter each line once with its total quantity.`);
+      }
+      seen.add(l.line_id);
+    }
+  }
+
+  /** Cumulative received quantity per transfer line, from the event rows. */
+  private async receivedQuantities(transferId: string, tenantId: string): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({ line_id: schema.transferReceiptLine.line_id, qty: schema.transferReceiptLine.quantity })
+      .from(schema.transferReceiptLine)
+      .innerJoin(schema.transferReceipt, eq(schema.transferReceiptLine.receipt_id, schema.transferReceipt.receipt_id))
+      .where(and(
+        eq(schema.transferReceipt.transfer_id, transferId),
+        eq(schema.transferReceipt.tenant_id, tenantId),
+        isNull(schema.transferReceipt.deleted_at),
+      ));
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
+    return map;
+  }
+
+  /**
+   * The shipment bounds: never beyond the ordered quantity, once the already-
+   * shipped events are counted. Tracking identity rides the order line — the
+   * same contract the atomic post has always had.
+   */
+  private assertShipment(
+    orderedLineQty: number,
+    alreadyShipped: number,
+    qty: number,
+    line: { lot_no: string | null; serial_no: string | null; item_id: string },
+  ): void {
+    void line;
+    if (!(qty > 0)) throw new BadRequestException('Shipment quantity must be greater than zero.');
+    if (alreadyShipped + qty > orderedLineQty + 1e-9) {
+      throw new BadRequestException('Shipment quantity exceeds the remaining balance to ship.');
+    }
+  }
+
+  /** SH-2026-0001 / RC-2026-0001 per tenant — keep the series monotonic even
+   * when older rows were inserted out of order. The old lexical `ORDER BY`
+   * lookup could reuse an existing number inside a posting transaction. */
+  private async nextEventNo(companyId: string, tenantId: string, kind: 'SH' | 'RC'): Promise<string> {
+    const table = kind === 'SH' ? schema.transferShipment : schema.transferReceipt;
+    const noColumn = kind === 'SH' ? schema.transferShipment.shipment_no : schema.transferReceipt.receipt_no;
+    const year = new Date().getFullYear();
+    const prefix = `${kind === 'SH' ? 'SH' : 'RC'}-${year}-`;
+    const [last] = await this.db
+      .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${noColumn}, ${prefix.length + 1}) AS UNSIGNED)), 0)` })
+      .from(table)
+      .where(and(eq(table.tenant_id, tenantId), like(noColumn, `${prefix}%`)))
+      .for('update');
+    const lastSeq = Number(last?.maxSeq ?? 0);
+    return `${prefix}${String((Number.isFinite(lastSeq) ? lastSeq : 0) + 1).padStart(4, '0')}`;
   }
 
   /**
@@ -1541,4 +2315,3 @@ export class StockTransferService {
     });
   }
 }
-

@@ -215,6 +215,12 @@ describe('AuthService', () => {
       await expect(service.registerAdmin(inviteDto({ user_type: 'COMPANY_ADMIN' }) as any, companyAdmin)).rejects.toThrow(BadRequestException);
     });
 
+    it('refuses FARM_MANAGER registration because this legacy endpoint cannot assign its required farm', async () => {
+      await expect(service.registerAdmin(inviteDto({ user_type: 'FARM_MANAGER' }) as any, bearer(adminAccess)))
+        .rejects.toThrow(new BadRequestException('Farm Managers must be created through Team Management with an assigned farm.'));
+      expect(invitee()).toBeUndefined();
+    });
+
     it('bootstraps the first user of an empty tenant without a token, as TENANT_ADMIN', async () => {
       tables.user_master.length = 0;
       const result = await service.registerAdmin(inviteDto({ user_type: 'STANDARD_USER' }) as any);

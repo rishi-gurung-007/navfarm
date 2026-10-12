@@ -1,4 +1,4 @@
-import type { MasterDataConfig } from "./types";
+import type { MasterDataConfig, MasterDataField } from "./types";
 
 const STATUS_OPTIONS = [
   { value: "ACTIVE", label: "Active" },
@@ -43,7 +43,7 @@ const locationType: MasterDataConfig = {
 const location: MasterDataConfig = {
   key: "location",
   label: "Locations",
-  description: "One hierarchy for farms, sheds, pens, cages, stores, quarantine areas and silos.",
+  description: "One hierarchy for farms, sheds, pens, cages, stores, silos, mills and loading bins.",
   apiBase: "/location",
   idKey: "location_id",
   group: "Farm Operations",
@@ -59,17 +59,17 @@ const location: MasterDataConfig = {
     { key: "nob_id", label: "Nature of Business", type: "select-entity", entityEndpoint: "/setup/wizard/nobs", entityValueKey: "nob_id", entityLabelKeys: ["nob_code", "nob_name"], helpText: "Leave blank if this location is shared across all business verticals." },
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this location is shared across all LOBs under the selected NOB." },
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
-    { key: "location_code", label: "Code", type: "text", createOnly: true, helpText: "Generated from the Location number series; can be customized.", section: "Identification" },
+    { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, createOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
       key: "location_type", label: "Location Type", type: "select-entity", required: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
-    { key: "location_name", label: "Name", type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
+    { key: "location_name", label: "Name", labelWhen: { key: "location_type", labels: { MILL: "Mill Name", BIN: "Bin Name" } }, type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
     {
       key: "location_address", label: "Location Address", type: "text", maxLength: 255,
-      visibleWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "FARM" }] },
-      helpText: "Stored on the Farm only. Child locations inherit their physical context from the Farm hierarchy.",
+      helpText: "Physical address. Required on Farm; optional on Mill. Child locations inherit context from their parent hierarchy.",
       section: "Identification",
     },
     {
@@ -78,17 +78,38 @@ const location: MasterDataConfig = {
       // code, which on the nine-farm data is 48 pens and 12 sheds, so choosing
       // SHED filtered 50 rows that held no Farm and offered nothing. parentForType
       // asks for exactly the allowed parent types, whatever the table's size.
-      key: "parent_location_id", label: "Parent Location", type: "select-entity", required: true, searchable: true,
-      entityEndpoint: "/location?parentForType={value}", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
+      key: "parent_location_id", label: "Parent Location",
+      labelWhen: { key: "location_type", labels: { BIN: "Parent Mill" } },
+      type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/location?parentForType={value}&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       dependsOn: "location_type",
       restrictOptionsBy: {
         selectorKey: "location_type", selectorEntityEndpoint: "/location-type", selectorCodeKey: "type_code",
         allowListKey: "allowed_parent_types", optionCodeKey: "location_type", hideWhenEmpty: true,
       },
-      helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm, have no Parent Location field.",
+      helpText: "Only locations from the immediately preceding hierarchy level are available. Level 1 root types, such as Farm and Mill, have no Parent Location field. A Bin must select an active Mill.",
       section: "Identification",
     },
     { key: "location_level", label: "Hierarchy Level", type: "number", min: 0, hideInForm: true, helpText: "Computed from the parent location." },
+    {
+      key: "department_id", label: "Department", type: "select-entity",
+      entityEndpoint: "/cost-center?costCenterType=DEPARTMENT", entityValueKey: "cost_center_id",
+      entityLabelKeys: ["cost_center_code", "cost_center_name"],
+      helpText: "Optional owning department (Cost Center of type DEPARTMENT). Transfer Shipment and Receipt check it on the From and To sub-locations.",
+      // Rishi, 12 Oct: hidden from the Location form and table. Existing values stay (a hidden field is
+      // never sent, so an edit keeps it) and Transfer Shipment/Receipt still check them.
+      hideInForm: true, hideInTable: true,
+      section: "Identification",
+    },
+    // CC (11 Oct): each farm / mill has its own cost centre; inventory journals take it from here.
+    {
+      key: "cost_center_id", label: "Cost Centre", type: "select-entity",
+      entityEndpoint: "/cost-center?isActive=true", entityValueKey: "cost_center_id",
+      entityLabelKeys: ["cost_center_code", "cost_center_name"],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
+      helpText: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
+      section: "Identification",
+    },
     // Hidden for SILO (2026-09-24, client request) — a silo is a sealed vessel
     // sized by what it holds, not by the ground it covers. There is no floor
     // area to walk, stock or apportion, so Area Size and Area UOM were left
@@ -98,8 +119,8 @@ const location: MasterDataConfig = {
     // spelled out under Max Capacity just below: a location type added later
     // stays visible by default instead of silently inheriting the SILO
     // exception.
-    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
-    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "area_size", label: "Area Size", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    { key: "area_unit", label: "Area UOM", type: "select-entity", entityEndpoint: "/uom?uomType=AREA", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
     // Hidden for SILO (2026-09-22, client request) — asking for a general Max
     // Capacity right next to Silo Capacity read as the same question
     // twice. Silo Capacity + Silo Reorder Days are what a silo's own
@@ -108,8 +129,39 @@ const location: MasterDataConfig = {
     // check validates against. notEquals rather than an enumerated equals
     // list, so a location type added later stays required by default instead
     // of silently inheriting the SILO exception.
-    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
-    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: "SILO" }] }, section: "Identification" },
+    { key: "max_capacity", label: "Max Capacity", type: "number", min: 0, max: 9999999, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    { key: "capacity_uom", label: "Capacity UOM", type: "select-entity", entityEndpoint: "/uom?uomType=COUNT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"], visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, requiredWhen: { anyOf: [{ key: "location_type", notEquals: ["SILO", "MILL", "BIN"] }] }, section: "Identification" },
+    {
+      key: "mill_daily_capacity_ton", label: "Daily Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_hourly_capacity_ton", label: "Hourly Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_bulk_daily_allocation_ton", label: "Bulk Daily Allocation TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "mill_bagged_daily_allocation_ton", label: "Bagged Daily Allocation TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "MILL" }] }, section: "Identification",
+    },
+    {
+      key: "bin_capacity_ton", label: "Bin Capacity TON", type: "number", min: 0, step: "0.001", nativeNumber: true,
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] }, section: "Identification",
+    },
+    {
+      key: "bin_feed_type", label: "Feed Type", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] },
+      requiredWhen: { anyOf: [{ key: "location_type", equals: "BIN" }] }, section: "Identification",
+    },
     // Hidden (2026-09-22, client request) — Storage Location duplicated
     // Location Type (STORE/SILO were already choices there); MasterDataTable's
     // setField now derives this straight from location_type instead. Kept in
@@ -131,21 +183,33 @@ const location: MasterDataConfig = {
     // live references for a cosmetic gain, and the stored value is still KG.
     { key: "silo_capacity_kg", label: "Silo Capacity", type: "number", min: 0, max: 999999.99, step: "0.01", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "Required when Storage Location is SILO.", section: "Identification" },
     { key: "silo_capacity_uom", label: "Silo Capacity UOM", type: "select", options: ["KG", "TON"].map((v) => ({ value: v, label: v })), defaultValue: "KG", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.", section: "Identification" },
-    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. The Feed Forecast's refill date is this many days before the run-down date. Standard 2.", section: "Identification" },
+    // I4 (final whole-branch review, 4 Oct): this field used to drive a Feed
+    // Forecast refill date; that calculation is gone from the forecast (TDD
+    // alignment), but the column and the field stay — required on a silo —
+    // per the "keep silo_reorder_days, the forecast must not read it" ruling.
+    // The help text must not claim a behaviour that no longer exists.
+    { key: "silo_reorder_days", label: "Refill Lead Time (days)", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, requiredWhen: { anyOf: [{ key: "storage_type", equals: "SILO" }] }, helpText: "How many days before this silo reaches its low stock level it must be refilled. A Location Master record only — the Feed Forecast does not read it. Standard 2.", section: "Identification" },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
     // Days, not replacing it. Required on a silo since D22 (Rishi, 27 Sep):
     // the forecast's run-down and the feed alerts read them.
     {
-      key: "low_level_kg", label: "Low Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "low_level_kg", label: "Below Feed Level KG", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Low feed alert at or below this. Usually 20% of capacity."
+      helpText: "Low feed alert when the System Balance is at or below this. Usually 20% of capacity."
     },
     {
-      key: "high_level_kg", label: "High Stock Level (kg)", type: "number", min: 0, step: "1", nativeNumber: true,
+      key: "high_level_kg", label: "Above Threshold KG", type: "number", min: 0, step: "1", nativeNumber: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
       requiredWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
-      helpText: "Over-stock notice at or above this. Usually 90% of capacity."
+      helpText: "Over-stock notice when the System Balance is at or above this. Usually 90% of capacity."
+    },
+    // Requisition r15: Feed Type is read from the silo record (stored as feed_in_bags).
+    {
+      key: "silo_feed_type", label: "Feed Type", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] }, section: "Identification",
+      helpText: "Bulk or Bagged. Requisitions and the loading sheet take their truck type and rounding from this."
     },
     // D32 (Rishi, 28 Sep): the six per-farm feed settings — refill buffer, lead
     // time, bulk order multiple, bag size, truck target, production weekday —
@@ -181,7 +245,23 @@ const location: MasterDataConfig = {
       section: "Identification",
       helpText: "The sheds on this silo's parent farm that may take their feed from it. A shed can draw from several silos, one per feed item; two silos feeding the same shed may not hold the same feed.",
     },
-    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
+    // W4G2 (Master Setup rows 13-20): the silo's feed facts, read from the same
+    // ledger / stock count / forecast the Feed Silo Status screen uses. Computed
+    // by the API on every read; never submitted.
+    ...([
+      { key: "silo_feed_item", label: "Feed in Silo", type: "text", helpText: "The feed item last received into this silo, from its latest posted transfer receipt. Opens the item record." },
+      { key: "available_stock_kg", label: "Available Stock KG", type: "number", step: "0.001", helpText: "What the inventory ledger holds of the Feed in Silo item now." },
+      { key: "system_balance_kg", label: "System Balance KG", type: "number", step: "0.001", helpText: "Ledger balance of the Feed in Silo item. A physical count creates a variance for approval; it never resets this." },
+      { key: "last_approved_count_kg", label: "Last Approved Physical Count KG", type: "number", step: "0.001", helpText: "Quantity on the latest posted physical stock count of this silo." },
+      { key: "last_approved_count_at", label: "Last Approved Physical Count Date", type: "date", helpText: "Date of that stock count." },
+      { key: "last_feed_receipt_date", label: "Last Feed Receipt Date", type: "date", helpText: "Date of the last posted transfer receipt into this silo." },
+      { key: "first_shortage_date", label: "First Shortage Date", type: "date", helpText: "The first date this silo cannot meet the feed demand drawn from it, from the feed forecast." },
+      { key: "next_diet_change_date", label: "Next Diet Change Date", type: "date", helpText: "The next date a batch fed from this silo changes diet, from the feed forecast." },
+    ] as MasterDataField[]).map((f): MasterDataField => ({
+      ...f, readOnly: true, editOnly: true, hideInTable: true, emptyLabel: "Not available", section: "Identification",
+      visibleWhen: { anyOf: [{ key: "location_type", equals: "SILO" }] },
+    })),
+    { key: "downtime_days_required", label: "Downtime Days Required", type: "number", min: 0, max: 365, step: "1", visibleWhen: { anyOf: [{ key: "location_type", notEquals: ["MILL", "BIN"] }] }, helpText: "Empty days required between batches for biosecurity.", section: "Identification" },
     // D32: "Silo / Store Name" is gone from the form — it duplicated the
     // required Name field. The storage_name column is kept, and the seeds
     // still fill it for the silos and stores the client's master names.
@@ -966,6 +1046,7 @@ const item: MasterDataConfig = {
     { key: "item_code", label: "Code" },
     { key: "item_name", label: "Name" },
     { key: "item_type", label: "Type" },
+    { key: "feed_form", label: "Feed Form" },
     { key: "category_code", label: "Category" },
     { key: "sub_category", label: "Sub Category" },
     { key: "template_code", label: "Template" },
@@ -978,6 +1059,8 @@ const item: MasterDataConfig = {
     { key: "lob_id", label: "Line of Business", type: "select-entity", entityEndpoint: "/setup/wizard/lobs/{value}", entityValueKey: "lob_id", entityLabelKeys: ["lob_code", "lob_name"], dependsOn: "nob_id", helpText: "Leave blank if this item is used across all LOBs under the selected NOB.", section: "Classification" },
     { key: "item_code", label: "Code", type: "text", createOnly: true, helpText: "Assigned from the Item number series; can be customized.", section: "Identification" },
     { key: "item_type", label: "Item Type", type: "select-entity", required: true, entityEndpoint: "/item-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification" },
+    // Rishi 12 Oct: an item of a feed type says whether it is Bulk or Bagged (replaces separate FEED_BULK / FEED_BAG types).
+    { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }], visibleWhen: { anyOf: [{ key: "item_type", startsWith: "FEED" }] }, helpText: "Bulk (silo) or Bagged. Feed item types only.", section: "Identification" },
     { key: "item_name", label: "Name", type: "text", required: true, placeholder: "Sow lactation feed", section: "Identification" },
     {
       // Depends on Item Type via the query mechanism, not path substitution — a
@@ -1072,6 +1155,8 @@ const item: MasterDataConfig = {
     { key: "is_inventoriable", label: "Inventoriable", type: "boolean", helpText: "Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.", section: "Inventory" },
     { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
+    // TDD Master Setup §2 / Loading Sheet row 65: the feed diet number, 1 to 14.
+    { key: "diet_no", label: "Diet No.", type: "number", min: 1, max: 14, step: "1", nativeNumber: true, helpText: "Feed diet number, 1 to 14.", section: "Inventory" },
     { key: "reorder_level", label: "Reorder Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "lead_time_days", label: "Lead Time (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, helpText: "Procurement lead time, for feed/stock forecast planning.", section: "Inventory" },
     { key: "shelf_life_days", label: "Shelf Life (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
@@ -1200,6 +1285,8 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "period_from", label: "From" },
     { key: "period_to", label: "To" },
     { key: "std_fcr", label: "Std FCR" },
+    // LFO (11 Oct): blank = the default row; a farm name marks a farm-level override.
+    { key: "farm_name", label: "Farm (override)", noFilter: true },
   ],
   supportsNobLobFilter: true,
   fields: [
@@ -1237,13 +1324,25 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
-    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0 },
+    // TDD Master Setup row 37: how this stage's feed is supplied.
+    {
+      key: "feed_form", label: "Feed Form", type: "select",
+      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+    },
+    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
+    {
+      key: "farm_id", label: "Farm (override)", type: "select-entity", searchable: true,
+      entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
+      helpText: "Optional. Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",
+    },
+    { key: "effective_from", label: "Effective From", type: "date", helpText: "Optional. The first date this feed row applies, so a diet change can be planned ahead. Blank = always." },
+    { key: "effective_to", label: "Effective To", type: "date", helpText: "Optional. The last date this feed row applies. Rows for the same stage and days cannot overlap in dates." },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
-    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0 },
-    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.01", min: 0 },
+    { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0, max: 99.999 },
+    { key: "std_mortality_rate_pct", label: "Std Mortality Rate %", type: "number", step: "0.01", min: 0, max: 99.999 },
     { key: "output_item_id", label: "Output Item", type: "select-entity", searchable: true, entityEndpoint: "/item", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
     { key: "output_uom", label: "Output UOM", type: "text" },
     { key: "std_output_qty", label: "Std Output Qty", type: "number", step: "0.01", min: 0 },
@@ -1254,14 +1353,26 @@ const breedLifecycleStage: MasterDataConfig = {
     // daily entry actually records. The picker's own New/View All buttons are
     // how a tenant adds one of their own without leaving this form.
     {
-      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json",
+      key: "kpi_thresholds", label: "KPIs & Alerts", type: "json", subDialog: true,
       jsonRow: [
         { key: "metric", label: "KPI", type: "select-entity", entityEndpoint: "/kpi-metric", entityValueKey: "metric_code", entityLabelKeys: ["metric_code", "metric_name"] },
+        { key: "uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
+        // Left empty, a line follows the header's KPI period (shown as the
+        // placeholder), so changing the header moves every line not set by hand.
+        { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })) },
         { key: "lower_limit", label: "Lower Limit", type: "number", step: "0.01" },
         { key: "upper_limit", label: "Upper Limit", type: "number", step: "0.01" },
+        { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
+        { key: "tolerance_pct", label: "Tolerance (%)", type: "number", step: "0.01", min: 0, max: 100 },
+        { key: "tolerance_type", label: "Tolerance Type", type: "select", options: [{ value: "UPPER", label: "Upper" }, { value: "LOWER", label: "Lower" }] },
         { key: "severity", label: "Alert Severity", type: "select", options: ["INFO", "WARNING", "CRITICAL"].map((v) => ({ value: v, label: v })) },
       ],
-      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold.",
+      helpText: "One row per KPI. Leave a limit empty for a one-sided threshold. Tolerance is measured around the Average Value; KPI Period defaults to the header period.",
+    },
+    {
+      key: "kpi_alert_period", label: "KPI period", type: "select", subDialog: true,
+      options: ["DAILY", "WEEKLY", "MONTHLY"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
+      helpText: "Default KPI period for the lines below; a line can set its own.",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a
@@ -1416,12 +1527,29 @@ const ALERT_EVENT_TYPES = [
   { value: "FEED_ABOVE", label: "Feed at or above high level" },
   { value: "DIET_CHANGE", label: "Diet change coming" },
   { value: "REQ_DEADLINE", label: "Requisition deadline" },
+  { value: "PLAN_AVAILABLE", label: "Feed plan available" },
+  { value: "MILL_DISPATCH", label: "Feed dispatched from the mill" },
+  { value: "MILL_ADJUSTED", label: "Mill approved a different quantity" },
+  { value: "RECEIPT_VARIANCE", label: "Feed receipt short of shipment" },
+  { value: "NO_NEXT_FEED_ROW", label: "No next feed row for a batch" },
+  { value: "NEXT_DIET_NO_SILO", label: "No silo for the next diet" },
+  { value: "CAPACITY_EXCEEDED", label: "Mill capacity exceeded" },
+  { value: "SHORTFALL", label: "Projected shortfall in a silo" },
+  { value: "NOT_DRAFTED", label: "Shortfall with no requisition drafted" },
+  { value: "TRUCK_TARGET", label: "Farm order below the truck target" },
+  { value: "AUTO_DRAFTED", label: "Requisition auto-drafted" },
+  { value: "STOCK_TAKE_DUE", label: "Monthly stock take due" },
+  { value: "CHANGEOVER", label: "Silo changeover needed" },
 ];
 const ALERT_TRIGGER_ENTITIES = [
   { value: "SILO", label: "Silo" },
   { value: "REQUISITION", label: "Requisition" },
   { value: "FEED_PLAN", label: "Feed plan" },
   { value: "STOCK_TAKE", label: "Stock take" },
+  { value: "LOADING_SHEET", label: "Loading sheet" },
+  { value: "CONSOLIDATION", label: "Consolidation" },
+  { value: "RECEIPT", label: "Feed receipt" },
+  { value: "BATCH", label: "Batch" },
 ];
 const ALERT_THRESHOLD_REFERENCES = [
   { value: "SILO_BELOW", label: "Silo's low level" },
@@ -1464,7 +1592,7 @@ const alertRule: MasterDataConfig = {
     {
       key: "trigger_entity", label: "Trigger Entity", type: "select", required: true,
       options: ALERT_TRIGGER_ENTITIES,
-      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE: FEED_PLAN. REQ_DEADLINE: REQUISITION."
+      helpText: "FEED_BELOW_L1 and FEED_ABOVE: SILO. DIET_CHANGE, PLAN_AVAILABLE and NEXT_DIET_NO_SILO: FEED_PLAN. REQ_DEADLINE: REQUISITION. MILL_DISPATCH: LOADING_SHEET. MILL_ADJUSTED and CAPACITY_EXCEEDED: CONSOLIDATION. RECEIPT_VARIANCE: RECEIPT. NO_NEXT_FEED_ROW: BATCH. SHORTFALL and NOT_DRAFTED: SILO. TRUCK_TARGET: FEED_PLAN. AUTO_DRAFTED and CHANGEOVER: REQUISITION. STOCK_TAKE_DUE: STOCK_TAKE."
     },
     {
       key: "threshold_reference", label: "Threshold Reference", type: "select", required: true,
@@ -1474,15 +1602,17 @@ const alertRule: MasterDataConfig = {
     {
       key: "threshold_value", label: "Threshold Value", type: "number", min: 0, nativeNumber: true,
       requiredWhen: { anyOf: [{ key: "threshold_reference", equals: "FIXED_VALUE" }] },
-      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE."
+      helpText: "KG for a silo rule; days before the diet change for DIET_CHANGE; days before the submission deadline for REQ_DEADLINE; days ahead to look for NO_NEXT_FEED_ROW and NEXT_DIET_NO_SILO (default 7); days before the stock take date for STOCK_TAKE_DUE (default 3); KG the shortfall must exceed for SHORTFALL and NOT_DRAFTED (0 = any); 0 for the other events."
     },
     {
       key: "priority_level", label: "Priority Level", type: "select", required: true,
       options: ALERT_PRIORITIES
     },
     {
-      key: "recipient_roles", label: "Recipient Role(s)", type: "string-list", required: true,
-      helpText: "Role codes from Role Master. Tenant, company and operational admins see every alert regardless."
+      key: "recipient_roles", label: "Recipient Role(s)", type: "select-entity", multiple: true, required: true,
+      entityEndpoint: "/alert-rule/role-options", entityValueKey: "role_code", entityLabelKeys: ["role_code", "role_name"],
+      emptyMultipleLabel: "None selected",
+      helpText: "Pick from the Role Master. Tenant, company and operational admins see every alert regardless."
     },
     {
       key: "delivery_channel", label: "Delivery Channel", type: "select", required: true,
@@ -1498,7 +1628,9 @@ const alertRule: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
     },
     {
-      key: "escalation_role", label: "Escalation Recipient Role", type: "text", maxLength: 50,
+      key: "escalation_role", label: "Escalation Recipient Role", type: "select-entity",
+      entityEndpoint: "/alert-rule/role-options", entityValueKey: "role_code", entityLabelKeys: ["role_code", "role_name"],
+      helpText: "A role from the Role Master.",
       visibleWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }, requiredWhen: { anyOf: [{ key: "frequency", equals: "ESCALATING" }] }
     },
     {
@@ -1512,17 +1644,27 @@ const alertRule: MasterDataConfig = {
 // order. Business Year and Production Start Date are derived by the API
 // (Production Start = the Sunday after End), so they are table columns only
 // and never form fields. A year is drafted with "Generate July–June periods"
-// on Inventory → Feed Forecast (Reporting Period view) and edited from
-// Settings → Reporting Periods. It still uses the shared master-data engine;
-// only its navigation reflects that it is a company calendar, not farm data.
+// on Inventory → Feed Forecast (Reporting Period view) and edited from its
+// primary Farm Operations master page. It still uses the shared master-data engine.
 const reportingPeriod: MasterDataConfig = {
   key: "reporting-period", label: "Reporting Periods", singular: "Reporting Period", apiBase: "/reporting-period", idKey: "period_id",
-  group: "Settings", isPrimary: false, businessAdminOnly: true,
-  description: "Monthly periods of the July–June business year, each ending on the month-end Saturday.",
+  group: "Farm Operations", isPrimary: true, businessAdminOnly: true,
+  draftLifecycle: {
+    activatePath: "activate",
+    approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+  },
+  statusActiveValues: ["ACTIVE"],
+  description: "Review and edit inactive July–June draft periods, then activate them explicitly for forecasting.",
   columns: [
     { key: "period_code", label: "Code" }, { key: "business_year", label: "Business Year" },
     { key: "start_date", label: "Start Date", format: "date" }, { key: "end_date", label: "End Date", format: "date" },
     { key: "stock_take_date", label: "Stock Take Date", format: "date" }, { key: "production_start_date", label: "Production Start Date", format: "date" },
+    { key: "status", label: "Status" }, { key: "period_status", label: "Period Status" },
+  ],
+  // Period Close (workbook Checkpoints r31/r32): the API refuses Close until every farm and the mill
+  // have a posted Monthly Stock Take.
+  rowCommands: [
+    { key: "close", label: "Close Period", path: "close", visibleWhen: (row) => row.period_status !== "CLOSED", successMessage: "Period closed" },
   ],
   fields: [
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
@@ -1530,6 +1672,34 @@ const reportingPeriod: MasterDataConfig = {
     { key: "start_date", label: "Start Date", type: "date", required: true, helpText: "Normally the Sunday after the previous period's End Date." },
     { key: "end_date", label: "End Date", type: "date", required: true, helpText: "The month-end Saturday. Production Start Date is set to the Sunday after it." },
     { key: "stock_take_date", label: "Stock Take Date", type: "date", helpText: "Leave blank to use the End Date." },
+  ],
+};
+
+const binDietAssignment: MasterDataConfig = {
+  key: "bin-diet-assignment", label: "BIN Diet Assignments", singular: "BIN Diet Assignment",
+  description: "Assign the feed diet produced in a mill BIN for an exact production date. A BIN carries one diet per production date. Release uses this assignment without guessing a later date.",
+  apiBase: "/bin-diet-assignment", idKey: "assignment_id", group: "Inventory",
+  tabOf: "location", tabLabel: "BIN Diet Assignments",
+  isPrimary: false, businessAdminOnly: true,
+  columns: [
+    { key: "bin_code", label: "BIN Code" },
+    { key: "bin_name", label: "BIN Name" },
+    { key: "feed_item_no", label: "Feed Item No." },
+    { key: "feed_item_description", label: "Feed Item Description" },
+    { key: "production_date", label: "Production Date", format: "date" },
+    { key: "diet_priority", label: "Diet Priority" },
+    { key: "status", label: "Status" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "bin_location_id", label: "BIN", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/location?locationType=BIN&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"] },
+    { key: "feed_item_id", label: "Feed Item", type: "select-entity", required: true, searchable: true,
+      entityEndpoint: "/item?itemType=FEED&isActive=true", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"],
+      helpText: "Feed items only (item type FEED BULK or FEED BAGGED)." },
+    { key: "production_date", label: "Production Date", type: "date", required: true,
+      helpText: "Release requires an active assignment on this exact date. A BIN can carry only one active diet per date." },
+    { key: "diet_priority", label: "Diet Priority", type: "number", required: true, min: 1, step: "1" },
   ],
 };
 
@@ -1896,6 +2066,32 @@ const costCenter: MasterDataConfig = {
 };
 
 /**
+ * Departments (Rishi, 12 Oct): the company's Cost Center rows of type
+ * DEPARTMENT, managed from Company Settings > Departments. Not a master-data
+ * page of its own (it is not in MASTER_DATA_CONFIGS); it is the Cost Center
+ * master with the type fixed, so the same API, permission and validation apply.
+ */
+export const departmentMaster: MasterDataConfig = {
+  key: "department",
+  label: "Departments",
+  singular: "Department",
+  apiBase: "/cost-center",
+  idKey: "cost_center_id",
+  group: "Finance",
+  hideGroupBadge: true,
+  fixedFilter: { queryParam: "costCenterType", payloadKey: "cost_center_type", value: "DEPARTMENT" },
+  columns: [
+    { key: "cost_center_code", label: "Code" },
+    { key: "cost_center_name", label: "Name" },
+  ],
+  fields: [
+    { key: "company_id", label: "Company", type: "text", hideInForm: true },
+    { key: "cost_center_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "STORES" },
+    { key: "cost_center_name", label: "Name", type: "text", required: true, placeholder: "Stores" },
+  ],
+};
+
+/**
  * Both tables have been in the database since the start — currency_master and
  * exchange_rate, with endpoints behind them — and neither had a screen. It
  * showed: exchange_rate held zero rows, because there was no way to enter one,
@@ -1994,16 +2190,14 @@ const currency: MasterDataConfig = {
  * has Finance entering the USD rate manually, and restating a past period needs
  * the rate as at that date.
  *
- * Every rate is quoted against the US dollar and reads "1 USD = rate", so the
- * base side is not on the form — the API fills it with USD (Rishi, 2026-09-11).
- * It is still shown as a column, so what the rate is measured against is never
- * left implicit.
+ * The source can be selected explicitly. When it is omitted, the API uses the
+ * active company's canonical base currency; it never assumes USD.
  */
 const exchangeRate: MasterDataConfig = {
   key: "exchange-rate",
   label: "Exchange Rates",
   singular: "Exchange Rate",
-  description: "Manually entered USD conversion rates. Each row reads 1 USD = rate, on a date.",
+  description: "Dated conversion rates for the active company. An omitted source uses that company's base currency.",
   apiBase: "/currency/rates",
   idKey: "rate_id",
   group: "Finance",
@@ -2019,13 +2213,18 @@ const exchangeRate: MasterDataConfig = {
   ],
   fields: [
     {
-      key: "to_currency_id", label: "Currency", type: "select-entity", required: true,
+      key: "from_currency_id", label: "Source Currency", type: "select-entity",
       entityEndpoint: "/currency", entityValueKey: "currency_id", entityLabelKeys: ["iso_code", "currency_name"],
-      helpText: "The currency being quoted against the US dollar.",
+      helpText: "Optional. When omitted, the active company's base currency is used.",
     },
     {
-      key: "rate", label: "Rate (1 USD =)", type: "number", min: 0, required: true, step: "0.000001", placeholder: "36.25",
-      helpText: "How many units of the chosen currency one US dollar buys. 1 USD = 36.25 ZWL is entered as 36.25.",
+      key: "to_currency_id", label: "Currency", type: "select-entity", required: true,
+      entityEndpoint: "/currency", entityValueKey: "currency_id", entityLabelKeys: ["iso_code", "currency_name"],
+      helpText: "The currency being quoted by this rate.",
+    },
+    {
+      key: "rate", label: "Conversion Rate", type: "number", min: 0, required: true, step: "0.000001", placeholder: "36.25",
+      helpText: "How many units of the quoted currency one unit of the source currency buys.",
     },
     {
       key: "rate_date", label: "Rate Date", type: "date", required: true,
@@ -2040,7 +2239,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   numberSeries, stage, activity,
   item, itemCategory, itemType, itemAttribute, itemTemplateConfig, uom, uomConversion,
   animal,
-  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, disease, feedFormula,
+  species, breed, breedLifecycleStage, kpiMetric, reason, alertRule, reportingPeriod, binDietAssignment, disease, feedFormula,
   supplier, customer, resource,
   glAccount, glMapping, costCenter, country, currency, exchangeRate,
 ];
@@ -2053,7 +2252,7 @@ export const MASTER_DATA_GROUPS = ["Farm Operations", "Production", "Inventory",
  * by module. Masters not named here still appear; they're appended after, in
  * their existing relative order, so this only pins the front of the list.
  */
-export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "alert-rule"];
+export const MASTER_DATA_NAV_ORDER: string[] = ["location", "number-series", "item", "stage", "breed", "animal", "activity", "reporting-period", "alert-rule"];
 
 export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === "no-series") return MASTER_DATA_CONFIGS.find((c) => c.key === "number-series");

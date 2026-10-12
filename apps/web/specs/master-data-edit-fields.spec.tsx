@@ -2,9 +2,12 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MasterDataTable from "@/modules/master-data/MasterDataTable";
 import type { MasterDataConfig } from "@/modules/master-data/types";
+import { getConfig } from "@/modules/master-data/configs";
 import { LanguageProvider } from "@/hooks/useLanguage";
 import { ApiError } from "@/lib/api-client";
 import { api } from "@/services/api-client";
+
+const mockHasPermission = jest.fn(() => true);
 
 jest.mock("@/services/api-client", () => ({
   api: {
@@ -22,7 +25,7 @@ jest.mock("@/hooks/useAuth", () => ({
   getActiveOperationalAreaId: () => null,
   getActiveOperationalArea: () => null,
   getStoredUser: () => ({ userType: "TENANT_ADMIN" }),
-  hasPermission: () => true,
+  hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 
 jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
@@ -30,7 +33,6 @@ jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
 beforeAll(() => {
   Element.prototype.scrollIntoView = jest.fn();
 });
-
 const renderTable = (config: MasterDataConfig) => render(
   <LanguageProvider>
     <MasterDataTable config={config} />
@@ -105,7 +107,10 @@ function expectStageTransitionFields(enabled: string[]) {
 }
 
 describe("master-data edit fields", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockHasPermission.mockReturnValue(true);
+  });
 
   it("shows create-only fields disabled, keeps mutable fields editable, and never exposes hideInForm fields", async () => {
     const config: MasterDataConfig = {
@@ -123,13 +128,19 @@ describe("master-data edit fields", () => {
           key: "conditional_note",
           label: "Conditional Note",
           type: "text",
-          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "different" }] },
+          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "Editable name" }] },
         },
         {
           key: "conditional_note",
           label: "Conditional Note",
           type: "text",
           visibleWhen: { anyOf: [{ key: "mutable_name", equals: "another value" }] },
+        },
+        {
+          key: "unmet_field",
+          label: "Unmet Conditional Field",
+          type: "text",
+          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "different" }] },
         },
         { key: "internal_value", label: "Internal Value", type: "text", hideInForm: true },
       ],
@@ -155,7 +166,99 @@ describe("master-data edit fields", () => {
     expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).disabled).toBe(false);
     expect((screen.getByRole("textbox", { name: "Conditional Note" }) as HTMLInputElement).disabled).toBe(false);
     expect(screen.getAllByRole("textbox", { name: "Conditional Note" })).toHaveLength(1);
+    expect(screen.queryByRole("textbox", { name: "Unmet Conditional Field" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Internal Value" })).toBeNull();
+  });
+
+  it("keeps a reviewed reporting-period draft inactive when its fields are edited", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [
+        { key: "period_code", label: "Code", type: "text", createOnly: true, required: true },
+        { key: "start_date", label: "Start Date", type: "date", required: true },
+        { key: "end_date", label: "End Date", type: "date", required: true },
+      ],
+    };
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", start_date: "2026-08-30", end_date: "2026-09-26",
+      status: "DRAFT", is_active: false,
+    }]);
+    (api.put as jest.Mock).mockResolvedValue({});
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.change(await screen.findByLabelText("Start Date"), { target: { value: "2026-08-23" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      "/reporting-period/period-1",
+      expect.not.objectContaining({ status: "ACTIVE", is_active: true }),
+    ));
+  });
+
+  it("activates a reviewed reporting-period draft through the dedicated action", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+    };
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
+    }]);
+    (api.patch as jest.Mock).mockResolvedValue({});
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+    fireEvent.click(await screen.findByText("Activate"));
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/reporting-period/period-1/activate"));
+  });
+
+  it("hides Activate from a draft editor without reporting-period approval authority", async () => {
+    const config: MasterDataConfig = {
+      key: "reporting-period",
+      label: "Reporting Periods",
+      singular: "Reporting Period",
+      apiBase: "/reporting-period",
+      idKey: "period_id",
+      group: "Settings",
+      draftLifecycle: {
+        activatePath: "activate",
+        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+      },
+      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+    };
+    mockHasPermission.mockImplementation((_user, _module, _resource, action) => action !== "can_approve");
+    (api.get as jest.Mock).mockResolvedValue([{
+      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
+    }]);
+
+    renderTable(config);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+
+    expect(await screen.findByText("Edit")).toBeTruthy();
+    expect(screen.queryByText("Activate")).toBeNull();
   });
 
   it("shows every Stage transition field on create and only enables fields relevant to the selected trigger", async () => {
@@ -242,7 +345,90 @@ describe("master-data edit fields", () => {
       "Breed code 'BREED-EXISTING' already exists for Large White.",
     );
     expect(screen.queryByRole("button", { name: "Change code" })).toBeNull();
-    expect(screen.getByRole("dialog", { name: "Add Test Breed" })).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Code" }) as HTMLInputElement).value).toBe("BREED-EXISTING");
+  });
+
+  it("shows only type-relevant fields when editing a location (e.g. FARM hides MILL, BIN, and SILO fields)", async () => {
+    const locationConfig = getConfig("location")!;
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url.startsWith("/location-type")) {
+        return Promise.resolve([
+          { type_code: "FARM", type_name: "Farm" },
+          { type_code: "MILL", type_name: "Feed Mill" },
+          { type_code: "SILO", type_name: "Silo" },
+          { type_code: "BIN", type_name: "Bin" },
+        ]);
+      }
+      return Promise.resolve([
+        {
+          location_id: "loc-farm-1",
+          location_code: "LEA100",
+          location_name: "LEARIG FARM",
+          location_type: "FARM",
+          location_address: "Learig Farm, Arcturus",
+          gps_latitude: "-17.82722000",
+          gps_longitude: "30.99755000",
+          is_active: true,
+        },
+      ]);
+    });
+
+    renderTable(locationConfig);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for LEA100" }));
+    fireEvent.click(await screen.findByText("Edit"));
+
+    // Farm fields are visible
+    expect(await screen.findByRole("textbox", { name: "Location Address" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Latitude" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Longitude" })).toBeTruthy();
+
+    // MILL, BIN, and SILO fields are NOT visible on a Farm edit
+    expect(screen.queryByRole("textbox", { name: "Daily Capacity TON" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Hourly Capacity TON" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Bulk Daily Allocation TON" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Bagged Daily Allocation TON" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Bin Capacity TON" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Feed Type" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Silo Capacity" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Silo Capacity UOM" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Below Feed Level KG" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Above Threshold KG" })).toBeNull();
+  });
+
+  it("shows active mills in Parent Mill options when creating a BIN", async () => {
+    const locationConfig = getConfig("location")!;
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url.startsWith("/location-type")) {
+        return Promise.resolve([
+          { type_code: "FARM", type_name: "Farm", allowed_parent_types: [] },
+          { type_code: "MILL", type_name: "Feed Mill", allowed_parent_types: [] },
+          { type_code: "BIN", type_name: "Bin", allowed_parent_types: ["MILL"] },
+        ]);
+      }
+      if (url.includes("parentForType=BIN")) {
+        return Promise.resolve([
+          { location_id: "mill-1", location_code: "MILL-001", location_name: "Kara Mill", location_type: "MILL", is_active: true },
+        ]);
+      }
+      if (url.startsWith("/no-series/preview-by-master")) {
+        return Promise.resolve({ data: { generated: true, allowManual: true, preview: "BIN-001" } });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderTable(locationConfig);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Location" }));
+
+    // Select Location Type BIN
+    const typeSelect = await screen.findByRole("button", { name: "Location Type" });
+    fireEvent.click(typeSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "BIN — Bin" }));
+
+    // Check Parent Mill button
+    const parentMillBtn = await screen.findByRole("button", { name: "Parent Mill" });
+    fireEvent.click(parentMillBtn);
+
+    // Kara Mill should be offered
+    expect(await screen.findByText("Kara Mill")).toBeTruthy();
   });
 });

@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { QueryFeedForecastDto, QueryFeedPeriodsDto, UpdateFeedFarmSettingsDto, UpdateSiloPlanningDto } from './dto/feed-forecast.dto';
+import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryMillCompareDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -42,51 +42,121 @@ export class FeedForecastController {
     return { success: true, message: 'Farms retrieved successfully.', data };
   }
 
+  @Get('runs')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Immutable feed forecast run history for one farm' })
+  async runs(@Query() query: QueryFeedForecastRunsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listRuns(query.farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Feed forecast runs retrieved successfully.', data };
+  }
+
+  @Get('runs/current')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'The saved, non-archived feed forecast calculation for one farm' })
+  async currentRun(@Query() query: QueryFeedForecastRunsDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.currentRun(query.farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Current feed forecast run retrieved successfully.', data };
+  }
+
+  @Get('feed-plan')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Saved feed plan with requisition and transfer fulfilment for one farm' })
+  async feedPlan(@Query('farmId') farmId: string | undefined, @Query('from') from: string | undefined, @Query('to') to: string | undefined, @Query('productionDate') productionDate: string | undefined, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.feedPlan(farmId, tenantId, req.user?.userType, from, to, productionDate || undefined);
+    return { success: true, message: 'Feed plan retrieved successfully.', data };
+  }
+
+  @Get('mill-compare')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Compare Report: all farms\' approved feed demand vs Mill Capacity Available per diet for a production date or ISO week' })
+  async millCompare(@Query() query: QueryMillCompareDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.millCompareReport(tenantId, req.user?.userType, { millId: query.millId, date: query.date, period: query.period });
+    return { success: true, message: 'Compare report retrieved successfully.', data };
+  }
+
+  @Get('feed-plan/versions')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Retained Tentative and Actual Feed Plan versions for one farm' })
+  async feedPlanVersions(@Query('farmId') farmId: string | undefined, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.listFeedPlanVersions(farmId, tenantId, req.user?.userType);
+    return { success: true, message: 'Feed plan versions retrieved successfully.', data };
+  }
+
+  @Get('feed-plan/versions/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'One retained Feed Plan version with its five-week evidence' })
+  async feedPlanVersion(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.findFeedPlanVersion(id, tenantId);
+    return { success: true, message: 'Feed plan version retrieved successfully.', data };
+  }
+
+  @Post('feed-plan/versions')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Generate and retain the next Tentative or Actual Feed Plan version' })
+  async generateFeedPlanVersion(@Body() dto: GenerateFeedPlanDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.generateFeedPlanVersion(dto.farmId, dto.productionDate, tenantId, req.user);
+    return { success: true, message: 'Feed plan version generated.', data };
+  }
+
+  @Get('runs/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'One immutable feed forecast run and its dated lines' })
+  async run(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.findRun(id, tenantId);
+    return { success: true, message: 'Feed forecast run retrieved successfully.', data };
+  }
+
+  @Delete('runs/:id')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Archive the current calculation so the farm can calculate again' })
+  async archiveRun(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.archiveRun(id, tenantId, req.user);
+    return { success: true, message: 'Feed forecast calculation archived.', data };
+  }
+
+  // Stricter than archive ('create'): this cannot be undone. Registered after
+  // @Delete('runs/:id'); the literal 'permanent' suffix keeps the paths apart.
+  @Delete('runs/:id/permanent')
+  @RequirePermission('INVENTORY', 'LEDGER', 'delete')
+  @ApiOperation({ summary: 'Permanently delete a saved calculation and its lines; refused while a requisition or feed plan uses it' })
+  async deleteRunPermanently(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.deleteRunPermanently(id, tenantId, req.user);
+    return { success: true, message: 'Feed forecast calculation permanently deleted.', data };
+  }
+
   /**
-   * D32: the six per-farm feed settings, read and written on their own screen
-   * (Settings → Inventory Setup → Feed Planning) instead of on the Add/Edit
-   * Location form. Read under the report's grant, like 'farms' above, so the
-   * table renders for anyone who may see the forecast the settings shape.
-   * Written under the location master's own edit right, because the row being
-   * changed is a farm's master row. Deliberately not the generic
-   * PUT /location, which also demands Max Capacity and the rest of the form.
+   * Farms with their feed-planning override values, for Company
+   * Settings → Feed Planning. Read under the report's grant, like 'farms'
+   * above. The override values are written through PUT /feed-settings/farm
+   * (Task 8: they moved off location_master onto feed_planning_setting).
    */
   @Get('farm-settings')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: "Each farm this caller may open, with its six feed planning settings (D32)" })
-  async farmSettings(@Req() req: any) {
+  @ApiOperation({ summary: "Each farm this caller may open, with its feed planning override values" })
+  async farmSettings(@Query('companyId') companyId: string | undefined, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType);
+    const data = await this.feedForecastService.listFarmSettings(tenantId, req.user?.userType, companyId);
     return { success: true, message: 'Feed planning settings retrieved successfully.', data };
   }
 
-  @Put('farm-settings/:farmId')
-  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
-  @ApiOperation({ summary: "One farm's feed planning settings; only those six columns are written (D32)" })
-  async updateFarmSettings(@Param('farmId', ParseUUIDPipe) farmId: string, @Body() dto: UpdateFeedFarmSettingsDto, @Req() req: any) {
+  // Silo dashboard (TDD Engine §4, Master Setup §1): read under the forecast's own grant and farm scope.
+  @Get('silo-status')
+  @RequirePermission('INVENTORY', 'LEDGER', 'view')
+  @ApiOperation({ summary: 'Bootstrap Farm → Shed → Silo options, then return the selected Silo dashboard from one Farm calculation' })
+  async siloStatus(@Query() query: QuerySiloStatusDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.updateFarmSettings(farmId, dto, tenantId, req.user);
-    return { success: true, message: 'Feed planning settings updated.', data };
-  }
-
-  /**
-   * D41: a silo's levels and reorder days, from Feed Planning. Written under the
-   * location master's own edit right, like the farm settings above — the row
-   * being changed is a silo's master row — and never through the generic
-   * PUT /location, which demands the whole silo form.
-   */
-  @Put('farm-settings/:farmId/silos/:siloId')
-  @RequirePermission('MASTER_DATA', 'LOCATION', 'edit')
-  @ApiOperation({ summary: "One silo's feed levels and reorder days; only those three columns are written (D41)" })
-  async updateSiloSettings(
-    @Param('farmId', ParseUUIDPipe) farmId: string,
-    @Param('siloId', ParseUUIDPipe) siloId: string,
-    @Body() dto: UpdateSiloPlanningDto,
-    @Req() req: any,
-  ) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.updateSiloSettings(farmId, siloId, dto, tenantId, req.user);
-    return { success: true, message: 'Silo feed planning updated.', data };
+    const data = await this.feedForecastService.siloStatus(query, tenantId, req.user?.userType);
+    return { success: true, message: 'Silo status retrieved successfully.', data };
   }
 
   @Get()
@@ -101,5 +171,14 @@ export class FeedForecastController {
       message: 'Feed forecast retrieved successfully.',
       data: result,
     };
+  }
+
+  @Post('runs')
+  @RequirePermission('INVENTORY', 'LEDGER', 'create')
+  @ApiOperation({ summary: 'Save the displayed feed forecast as an immutable run' })
+  async saveRun(@Body() dto: QueryFeedForecastDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.feedForecastService.saveRun(dto, tenantId, req.user);
+    return { success: true, message: 'Feed forecast run saved.', data };
   }
 }

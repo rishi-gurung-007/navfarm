@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, NotFoundException, Inject, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, sql, and, ne } from 'drizzle-orm';
+import { eq, sql, and, ne, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import * as masterSchema from '../../../core/database/master-schema';
 import * as schema from '../../../core/database/schema';
@@ -102,6 +102,10 @@ export class TenantService {
 
       const masterCountries = await this.db.select().from(masterSchema.countryMaster);
       if (masterCountries.length > 0) {
+        // Migration 0176 already inserted every ISO country (fresh UUIDs). The master rows win — states,
+        // currencies and timezones reference their ids — so drop the same-iso2 rows from this brand-new
+        // database first; otherwise the copy hits the iso2 unique key and signup fails (12 Oct).
+        await tenantDb.delete(schema.countryMaster).where(inArray(schema.countryMaster.iso2, masterCountries.map((c) => c.iso2)));
         await tenantDb.insert(schema.countryMaster).values(masterCountries);
       }
 

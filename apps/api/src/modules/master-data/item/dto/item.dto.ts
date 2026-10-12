@@ -1,7 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+
+export const FEED_FORMS = ['BULK', 'BAGGED'] as const;
 
 // TDD row 21 specifies the withdrawal period as two digits.
 const MAX_WITHDRAWAL_DAYS = 99;
@@ -138,6 +140,18 @@ export class CreateItemDto {
   @IsOptional()
   @Min(0)
   reorder_level?: number;
+
+  @ApiProperty({ description: 'Diet number 1 to 14 (TDD Master Setup §2)', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'Diet No. must be between 1 and 14.' })
+  @Max(14, { message: 'Diet No. must be between 1 and 14.' })
+  diet_no?: number;
+
+  @ApiProperty({ description: 'Bulk or Bagged; feed items only. null clears it.', required: false, enum: FEED_FORMS, nullable: true })
+  @IsOptional()
+  @IsIn(FEED_FORMS, { message: 'Feed Form must be BULK or BAGGED.' })
+  feed_form?: 'BULK' | 'BAGGED' | null;
 
   @ApiProperty({ description: 'Procurement lead time in days, for feed/stock forecast planning', required: false })
   @IsInt()
@@ -343,6 +357,18 @@ export class UpdateItemDto {
   @IsOptional()
   @Min(0)
   reorder_level?: number;
+
+  @ApiProperty({ description: 'Diet number 1 to 14 (TDD Master Setup §2)', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'Diet No. must be between 1 and 14.' })
+  @Max(14, { message: 'Diet No. must be between 1 and 14.' })
+  diet_no?: number;
+
+  @ApiProperty({ description: 'Bulk or Bagged; feed items only. null clears it.', required: false, enum: FEED_FORMS, nullable: true })
+  @IsOptional()
+  @IsIn(FEED_FORMS, { message: 'Feed Form must be BULK or BAGGED.' })
+  feed_form?: 'BULK' | 'BAGGED' | null;
 
   @ApiProperty({ required: false })
   @IsInt()

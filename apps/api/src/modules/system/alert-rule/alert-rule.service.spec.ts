@@ -1,7 +1,7 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
-import { AlertRuleService } from './alert-rule.service';
+import { AlertRuleService, normalizeFeedRecipientRole } from './alert-rule.service';
 
 /** "Only one low feed event applies per silo" (Master Setup §4 row 45). */
 describe('AlertRuleService', () => {
@@ -10,7 +10,7 @@ describe('AlertRuleService', () => {
   const selectQueue: unknown[][] = [];
   const chain = (rows: unknown[]) => {
     const self: any = {
-      from: () => self,
+      from: () => self, innerJoin: () => self,
       where: (cond: unknown) => { capturedWhere = cond; return self; },
       orderBy: () => self, offset: () => self, limit: async () => rows,
       then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej),
@@ -25,6 +25,45 @@ describe('AlertRuleService', () => {
     capturedWhere = undefined;
     (db.select as jest.Mock).mockClear();
     (db.insert as jest.Mock).mockReset();
+  });
+
+  it('maps legacy HEAD_OF_FARM recipients to the existing OPERATIONAL_ADMIN user type', () => {
+    expect(normalizeFeedRecipientRole('HEAD_OF_FARM')).toBe('OPERATIONAL_ADMIN');
+  });
+
+  // W4G2 rows 50 and 54: recipient and escalation roles come from the Role Master.
+  describe('recipient roles are Role Master codes', () => {
+    const dto = (over: object = {}) => ({
+      company_id: 'co-1', notification_code: 'ROLE-T', notification_name: 'Role test',
+      event_type: 'DIET_CHANGE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 3,
+      priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', ...over,
+    }) as any;
+
+    it('refuses a recipient role the company does not have', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]); // role lookup
+      await expect(service.create(dto({ recipient_roles: ['NOT_A_ROLE'] }), 'tenant-1', { userId: 'u' }))
+        .rejects.toThrow(/NOT_A_ROLE is not in the Role Master/);
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('refuses an escalation role the company does not have', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]);
+      await expect(service.create(dto({ recipient_roles: ['MANAGER'], frequency: 'ESCALATING', escalation_after_hours: 4, escalation_role: 'GHOST' }), 'tenant-1', { userId: 'u' }))
+        .rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('lists the Role Master codes and the default rules\' user types once each, in code order', async () => {
+      selectQueue.push([{ role_code: 'OPERATOR', role_name: 'Operator' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MANAGER', role_name: 'Manager' }, { role_code: 'MILL_MANAGER', role_name: 'Mill Manager (Role Master)' }]);
+      const rows = await service.roleOptions('tenant-1', 'co-1');
+      expect(rows.map((r) => r.role_code)).toEqual(['FARM_MANAGER', 'HEAD_OF_FARM', 'MANAGER', 'MILL_MANAGER', 'OPERATOR']);
+      expect(rows.find((r) => r.role_code === 'MILL_MANAGER')?.role_name).toBe('Mill Manager (Role Master)'); // the Role Master row wins
+    });
+
+    it('accepts the user types the default rules use without a Role Master row (decisions 11 Oct)', async () => {
+      selectQueue.push([{ role_code: 'MANAGER', role_name: 'Manager' }]);
+      await expect(service.create(dto({ recipient_roles: ['FARM_MANAGER', 'MILL_MANAGER'], frequency: 'ESCALATING', escalation_after_hours: 4, escalation_role: 'HEAD_OF_FARM' }), 'tenant-1', { userId: 'u' }))
+        .rejects.not.toThrow(/is not in the Role Master/);
+    });
   });
 
   it('refuses a second active FEED_BELOW_L1 rule for the same company and farm filter', async () => {
@@ -112,11 +151,12 @@ describe('AlertRuleService', () => {
   // M8, fix round 1: ensureDefaultRules' select-then-insert is not itself
   // atomic, so a concurrent duplicate insert must be a no-op rather than an
   // unhandled ER_DUP_ENTRY.
+  const ALL_CODES = ['FEED-BELOW-L1', 'FEED-ABOVE', 'DIET-CHANGE', 'REQ-REMINDER', 'REQ-OVERDUE', 'PLAN-AVAILABLE',
+    'MILL-DISPATCH', 'MILL-ADJUSTED', 'RECEIPT-VARIANCE', 'NO-NEXT-FEED-ROW', 'NEXT-DIET-NO-SILO', 'CAPACITY-EXCEEDED',
+    'SHORTFALL', 'NOT-DRAFTED', 'TRUCK-TARGET', 'AUTO-DRAFTED', 'STOCK-TAKE-DUE', 'CHANGEOVER'];
   describe('ensureDefaultRules — idempotent under concurrency', () => {
-    it('inserts nothing when all five default rules are already present', async () => {
-      selectQueue.push([
-        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' },
-      ]);
+    it('inserts nothing when all eighteen default rules are already present', async () => {
+      selectQueue.push(ALL_CODES.map((code) => ({ code })));
       await service.ensureDefaultRules('co-1', 'tenant-1');
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -128,8 +168,8 @@ describe('AlertRuleService', () => {
       (db.insert as jest.Mock).mockReturnValueOnce({ values });
       await service.ensureDefaultRules('co-1', 'tenant-1');
       const inserted = values.mock.calls[0][0];
-      expect(inserted).toHaveLength(3);
-      expect(inserted.map((row: any) => row.notification_code).sort()).toEqual(['DIET-CHANGE', 'REQ-OVERDUE', 'REQ-REMINDER']);
+      expect(inserted).toHaveLength(16);
+      expect(inserted.map((row: any) => row.notification_code).sort()).toEqual(ALL_CODES.filter((c) => c !== 'FEED-BELOW-L1' && c !== 'FEED-ABOVE').sort());
       expect(onDuplicateKeyUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.any(Object) }));
     });
 
@@ -138,12 +178,10 @@ describe('AlertRuleService', () => {
       const valuesA = jest.fn().mockReturnValue({ onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}) });
       (db.insert as jest.Mock).mockReturnValueOnce({ values: valuesA });
       await service.ensureDefaultRules('co-A', 'tenant-1');
-      expect(valuesA.mock.calls[0][0]).toHaveLength(5);
+      expect(valuesA.mock.calls[0][0]).toHaveLength(18);
       expect(valuesA.mock.calls[0][0].every((row: any) => row.company_id === 'co-A')).toBe(true);
 
-      selectQueue.push([
-        { code: 'FEED-BELOW-L1' }, { code: 'FEED-ABOVE' }, { code: 'DIET-CHANGE' }, { code: 'REQ-REMINDER' }, { code: 'REQ-OVERDUE' },
-      ]); // company B already has all five
+      selectQueue.push(ALL_CODES.map((code) => ({ code }))); // company B already has all eighteen
       await service.ensureDefaultRules('co-B', 'tenant-1');
       expect(db.insert).toHaveBeenCalledTimes(1); // only company A's insert ever happened
     });

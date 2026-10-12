@@ -12,8 +12,11 @@ const statements = sql.split('--> statement-breakpoint').map((s) => s.replace(/^
 describe('migration 0144 — BCS metric repair', () => {
   it('is journalled after 0143, strictly increasing', () => {
     const journal = JSON.parse(readFileSync(join(__dirname, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
-    const entry = journal.find((e) => e.idx === 144);
-    expect(entry?.tag).toBe('0144_bcs_metric_repair');
+    // Found by tag, not by position: the journal's indexes shift whenever another branch's migrations are merged in.
+    const at = journal.findIndex((e) => e.tag === '0144_bcs_metric_repair');
+    expect(at).toBeGreaterThan(journal.findIndex((e) => e.tag === '0143_headcount_transfer_and_stage_gender'));
+    expect(journal.findIndex((e) => e.tag === '0143_headcount_transfer_and_stage_gender')).toBeGreaterThan(-1);
+    expect(journal[at].idx).toBe(at);
     expect(journal.map((e) => e.when).every((w, i, all) => i === 0 || w > all[i - 1])).toBe(true);
   });
 

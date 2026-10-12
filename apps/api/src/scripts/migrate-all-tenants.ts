@@ -4,6 +4,8 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
+import { assertCanonicalLineage, isMissingTableError } from './migration-lineage';
+import { assertDatabaseAllowed } from '../core/database/database-allowlist';
 
 /**
  * Applies any pending tenant-schema migrations (src/drizzle/tenant) to every
@@ -23,6 +25,7 @@ const ssl = process.env.DATABASE_SSL === 'true'
 const masterDatabase = process.env.DATABASE_NAME || 'nf_master';
 
 async function run() {
+  assertDatabaseAllowed(masterDatabase, 'migrate-all-tenants master');
   const masterPool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
   const masterDb = drizzle(masterPool, { schema: master, mode: 'default' });
 
@@ -32,6 +35,15 @@ async function run() {
     const failedTenants: string[] = [];
 
     for (const t of tenants) {
+      // A registry row decides which database this migrates; refuse any the
+      // allowlist does not name before DDL can reach it.
+      try {
+        assertDatabaseAllowed(t.db_name, `migrate-all-tenants tenant ${t.tenant_code}`);
+      } catch (err) {
+        console.error(`  [${t.tenant_code}] REFUSED:`, err instanceof Error ? err.message : err);
+        failedTenants.push(t.tenant_code);
+        continue;
+      }
       const tenantPool = mysql.createPool({
         host: t.db_host || host,
         port: t.db_port || port,
@@ -43,6 +55,24 @@ async function run() {
       const tenantDb = drizzle(tenantPool, { schema: tenant, mode: 'default' });
 
       try {
+        // The Mac development tenant has the older Feed Forecast lineage (its
+        // journal is beyond the Windows baseline and it already owns feed
+        // loading tables).  Never let the canonical Windows migration folder
+        // run against that lineage: it would replay overlapping columns.
+        let latestId = 0;
+        try {
+          const [journalRows] = await tenantPool.query<mysql.RowDataPacket[]>(
+            'SELECT id FROM __drizzle_migrations ORDER BY id DESC LIMIT 1',
+          );
+          latestId = Number(journalRows[0]?.id ?? 0);
+        } catch (err) {
+          // A truly empty database has no journal yet; drizzle creates it. Treat as journal 0.
+          if (!isMissingTableError(err)) throw err;
+        }
+        const [loadingTables] = await tenantPool.query<mysql.RowDataPacket[]>(
+          "SHOW TABLES LIKE 'feed_loading_sheet'",
+        );
+        assertCanonicalLineage(latestId, loadingTables.length > 0);
         await migrate(tenantDb as any, {
           migrationsFolder: resolve(process.cwd(), 'src/drizzle/tenant'),
         });

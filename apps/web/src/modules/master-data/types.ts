@@ -5,6 +5,7 @@ export type FieldType =
   | "boolean"
   | "email"
   | "date"
+  | "time"
   | "select"
   | "select-entity"
   | "field-list"
@@ -26,6 +27,8 @@ export interface RequiredCondition {
   key: string;
   equals?: string | boolean | Array<string | boolean | null | undefined>;
   notEquals?: string | boolean | Array<string | boolean | null | undefined>;
+  /** Matches when the value, upper-cased, starts with this prefix (e.g. every FEED-* item type). */
+  startsWith?: string;
 }
 
 export interface MasterDataField {
@@ -40,7 +43,11 @@ export interface MasterDataField {
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
+  /** Edited in a stacked dialog opened from the record dialog's header ("KPIs & Alerts"), not in the form grid. Still part of the form state and payload. */
+  subDialog?: boolean;
   placeholder?: string;
+  /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
+  defaultFromField?: string;
   helpText?: string;
   /** Static dropdown options, for type: "select" */
   options?: SelectOption[];
@@ -73,6 +80,8 @@ export interface MasterDataField {
    * everywhere.
    */
   emptyMultipleLabel?: string;
+  /** What a read-only record view shows when the value is empty, instead of a dash (e.g. "Not available"). */
+  emptyLabel?: string;
   /**
    * For type "select-entity": key(s) of other field(s) in this form whose value this dropdown
    * depends on (e.g. lob_id depending on nob_id). Disabled until every parent has a value;
@@ -433,6 +442,23 @@ export interface MasterDataConfig {
    * Conversions), so the table doesn't offer a Restore action that would 404.
    */
   supportsRestore?: boolean;
+  /** Opt-in reviewed-draft lifecycle. Draft editing and activation approval remain separate authorities. */
+  draftLifecycle?: {
+    activatePath: string;
+    approvePermission: { moduleCode: string; resource: string };
+  };
+  /**
+   * Extra POST commands in a row's action menu (e.g. Reporting Period Close / Reopen).
+   * `reasonPrompt` asks for a reason and sends it as `{ reason }`; the API enforces the rules.
+   */
+  rowCommands?: Array<{
+    key: string;
+    label: string;
+    path: string;
+    visibleWhen?: (row: Record<string, any>) => boolean;
+    reasonPrompt?: string;
+    successMessage: string;
+  }>;
   /** Whether the table row actions render a delete / deactivate trash button. Defaults to true. */
   supportsDelete?: boolean;
   /**
@@ -468,6 +494,13 @@ export interface MasterDataConfig {
   lookupFor?: string[];
   /** Sub-tabs that filter rows by a field value (e.g. resource_type: MANPOWER vs EQUIPMENT). */
   filterTabs?: MasterDataFilterTabs;
+  /**
+   * A view of a shared table fixed to one value of a column: the list is
+   * requested with `queryParam=value` and every saved row carries
+   * `payloadKey=value`, without the column appearing in the form. Departments
+   * are the Cost Center table fixed to type DEPARTMENT.
+   */
+  fixedFilter?: { queryParam: string; payloadKey: string; value: string };
 }
 
 export interface MasterDataFilterTabOption {

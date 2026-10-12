@@ -1,0 +1,305 @@
+/**
+ * Transfer execution rules — pure, no database (plan Task 10).
+ *
+ * decisions.md (1 Oct): "Partial shipment and receipt are allowed without
+ * over-shipment or over-receipt; Direct Transfer may post a selected partial
+ * shipment and its matching receipt together when the user has the explicit
+ * Direct Transfer permission." Spec "Transfer execution": shipment and receipt
+ * documents are append-only partial events; lot/serial assignment is mandatory
+ * before shipment for tracked items and is copied automatically to receipt.
+ *
+ * The quantity guards re-raise requisition.rules.ts's own assertShipmentQty /
+ * assertReceiptQty so the same bounds live in one place — the requisition
+ * line's balance and the transfer line's balance are the same arithmetic.
+ */
+import { BadRequestException } from '@nestjs/common';
+import { assertReceiptQty, assertShipmentQty } from '../../procurement/requisition/requisition.rules';
+import { FLOAT_SUM_TOLERANCE } from '../../../common/numeric-tolerance';
+
+export interface TrackingAssignment {
+  lot_no: string | null;
+  serial_no: string | null;
+  qty: number;
+}
+
+export interface ItemTrackingFlags {
+  isLotTracked: boolean;
+  isSerialTracked: boolean;
+}
+
+/**
+ * One transfer line carries its assignment as the document stores it: a single
+ * `lot_no` and a comma-separated `serial_no` list (Rishi's 4 Oct list, "Item
+ * Tracking Button … Lot/Serial assignment page"). Expand that into the ledger's
+ * row-per-identity shape: serials are one unit each, a bare lot carries the
+ * whole line quantity.
+ */
+export function assignmentsFromLine(line: { lot_no: string | null; serial_no: string | null; qty: number }): TrackingAssignment[] {
+  const qtyAbs = Math.abs(line.qty);
+  const serials = String(line.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (line.lot_no) {
+    // One lot with one or more serials: the lot carries the serials, one row
+    // per serial, qty 1, and the remainder (if any) stays on the lot.
+    if (serials.length) {
+      return serials.map((s) => ({ lot_no: line.lot_no, serial_no: s, qty: 1 }));
+    }
+    return [{ lot_no: line.lot_no, serial_no: null, qty: qtyAbs }];
+  }
+  if (serials.length) {
+    return serials.map((s) => ({ lot_no: null, serial_no: s, qty: 1 }));
+  }
+  return [{ lot_no: null, serial_no: null, qty: qtyAbs }];
+}
+
+
+export interface ShipmentLineState {
+  ordered: number;
+  previouslyShipped: number;
+  events: TrackingAssignment[];
+}
+
+export interface ReceiptLineState {
+  ordered: number;
+  previouslyShipped: number;
+  previouslyReceived: number;
+  events: TrackingAssignment[];
+}
+
+/** The quantity guards, re-raised under transfer names for the callers here. */
+export const assertShipmentEvent = (balanceToShip: number, qty: number): void => assertShipmentQty(balanceToShip, qty);
+export const assertReceiptEvent = (remainingToReceive: number, qty: number): void => assertReceiptQty(remainingToReceive, qty);
+
+/** Ship `qty` against a line: append-only accumulation, never beyond the order. */
+export function nextShipmentState(
+  state: ShipmentLineState,
+  event: { lineId: string; qty: number },
+): { shipped: number; balanceToShip: number; events: TrackingAssignment[] } {
+  const remaining = state.ordered - state.previouslyShipped;
+  assertShipmentQty(remaining, event.qty);
+  return { shipped: state.previouslyShipped + event.qty, balanceToShip: remaining - event.qty, events: [] };
+}
+
+/**
+ * Receive `qty` against a line: bounded by what has actually shipped (never
+ * the order), and never before any shipment exists — "a receipt cannot
+ * precede its shipment".
+ */
+export function nextReceiptState(
+  state: ReceiptLineState,
+  event: { lineId: string; qty: number },
+): { received: number; remainingToReceive: number; events: TrackingAssignment[] } {
+  if (state.previouslyShipped <= 0) {
+    throw new BadRequestException('A receipt cannot precede its shipment.');
+  }
+  const remaining = Math.min(state.previouslyShipped, state.ordered) - state.previouslyReceived;
+  assertReceiptQty(remaining, event.qty);
+  return { received: state.previouslyReceived + event.qty, remainingToReceive: remaining - event.qty, events: [] };
+}
+
+/**
+ * Lot/serial identity before shipment. A lot-tracked line must carry at least
+ * one lot assignment; a serial-tracked line one serial per unit. Assigned
+ * quantities must cover the shipped quantity — under-covering would post an
+ * untracked remainder, which is the hole the rule exists to close.
+ */
+export function assertTrackingAssignments(
+  item: { isLotTracked: boolean; isSerialTracked: boolean },
+  assignments: TrackingAssignment[],
+  qty: number,
+): void {
+  if (item.isLotTracked && !assignments.some((a) => a.lot_no)) {
+    throw new BadRequestException('Item is lot-tracked; assign a lot before shipment.');
+  }
+  if (item.isSerialTracked) {
+    if (!assignments.some((a) => a.serial_no)) {
+      throw new BadRequestException('Item is serial-tracked; assign a serial number before shipment.');
+    }
+    const serials = assignments.filter((a) => a.serial_no).map((a) => a.serial_no);
+    if (new Set(serials).size !== serials.length) {
+      throw new BadRequestException('Serial numbers must be unique on one transfer line.');
+    }
+  }
+  if (item.isLotTracked || item.isSerialTracked) {
+    const covered = assignments.reduce((sum, a) => sum + a.qty, 0);
+    if (assignments.length === 0 || covered <= 0) {
+      throw new BadRequestException('Assigned quantities must cover the shipped quantity.');
+    }
+    if (covered + FLOAT_SUM_TOLERANCE < qty) {
+      throw new BadRequestException(`Assigned lot/serial quantities (${covered}) do not cover the shipped quantity (${qty}).`);
+    }
+  }
+}
+
+/** Receipt copies the shipment's assignments verbatim (spec: "copied automatically"). */
+export function cumulativeAfter(assignments: TrackingAssignment[]): TrackingAssignment[] {
+  return assignments.map((a) => ({ ...a }));
+}
+
+/**
+ * The same 1e-9 tolerance assertShipment (stock-transfer.service.ts) already
+ * uses against the ordered quantity, re-applied here (Part E Task 4b, fix
+ * round 1, Important 1). shippedQuantities/receivedQuantities sum Number(qty)
+ * in JS float arithmetic — ordered 1.3 shipped as 0.6 + 0.7 sums to
+ * 1.2999999999999998, short of 1.3 by 2e-16. A bare >= never saw that as
+ * fully shipped, so the transfer sat in PARTIALLY_RECEIVED forever: further
+ * shipment, edit and cancel were all refused once "shipped" existed. The data
+ * script (recompute-transfer-status.ts) sums in SQL DECIMAL arithmetic, which
+ * is exact — it would have read 1.3 and disagreed with the service's
+ * 1.2999999999999998. Both read through this one function, so the tolerance
+ * fixes them together rather than needing two matching fixes.
+ *
+ * Part E Task 7: this is now the shared `FLOAT_SUM_TOLERANCE` (imported from
+ * common/numeric-tolerance.ts) under its original local name — moved there
+ * so requisition.rules.ts's own float-sum comparison (fulfilmentStatusOf)
+ * could reuse it instead of hand-rolling a seventh instance.
+ */
+const FULLY_COVERED_TOLERANCE = FLOAT_SUM_TOLERANCE;
+
+export const transferIsFullyShipped = (lines: Array<{ ordered: number; shipped: number }>): boolean =>
+  lines.length > 0 && lines.every((l) => l.shipped >= l.ordered - FULLY_COVERED_TOLERANCE);
+
+export const transferIsFullyReceived = (lines: Array<{ ordered: number; received: number }>): boolean =>
+  lines.length > 0 && lines.every((l) => l.received >= l.ordered - FULLY_COVERED_TOLERANCE);
+
+/**
+ * A transfer's status, derived from its events (Part E Task 4b). The column
+ * is stock_transfer.status varchar(20) with no CHECK or enum, so the two new
+ * values are plain strings:
+ *   no line shipped                               -> DRAFT
+ *   every line shipped AND received in full       -> POSTED
+ *   any receipt, something ordered not received   -> PARTIALLY_RECEIVED
+ *   shipped, nothing received                     -> IN_TRANSIT
+ * CANCELLED is not derived: only remove() sets it, and only on a transfer
+ * with no events.
+ */
+export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'POSTED';
+
+/** Statuses a further shipment or receipt may still be posted against. */
+export const OPEN_TRANSFER_STATUSES: readonly TransferStatus[] = ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'];
+
+export function transferStatusFor(lines: Array<{ ordered: number; shipped: number; received: number }>): TransferStatus {
+  if (!lines.some((l) => l.shipped > 0)) return 'DRAFT';
+  if (transferIsFullyShipped(lines) && transferIsFullyReceived(lines)) return 'POSTED';
+  if (lines.some((l) => l.received > 0)) return 'PARTIALLY_RECEIVED';
+  return 'IN_TRANSIT';
+}
+
+/**
+ * WP4a live-check defect: a receipt of a multi-serial shipment line wrote ONE
+ * ledger layer named "SN1,SN2", which no consumer can match (a serial is one
+ * physical unit; the Goods Receipt writes one row per serial). The receipt
+ * copies the shipment's serials (Rishi's 4 Oct list: "On Transfer Receipt:
+ * Serial/Lot auto-populated from Shipment") one layer per serial instead. A
+ * partial receipt takes the next serials not yet received on that shipment
+ * line, in shipment order.
+ */
+export function serialsForReceipt(shipmentSerialNo: string | null, alreadyReceived: number, qty: number): string[] {
+  const serials = String(shipmentSerialNo ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!Number.isInteger(qty) || !Number.isInteger(alreadyReceived)) {
+    throw new BadRequestException(`Serial-tracked receipts are whole units (got ${qty}).`);
+  }
+  const left = serials.length - alreadyReceived;
+  if (qty > left) {
+    throw new BadRequestException(`The shipment line has ${left} serial(s) left to receive; ${qty} requested.`);
+  }
+  return serials.slice(alreadyReceived, alreadyReceived + qty);
+}
+
+/** `total` in `parts` four-place shares; the last takes the rounding remainder so the sum is exact. */
+export function splitAmount(total: number, parts: number): number[] {
+  const round4 = (v: number) => Math.round(v * 10000) / 10000;
+  const share = round4(total / parts);
+  const out = Array.from({ length: parts }, () => share);
+  out[parts - 1] = round4(total - share * (parts - 1));
+  return out;
+}
+
+/**
+ * WP4a fix round 1 — the ONE tracking rule for a line about to ship, used by
+ * the shipment itself and by the requisition's Item Tracking route (which
+ * passes the whole balance as qty), so an assignment the route accepts is
+ * one the shipment accepts.
+ *
+ * On top of assertTrackingAssignments, a serial-tracked line ships its whole
+ * balance in one shipment with exactly one serial per unit: with spares or a
+ * partial shipment, which serials left would be FIFO's choice, not the
+ * document's, and the receipt could not know which to copy. Partial serial
+ * shipments stay refused until the consumed serials are recorded per event.
+ */
+export function assertTrackingForShipment(
+  item: ItemTrackingFlags,
+  assignment: { lot_no: string | null; serial_no: string | null },
+  qty: number,
+  balanceToShip: number,
+): void {
+  assertTrackingAssignments(item, assignmentsFromLine({ ...assignment, qty }), qty);
+  if (item.isSerialTracked) {
+    if (qty + FLOAT_SUM_TOLERANCE < balanceToShip) {
+      throw new BadRequestException(
+        `A serial-tracked line ships its whole balance (${balanceToShip}) in one shipment; partial shipments of serial-tracked lines are not supported yet.`,
+      );
+    }
+    const count = String(assignment.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean).length;
+    if (count !== qty) {
+      throw new BadRequestException(`Assign exactly ${qty} serial number(s) to ship ${qty}; ${count} are assigned.`);
+    }
+  }
+}
+
+/**
+ * W2T — feed TO receipt controls (Requisition rows 145-147, Silo TO Receipt
+ * rows 17, 24 and 27, Checkpoints rows 26 and 27). Over-receipt is refused
+ * before these run (decisions.md, 10 Oct: the block stays, departing from row
+ * 29), so the variance here is never negative.
+ */
+export const BAG_COUNT_TOLERANCE = 0.01; // Silo row 24: "within 1 percent tolerance"
+
+/** Shipped minus everything received on the line once this posting lands. */
+export function receiptVariance(shipped: number, previouslyReceived: number, quantity: number): number {
+  const v = Math.round((shipped - previouslyReceived - quantity) * 10000) / 10000;
+  return Math.abs(v) < FLOAT_SUM_TOLERANCE ? 0 : v;
+}
+
+export interface FeedReceiptLineCheck {
+  label: string;
+  shipped: number;
+  previouslyReceived: number;
+  quantity: number;
+  feedType: string | null;
+  bagSizeKg: number;
+  bagCount?: number | null;
+  varianceReason?: string | null;
+  deliveryNoteNo?: string | null;
+}
+
+/**
+ * Refuses a feed receipt line that breaks a control and returns its variance:
+ * outstanding before this posting minus what is received now. A reason is
+ * required on every short receipt, even if more is still coming (Rishi, 11 Oct).
+ * The delivery note no. is optional.
+ */
+export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
+  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  const variance = receiptVariance(c.shipped, c.previouslyReceived, c.quantity);
+  if (variance > 0 && !c.varianceReason?.trim()) {
+    throw new BadRequestException(
+      `${c.label}: ${fmt(c.shipped)} KG shipped but ${fmt(c.previouslyReceived + c.quantity)} KG received leaves ${fmt(variance)} KG short; enter a variance reason (checkpoint 26).`,
+    );
+  }
+  if (c.feedType !== 'BAGGED' && c.bagCount != null) {
+    throw new BadRequestException(`${c.label}: a bag count applies only to BAGGED feed; remove it from this ${c.feedType ?? 'non-bagged'} line.`);
+  }
+  if (c.feedType === 'BAGGED') {
+    const bags = c.bagCount;
+    if (bags == null || !Number.isInteger(bags) || bags <= 0) {
+      throw new BadRequestException(`${c.label}: enter the bag count received, a whole number, for bagged feed (checkpoint 27).`);
+    }
+    const bagKg = bags * c.bagSizeKg;
+    if (Math.abs(bagKg - c.quantity) > c.quantity * BAG_COUNT_TOLERANCE + FLOAT_SUM_TOLERANCE) {
+      throw new BadRequestException(
+        `${c.label}: ${bags} bags x ${fmt(c.bagSizeKg)} KG = ${fmt(bagKg)} KG does not match ${fmt(c.quantity)} KG received within 1 percent (checkpoint 27).`,
+      );
+    }
+  }
+  return variance;
+}

@@ -50,7 +50,10 @@ describe('StockTransferService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
+      innerJoin: () => self,
+      leftJoin: () => self,
       where: (cond: unknown) => { capturedWhere ??= cond; return self; },
+      orderBy: () => self,
       limit: () => self,
       offset: () => self,
       for: () => self,
@@ -77,6 +80,11 @@ describe('StockTransferService', () => {
     rows.set(schema.stockTransfer, []);
     rows.set(schema.stockTransferLine, []);
     rows.set(schema.locationMaster, []);
+    // Task 10 event tables: the direct-transfer wrapper reads and writes them.
+    rows.set(schema.transferShipment, []);
+    rows.set(schema.transferShipmentLine, []);
+    rows.set(schema.transferReceipt, []);
+    rows.set(schema.transferReceiptLine, []);
 
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
@@ -89,8 +97,22 @@ describe('StockTransferService', () => {
     mockWriteNegativeEntry.mockReset().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
     mockWritePositiveEntry.mockReset().mockResolvedValue({ ledger_id: 'led-2' });
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
-    mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+    mockDbInsert.mockImplementation((table: unknown) => ({
+      values: jest.fn(async (v: any) => {
+        // Event rows written by the direct-transfer path must be readable
+        // inside the same call: the receipt binds to the shipment it follows,
+        // and the POSTED claim recounts coverage from the event tables. The
+        // `qty` alias mirrors what the cumulative joins project (qty:
+        // quantity). Other inserts are ignored.
+        const bucket = rows.get(table);
+        if (bucket && v && typeof v === 'object' && ('shipment_id' in v || 'receipt_id' in v)) {
+          bucket.push({ ...v, qty: v.quantity });
+        }
+      }),
+    }));
+    // MySqlRawQueryResult is an array ([ResultSetHeader, ...]); the DRAFT →
+    // POSTED claim destructures it and reads affectedRows.
+    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
     cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
@@ -105,6 +127,10 @@ describe('StockTransferService', () => {
             getStockBalance: mockGetStockBalance,
             writeNegativeEntry: mockWriteNegativeEntry,
             writePositiveEntry: mockWritePositiveEntry,
+            transferShipmentRemainingValue: jest.fn().mockResolvedValue(0),
+            writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
+            writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
+            transferShipmentRate: jest.fn().mockResolvedValue(2.5),
           },
         },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
@@ -114,6 +140,90 @@ describe('StockTransferService', () => {
     }).compile();
 
     service = module.get<StockTransferService>(StockTransferService);
+  });
+
+  describe('feed release transfer creation', () => {
+    const dto = {
+      company_id: 'co-1',
+      from_warehouse_id: 'bin-1',
+      to_warehouse_id: 'silo-1',
+      posting_date: '2026-10-08',
+      lines: [{ item_id: 'feed-1', quantity: 5000, uom: 'KG', requisition_line_id: 'req-line-1' }],
+    };
+    const validContext = {
+      requisition: { requisition_id: 'req-1', tenant_id: 'tenant-1', company_id: 'co-1', main_location_id: 'farm-1' },
+      source: { location_id: 'bin-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'BIN', parent_location_id: 'mill-1', is_active: true, status: 'ACTIVE', deleted_at: null },
+      mill: { location_id: 'mill-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'MILL', is_active: true, status: 'ACTIVE', deleted_at: null },
+      destination: { location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'SILO', parent_location_id: 'farm-1', farm_id: 'farm-1', is_active: true, status: 'ACTIVE', deleted_at: null },
+    };
+
+    const enterPostingTransaction = () => {
+      const get = cls.get.bind(cls);
+      cls.get = ((key?: string) => key === 'tenantPostingTransaction' ? true : get(key as any)) as typeof cls.get;
+    };
+
+    it('is callable only while the owning feed release transaction is active', async () => {
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(
+        'Feed release transfers must be created inside the feed requisition transaction.',
+      );
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('requires every generated transfer line to retain its requisition line id', async () => {
+      enterPostingTransaction();
+      await expect(service.createForFeedRelease({ ...dto, lines: [{ item_id: 'feed-1', quantity: 5, uom: 'KG' }] } as any, 'tenant-1'))
+        .rejects.toThrow('Every feed release transfer line must include requisition_line_id.');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('creates a validated BIN-to-SILO transfer through the shared insert path', async () => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue(validContext);
+      const createRecord = jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' });
+
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1', { userId: 'u-1' })).resolves.toEqual({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001',
+      });
+      expect(createRecord).toHaveBeenCalledWith(dto, 'tenant-1', { userId: 'u-1' });
+    });
+
+    it('allocates a fresh sequential transfer number for each release group', async () => {
+      jest.spyOn(service as any, 'generateTransferNo')
+        .mockResolvedValueOnce('TR-000041')
+        .mockResolvedValueOnce('TR-000042');
+
+      const first = await (service as any).createRecord(dto, 'tenant-1', { userId: 'u-1' });
+      const second = await (service as any).createRecord({ ...dto, from_warehouse_id: 'bin-2' }, 'tenant-1', { userId: 'u-1' });
+
+      expect(first.transfer_no).toBe('TR-000041');
+      expect(second.transfer_no).toBe('TR-000042');
+      expect(first.transfer_id).not.toBe(second.transfer_id);
+    });
+
+    it.each([
+      ['a source that is not a BIN', { source: { ...validContext.source, location_type: 'STORE' } }, 'must be an active BIN'],
+      ['a BIN without a MILL parent', { mill: null }, 'must have an active MILL parent'],
+      ['an inactive BIN', { source: { ...validContext.source, is_active: false } }, 'must be an active BIN'],
+      ['a source in another company', { source: { ...validContext.source, company_id: 'co-2' } }, 'must belong to company co-1'],
+      ['a destination on another farm', { destination: { ...validContext.destination, parent_location_id: 'farm-2', farm_id: 'farm-2' } }, 'must belong to requisition farm farm-1'],
+    ])('refuses %s', async (_label, override, message) => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue({ ...validContext, ...override });
+      const createRecord = jest.spyOn(service as any, 'createRecord');
+
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(message);
+      expect(createRecord).not.toHaveBeenCalled();
+    });
+
+    it('allows a BAGGED feed line to release into an active farm STORE', async () => {
+      enterPostingTransaction();
+      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue({
+        ...validContext,
+        destination: { ...validContext.destination, location_type: 'STORE' },
+      });
+      jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
+      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).resolves.toEqual({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
+    });
   });
 
   // Ruling M6: a posted transfer re-checks the silo levels of the farms at
@@ -140,7 +250,7 @@ describe('StockTransferService', () => {
           StockTransferService,
           { provide: ClsService, useValue: cls },
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-          { provide: InventoryLedgerService, useValue: { writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }), getStockBalance: mockGetStockBalance } },
+          { provide: InventoryLedgerService, useValue: { transferShipmentRemainingValue: jest.fn().mockResolvedValue(0), writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }), writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }), transferShipmentRate: jest.fn().mockResolvedValue(2.5), getStockBalance: mockGetStockBalance } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
           { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
@@ -250,7 +360,12 @@ describe('StockTransferService', () => {
         transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
         from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
       } as any);
+      // M6 (fix round 1) moved assertNotShipped ahead of assertWarehouses, so
+      // update()'s FIRST select is now the shipment-events read, not the
+      // source-warehouse read — this harmless empty queue entry is it ("no
+      // shipment"); the two real location overrides shift down by one.
       mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) })
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
         .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-other', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
 
@@ -334,13 +449,239 @@ describe('StockTransferService', () => {
         transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
         from_warehouse_id: 'store-k', to_warehouse_id: 'wh-1', lines: [],
       } as any);
-      mockDbSelect.mockReturnValueOnce({
-        from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
-      });
+      // M6 (fix round 1): assertNotShipped's select (no shipment) runs before
+      // assertWarehouses's source-warehouse select.
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) })
+        .mockReturnValueOnce({
+          from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
+        });
 
       await expect(service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 999, uom: 'KG' }] } as any, 'tenant-1'))
         .rejects.toThrow('Source location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Fix round 1, M6: update() must check for a shipment (assertNotShipped)
+   * before it validates the warehouses (assertWarehouses) — the cheap,
+   * event-based refusal first, the two location reads only once that is clear.
+   * Before this fix the order was reversed.
+   */
+  describe('fix round 1, M6 — update() checks shipped stock before the warehouses', () => {
+    it('reports "stock has already shipped", not a warehouse error, even when the new destination would also fail validation', async () => {
+      useFarmScope(cls, { farmId: null, companyId: 'co-1', restricted: false, lobId: null });
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'IN_TRANSIT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      rows.set(schema.transferShipment, [{ shipment_no: 'SH-2026-0001' }]);
+      // The destination the caller wants to move to does not exist — if
+      // assertWarehouses ran first, THIS is the error that would surface.
+      rows.set(schema.locationMaster, []);
+
+      await expect(service.update('tr-1', { to_warehouse_id: 'wh-bad' } as any, 'tenant-1'))
+        .rejects.toThrow('Stock Transfer TR-000001 cannot be edited — stock has already shipped on SH-2026-0001.');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * M1 (fix round 1): the ordinary paths the new guards must not have broken
+   * — a DRAFT with no shipment or receipt event still cancels and still edits,
+   * exactly as before Task 4b's status-follows-events and no-edit-once-shipped
+   * guards were added.
+   */
+  describe('fix round 1, M1 — the ordinary paths still work', () => {
+    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+
+    it('remove() still cancels a DRAFT with no events (CANCELLED written)', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      // No shipment: assertNotShipped passes silently (default empty rows.get(schema.transferShipment)).
+      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      mockDbUpdate.mockReturnValue({ set: setSpy });
+
+      const result = await service.remove('tr-1', 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED' }));
+      expect(result).toEqual({ success: true, message: "Transfer Order 'TR-000001' has been cancelled." });
+    });
+
+    it('update() still edits a DRAFT with no events', async () => {
+      useFarmScope(cls, openScope);
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      mockDbSelect
+        .mockReturnValueOnce({ from: () => chain([]) }) // assertNotShipped: no shipment
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) })
+        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) });
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      rows.set(schema.stockTransferLine, []);
+      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      mockDbUpdate.mockReturnValue({ set: setSpy });
+
+      await service.update('tr-1', { remarks: 'moved to dock 2' } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ remarks: 'moved to dock 2' }));
+    });
+  });
+
+  /**
+   * Fix round 2, Important (coordinator, 4 Oct): round 1's position (line_no)
+   * inference was unsound. insertLines always assigns line_no = idx + 1 with
+   * no item cross-check, so a reorder swaps two lines' links, a removal from
+   * the front/middle hands the survivor a stranger's FK, and a
+   * front-insertion misattributes two links while silently dropping a third
+   * — a silent WRONG FK, worse than round 1's silent NULL (a NULL fails
+   * loudly downstream; a wrong FK posts shipped/received quantities onto the
+   * wrong requisition line and nothing ever complains). There is no sound
+   * inference here — only the caller knows which incoming line is which — so
+   * update() now refuses: if the transfer carries ANY requisition_line_id
+   * today, every replacement line must supply its own, or the request is
+   * rejected with a message naming the problem. An ordinary hand-made
+   * transfer (no links anywhere) is unaffected.
+   */
+  describe('fix round 2, Important — update() refuses a line-replace that would misattribute or drop a requisition link', () => {
+    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+    const REFUSAL = "Stock Transfer TR-000001 came from a requisition release; every replacement line must supply its requisition_line_id.";
+
+    function primeMutation(existingLines: any[]) {
+      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+      } as any);
+      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      rows.set(schema.transferShipment, []); // assertNotShipped: no shipment
+      rows.set(schema.stockTransfer, [{
+        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
+        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
+      }]);
+      rows.set(schema.stockTransferLine, existingLines);
+    }
+
+    let insertedLines: any;
+    beforeEach(() => {
+      insertedLines = undefined;
+      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      mockDbInsert.mockImplementation((table: unknown) => ({
+        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
+      }));
+    });
+
+    // The two lines a Store release would have created, in order: A then B.
+    const TWO_LINKED_LINES = [
+      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
+      { line_id: 'ln-B', transfer_id: 'tr-1', line_no: 2, item_id: 'item-B', quantity: '5.0000', uom: 'KG', requisition_line_id: 'rl-B' },
+    ];
+    const ONE_LINKED_LINE = [
+      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
+    ];
+
+    // Case 1: Reordered [A,B] -> [B,A], neither line supplies its id.
+    // Round 1 would have handed B the id that belongs to A and vice versa
+    // (both wrong) — now refused.
+    it('refuses a reorder with no supplied ids (round 1 would have swapped A and B\'s links)', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(TWO_LINKED_LINES);
+
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
+    });
+
+    // Case 2: Removed from the front — only B survives, with no supplied id.
+    // Round 1 would have handed the survivor (B, now at position 1) A's old
+    // link — a stranger's FK, not "no link".
+    it('refuses a removal from the front with no supplied id (round 1 would have handed the survivor a stranger\'s link)', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(TWO_LINKED_LINES);
+
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
+    });
+
+    // Case 3: Front insertion [C, A] — a brand-new line C prepended ahead of
+    // the existing A, neither supplying an id. Round 1 would have misattributed
+    // both (C inheriting A's link, A getting nothing) — now refused.
+    it('refuses a front-insertion with no supplied ids (round 1 would have misattributed both lines)', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(ONE_LINKED_LINE);
+
+      await expect(service.update('tr-1', {
+        lines: [{ item_id: 'item-C', quantity: 2, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      expect(insertedLines).toBeUndefined();
+    });
+
+    // Case 4: Added-at-end — growing the line count is fine on its own; the
+    // rule is "does every line carry an id", not "does the count match".
+    // Every line, old and new, supplies its own id.
+    it('accepts a line added at the end when every line (old and new) supplies its own id', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(ONE_LINKED_LINE);
+
+      await service.update('tr-1', {
+        lines: [
+          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
+          { item_id: 'item-C', quantity: 2, uom: 'KG', requisition_line_id: 'rl-C' },
+        ],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
+      expect(insertedLines[1]).toMatchObject({ requisition_line_id: 'rl-C' });
+    });
+
+    // Case 5: caller-supplied — the straightforward case the mechanism exists
+    // for: every existing line's id is echoed back exactly, unreordered.
+    it('accepts a straight replace when the caller echoes every existing id back', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation(TWO_LINKED_LINES);
+
+      await service.update('tr-1', {
+        lines: [
+          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
+          { item_id: 'item-B', quantity: 5, uom: 'KG', requisition_line_id: 'rl-B' },
+        ],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
+      expect(insertedLines[1]).toMatchObject({ requisition_line_id: 'rl-B' });
+    });
+
+    // Regression guard: an ordinary hand-made transfer (no requisition links
+    // anywhere) must keep working exactly as before this fix round — no id
+    // required from anyone, reorder/remove/insert all unaffected.
+    it('leaves an ordinary transfer with no requisition links unaffected — no id required, reorder included', async () => {
+      useFarmScope(cls, openScope);
+      primeMutation([
+        { line_id: 'ln-X', transfer_id: 'tr-1', line_no: 1, item_id: 'item-X', quantity: '1.0000', uom: 'KG', requisition_line_id: null },
+        { line_id: 'ln-Y', transfer_id: 'tr-1', line_no: 2, item_id: 'item-Y', quantity: '2.0000', uom: 'KG', requisition_line_id: null },
+      ]);
+
+      // Reordered, and neither line supplies an id — would be refused on a
+      // release-linked transfer, but this one carries no links at all.
+      await service.update('tr-1', {
+        lines: [{ item_id: 'item-Y', quantity: 2, uom: 'KG' }, { item_id: 'item-X', quantity: 1, uom: 'KG' }],
+      } as any, 'tenant-1', { userId: 'u-1' } as any);
+
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0].requisition_line_id).toBeFalsy();
+      expect(insertedLines[1].requisition_line_id).toBeFalsy();
     });
   });
 
@@ -778,4 +1119,3 @@ describe('StockTransferService', () => {
     });
   });
 });
-

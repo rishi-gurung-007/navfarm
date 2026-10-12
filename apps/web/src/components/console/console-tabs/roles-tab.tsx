@@ -34,10 +34,12 @@ const DEFAULT_RESOURCES = [
   // FINANCE (Phase 4)
   { module_code: "FINANCE", resource: "JOURNAL", name: "Journal Entries", nameKey: "jpJournalEntries" },
   { module_code: "FINANCE", resource: "REPORTS", name: "Financial Reports", nameKey: "rolFinancialReports" },
+  { module_code: "FINANCE", resource: "STOCK_VARIANCE", name: "Stock Variance (Finance approval)", nameKey: "rolStockVariance" },
   // INVENTORY (Phase 3)
   { module_code: "INVENTORY", resource: "GOODS_RECEIPT", name: "GRN", nameKey: "grpTitle" },
   { module_code: "INVENTORY", resource: "STOCK_TRANSFER", name: "Transfer Order", nameKey: "apDocType_STOCK_TRANSFER" },
   { module_code: "INVENTORY", resource: "STOCK_ADJUSTMENT", name: "Stock Adjustment", nameKey: "invStockAdjustment" },
+  { module_code: "INVENTORY", resource: "STOCK_COUNT", name: "Feed Stock Count", nameKey: "rolFeedStockCount" },
   { module_code: "INVENTORY", resource: "LEDGER", name: "Inventory Ledger", nameKey: "invLedger" },
   { module_code: "INVENTORY", resource: "BIO_ASSET_LEDGER", name: "Bio-Asset Ledger", nameKey: "blBioAssetLedgerTitle" },
   { module_code: "PROCUREMENT", resource: "REQUISITION", name: "Procurement Requisitions", nameKey: "rolProcurementRequisitions" },
@@ -67,6 +69,7 @@ const DEFAULT_RESOURCES = [
   { module_code: "NOTIFICATION", resource: "SETTINGS", name: "Notification Gateway Settings", nameKey: "rolNotificationGateway" },
   { module_code: "NOTIFICATION", resource: "ALERT_RULE", name: "Alerts and Notifications Master", nameKey: "rolAlertRules" },
   { module_code: "MASTER_DATA", resource: "REPORTING_PERIOD", name: "Reporting Periods", nameKey: "rolReportingPeriods" },
+  { module_code: "MASTER_DATA", resource: "BIN_DIET_ASSIGNMENT", name: "BIN Diet Assignments", nameKey: "rolBinDietAssignments" },
   { module_code: "MASTER_DATA", resource: "OPERATIONAL_AREA", name: "Operational Areas", nameKey: "operationalAreas" },
   { module_code: "MASTER_DATA", resource: "BREED_LIFECYCLE_STAGE", name: "Breed Lifecycle Standards", nameKey: "rolBreedLifecycleStandards" },
   { module_code: "MASTER_DATA", resource: "ACTIVITY", name: "Activities", nameKey: "rolActivities" },
@@ -76,6 +79,9 @@ const DEFAULT_RESOURCES = [
   // PRODUCTION (Phase 6)
   { module_code: "PRODUCTION", resource: "PARAMETER", name: "Production Parameters", nameKey: "rolProductionParameters" },
   { module_code: "PRODUCTION", resource: "BATCH_SCHEDULE", name: "Production Schedulers", nameKey: "rolProductionSchedulers" },
+  // Recording a day against a scheduler, as distinct from designing the
+  // scheduler above: an operator holds this and not BATCH_SCHEDULE.
+  { module_code: "PRODUCTION", resource: "BATCH_ENTRY", name: "Daily Data Entry", nameKey: "rolBatchDataEntry" },
   // PRODUCTION (QC/QR)
   { module_code: "PRODUCTION", resource: "QC_PARAMETER", name: "QC Parameters", nameKey: "navQcParameters" },
   { module_code: "PRODUCTION", resource: "QC", name: "QC Inspections", nameKey: "rolQcInspections" },

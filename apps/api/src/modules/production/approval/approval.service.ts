@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, desc, like, sql, SQL, inArray, notInArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -9,6 +9,19 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertCompanyInScope, batchReferenceScopeConditions, batchScopeConditions, farmScope, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
+import { mayDecideAnyRequisition } from '../../procurement/requisition/requisition.rules';
+
+/**
+ * The approval_request.doc_type values a requisition writes (REQUISITION for
+ * common, FEED_REQUISITION for feed — requisition.service.ts's
+ * COMMON_REQUISITION_DOC_TYPE and feed-requisition.service.ts's
+ * FEED_APPROVAL_DOC_TYPE respectively). Duplicated here as literals rather
+ * than imported: this engine deliberately never imports the document modules
+ * it serves (they import it), and importing requisition.service.ts here
+ * would also be circular — it imports ApprovalService.
+ */
+/** The approval-engine document types that ARE requisitions (common and feed). */
+export const REQUISITION_APPROVAL_DOC_TYPES = ['REQUISITION', 'FEED_REQUISITION'] as const;
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -55,7 +68,7 @@ export interface ApprovalDocumentHandler {
   /** Inside the withdrawal's transaction. */
   withdraw(request: ApprovalRequestRow, tenantId: string, user: any): Promise<void>;
   /** After the decision commits (e.g. re-evaluating alerts). Must not throw. */
-  afterDecide?(request: ApprovalRequestRow, tenantId: string): Promise<void>;
+  afterDecide?(request: ApprovalRequestRow, tenantId: string, user?: any, decision?: 'APPROVED' | 'REJECTED'): Promise<void>;
 }
 
 @Injectable()
@@ -206,25 +219,86 @@ export class ApprovalService {
    * always has. D25: a farm-level document (no batch, farm_id set) reaches it
    * through that farm — a farm user sees their own farm's, a company admin the
    * company's, a restricted user their LOB's — which is what lets a farm's own
-   * approvers decide a feed requisition here. A row with neither stays visible
-   * only to a caller with no farm, company or restriction, exactly as before:
-   * the old batch_id IN (…) condition was never true for a NULL batch.
+   * approvers decide a feed requisition here.
+   *
+   * D1 (Part E live verification): a common requisition (Item/FA/Service) can
+   * have neither a batch nor a farm, so it fell through both branches above.
+   * This third branch is for exactly that row, and it is reachable by any
+   * caller who is not LOB-restricted — a company admin (companyId set) as
+   * much as a tenant-wide admin (companyId null) — because approval_request
+   * carries no lob_id of its own to check a restricted user's LOB against:
+   * there is nothing on this row for `assertLobInScope`'s or
+   * `locationReferenceScopeConditions`'s LOB conditions to compare, so a
+   * restricted caller (OPERATIONAL_ADMIN, FARM_MANAGER, STANDARD_USER) is
+   * kept out of this branch rather than guessed into or out of an LOB it
+   * cannot state. The farm/batch branches above are untouched; the
+   * `company_id = scope.companyId` condition appended below still bounds
+   * every branch including this one, so a company admin never reads another
+   * company's row.
+   *
+   * Rishi, 4 Oct (Option A): a non-restricted user who also has an active
+   * farm selected (a company/tenant admin who picked a farm via
+   * x-active-farm-id, not a farm-bound persona) still sees the company's
+   * farm-less requests alongside that farm's own. So this branch no longer
+   * gates on `scope.farmId` at all — only `scope.restricted` decides it.
+   * A farm-bound user (FARM_MANAGER, STANDARD_USER) is always `restricted`
+   * (RESTRICTED_USER_TYPES), so they stay excluded exactly as before; the
+   * farmId check that used to also exclude a merely-farm-selecting admin is
+   * gone because that exclusion was never the rule Rishi wanted.
+   *
+   * decisions.md 2026-10-04 (second entry): a TENANT_ADMIN or COMPANY_ADMIN
+   * (mayDecideAnyRequisition) may see/decide ANY requisition in their scope
+   * regardless of which farm is active — an extra OR branch bounded by
+   * doc_type (REQUISITION/FEED_REQUISITION only; every other approval kind
+   * keeps the ordinary active-farm narrowing). The trailing company-boundary
+   * condition below still bounds this branch like every other, and
+   * `userType` defaults to undefined (not exempt) so every pre-existing
+   * caller that has not threaded it through is unaffected.
    */
-  private farmConditions(): SQL[] {
+  /**
+   * Public since WP1b (decisions.md 2026-10-04, "one Requisitions page"): the
+   * hub's waiting-for-approval filter and pending count reuse THIS predicate —
+   * the inbox's own visibility rule plus the WP1 admin rule — so the two
+   * surfaces can never disagree about what the current user may decide.
+   */
+  farmConditions(userType?: string): SQL[] {
     const scope = farmScope(this.cls);
     const R = schema.approvalRequest;
     const paths: SQL[] = [
       and(sql`${R.batch_id} IS NOT NULL`, ...batchReferenceScopeConditions(scope, R.batch_id))!,
       and(isNull(R.batch_id), sql`${R.farm_id} IS NOT NULL`, ...locationReferenceScopeConditions(scope, R.farm_id))!,
     ];
-    if (!scope.restricted && !scope.farmId && !scope.companyId) {
+    if (!scope.restricted) {
       paths.push(and(isNull(R.batch_id), isNull(R.farm_id))!);
+    }
+    if (mayDecideAnyRequisition(userType)) {
+      paths.push(inArray(R.doc_type, [...REQUISITION_APPROVAL_DOC_TYPES]));
     }
     return [or(...paths)!, ...restrictedScopeConditions(scope, { companyId: R.company_id })];
   }
 
-  async findAll(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
+  /**
+   * WP1b: the visibility predicate for the requisition kinds' approval
+   * requests — farmConditions (above, one copy) narrowed to those kinds. The
+   * hub's waiting filter and pending count build on this; findOne and decide
+   * keep plain farmConditions so deciding from the hub reaches the same
+   * handlers.
+   */
+  requisitionRequestConditions(userType?: string, docTypes: readonly string[] = REQUISITION_APPROVAL_DOC_TYPES): SQL[] {
+    // farmConditions first, so its rendered SQL (and its parameter order) is a
+    // prefix of the hub predicate's — the equivalence test asserts exactly that.
+    return [...this.farmConditions(userType), inArray(schema.approvalRequest.doc_type, [...docTypes])];
+  }
+
+  async findAll(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      ...this.farmConditions(userType),
+      // Rishi, 7 Oct: common requisitions are visible and actionable here as
+      // well as on Requisition. Feed requisitions remain on Feed Forecast.
+      notInArray(schema.approvalRequest.doc_type, ['FEED_REQUISITION']),
+    ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -270,8 +344,14 @@ export class ApprovalService {
   }
 
   /** Pending/approved/rejected counts in one query, so the tab badges don't need three round trips. */
-  async counts(query: QueryApprovalDto, tenantId: string) {
-    const conditions: SQL[] = [eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()];
+  async counts(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      ...this.farmConditions(userType),
+      // Keep badges identical to the visible inbox: include common, exclude feed.
+      notInArray(schema.approvalRequest.doc_type, ['FEED_REQUISITION']),
+    ];
     if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
     // An area filter keeps rows of that area AND rows that carry no area yet:
     // every approval_request row written before Plan S has a NULL area, so a
@@ -294,12 +374,43 @@ export class ApprovalService {
     return { PENDING: map.PENDING || 0, APPROVED: map.APPROVED || 0, REJECTED: map.REJECTED || 0 };
   }
 
-  async findOne(requestId: string, tenantId: string) {
+  /**
+   * WP1b (decisions.md 2026-10-04, "one Requisitions page"): the inbox's card
+   * — "Requisitions waiting for approval: N → open Requisitions" — reads this
+   * count: the common requisition kind the inbox no longer lists, under the same
+   * waiting predicate the hub's filter uses (requisitionRequestConditions).
+   */
+  async countsRequisitions(query: QueryApprovalDto, tenantId: string, userType?: string) {
+    const conditions: SQL[] = [
+      eq(schema.approvalRequest.tenant_id, tenantId),
+      isNull(schema.approvalRequest.deleted_at),
+      eq(schema.approvalRequest.status, 'PENDING'),
+      // WP1g (decisions.md 2026-10-05): the Requisition page lists the common
+      // kind only; a feed requisition is decided on Feed Forecast -> Requisition.
+      // Counting FEED_REQUISITION made the card promise rows the page never shows.
+      // The kind is an argument to the shared predicate, not a second condition.
+      ...this.requisitionRequestConditions(userType, ['REQUISITION']),
+    ];
+    if (query.company_id) conditions.push(eq(schema.approvalRequest.company_id, query.company_id));
+    if (query.operational_area_id) {
+      conditions.push(or(
+        eq(schema.approvalRequest.operational_area_id, query.operational_area_id),
+        isNull(schema.approvalRequest.operational_area_id),
+      )!);
+    }
+    const [row] = await this.db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(schema.approvalRequest)
+      .where(and(...conditions));
+    return { PENDING: Number(row?.n ?? 0) };
+  }
+
+  async findOne(requestId: string, tenantId: string, userType?: string) {
     const [row] = await this.db
       .select(this.listShape())
       .from(schema.approvalRequest)
       .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.approvalRequest.batch_id))
-      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions()))
+      .where(and(eq(schema.approvalRequest.request_id, requestId), eq(schema.approvalRequest.tenant_id, tenantId), isNull(schema.approvalRequest.deleted_at), ...this.farmConditions(userType)))
       .limit(1);
     if (!row) throw new NotFoundException('Approval request not found.');
     return row;
@@ -329,7 +440,7 @@ export class ApprovalService {
         eq(schema.approvalRequest.request_id, requestId),
         eq(schema.approvalRequest.tenant_id, tenantId),
         isNull(schema.approvalRequest.deleted_at),
-        ...this.farmConditions(),
+        ...this.farmConditions(userPayload?.userType),
       ))
       .for('update');
     if (!current) throw new NotFoundException('Approval request not found.');
@@ -344,7 +455,7 @@ export class ApprovalService {
     // it, and may refuse it (e.g. a feed requisition that needs remarks).
     const handler = this.handlerFor(current);
     await handler?.decide(current, status, reason?.trim() || null, tenantId, userPayload);
-    if (handler?.afterDecide) after.run = () => handler.afterDecide!(current, tenantId);
+    if (handler?.afterDecide) after.run = () => handler.afterDecide!(current, tenantId, userPayload, status);
 
     if (status === 'APPROVED' && current.doc_type === 'UNSCHEDULED_HEALTH') {
       if (!current.batch_id) throw new BadRequestException('This health request has no batch.');
@@ -381,7 +492,12 @@ export class ApprovalService {
       newValues: status === 'REJECTED' ? { status, rejection_reason: reason || null } : { status, remarks: reason || null },
     });
 
-    return this.findOne(requestId, tenantId);
+    // Bug found live (WP1 check, 4 Oct): without userType here, the
+    // just-decided row's own read-back used the farm-only visibility — the
+    // very fix above that let an admin reach another farm's request would
+    // then throw "Approval request not found." on its own read-back and roll
+    // the whole decision back. Thread it through like every other call.
+    return this.findOne(requestId, tenantId, userPayload?.userType);
     });
     await after.run?.();
     return result;
@@ -404,9 +520,12 @@ export class ApprovalService {
       documentType: string;
       documentId: string;
       documentNo: string;
-      farmId: string;
+      /** A farm-level document is scoped to this farm in the inbox; a company-level one (farmId undefined) is visible to unrestricted approvers only. */
+      farmId?: string;
       companyId: string;
       title: string;
+      /** Overrides the derived "CODE — Name" label (company-level documents may name their own origin). */
+      location_label?: string | null;
       urgency?: 'HIGH' | 'MEDIUM' | 'LOW';
       itemOrStage?: string | null;
       requestedQty?: string | null;
@@ -418,18 +537,22 @@ export class ApprovalService {
   ): Promise<string> {
     assertCompanyInScope(farmScope(this.cls), doc.companyId);
     return withTenantTransaction(this.cls, async () => {
-      const [farm] = await this.db
-        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
-        .from(schema.locationMaster)
-        .where(and(
-          eq(schema.locationMaster.location_id, doc.farmId),
-          eq(schema.locationMaster.company_id, doc.companyId),
-          eq(schema.locationMaster.tenant_id, tenantId),
-          eq(schema.locationMaster.location_type, 'FARM'),
-          isNull(schema.locationMaster.deleted_at),
-        ))
-        .limit(1);
-      if (!farm) throw new NotFoundException('Farm not found.');
+      let locationLabel: string | null = null;
+      if (doc.farmId) {
+        const [farm] = await this.db
+          .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+          .from(schema.locationMaster)
+          .where(and(
+            eq(schema.locationMaster.location_id, doc.farmId),
+            eq(schema.locationMaster.company_id, doc.companyId),
+            eq(schema.locationMaster.tenant_id, tenantId),
+            inArray(schema.locationMaster.location_type, ['FARM', 'MILL']), // a feed mill's monthly stock take is a farm-level document too
+            isNull(schema.locationMaster.deleted_at),
+          ))
+          .limit(1);
+        if (!farm) throw new NotFoundException('Farm not found.');
+        locationLabel = `${farm.code} — ${farm.name ?? ''}`.trim();
+      }
       const [open] = await this.db
         .select({ request_id: schema.approvalRequest.request_id })
         .from(schema.approvalRequest)
@@ -475,9 +598,9 @@ export class ApprovalService {
         requested_by: userPayload?.userId || null,
         requestor_label: userPayload?.fullName || userPayload?.email || null,
         requestor_role: (userPayload?.userType || '').replace(/_/g, ' ') || null,
-        location_label: `${farm.code} — ${farm.name ?? ''}`.trim().slice(0, 200),
+        location_label: (doc.location_label || locationLabel)?.slice(0, 200) ?? null,
         operational_area_id: areaId,
-        farm_id: doc.farmId,
+        farm_id: doc.farmId ?? null,
         document_id: doc.documentId,
         urgency: doc.urgency || 'MEDIUM',
         item_or_stage: doc.itemOrStage || null,
@@ -494,7 +617,7 @@ export class ApprovalService {
         action: 'CREATE',
         entityName: 'approval_request',
         entityId: requestId,
-        newValues: { doc_no: doc.documentNo, doc_type: doc.documentType, title: doc.title, document_id: doc.documentId, farm_id: doc.farmId },
+        newValues: { doc_no: doc.documentNo, doc_type: doc.documentType, title: doc.title, document_id: doc.documentId, farm_id: doc.farmId ?? null },
       });
       return requestId;
     });

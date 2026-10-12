@@ -4,7 +4,15 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
-import { LocationService, siloCapacityForDisplay, siloCapacityToKg } from './location.service';
+import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
+import {
+  LocationService,
+  WAREHOUSE_LOCATION_TYPES,
+  capacityKgForTonDisplay,
+  capacityTonToKg,
+  siloCapacityForDisplay,
+  siloCapacityToKg,
+} from './location.service';
 
 describe('LocationService canonical hierarchy', () => {
   let service: LocationService;
@@ -18,6 +26,7 @@ describe('LocationService canonical hierarchy', () => {
   // LocationService's — these tests only need to know it was asked, and
   // whether it allowed or refused, not the item logic behind that answer.
   const siloFeedService = { assertAttachable: jest.fn(), currentItems: jest.fn() };
+  const forecast = { currentSiloStatuses: jest.fn() };
 
   const makeSelectBuilder = (rows: any[]) => {
     const builder: any = {};
@@ -65,6 +74,14 @@ describe('LocationService canonical hierarchy', () => {
     type_code: 'SILO', type_name: 'Silo', code_prefix: 'SILO',
     allowed_parent_types: ['FARM', 'SHED'], company_id: null,
   };
+  const millType = {
+    type_code: 'MILL', type_name: 'Mill', code_prefix: 'MILL',
+    allowed_parent_types: [], company_id: null,
+  };
+  const binType = {
+    type_code: 'BIN', type_name: 'Bin', code_prefix: 'BIN',
+    allowed_parent_types: ['MILL'], company_id: null,
+  };
   const uom = { uom_code: 'HEAD' };
   /** The farm a silo hangs off. No area_size or max_capacity, so the parent-fit
    *  checks return before issuing a SELECT and the queue above stays readable. */
@@ -94,6 +111,7 @@ describe('LocationService canonical hierarchy', () => {
     numberSeries.lockSeries.mockResolvedValue({ series_id: 'series-1', seq_length: 3 });
     siloFeedService.assertAttachable.mockResolvedValue(undefined);
     siloFeedService.currentItems.mockResolvedValue(new Map());
+    forecast.currentSiloStatuses.mockResolvedValue({ planningDate: '2026-10-11', statuses: [] });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -102,6 +120,7 @@ describe('LocationService canonical hierarchy', () => {
         { provide: AuditLogService, useValue: audit },
         { provide: NumberSeriesService, useValue: numberSeries },
         { provide: SiloFeedService, useValue: siloFeedService },
+        { provide: FeedForecastService, useValue: forecast },
       ],
     }).compile();
     service = module.get(LocationService);
@@ -136,6 +155,121 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.location_code).toBe('LION_001');
   });
 
+  describe('MILL and BIN capacity contract', () => {
+    it('converts decimal TON values to canonical KG and back without multiplying twice', () => {
+      expect(capacityTonToKg(12.5)).toBe('12500');
+      expect(capacityKgForTonDisplay('12500.00')).toBe('12.5');
+      expect(capacityTonToKg(capacityKgForTonDisplay('12500.00'))).toBe('12500');
+      expect(capacityTonToKg(null)).toBeNull();
+    });
+
+    it('allows allocations equal to daily capacity and stores dedicated MILL values in KG', async () => {
+      selectResults.push(
+        [company], [millType], [series],
+        [{
+          location_id: 'mill-1', location_code: 'MILL-001', location_type: 'MILL', location_level: 1,
+          mill_daily_capacity_kg: '10000.00', mill_hourly_capacity_kg: '1250.00',
+          mill_bulk_daily_allocation_kg: '6000.00', mill_bagged_daily_allocation_kg: '4000.00',
+        }],
+      );
+
+      const result = await service.create({
+        company_id: 'comp-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1.25,
+        mill_bulk_daily_allocation_ton: 6, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1');
+
+      expect(inserted()).toEqual(expect.objectContaining({
+        mill_daily_capacity_kg: '10000', mill_hourly_capacity_kg: '1250',
+        mill_bulk_daily_allocation_kg: '6000', mill_bagged_daily_allocation_kg: '4000',
+        max_capacity: null, capacity_uom: null,
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        mill_daily_capacity_ton: '10', mill_hourly_capacity_ton: '1.25',
+        mill_bulk_daily_allocation_ton: '6', mill_bagged_daily_allocation_ton: '4',
+      }));
+    });
+
+    it('rejects MILL allocations above daily capacity', async () => {
+      selectResults.push([company], [millType]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1,
+        mill_bulk_daily_allocation_ton: 6.01, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1')).rejects.toThrow('cannot exceed Daily Capacity');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('round-trips an untouched MILL edit without multiplying stored KG twice', async () => {
+      const mill = {
+        location_id: 'mill-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'MILL-001',
+        location_name: 'Main Mill', location_type: 'MILL', location_level: 1, parent_location_id: null,
+        mill_daily_capacity_kg: '12500.00', mill_hourly_capacity_kg: '1500.00',
+        mill_bulk_daily_allocation_kg: '7500.00', mill_bagged_daily_allocation_kg: '5000.00',
+        bin_capacity_kg: null, bin_feed_type: null, storage_type: null,
+      };
+      selectResults.push([mill], [millType], [mill]);
+
+      await service.update('mill-1', {
+        location_name: 'Main Mill',
+        mill_daily_capacity_ton: 12.5, mill_hourly_capacity_ton: 1.5,
+        mill_bulk_daily_allocation_ton: 7.5, mill_bagged_daily_allocation_ton: 5,
+      }, 'tenant-1');
+
+      const updates = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(updates).toEqual(expect.objectContaining({
+        mill_daily_capacity_kg: '12500', mill_hourly_capacity_kg: '1500',
+        mill_bulk_daily_allocation_kg: '7500', mill_bagged_daily_allocation_kg: '5000',
+      }));
+    });
+
+    it('enforces MILL as a root even if tenant type configuration permits a parent', async () => {
+      selectResults.push(
+        [company], [{ ...millType, allowed_parent_types: ['FARM'] }], [farmParent()],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Main Mill', location_type: 'MILL',
+        mill_daily_capacity_ton: 10, mill_hourly_capacity_ton: 1,
+        mill_bulk_daily_allocation_ton: 6, mill_bagged_daily_allocation_ton: 4,
+      }, 'tenant-1')).rejects.toThrow('MILL is a root location');
+    });
+
+    it('stores BIN capacity in KG, derives itself as a warehouse, and reads TON back', async () => {
+      const millParent = {
+        location_id: 'mill-1', company_id: 'comp-1', location_type: 'MILL', location_code: 'MILL-001',
+        location_level: 1, farm_id: 'mill-1', shed_id: null, warehouse_id: null, is_active: true,
+      };
+      selectResults.push(
+        [company], [binType], [millParent], [series], [],
+        [{
+          location_id: 'bin-1', location_code: 'MILL-001/BIN-001', location_type: 'BIN', location_level: 2,
+          bin_capacity_kg: '22500.00', bin_feed_type: 'BULK', warehouse_id: 'bin-1',
+        }],
+      );
+      const result = await service.create({
+        company_id: 'comp-1', parent_location_id: 'mill-1', location_name: 'Loading Bin', location_type: 'BIN',
+        bin_capacity_ton: 22.5, bin_feed_type: 'BULK',
+      }, 'tenant-1');
+
+      expect(inserted()).toEqual(expect.objectContaining({
+        bin_capacity_kg: '22500', bin_feed_type: 'BULK', warehouse_id: expect.any(String),
+        max_capacity: null, capacity_uom: null,
+      }));
+      expect(result.bin_capacity_ton).toBe('22.5');
+      expect(WAREHOUSE_LOCATION_TYPES).toEqual(['STORE', 'SILO', 'BIN']);
+    });
+
+    it('rejects a BIN whose parent is not an active MILL', async () => {
+      selectResults.push(
+        [company], [binType], [{ ...farmParent(), is_active: true }],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Loading Bin', location_type: 'BIN',
+        bin_capacity_ton: 10, bin_feed_type: 'BAGGED',
+      }, 'tenant-1')).rejects.toThrow('BIN must be created under an active MILL');
+    });
+  });
+
   it('generates FARM-001 for a root farm as a single location_master insert', async () => {
     selectResults.push(
       [company], [farmType], [uom], [series],
@@ -157,6 +291,26 @@ describe('LocationService canonical hierarchy', () => {
     expect(txInsert).toHaveBeenCalledTimes(1);
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(result.location_code).toBe('FARM-001');
+  });
+
+  // Test server, 11 Oct: Add Location with a typed code failed "Invalid master
+  // code." The type lookup found a series coded NS-FARM and its code was passed
+  // to manualCode() as the master name. A typed code is a LOCATION code, always.
+  it('validates a typed code against the LOCATION master, whatever series the type resolves to', async () => {
+    numberSeries.findDefaultSeriesByMaster.mockResolvedValueOnce({ code: 'NS-FARM' });
+    (numberSeries as any).manualCode = jest.fn().mockResolvedValue('987-ET-8');
+    selectResults.push(
+      [company], [farmType], [uom],
+      [{ location_id: 'loc-1', location_code: '987-ET-8', location_type: 'FARM', location_level: 1 }],
+    );
+
+    await service.create({
+      company_id: 'comp-1', location_code: '987-et-8',
+      location_name: 'rtvby', location_address: 'Farm Road', location_type: 'FARM',
+      max_capacity: 100, capacity_uom: 'HEAD',
+    }, 'tenant-1', { userId: 'user-1' });
+
+    expect((numberSeries as any).manualCode).toHaveBeenCalledWith('LOCATION', '987-et-8', 'tenant-1', 'comp-1', 'FARM');
   });
 
   it('retries once with a freshly computed sequence when the first insert collides on a duplicate location code', async () => {
@@ -318,6 +472,99 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.silo_capacity_kg).toBe('40');
   });
 
+  // W4G2, Master Setup rows 13-20: the silo record shows the forecast's own silo facts, read-only.
+  describe('silo feed facts on the record', () => {
+    const siloRow = (over: object = {}) => ({
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', farm_id: 'farm-1', parent_location_id: 'farm-1',
+      location_type: 'SILO', location_code: 'FARM-001/SILO-001', status: 'ACTIVE', is_active: true, ...over,
+    });
+
+    it('returns feed item, balances, last count, last receipt and next diet date from the forecast silo status', async () => {
+      selectResults.push([siloRow()], []);
+      forecast.currentSiloStatuses.mockResolvedValueOnce({ planningDate: '2026-10-11', statuses: [{
+        siloId: 'silo-1', feedInSiloItemCode: 'FEED-R1', feedInSiloItemName: 'Weaner R1', systemBalanceKg: 1500,
+        lastApprovedCountKg: 1450, lastApprovedCountAt: '2026-10-05 06:00:00', lastFeedReceiptDate: '2026-10-02', nextDietDate: '2026-10-25', firstShortageDate: '2026-10-18',
+      }] });
+      siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+        ['silo-1', { item_id: 'item-r1', item_code: 'FEED-R1', item_description: 'Weaner R1', on_hand_qty: 1500, uoms: ['KG'] }],
+      ]));
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(forecast.currentSiloStatuses).toHaveBeenCalledWith('farm-1', 'comp-1', 'tenant-1');
+      expect(r).toMatchObject({
+        silo_feed_item: 'FEED-R1 — Weaner R1', available_stock_kg: 1500, system_balance_kg: 1500,
+        last_approved_count_kg: 1450, last_approved_count_at: '2026-10-05',
+        last_feed_receipt_date: '2026-10-02', next_diet_change_date: '2026-10-25',
+        first_shortage_date: '2026-10-18', silo_feed_item_id: 'item-r1',
+      });
+    });
+
+    it('falls back to the ledger item when the forecast does not plan the silo, leaving the rest null', async () => {
+      selectResults.push([siloRow({ status: 'INACTIVE' })], []);
+      siloFeedService.currentItems.mockResolvedValueOnce(new Map([
+        ['silo-1', { item_id: 'i', item_code: 'FEED-R2', item_description: null, on_hand_qty: 800, uoms: ['KG'] }],
+      ]));
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(r).toMatchObject({ silo_feed_item: 'FEED-R2', available_stock_kg: 800, system_balance_kg: 800,
+        last_approved_count_kg: null, last_feed_receipt_date: null, next_diet_change_date: null });
+    });
+
+    it('leaves every fact null (screens say Not available) when the forecast fails and the silo is empty', async () => {
+      selectResults.push([siloRow()], []);
+      forecast.currentSiloStatuses.mockRejectedValueOnce(new Error('no feed settings'));
+
+      const r: any = await service.findOne('silo-1', 'tenant-1');
+
+      expect(r.silo_feed_item).toBeNull();
+      expect(r.available_stock_kg).toBeNull();
+      expect(r.next_diet_change_date).toBeNull();
+    });
+  });
+
+  // W4G2, checkpoint 1: a SILO is ACTIVE only with a shed linked.
+  describe('checkpoint 1: silo needs a shed before ACTIVE', () => {
+    const inactiveSilo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00', status: 'INACTIVE', is_active: true,
+      storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7,
+    };
+
+    it('refuses to activate a silo with no linked shed', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }], [] /* no links */);
+      await expect(service.update('silo-1', { status: 'ACTIVE' }, 'tenant-1'))
+        .rejects.toThrow('cannot be ACTIVE until at least one shed is linked');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+
+    it('activates a silo that has a linked shed', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }],
+        [{ shed_id: 'shed-1' }], // linked
+        [shedRow()], [], // attach checks are not reached: no attached_sheds posted
+        [{ ...inactiveSilo, status: 'ACTIVE' }], [{ shed_id: 'shed-1' }]);
+      await service.update('silo-1', { status: 'ACTIVE' }, 'tenant-1');
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts the shed list posted in the same save', async () => {
+      selectResults.push([inactiveSilo], [siloType], [farmParent()], [{ parent_location_id: null }]);
+      await expect(service.update('silo-1', { status: 'ACTIVE', attached_sheds: [] }, 'tenant-1'))
+        .rejects.toThrow('cannot be ACTIVE');
+    });
+
+    it('creates a silo with no shed INACTIVE, and one with a shed ACTIVE', async () => {
+      selectResults.push([company], [siloType], [farmParent()], [uom], [series], [], [{ location_id: 'silo-1', location_type: 'SILO' }], []);
+      await service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1', location_name: 'Silo', location_address: 'Farm Road', location_type: 'SILO',
+        low_level_kg: 200, high_level_kg: 1800, capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      }, 'tenant-1');
+      expect(inserted().status).toBe('INACTIVE');
+    });
+  });
+
   it('a silo read returns current_feed_item_code and current_feed_item_name from SiloFeedService.currentItems', async () => {
     selectResults.push(
       [{
@@ -445,6 +692,38 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.attached_sheds).toEqual(['shed-1']);
   });
 
+  it('Master r8: writes the effective dates on the new link row', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [], [shedRow()], [],
+      [{ location_id: 'silo-1', location_code: 'FARM-001/SILO-001', location_type: 'SILO', location_level: 2, company_id: 'comp-1' }],
+      [{ shed_id: 'shed-1' }],
+    );
+    await service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+      attached_shed_dates: { 'shed-1': { effective_from: '2026-10-20', effective_to: null } },
+    }, 'tenant-1');
+    const linkRows = (txInsert.mock.results[1].value.values as jest.Mock).mock.calls[0][0];
+    expect(linkRows[0]).toMatchObject({ shed_id: 'shed-1', effective_from: '2026-10-20', effective_to: null });
+  });
+
+  it('Master r8: refuses an Effective To before the Effective From', async () => {
+    selectResults.push(
+      [company], [siloType], [farmParent()], [uom], [series], [], [shedRow()],
+    );
+    await expect(service.create({
+      company_id: 'comp-1', parent_location_id: 'farm-1',
+      location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+      low_level_kg: 200, high_level_kg: 1800,
+      capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+      attached_sheds: ['shed-1'],
+      attached_shed_dates: { 'shed-1': { effective_from: '2026-10-20', effective_to: '2026-10-01' } },
+    }, 'tenant-1')).rejects.toThrow('Effective To');
+  });
+
   it('allows attaching a shed to a second silo — a shed may now draw from several silos, one per feed item (D7)', async () => {
     // The old model refused this outright, reading the shed's own
     // feed_silo_id; that check is gone from syncAttachedSheds. Whether two
@@ -546,6 +825,64 @@ describe('LocationService canonical hierarchy', () => {
     }, 'tenant-1')).rejects.toThrow('Only a SILO can have attached sheds');
   });
 
+  describe('silo Feed Type (Requisition r15)', () => {
+    const feedSilo = (over: object = {}) => ({
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1', status: 'INACTIVE',
+      low_level_kg: '200.00', high_level_kg: '1800.00',
+      storage_type: 'SILO', silo_capacity_kg: '2000.00', silo_capacity_uom: 'KG', silo_reorder_days: 7, feed_in_bags: true, ...over,
+    });
+    const created = (feedType?: 'BULK' | 'BAGGED') => {
+      selectResults.push([company], [siloType], [farmParent()], [uom], [series], [], [feedSilo()], []);
+      return service.create({
+        company_id: 'comp-1', parent_location_id: 'farm-1',
+        location_name: 'Feed Silo 1', location_address: 'Farm Road', location_type: 'SILO',
+        low_level_kg: 200, high_level_kg: 1800,
+        capacity_uom: 'KG', silo_capacity_kg: 2000, silo_capacity_uom: 'KG', silo_reorder_days: 7,
+        ...(feedType ? { silo_feed_type: feedType } : {}),
+      }, 'tenant-1');
+    };
+    const insertedRow = () => (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+
+    it('create writes feed_in_bags from the chosen Feed Type and returns it', async () => {
+      const result = await created('BAGGED');
+      expect(insertedRow().feed_in_bags).toBe(true);
+      expect(result.silo_feed_type).toBe('BAGGED');
+    });
+
+    it('create with BULK writes false; with nothing sent it stays null, which readers treat as BULK', async () => {
+      await created('BULK');
+      expect(insertedRow().feed_in_bags).toBe(false);
+      txInsert.mockClear();
+      await created();
+      expect(insertedRow().feed_in_bags).toBeNull();
+    });
+
+    it('update changes feed_in_bags when Feed Type is sent', async () => {
+      const silo = feedSilo({ feed_in_bags: false });
+      selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }], [silo], []);
+      await service.update('silo-1', { silo_feed_type: 'BAGGED' }, 'tenant-1', { userId: 'user-1' });
+      const set = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(set.feed_in_bags).toBe(true);
+    });
+
+    it('update does not overwrite a stored Feed Type when the field is not sent', async () => {
+      const silo = feedSilo();
+      selectResults.push([silo], [siloType], [farmParent()], [{ parent_location_id: null }], [silo], []);
+      await service.update('silo-1', { low_level_kg: 250 }, 'tenant-1', { userId: 'user-1' });
+      const set = (txUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(set).not.toHaveProperty('feed_in_bags');
+    });
+
+    it('refuses a Feed Type on anything that is not a SILO', async () => {
+      selectResults.push([company], [farmType]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD', silo_feed_type: 'BULK',
+      }, 'tenant-1')).rejects.toThrow('Only a SILO has a Feed Type');
+    });
+  });
+
   it('refuses to re-parent a SILO under a SHED, so an edit cannot undo what create refused', async () => {
     const silo = {
       location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
@@ -591,6 +928,36 @@ describe('LocationService canonical hierarchy', () => {
     expect(txDelete).toHaveBeenCalledTimes(1);
     expect(siloFeedService.assertAttachable).not.toHaveBeenCalled();
     expect(result.attached_sheds).toEqual([]);
+  });
+
+  describe('checkpoint 1 on an ACTIVE silo (edit)', () => {
+    const activeSilo = {
+      location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'comp-1', location_code: 'FARM-001/SILO-001',
+      location_type: 'SILO', location_level: 2, parent_location_id: 'farm-1', farm_id: 'farm-1',
+      low_level_kg: '200.00', high_level_kg: '1800.00', status: 'ACTIVE', is_active: true,
+      storage_type: 'SILO', silo_capacity_kg: '40000.00', silo_capacity_uom: 'TON', silo_reorder_days: 7,
+    };
+
+    it('keeps an ACTIVE silo with no shed editable for unrelated fields when the form sends attached_sheds: []', async () => {
+      selectResults.push(
+        [activeSilo], [siloType], [farmParent()],
+        [{ parent_location_id: null }],
+        [], // attachedShedIds: it never had a shed
+        [activeSilo], [],
+      );
+      await expect(service.update('silo-1', { low_level_kg: 250, attached_sheds: [] }, 'tenant-1', { userId: 'user-1' })).resolves.toBeDefined();
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('still refuses to empty an ACTIVE silo that has sheds', async () => {
+      selectResults.push(
+        [activeSilo], [siloType], [farmParent()],
+        [{ parent_location_id: null }],
+        [{ shed_id: 'shed-1' }], // attachedShedIds: it feeds a shed today
+      );
+      await expect(service.update('silo-1', { attached_sheds: [] }, 'tenant-1', { userId: 'user-1' })).rejects.toThrow('cannot be ACTIVE');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
   });
 
   it('keeps location type and generated identity immutable', async () => {
@@ -859,6 +1226,107 @@ describe('LocationService canonical hierarchy', () => {
     const res = await service.getLocationOccupancy('tenant-1', 'comp-1');
 
     expect(res[0].current_occupancy).toBe(58);
+  });
+
+  // Department on a location is the Cost Center Master identity of type
+  // DEPARTMENT (decisions.md, 1 Oct) — the sender department of a Store
+  // requisition is read from here, never compared as free text.
+  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+    const departmentRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-dept', tenant_id: 'tenant-1', company_id: 'comp-1',
+      cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
+    });
+
+    it('refuses a department that is not an active DEPARTMENT cost center', async () => {
+      selectResults.push(
+        [company],
+        [departmentRow({ cost_center_type: 'WAREHOUSE' })],
+      );
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+        department_id: 'cc-dept',
+      }, 'tenant-1')).rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('stores a valid department identity on the created location', async () => {
+      selectResults.push(
+        [company], [departmentRow()], [farmType], [uom], [series],
+        [{ location_id: 'loc-1', location_code: 'FARM-001', location_type: 'FARM', location_level: 1, department_id: 'cc-dept' }],
+      );
+      await service.create({
+        company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+        location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+        department_id: 'cc-dept',
+      }, 'tenant-1', { userId: 'user-1' });
+      const insertedRow = (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+      expect(insertedRow.department_id).toBe('cc-dept');
+    });
+
+    it('refuses an update whose department is not a DEPARTMENT cost center', async () => {
+      selectResults.push(
+        [{ ...farmParent(), parent_location_id: null, storage_type: null, department_id: null }],
+        [farmType],
+        [departmentRow({ cost_center_type: 'PROJECT' })],
+      );
+      await expect(service.update('farm-1', { department_id: 'cc-dept' }, 'tenant-1'))
+        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  // Each farm has its own cost centre (decisions, 11 Oct).
+  describe('farm cost centre (Cost Center Master)', () => {
+    const ccRow = (over: Record<string, unknown> = {}) => ({
+      cost_center_id: 'cc-farm', tenant_id: 'tenant-1', company_id: 'comp-1',
+      is_active: true, deleted_at: null, ...over,
+    });
+    const createFarm = () => service.create({
+      company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
+      location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
+      cost_center_id: '11111111-1111-4111-8111-111111111111',
+    }, 'tenant-1', { userId: 'user-1' });
+
+    it('refuses a cost centre of another company', async () => {
+      selectResults.push([company], [ccRow({ company_id: 'comp-2' })]);
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      expect(txInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses an inactive cost centre', async () => {
+      selectResults.push([company], [ccRow({ is_active: false })]);
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+    });
+
+    it('refuses a cost centre on a location that is not a FARM or MILL', async () => {
+      selectResults.push([company]);
+      await expect(service.create({
+        company_id: 'comp-1', location_name: 'Shed', location_type: 'SHED', max_capacity: 1, capacity_uom: 'HEAD',
+        cost_center_id: '11111111-1111-4111-8111-111111111111',
+      } as any, 'tenant-1')).rejects.toThrow('Cost Centre can be set on a FARM or MILL only.');
+    });
+
+    it('stores a valid cost centre on the created farm', async () => {
+      selectResults.push(
+        [company], [ccRow()], [farmType], [uom], [series],
+        [{ location_id: 'loc-1', location_code: 'FARM-001', location_type: 'FARM', location_level: 1, cost_center_id: 'cc-farm' }],
+      );
+      await createFarm();
+      const insertedRow = (txInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+      expect(insertedRow.cost_center_id).toBe('11111111-1111-4111-8111-111111111111');
+    });
+
+    it('refuses an update whose cost centre belongs to another company', async () => {
+      selectResults.push(
+        [{ ...farmParent(), parent_location_id: null, storage_type: null }],
+        [farmType],
+        [ccRow({ company_id: 'comp-2' })],
+      );
+      await expect(service.update('farm-1', { cost_center_id: '11111111-1111-4111-8111-111111111111' }, 'tenant-1'))
+        .rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      expect(txUpdate).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -12,6 +12,8 @@ import {
   IsArray,
   ValidateNested,
   ArrayMinSize,
+  MaxLength,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -66,6 +68,11 @@ export class StockTransferLineInput {
   @IsString()
   @IsOptional()
   remarks?: string;
+
+  @ApiProperty({ description: 'Part E: the requisition line this transfer line fulfils (set by Store release)', required: false })
+  @IsUUID()
+  @IsOptional()
+  requisition_line_id?: string;
 }
 
 export class CreateStockTransferDto {
@@ -131,13 +138,131 @@ export class UpdateStockTransferDto {
   lines?: StockTransferLineInput[];
 }
 
+// ---------------------------------------------------------------------------
+// Staged execution (Task 10): partial shipment and receipt events.
+// ---------------------------------------------------------------------------
+
+export class ShipmentLineInput {
+  @ApiProperty({ description: 'Stock transfer line UUID' })
+  @IsUUID()
+  @IsNotEmpty()
+  line_id: string;
+
+  @ApiProperty({ description: 'Quantity being shipped with this event' })
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  quantity: number;
+}
+
+export class PostShipmentDto {
+  @ApiProperty({ description: 'Event posting date', example: '2026-10-02' })
+  @IsDateString()
+  @IsNotEmpty()
+  posting_date: string;
+
+  @ApiProperty({ description: 'Shipped quantities per transfer line (partial allowed; may not exceed the balance to ship)', type: [ShipmentLineInput] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ShipmentLineInput)
+  lines: ShipmentLineInput[];
+
+  @ApiProperty({ description: 'Event remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+}
+
+export class ReceiptLineInput {
+  @ApiProperty({ description: 'Stock transfer line UUID' })
+  @IsUUID()
+  @IsNotEmpty()
+  line_id: string;
+
+  @ApiProperty({ description: 'Quantity being received with this event' })
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  quantity: number;
+
+  // W2T (0165): stored on the receipt line. Required only on a feed receipt
+  // (FeedRequisitionService.receipt applies assertFeedReceiptLine).
+  @ApiProperty({ description: 'Why less arrived than shipped (feed: mandatory on every short receipt, checkpoint 26)', required: false })
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  variance_reason?: string;
+
+  @ApiProperty({ description: 'Ignored: a reason is now required on every short receipt', required: false })
+  @IsBoolean()
+  @IsOptional()
+  final_receipt?: boolean;
+
+  @ApiProperty({ description: 'Bags physically received (feed: required for BAGGED, checkpoint 27)', required: false })
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  @IsOptional()
+  bag_count?: number;
+
+  @ApiProperty({ description: 'Delivery note no. (optional)', required: false })
+  @IsString()
+  @MaxLength(80)
+  @IsOptional()
+  delivery_note_no?: string;
+}
+
+export class PostReceiptDto {
+  @ApiProperty({ description: 'Shipment this receipt receives against — a receipt cannot precede its shipment' })
+  @IsUUID()
+  @IsNotEmpty()
+  shipment_id: string;
+
+  @ApiProperty({ description: 'Event posting date', example: '2026-10-03' })
+  @IsDateString()
+  @IsNotEmpty()
+  posting_date: string;
+
+  @ApiProperty({ description: 'Received quantities per transfer line (partial allowed; may not exceed what has shipped)', type: [ReceiptLineInput] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ReceiptLineInput)
+  lines: ReceiptLineInput[];
+
+  @ApiProperty({ description: 'Event remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+}
+
+export class PostDirectTransferDto {
+  @ApiProperty({ description: 'Event posting date', example: '2026-10-02' })
+  @IsDateString()
+  @IsNotEmpty()
+  posting_date: string;
+
+  @ApiProperty({ description: 'Quantities to ship and receive in one transaction (each may not exceed the ordered quantity)', type: [ShipmentLineInput] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ShipmentLineInput)
+  lines: ShipmentLineInput[];
+
+  @ApiProperty({ description: 'Event remarks', required: false })
+  @IsString()
+  @IsOptional()
+  remarks?: string;
+}
+
 export class QueryStockTransferDto {
   @ApiProperty({ description: 'Filter by company UUID', required: false })
   @IsOptional()
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'IN_TRANSIT', 'RECEIVED', 'POSTED', 'CANCELLED'] })
+  @ApiProperty({ description: 'Filter by status', required: false, enum: ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', 'RECEIVED', 'POSTED', 'CANCELLED'] })
   @IsOptional()
   @IsString()
   status?: string;
@@ -311,5 +436,4 @@ export class ShipStockTransferDto {
   @IsOptional()
   lines?: ShipStockTransferLineInput[];
 }
-
 

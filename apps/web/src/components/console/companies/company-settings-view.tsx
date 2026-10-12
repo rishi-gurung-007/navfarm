@@ -101,6 +101,7 @@ export function CompanySettingsView({ companyId, section = "profile", basePath =
       {error && <ErrorState message={error} />}
 
       <CompanyTab
+        key={activeSection.key}
         activeCompany={targetCompany}
         currencies={currencies}
         tenantId={tenantId}

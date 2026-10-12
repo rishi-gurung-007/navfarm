@@ -1,159 +1,325 @@
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
-import * as gridExports from '../src/components/console/inventory/feed-forecast-grid';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import {
-  FeedForecastGrid, FeedForecastStages, GRID_COLUMNS, STAGE_COLUMNS, ReportRow, StageBlock, fmtKg, groupRows,
+  FeedForecastGrid,
+  fmtKg,
+  GRID_COLUMNS,
+  type ReportRow,
+  type SourceBalancePoint,
+  pivotForecastRows,
 } from '../src/components/console/inventory/feed-forecast-grid';
 import { addDaysIso, formatDateShort } from '../src/components/console/inventory/feed-format';
 
 const t = (key: string, vars?: Record<string, unknown>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
 
 const row = (over: Partial<ReportRow> = {}): ReportRow => ({
-  key: 'b|r1|GRS/SILO-001|2026-09-23', batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
-  itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
-  date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, heads: 1000, perDayIntakeKg: 2000,
-  intakeKg: 2000, daysOfStock: 0, sharedBatchCount: 1, indicative: false,
-  runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
+  key: 'group|r1|silo-1|2026-09-23', farmId: 'farm-1', batchId: 'batch-1', batchGroupId: 'group-1',
+  batchNo: 'WG-2026-38', shedId: 'shed-1', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
+  itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'Weaner Diet R1',
+  sourceType: 'SILO', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', sourceLocationId: 'silo-1', feedType: 'BULK',
+  date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, openingSystemBalanceKg: 1500,
+  confirmedReceiptsKg: 0, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, intakeKg: 2000, dailyUseKg: 2000,
+  projectedClosingBalanceKg: 0, recommendedQtyKg: 4500, firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23',
+  daysOfStock: 0.8, sharedBatchCount: 1, indicative: false, runDownDate: '2026-09-23', ...over,
 });
 
-describe('feed-format date helpers (D16)', () => {
-  it('formats DD/MM/YY and dashes anything unusable', () => {
+const point = (over: Partial<SourceBalancePoint> = {}): SourceBalancePoint => ({
+  date: '2026-09-23', sourceType: 'SILO', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', locationId: 'silo-1',
+  itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'Weaner Diet R1',
+  openingSystemBalanceKg: 1500, confirmedReceiptKg: 0, dailyUseKg: 2000, projectedClosingBalanceKg: 0,
+  recommendedQtyKg: 4500, firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23', runDownDate: '2026-09-23', ...over,
+});
+
+describe('feed-format date helpers', () => {
+  it('formats DD/MM/YY and adds calendar days across a month end', () => {
     expect(formatDateShort('2026-09-23')).toBe('23/09/26');
-    expect(formatDateShort(null)).toBe('—');
-  });
-  it('adds calendar days across a month end', () => {
     expect(addDaysIso('2026-09-28', 7)).toBe('2026-10-05');
   });
 });
 
-describe('FeedForecastGrid', () => {
-  /**
-   * D33 (Rishi, 28 Sep): exactly the field specification's twelve columns.
-   * "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and go
-   * — and "Shared by N" went with Source, since it was a badge inside that cell.
-   */
-  it("shows exactly the field specification's 12 columns, in its order (D33)", () => {
-    render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
-    const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual([...GRID_COLUMNS]);
-    expect(GRID_COLUMNS).toEqual([
-      'ffColBatchNo', 'ffColItemName', 'ffColItemNo', 'ffColShedNo', 'ffColPlanningDate',
-      'ffColCurrentInventoryKg', 'ffColCurrentPigs', 'ffColPerDayIntakeKg', 'ffColDaysOfStock',
-      'ffColRunDown', 'ffColDateToRefill', 'ffColRequiredOn',
+describe('FeedForecastGrid — Engine row 70', () => {
+  it('shows the exact static row-70 fields around dated projected-closing columns', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((header) => header.textContent);
+
+    expect(headers).toEqual([
+      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
+      'ffColHeadCount', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
+      'ffColOpenTransfers', 'ffColPlannedFeedAdded', 'ffColPlannedFeedReference', 'ffColDailyUse',
+      '23/09/26', 'ffColFirstShortage', 'ffColRecommendedQty', 'ffColDeliveryDate',
     ]);
-    expect(GRID_COLUMNS).toHaveLength(12);
+    expect(GRID_COLUMNS).not.toContain('ffColStages');
   });
 
-  it('carries neither Source nor the wastage column any more (D33/D34)', () => {
-    render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCode: 'VIL100/STORE-001', sharedBatchCount: 3 })]} loading={false} horizonTo="2026-11-07" t={t} />);
-    expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColSource');
-    expect(GRID_COLUMNS as readonly string[]).not.toContain('ffColFeedOutKg');
+  it('shows identifiers only in No/Code columns and names only in entity/name columns', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const cells = within(screen.getByRole('table')).getAllByRole('cell').map((cell) => cell.textContent);
+
+    expect(cells.slice(0, 7)).toEqual([
+      'WG-2026-38',
+      'WEANER',
+      'GRS/SHED-003',
+      'GRS/SILO-001',
+      'Weaner silo',
+      'Weaner Diet R1',
+      'Weaner Diet R1',
+    ]);
+    expect(cells).not.toContain('FEED-R1 — Weaner Diet R1');
+  });
+
+  it('shows a stage group\'s batch number alone and its stage in the Stage column (Rishi, 10 Oct)', () => {
+    const grouped = row({
+      batchGroupId: 'batch-1:st-ges', batchNo: 'BATCH-000001 · GESTATION', plainBatchNo: 'BATCH-000001',
+      stageCode: 'GESTATION', stageName: 'Gestation', stageProjected: false,
+    });
+    const projected = row({
+      key: 'projected', batchGroupId: 'batch-1:st-flush', batchNo: 'BATCH-000001 · LACTATION (Projected)', plainBatchNo: 'BATCH-000001',
+      stageCode: 'LACTATION', stageName: null, stageProjected: true,
+    });
+    render(<FeedForecastGrid rows={[grouped, projected]} loading={false} t={t} />);
+    const bodyRows = within(screen.getByRole('table')).getAllByRole('row').slice(1);
+    const lead = bodyRows.map((r) => within(r).getAllByRole('cell').slice(0, 2).map((c) => c.textContent));
+    expect(lead).toEqual([['BATCH-000001', 'Gestation'], ['BATCH-000001', 'ffStageProjected:{"stage":"LACTATION"}']]);
+    expect(screen.queryByText(/ · /)).toBeNull();
+  });
+
+  it('uses human descriptions instead of blank or dash placeholders', () => {
+    render(<FeedForecastGrid rows={[row({ sourceCode: null, sourceName: null, currentItemName: null, firstShortageDate: null, runDownDate: null, deliveryDate: null })]} loading={false} t={t} />);
+    const cells = within(screen.getByRole('table')).getAllByRole('cell').map((cell) => cell.textContent);
+
+    expect(cells).toEqual(expect.arrayContaining([
+      'ffNoSource',
+      'ffNoSourceName',
+      'ffNoCurrentSiloItem',
+      'ffNoShortageProjected',
+      'ffNoDeliveryRequired',
+    ]));
+    expect(cells).not.toContain('—');
+    expect(cells).not.toContain('-');
+  });
+
+  it('shows source balance points only while the calculation line has applicable demand', () => {
+    const future = row({ itemId: 'r2', itemNo: 'FEED-R2', itemName: 'Grower R2', currentItemId: 'r2', currentItemNo: 'FEED-R2', currentItemName: 'Grower R2', date: '2026-09-26', dateTo: '2026-09-26' });
+    const source = [
+      point({ itemId: 'r2', itemNo: 'FEED-R2', itemName: 'Grower R2', currentItemId: 'r2', currentItemNo: 'FEED-R2', currentItemName: 'Grower R2', date: '2026-09-23', dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      point({ itemId: 'r2', itemNo: 'FEED-R2', itemName: 'Grower R2', currentItemId: 'r2', currentItemNo: 'FEED-R2', currentItemName: 'Grower R2', date: '2026-09-24', dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      point({ itemId: 'r2', itemNo: 'FEED-R2', itemName: 'Grower R2', currentItemId: 'r2', currentItemNo: 'FEED-R2', currentItemName: 'Grower R2', date: '2026-09-25', dailyUseKg: 0, projectedClosingBalanceKg: 1000 }),
+      point({ itemId: 'r2', itemNo: 'FEED-R2', itemName: 'Grower R2', currentItemId: 'r2', currentItemNo: 'FEED-R2', currentItemName: 'Grower R2', date: '2026-09-26', dailyUseKg: 2500, projectedClosingBalanceKg: 0, runDownDate: '2026-09-26' }),
+    ];
+
+    const { pivoted, columns } = pivotForecastRows([future], source, 'DAILY', '2026-09-23');
+
+    expect(columns.map((column) => column.key)).toEqual(['2026-09-26']);
+    expect(columns.map((column) => pivoted[0].closingBySlot[column.key])).toEqual([0]);
+  });
+
+  it('does not leak a shared source balance or shortage dates into a different stage line', () => {
+    const rows = [
+      row({ date: '2026-09-23', dateTo: '2026-09-24', stageCode: 'WEANER', firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+      row({ key: 'grower', date: '2026-09-25', dateTo: '2026-09-26', stageCode: 'GROWER', firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+    ];
+    const balances = [
+      point({ date: '2026-09-23', projectedClosingBalanceKg: 600, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+      point({ date: '2026-09-24', projectedClosingBalanceKg: 400, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+      point({ date: '2026-09-25', projectedClosingBalanceKg: 200, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+      point({ date: '2026-09-26', projectedClosingBalanceKg: 0, firstShortageDate: '2026-09-26', deliveryDate: '2026-09-24' }),
+    ];
+
+    const { pivoted, columns } = pivotForecastRows(rows, balances, 'DAILY', '2026-09-23');
+    const weaner = pivoted.find((entry) => entry.stageCode === 'WEANER')!;
+    const grower = pivoted.find((entry) => entry.stageCode === 'GROWER')!;
+
+    expect(columns.map((column) => column.key)).toEqual(['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26']);
+    expect(weaner.closingBySlot).toEqual({ '2026-09-23': 600, '2026-09-24': 400 });
+    expect(weaner.firstShortageDate).toBeNull();
+    expect(weaner.deliveryDate).toBeNull();
+    expect(grower.closingBySlot).toEqual({ '2026-09-25': 200, '2026-09-26': 0 });
+    expect(grower.firstShortageDate).toBe('2026-09-26');
+    expect(grower.deliveryDate).toBe('2026-09-24');
+  });
+
+  it('uses the last source point in each seven-day bucket for WEEKLY closing balance', () => {
+    const source = Array.from({ length: 10 }, (_, index) => point({
+      date: addDaysIso('2026-09-23', index), projectedClosingBalanceKg: 900 - index * 100, runDownDate: '2026-10-02',
+    }));
+    const { pivoted, columns } = pivotForecastRows([row({ dateTo: '2026-10-02', runDownDate: '2026-10-02' })], source, 'WEEKLY', '2026-09-23');
+
+    expect(columns.map((column) => column.key)).toEqual(['2026-09-23', '2026-09-30']);
+    expect(columns.map((column) => pivoted[0].closingBySlot[column.key])).toEqual([300, 0]);
+  });
+
+  it('does not sum a shared silo closing balance across two batch rows', () => {
+    const sharedRows = [row(), row({ key: 'second', batchId: 'batch-2', batchGroupId: 'group-2', batchNo: 'WG-2026-39' })];
+    const { pivoted } = pivotForecastRows(sharedRows, [point({ projectedClosingBalanceKg: 800, runDownDate: null })], 'DAILY', '2026-09-23');
+
+    expect(pivoted).toHaveLength(2);
+    expect(pivoted.map((entry) => entry.closingBySlot['2026-09-23'])).toEqual([800, 800]);
+  });
+
+  it('renders daily records for the same batch, stage, item and source as one forecast row', () => {
+    const dailyRows = [
+      row(),
+      row({
+        key: 'group|r1|silo-1|2026-09-24',
+        date: '2026-09-24',
+        dateTo: '2026-09-24',
+        openingSystemBalanceKg: 0,
+        projectedClosingBalanceKg: 0,
+      }),
+    ];
+    const balances = [
+      point({ date: '2026-09-23', projectedClosingBalanceKg: 500 }),
+      point({ date: '2026-09-24', projectedClosingBalanceKg: 0 }),
+    ];
+
+    const { pivoted, columns } = pivotForecastRows(dailyRows, balances, 'DAILY', '2026-09-23');
+
+    expect(pivoted).toHaveLength(1);
+    expect(columns.map((column) => column.key)).toEqual(['2026-09-23', '2026-09-24']);
+    expect(columns.map((column) => pivoted[0].closingBySlot[column.key])).toEqual([500, 0]);
+    expect(pivoted[0].date).toBe('2026-09-23');
+    expect(pivoted[0].dateTo).toBe('2026-09-24');
+  });
+
+  it('renders required and current feed items, quantities and dates from the contract', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
+    expect(cells).toEqual([
+      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', 'Weaner Diet R1', 'Weaner Diet R1',
+      '1,000', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
+    ]);
+  });
+
+  it('shows planned feed separately with the requisition reference on its delivery date', () => {
+    render(<FeedForecastGrid rows={[row({
+      plannedIncomingKg: 3000,
+      incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceNo: 'REQ-GRA100-2026-00001', overdue: false }],
+    })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    expect(screen.getByText('3,000.00')).toBeTruthy();
+    expect(screen.getByText('REQ-GRA100-2026-00001')).toBeTruthy();
+  });
+
+  it('W5B: the balance dialog lists an open transfer once, not as both expected and open transfer', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ openTransferKg: 800, openTransferMovementKg: 800 } as any)]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(screen.queryAllByText(/^\+ 800\.00 KG ffExpectedTransferShort/)).toHaveLength(1);
+    expect(screen.queryByText(/ffOpenTransferShort/)).toBeNull();
+  });
+
+  it('W5B (Silo r8, checkpoint 37): the balance dialog says System Balance for opening and closing', () => {
+    const { translations } = require('../src/utils/translations');
+    expect(translations.en.ffBalanceOpening).toMatch(/System Balance/);
+    expect(translations.en.ffClosingBalanceShort).toMatch(/System Balance/);
+    expect(translations.en.ffBalanceOpening).not.toMatch(/opening stock/i);
+    expect(translations.en.ffClosingBalanceShort).not.toMatch(/closing stock/i);
+  });
+
+  it('shows planned incoming on the dated closing cell and explains the stock movement when clicked', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({
+        openingSystemBalanceKg: 1500,
+        plannedIncomingKg: 3000,
+        dailyUseKg: 2000,
+        projectedClosingBalanceKg: 2500,
+        incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceNo: 'REQ-VIL100-2026-00005' }],
+      })]}
+      view="DAILY"
+      from="2026-09-23"
+      loading={false}
+      t={t}
+    />);
+
+    // 11 Oct: no second line in the cell; the balance is coloured and the
+    // movement is itemised only in the dialog.
+    expect(screen.queryByText('+3,000.00 KG ffPlannedShort')).toBeNull();
+    const cell = screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' });
+    expect(cell.querySelector('[data-incoming="true"]')?.textContent).toBe('2,500.00');
+    fireEvent.click(cell);
+    expect(await screen.findByText('+ 3,000.00 KG ffPlannedShort')).toBeTruthy();
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(await screen.findByText('ffBalanceOpening:{"kg":"1,500.00"}')).toBeTruthy();
+    expect(await screen.findByText('ffPlannedIncomingReference:{"references":"REQ-VIL100-2026-00005"}')).toBeTruthy();
+  });
+
+  // Rishi, 12 Oct: no negative quantity in the calculation. A negative adjustment or transfer out is a separate
+  // non-negative outflow, explained in the dialog and not a grid column.
+  it('the balance dialog explains other stock movements as a subtraction, and shows no negative receipt', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({ openingSystemBalanceKg: 9900, confirmedReceiptKg: 0, otherOutflowKg: 5900, dailyUseKg: 100, projectedClosingBalanceKg: 3900 })]}
+      view="DAILY" from="2026-09-23" loading={false} t={t}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 5,900.00 KG ffOtherMovementsShort')).toBeTruthy();
+    expect(screen.queryByText(/ffConfirmedReceiptShort/)).toBeNull();
+    expect(screen.queryByText(/-5,900/)).toBeNull();
+    expect(GRID_COLUMNS).not.toContain('ffColOtherOutflow');
+  });
+
+  it('the balance dialog shows feed used before it was received on its own line, apart from the adjustments line', async () => {
+    render(<FeedForecastGrid
+      rows={[row()]}
+      sourceBalances={[point({ openingSystemBalanceKg: 0, confirmedReceiptKg: 40000, otherOutflowKg: 4300, usedBeforeReceivedKg: 4200, dailyUseKg: 100, projectedClosingBalanceKg: 35600 })]}
+      view="DAILY" from="2026-09-23" loading={false} t={t}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 4,200.00 KG ffUsedBeforeReceivedShort')).toBeTruthy();
+    expect(screen.getByText('− 100.00 KG ffOtherMovementsShort')).toBeTruthy();
+  });
+
+  it('only the used-before-received line appears when the whole outflow is that deficit', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ openingSystemBalanceKg: 0, confirmedReceiptKg: 40000, otherOutflowKg: 4200, usedBeforeReceivedKg: 4200 })]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('− 4,200.00 KG ffUsedBeforeReceivedShort')).toBeTruthy();
+    expect(screen.queryByText(/ffOtherMovementsShort/)).toBeNull();
+  });
+
+  it('the balance dialog omits the other-movements line when there is none', async () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point({ otherOutflowKg: 0 })]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ffBalanceExplainAria:{"date":"23/09/26"}' }));
+    expect(await screen.findByText('ffBalanceExplainBody')).toBeTruthy();
+    expect(screen.queryByText(/ffOtherMovementsShort/)).toBeNull();
+  });
+
+  it('adds other outflows across a weekly bucket and never shows a negative opening or receipt (older saved runs)', () => {
+    const { pivoted } = pivotForecastRows(
+      [row({ date: '2026-09-23', dateTo: '2026-09-25', days: 3 })],
+      [
+        point({ date: '2026-09-23', openingSystemBalanceKg: -471.74, confirmedReceiptKg: -5900, otherOutflowKg: 100 }),
+        point({ date: '2026-09-24', openingSystemBalanceKg: 0, otherOutflowKg: 250 }),
+      ],
+      'WEEKLY', '2026-09-23',
+    );
+    const cell = Object.values(pivoted[0].balanceBySlot)[0];
+    expect(cell).toMatchObject({ openingKg: 0, confirmedReceiptKg: 0, otherOutflowKg: 350 });
+  });
+
+  it('W2D W7: links batch, house, silo, required and current item, and the planned requisition reference', () => {
+    render(<FeedForecastGrid rows={[row({
+      currentItemId: 'r0', currentItemName: 'Weaner Diet R0',
+      plannedIncomingKg: 3000,
+      incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceId: 'req-9', referenceNo: 'FRQ-0009', expectedDate: '2026-09-23' }],
+    })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const table = screen.getByRole('table');
-    expect(within(table).queryByText('VIL100/STORE-001')).toBeNull();
-    expect(within(table).queryByText(/ffSharedBy/)).toBeNull();
+    const href = (name: string) => within(table).getByRole('link', { name }).getAttribute('href');
+    expect(href('WG-2026-38')).toBe('/batches/entry?batchId=batch-1');
+    expect(href('GRS/SHED-003')).toBe('/master-data/location?recordId=shed-1');
+    expect(href('GRS/SILO-001')).toBe('/master-data/location?recordId=silo-1');
+    expect(href('Weaner Diet R1')).toBe('/master-data/item?recordId=r1');
+    expect(href('Weaner Diet R0')).toBe('/master-data/item?recordId=r0');
+    expect(href('FRQ-0009')).toBe('/inventory/feed-forecast?tab=feed-requisition&id=req-9');
   });
 
-  it('holds the header row and the Batch No and Item columns (sticky), and aligns numbers right with two decimals', () => {
-    render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
-    const headers = screen.getAllByRole('columnheader');
-    expect(headers[0].getAttribute('data-sticky-col')).toBe('true');
-    expect(headers[1].getAttribute('data-sticky-col')).toBe('last');
-    expect(headers[2].hasAttribute('data-sticky-col')).toBe(false);
-    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(cells[0].getAttribute('data-sticky-col')).toBe('true');
-    // Current Inventory is column 6 of 12 now that Source has gone.
-    expect(cells[5].textContent).toBe('1,500.00');
-    expect(cells[5].className).toContain('text-right');
-    expect(fmtKg(16.3)).toBe('16.30');
+  it('uses human text for a non-finite quantity instead of NaN', () => {
+    expect(fmtKg(Number.NaN)).toBe('Not available');
   });
 
-  it('shows the Item No, DD/MM/YY dates and an Overdue badge', () => {
-    render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo="2026-11-07" t={t} />);
-    const table = screen.getByRole('table');
-    expect(within(table).getByText('FEED-R1')).toBeTruthy();
-    expect(within(table).getAllByText('23/09/26').length).toBe(2);
-    expect(within(table).getByText('21/09/26')).toBeTruthy();
-    expect(within(table).getByText('ffOverdue')).toBeTruthy();
-  });
-
-  it('marks an indicative Days of Stock, in its new column position (D33)', () => {
-    render(<FeedForecastGrid rows={[row({ indicative: true, daysOfStock: 93 })]} loading={false} horizonTo={null} t={t} />);
-    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(within(cells[8]).getByText('93')).toBeTruthy();
-    expect(within(cells[8]).getByText('ffIndicative')).toBeTruthy();
-    expect(cells[8].textContent).toBe('ffIndicative93');
-  });
-
-  it("shows a grouped line's dates and only dashes when forecast dates are not available", () => {
-    render(<FeedForecastGrid rows={[row({ days: 3, dateTo: '2026-09-25', runDownDate: null, refillDate: null, requiredOn: null, overdue: false })]} loading={false} horizonTo="2026-11-07" t={t} />);
-    expect(screen.getByText('23/09/26 – 25/09/26')).toBeTruthy();
-    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
-    expect(cells.slice(9, 12).map((cell) => cell.textContent)).toEqual(['—', '—', '—']);
-    expect(screen.queryByText(/ffBeyondHorizon|ffNotDueBy/)).toBeNull();
-    expect(screen.queryByText('ffOverdue')).toBeNull();
-  });
-
-  it('marks where each batch + item group starts and shades every second group', () => {
-    const rows = [row(), row({ key: 'k2', date: '2026-09-24' }), row({ key: 'k3', itemId: 'r2', itemName: 'Weaner Diet R2' })];
-    expect(groupRows(rows).map((g) => [g.start, g.alt])).toEqual([[true, false], [false, false], [true, true]]);
-    render(<FeedForecastGrid rows={rows} loading={false} horizonTo={null} t={t} />);
-    const body = screen.getAllByRole('row').slice(1);
-    expect(body.map((r) => r.getAttribute('data-group-start'))).toEqual(['true', null, 'true']);
-    expect(body[2].getAttribute('data-group-alt')).toBe('true');
-  });
-
-  it('shows an empty state and a loading state', () => {
-    const { rerender } = render(<FeedForecastGrid rows={[]} loading={false} horizonTo={null} t={t} />);
-    expect(screen.getByText(/ffNoRows/)).toBeTruthy();
-    rerender(<FeedForecastGrid rows={[]} loading horizonTo={null} t={t} />);
-    expect(screen.getByText(/ffLoading/)).toBeTruthy();
-  });
-
-  it('titles Days of Stock and Run-Down with what each counts to', () => {
-    render(<FeedForecastGrid rows={[row()]} loading={false} horizonTo={null} t={t} />);
-    const headers = screen.getAllByRole('columnheader');
-    expect(headers.find((h) => h.textContent === 'ffColDaysOfStock')!.getAttribute('title')).toBe('ffDaysOfStockHint');
-    expect(headers.find((h) => h.textContent === 'ffColRunDown')!.getAttribute('title')).toBe('ffRunDownHint');
-  });
-});
-
-describe('wastageNote (D34)', () => {
-  it('is gone: the screen no longer states a wastage allowance', () => {
-    expect((gridExports as Record<string, unknown>).wastageNote).toBeUndefined();
-  });
-});
-
-describe('FeedForecastStages — a table, not stacked cards (review C, A6)', () => {
-  const block: StageBlock = {
-    batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-08-01', currentTo: '2026-09-11',
-    nextStageCode: 'GROWER', nextFrom: '2026-09-12', nextTo: '2026-11-06', stageChangeEarliest: null, stageChangeDate: '2026-09-12', stageChangeOverdue: true,
-  };
-
-  it('shows an event-based stage change as the window earliest – latest (expected) (D36)', () => {
-    render(<FeedForecastStages stages={[{ ...block, stageChangeEarliest: '2026-09-10' }]} t={t} />);
-    const cell = within(screen.getAllByRole('row')[1]).getAllByRole('cell')[6];
-    expect(cell.textContent).toBe('10/09/26 – 12/09/26 (ffChangeExpected)ffStageChangeNotPosted');
-  });
-
-  it('lists batch, current stage, from, to, next stage and change date, with a not-posted mark', () => {
-    render(<FeedForecastStages stages={[block]} t={t} />);
-    const table = screen.getByRole('table', { name: 'ffStagesTitle' });
-    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([...STAGE_COLUMNS]);
-    const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells).toEqual(['WG-2026-38', 'GRS/SHED-003', 'WEANER', '01/08/26', '11/09/26', 'GROWER', '12/09/26ffStageChangeNotPosted']);
-  });
-
-  it('shows a dash, never "( – —)", where a stage has no length or no successor (A6)', () => {
-    render(<FeedForecastStages stages={[{ ...block, currentTo: null, nextStageCode: null, nextFrom: null, nextTo: null, stageChangeDate: null, stageChangeOverdue: false }]} t={t} />);
-    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells.slice(4)).toEqual(['—', '—', '—']);
-  });
-
-  it('renders both rows of a batch with two concurrent stages, and an empty state', () => {
-    const shared = { ...block, batchNo: 'BATCH-000010', nextStageCode: null, nextFrom: null, nextTo: null, stageChangeEarliest: null, stageChangeDate: null, stageChangeOverdue: false };
-    const { rerender } = render(<FeedForecastStages stages={[{ ...shared, currentStageCode: 'GESTATION' }, { ...shared, currentStageCode: 'LACTATION' }]} t={t} />);
-    expect(screen.getAllByText('BATCH-000010')).toHaveLength(2);
-    rerender(<FeedForecastStages stages={[]} t={t} />);
-    expect(screen.getByText('ffNoStages')).toBeTruthy();
+  it('shows empty and loading states', () => {
+    const { rerender } = render(<FeedForecastGrid rows={[]} sourceBalances={[]} loading={false} t={t} />);
+    expect(screen.getByText('ffNoRows')).toBeTruthy();
+    rerender(<FeedForecastGrid rows={[]} sourceBalances={[]} loading t={t} />);
+    expect(screen.getByText('ffLoading')).toBeTruthy();
   });
 });

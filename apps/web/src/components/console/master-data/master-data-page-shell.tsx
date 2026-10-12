@@ -10,7 +10,7 @@ import MasterDataTable from "@/modules/master-data/MasterDataTable";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { Tabs } from "@/components/ui/tabs";
-import { ShieldAlert } from "lucide-react";
+import { Database, ShieldAlert } from "lucide-react";
 
 
 const S = {
@@ -68,6 +68,24 @@ export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
   // not two — so this shell no longer registers a module index of its own.
 
   if (!ready || !user) return null;
+
+  // Master data belongs to a company or an operational area, not to the tenant
+  // (client ruling, 12 Oct). Deep links in TENANT scope land here, not on a table.
+  if (getActiveWorkspaceScope() === "TENANT") {
+    return (
+      <ConsolePage size="narrow">
+        <PageHeader title={t("masterData")} sticky={false} />
+        <div
+          data-testid="master-data-tenant-note"
+          className="flex items-center gap-3 rounded-[var(--radius-md)] border p-5"
+          style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-muted, transparent)", color: "var(--text-secondary)" }}
+        >
+          <Database className="h-5 w-5 shrink-0" />
+          <p className="text-sm">{t("mdTenantScopeNote")}</p>
+        </div>
+      </ConsolePage>
+    );
+  }
 
   if (!mayView) {
     return (

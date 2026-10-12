@@ -97,9 +97,10 @@ Dependency order:
 
 `1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13`
 
-Tasks 3 and 4 may run after Task 2 on disjoint files. Tasks 5–7 must remain
-serial because they share forecast/requisition integration contracts. Tasks
-8–10 remain serial because they share requisition and transfer state.
+Tasks 3 and 4 remain serial because both modify the Feed Forecast panel even
+though their API modules are otherwise disjoint. Tasks 5–7 must remain serial
+because they share forecast/requisition integration contracts. Tasks 8–10
+remain serial because they share requisition and transfer state.
 
 ## Locked schema and API names
 

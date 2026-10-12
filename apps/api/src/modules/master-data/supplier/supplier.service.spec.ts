@@ -3,7 +3,7 @@ import { SupplierService } from './supplier.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { EncryptionService } from '../../system/encryption/encryption.service';
-import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 describe('SupplierService', () => {

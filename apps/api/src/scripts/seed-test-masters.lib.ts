@@ -1,0 +1,198 @@
+/**
+ * Pure planning for seed-test-masters.ts: copy one company's master data into
+ * another company (possibly in another tenant database). The row copying itself
+ * (fresh UUIDs, FK remapping between copied rows, number-series reset, deferred
+ * cycles) is planTemplateCopies; this file only prepares its input: stamps the
+ * target tenant, and decides what happens to references that point outside the
+ * copied set (keep / map by code / null / skip the row).
+ */
+import { getTableColumns, getTableName } from 'drizzle-orm';
+import { AnyMySqlTable, getTableConfig } from 'drizzle-orm/mysql-core';
+
+type Row = Record<string, any>;
+export interface SourceSet { table: AnyMySqlTable; rows: Row[] }
+
+/** `${foreignTable}:${value}` -> present in the target database (kept as is). */
+export interface RefLookup { exists: Set<string>; remap: Map<string, string> }
+export interface ExternalRef { foreignTable: string; foreignColumn: string; value: string; viaCompanyTable: boolean }
+export interface TableReport { table: string; copied: number; skipped: string[]; nulled: number }
+
+// created_by / updated_by are nulled by planTemplateCopies, so never resolved here.
+const OWNER_COLUMNS = ['tenant_id', 'company_id', 'created_by', 'updated_by'];
+const key = (table: string, value: unknown) => `${table}:${value}`;
+const primaryName = (table: AnyMySqlTable) => Object.entries(getTableColumns(table)).find(([, c]) => c.primary)![0];
+
+export interface Link { column: string; notNull: boolean; foreignTable: AnyMySqlTable; foreignColumn: string }
+/** Foreign keys that exist in the database but are not declared in schema.ts (hand-written migrations). */
+const dbForeignKeys = new Map<string, { column: string; foreignTable: AnyMySqlTable; foreignColumn: string }[]>();
+export function registerDbForeignKeys(fks: { table: string; column: string; refTable: string; refColumn: string }[], all: AnyMySqlTable[]) {
+  const byName = new Map(all.map((t) => [getTableName(t), t]));
+  dbForeignKeys.clear();
+  for (const f of fks) {
+    const ft = byName.get(f.refTable);
+    if (!ft || !byName.has(f.table)) continue;
+    dbForeignKeys.set(f.table, [...(dbForeignKeys.get(f.table) || []), { column: f.column, foreignTable: ft, foreignColumn: f.refColumn }]);
+  }
+}
+
+export function links(table: AnyMySqlTable, passthrough: ReadonlySet<string> = new Set()): Link[] {
+  const out: Link[] = [];
+  for (const fk of getTableConfig(table).foreignKeys) {
+    const ref = fk.reference();
+    if (passthrough.has(getTableName(ref.foreignTable))) continue; // kept untouched (users: replaced later)
+    ref.columns.forEach((c, i) => {
+      if (OWNER_COLUMNS.includes(c.name)) return;
+      out.push({ column: c.name, notNull: c.notNull, foreignTable: ref.foreignTable, foreignColumn: ref.foreignColumns[i].name });
+    });
+  }
+  const cols = Object.values(getTableColumns(table));
+  for (const f of dbForeignKeys.get(getTableName(table)) || []) {
+    if (OWNER_COLUMNS.includes(f.column) || out.some((l) => l.column === f.column)) continue;
+    if (passthrough.has(getTableName(f.foreignTable))) continue;
+    out.push({ column: f.column, notNull: !!cols.find((c) => c.name === f.column)?.notNull, foreignTable: f.foreignTable, foreignColumn: f.foreignColumn });
+  }
+  return out;
+}
+
+const internalIds = (sets: SourceSet[]) => {
+  const ids = new Set<string>();
+  for (const { table, rows } of sets) for (const r of rows) ids.add(key(getTableName(table), r[primaryName(table)]));
+  return ids;
+};
+
+/** Every reference whose target is not one of the copied rows. */
+export function collectExternalRefs(sets: SourceSet[], companyTables: AnyMySqlTable[], passthrough: ReadonlySet<string> = new Set()): ExternalRef[] {
+  const internal = internalIds(sets);
+  const seen = new Map<string, ExternalRef>();
+  for (const { table, rows } of sets) {
+    for (const l of links(table, passthrough)) {
+      const ft = getTableName(l.foreignTable);
+      for (const r of rows) {
+        const v = r[l.column];
+        if (!v || internal.has(key(ft, v))) continue;
+        seen.set(`${ft}.${l.foreignColumn}:${v}`, { foreignTable: ft, foreignColumn: l.foreignColumn, value: String(v), viaCompanyTable: companyTables.includes(l.foreignTable) });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Stamps the target tenant and resolves external references. Returns the rows
+ * to hand to planTemplateCopies plus a per-table report of what was dropped. */
+export function prepareSeedSets(
+  input: SourceSet[], targetTenantId: string, lookup: RefLookup, companyTables: AnyMySqlTable[], passthrough: ReadonlySet<string> = new Set(),
+): { sets: SourceSet[]; reports: Map<string, TableReport> } {
+  const reports = new Map<string, TableReport>();
+  const report = (t: string) => { if (!reports.has(t)) reports.set(t, { table: t, copied: 0, skipped: [], nulled: 0 }); return reports.get(t)!; };
+  let sets: SourceSet[] = input.map(({ table, rows }) => ({
+    table, rows: rows.map((r) => (getTableColumns(table).tenant_id ? { ...r, tenant_id: targetTenantId } : { ...r })),
+  }));
+  for (const s of sets) report(getTableName(s.table));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const internal = internalIds(sets);
+    sets = sets.map(({ table, rows }) => {
+      const name = getTableName(table);
+      const pk = primaryName(table);
+      const kept: Row[] = [];
+      for (const row of rows) {
+        let drop: string | undefined;
+        const next = { ...row };
+        for (const l of links(table, passthrough)) {
+          const v = row[l.column];
+          if (!v) continue;
+          const ft = getTableName(l.foreignTable);
+          if (internal.has(key(ft, v))) continue;
+          const k = key(ft, v);
+          const mapped = lookup.remap.get(k);
+          // A reference into a company catalog may only be kept when it was
+          // mapped to the target company's own row (planTemplateCopies rejects
+          // anything else); other tables keep ids that exist in the target.
+          if (mapped) next[l.column] = mapped;
+          else if (lookup.exists.has(k) && !companyTables.includes(l.foreignTable)) continue;
+          else if (!l.notNull) { next[l.column] = null; }
+          else drop = `${l.column} -> ${ft} ${v} not copied (inactive, deleted or absent in source) and not in target`;
+        }
+        if (drop) { report(name).skipped.push(`${row[pk]}: ${drop}`); changed = true; continue; }
+        kept.push(next);
+      }
+      return { table, rows: kept };
+    });
+  }
+  // Count references nulled: present in the source row, absent in the kept row.
+  const original = new Map<string, Row>();
+  for (const { table, rows } of input) for (const r of rows) original.set(key(getTableName(table), r[primaryName(table)]), r);
+  for (const { table, rows } of sets) {
+    const name = getTableName(table);
+    for (const row of rows) {
+      const src = original.get(key(name, row[primaryName(table)]))!;
+      for (const l of links(table, passthrough)) if (src[l.column] && !row[l.column]) report(name).nulled += 1;
+    }
+  }
+  return { sets, reports };
+}
+
+export function summarize(reports: Map<string, TableReport>, copiedByTable: Map<string, number>, skippedTables: Map<string, string>) {
+  const names = new Set([...reports.keys(), ...skippedTables.keys(), ...copiedByTable.keys()]);
+  const rows = [...names].sort().map((table) => {
+    const r = reports.get(table);
+    const reason = skippedTables.get(table);
+    return {
+      table,
+      copy: copiedByTable.get(table) ?? 0,
+      rows_skipped: r?.skipped.length ?? 0,
+      refs_nulled: r?.nulled ?? 0,
+      note: (reason ?? (r?.skipped.length ? r.skipped[0] : '')).slice(0, 90),
+    };
+  });
+  return {
+    rows,
+    totals: {
+      copy: rows.reduce((n, r) => n + r.copy, 0),
+      rows_skipped: rows.reduce((n, r) => n + r.rows_skipped, 0),
+      tables_skipped: skippedTables.size,
+    },
+  };
+}
+
+// ---- command line + name resolution (pure) ----
+export interface SeedArgs { sourceTenant: string; sourceCompany: string; tenant: string; company: string; mode: 'plan' | 'verify' | 'apply'; withOperational: boolean; asUser?: string }
+const VALUE_FLAGS: Record<string, keyof SeedArgs> = { '--source-tenant': 'sourceTenant', '--source-company': 'sourceCompany', '--tenant': 'tenant', '--company': 'company', '--as-user': 'asUser' };
+
+export function parseSeedArgs(argv: string[]): SeedArgs {
+  const out: Record<string, string> = { sourceTenant: 'devco' };
+  let apply = false, verify = false, withOperational = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--apply') apply = true;
+    else if (a === '--verify') verify = true;
+    else if (a === '--with-operational') withOperational = true;
+    else if (VALUE_FLAGS[a]) {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) throw new Error(`${a} needs a value.`);
+      out[VALUE_FLAGS[a]] = v; i += 1;
+    } else throw new Error(`Unknown argument '${a}'. Use --source-tenant, --source-company, --tenant, --company and optionally --with-operational, --as-user, --verify or --apply.`);
+  }
+  if (apply && verify) throw new Error('Use --verify or --apply, not both.');
+  for (const [flag, k] of [['--source-company', 'sourceCompany'], ['--tenant', 'tenant'], ['--company', 'company']] as const) {
+    if (!out[k]) throw new Error(`${flag} is required.`);
+  }
+  return { ...(out as unknown as Omit<SeedArgs, 'mode' | 'withOperational'>), withOperational, mode: apply ? 'apply' : verify ? 'verify' : 'plan' };
+}
+
+/** tenant_code or db_name -> db_name; exactly one match. */
+export function resolveTenantDb(input: string, tenants: { tenant_code: string; db_name: string }[]): string {
+  const hits = tenants.filter((t) => t.tenant_code === input || t.db_name === input);
+  const dbs = [...new Set(hits.map((t) => t.db_name))];
+  if (dbs.length === 1) return dbs[0];
+  throw new Error(dbs.length ? `Tenant '${input}' is ambiguous (${dbs.join(', ')}).` : `Tenant '${input}' not found by tenant_code or db_name in nf_master.tenant_master.`);
+}
+
+/** company_id or company_code -> company_id; exactly one match. */
+export function resolveCompanyId(input: string, database: string, companies: { company_id: string; company_code: string }[]): string {
+  const byId = companies.filter((c) => c.company_id === input);
+  const hits = byId.length ? byId : companies.filter((c) => c.company_code.toLowerCase() === input.toLowerCase());
+  if (hits.length === 1) return hits[0].company_id;
+  throw new Error(hits.length ? `Company '${input}' is ambiguous in ${database} (${hits.map((h) => h.company_id).join(', ')}); pass the company id.` : `Company '${input}' not found in ${database}.company_master (by company_code or company_id).`);
+}

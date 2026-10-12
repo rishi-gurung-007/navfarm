@@ -7,7 +7,6 @@ import * as schema from '../../../core/database/schema';
 import * as masterSchema from '../../../core/database/master-schema';
 import { MASTER_CONNECTION } from '../../../core/database/database.module';
 import { Step1ProfileDto } from './dto/step1-profile.dto';
-import { copyCompanyMasterTemplates } from '../../core/company/copy-master-templates';
 import { Step2AddressDto } from './dto/step2-address.dto';
 import { Step3ContactDto } from './dto/step3-contact.dto';
 import { Step7FiscalDto } from './dto/step7-fiscal.dto';
@@ -74,11 +73,8 @@ export class SetupWizardService implements OnModuleInit {
       if (existing.length > 0) {
         // Tenant signup creates a placeholder company so the first administrator
         // has a valid company FK. Step 1 normally claims that row instead of
-        // inserting a new company, so this branch must take the same one-time
-        // master-template snapshot as the insert branch below. Use the original
-        // code, not the permanent all-zero id: later edits keep that id and must
-        // not re-copy independently owned company masters or reset counters.
-        const claimsPlaceholder = existing[0].company_code === 'PLACEHOLDER';
+        // inserting a new company. No master-template copy happens either way:
+        // a new company starts with blank master data (client ruling, 12 Oct).
         // Update
         await tx
           .update(schema.companyMaster)
@@ -101,10 +97,6 @@ export class SetupWizardService implements OnModuleInit {
             primary_color_hex: dto.primary_color_hex || '#1F4E79',
           })
           .where(eq(schema.companyMaster.company_id, existing[0].company_id));
-
-        if (claimsPlaceholder) {
-          await copyCompanyMasterTemplates(tx, dto.tenant_id, existing[0].company_id);
-        }
 
         [company] = await tx
           .select()
@@ -166,7 +158,8 @@ export class SetupWizardService implements OnModuleInit {
             onboarding_status: 'PENDING',
           });
 
-        await copyCompanyMasterTemplates(tx, dto.tenant_id, companyId);
+        // No template copy: a new company starts with blank master data
+        // (client ruling, 12 Oct). copyCompanyMasterTemplates stays for scripts.
 
         [company] = await tx
           .select()
@@ -307,12 +300,29 @@ export class SetupWizardService implements OnModuleInit {
     return { success: true };
   }
 
-  async saveStep5Currency(companyId: string, currencyId: string) {
+  async saveStep5Currency(companyId: string, currencyId: string, localCurrencyId?: string) {
     await this.db.transaction(async (tx) => {
       await tx
         .update(schema.companyMaster)
         .set({ base_currency_id: currencyId })
         .where(eq(schema.companyMaster.company_id, companyId));
+
+      if (localCurrencyId !== undefined) {
+        await tx.update(schema.companyCurrencyConfig)
+          .set({ is_base: false, is_local: false })
+          .where(eq(schema.companyCurrencyConfig.company_id, companyId));
+        const sameCurrency = currencyId === localCurrencyId;
+        await tx.insert(schema.companyCurrencyConfig).values({
+          curr_config_id: randomUUID(), company_id: companyId, currency_id: currencyId,
+          is_base: true, is_local: sameCurrency,
+        }).onDuplicateKeyUpdate({ set: { is_base: true, is_local: sameCurrency } });
+        if (!sameCurrency) {
+          await tx.insert(schema.companyCurrencyConfig).values({
+            curr_config_id: randomUUID(), company_id: companyId, currency_id: localCurrencyId,
+            is_base: false, is_local: true,
+          }).onDuplicateKeyUpdate({ set: { is_base: false, is_local: true } });
+        }
+      }
 
       await this.logStepCompletion(tx, companyId, 'BASE_CURRENCY');
     });
@@ -451,19 +461,8 @@ export class SetupWizardService implements OnModuleInit {
     // Mark the final completion step as completed in log
     await this.logStepCompletion(this.db, companyId, 'SETUP_COMPLETE');
 
-    // Provision a starter chart of accounts, GL mappings, and a default
-    // warehouse — without this a brand-new company has no way to post a
-    // batch or goods receipt until someone hand-builds a chart of accounts.
-    const [company] = await this.db
-      .select({ tenant_id: schema.companyMaster.tenant_id })
-      .from(schema.companyMaster)
-      .where(eq(schema.companyMaster.company_id, companyId))
-      .limit(1);
-    if (company) {
-      await this.masterDataSeedService.seedStarterMasterData(company.tenant_id, companyId);
-      await this.logStepCompletion(this.db, companyId, 'CHART_OF_ACCOUNTS');
-      await this.logStepCompletion(this.db, companyId, 'MASTER_DATA_LOAD');
-    }
+    // Rishi, 12 Oct: a new company starts with completely blank master data — no starter chart of accounts,
+    // GL mappings or default store is created here any more (MasterDataSeedService stays for scripts).
 
     return {
       success: true,
@@ -587,6 +586,7 @@ export class SetupWizardService implements OnModuleInit {
         decimal_places: schema.currencyMaster.decimal_places,
         symbol_position: schema.currencyMaster.symbol_position,
         is_base: schema.companyCurrencyConfig.is_base,
+        is_local: schema.companyCurrencyConfig.is_local,
         is_reporting: schema.companyCurrencyConfig.is_reporting,
       })
       .from(schema.companyCurrencyConfig)

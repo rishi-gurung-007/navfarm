@@ -13,6 +13,9 @@ import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service'
 
 import { BreedingService } from '../../piggery/breeding/breeding.service';
 const breedingMock = { recordFarrowing: jest.fn(), recordWeaning: jest.fn(), recordSemenCollection: jest.fn() };
+// The closed-period guard (r32) is its own unit (monthly-stock-take.rules.spec.ts); these
+// tests queue db.select results in order, so the guard's read is stubbed here.
+jest.mock('../../../common/period-close', () => ({ assertPostingPeriodOpen: jest.fn().mockResolvedValue(undefined) }));
 
 describe('BatchDailyDataService', () => {
   let service: BatchDailyDataService;
@@ -1384,6 +1387,10 @@ describe('BatchDailyDataService', () => {
       expect(text).toContain('`location_master`.`is_active` = ?');
       expect(text).toContain('`location_master`.`deleted_at` is null');
       expect(params).toContain('tenant-123');
+      // Master r8: only the links effective on the entry date count (the shared helper).
+      expect(text).toContain('`silo_shed_link`.`effective_from`');
+      expect(text).toContain('`silo_shed_link`.`effective_to`');
+      expect(params).toContain('2026-09-08');
     });
 
     it('refuses the entry when no attached silo holds the item and there is no store', async () => {
@@ -1441,6 +1448,44 @@ describe('BatchDailyDataService', () => {
         'tenant-123',
         { userId: 'user-1' },
       );
+    });
+  });
+  // Workbook checkpoint 28: empty bags x bag size vs posted consumption on POST Day. A flag, never a refusal.
+  describe('empty-bag reconciliation (checkpoint 28)', () => {
+    const settings = (rows: unknown[]) =>
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) });
+    const group = (empty_bags?: number) =>
+      [{ dto: { empty_bags }, header, tenantId: 'tenant-123', batchId: 'batch-1', line: { line_id: 'line-1', activity_name: 'Feeding' }, farmId: null }] as any;
+    const alertValues = jest.fn().mockResolvedValue({});
+
+    beforeEach(() => {
+      alertValues.mockClear();
+      mockDbInsert.mockReturnValue({ values: alertValues });
+    });
+
+    it('flags 98 bags of 50 KG against 5,000 KG posted when the tolerance is 1%, and logs an alert', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '1.00' }]);
+      const warning = await (service as any).reconcileEmptyBags(group(98), 5000);
+      expect(warning).toBe('98 empty bags imply 4,900 KG versus 5,000 KG posted use; review tolerance (1%).');
+      expect(alertValues).toHaveBeenCalledWith(expect.objectContaining({ alert_type: 'BAG_RECONCILIATION', severity: 'WARNING' }));
+    });
+
+    it('allows the same count inside a 2% tolerance, and does nothing when no count was entered', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '2.00' }]);
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
+      await expect((service as any).reconcileEmptyBags(group(undefined), 5000)).resolves.toBeNull();
+      expect(alertValues).not.toHaveBeenCalled();
+    });
+
+    it('returns null, never throws, when the settings read fails (flag only, never block)', async () => {
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockRejectedValue(new Error('db down')) }) });
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
+    });
+
+    it('returns null, never throws, when the alert log insert fails', async () => {
+      settings([{ farm_id: null, bag_size_kg: '50.00', bag_tolerance_pct: '1.00' }]);
+      alertValues.mockRejectedValueOnce(new Error('insert failed'));
+      await expect((service as any).reconcileEmptyBags(group(98), 5000)).resolves.toBeNull();
     });
   });
 });

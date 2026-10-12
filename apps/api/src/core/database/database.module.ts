@@ -7,6 +7,7 @@ import { ConnectionManagerService } from './connection-manager.service';
 import { UserDirectoryService } from './user-directory.service';
 import { MASTER_CONNECTION, PG_CONNECTION } from './database.tokens';
 import { DEFAULT_MASTER_DATABASE } from './database-names';
+import { assertDatabaseAllowed } from './database-allowlist';
 
 export { MASTER_CONNECTION, PG_CONNECTION };
 
@@ -23,6 +24,11 @@ export { MASTER_CONNECTION, PG_CONNECTION };
         const user = config.get<string>('database.username');
         const database = config.get<string>('database.database') || DEFAULT_MASTER_DATABASE;
         const ssl = config.get<boolean>('database.ssl');
+
+        // Refuse before the pool exists: the master database is the registry
+        // the tenant middleware reads to pick a tenant database, so losing
+        // isolation here loses it everywhere.
+        assertDatabaseAllowed(database, 'master connection');
 
         console.log(`[Master Database] Connecting to ${user}@${host}:${port}/${database}${ssl ? ' (TLS)' : ''}`);
 

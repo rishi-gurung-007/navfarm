@@ -8,7 +8,9 @@ import {
   bigint,
   boolean,
   timestamp,
+  datetime,
   date,
+  time,
   decimal,
   char,
   json,
@@ -268,14 +270,228 @@ export const companyCurrencyConfig = mysqlTable('company_currency_config', {
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
   currency_id: varchar('currency_id', { length: 36 }).notNull(),
   is_base: boolean('is_base').default(false).notNull(),
+  is_local: boolean('is_local').default(false).notNull(),
   is_reporting: boolean('is_reporting').default(false).notNull(),
   display_order: int('display_order').default(1).notNull()
 }, (table) => ({
+  companyCurrencyUnique: uniqueIndex('uq_company_currency_config_company_currency').on(table.company_id, table.currency_id),
   currencyFk: foreignKey({
     columns: [table.currency_id],
     foreignColumns: [currencyMaster.currency_id],
     name: 'comp_curr_config_curr_id_fk'
   }).onDelete('restrict')
+}));
+
+export const feedPlanningSetting = mysqlTable('feed_planning_setting', {
+  setting_id: varchar('setting_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  default_forecast_days: int('default_forecast_days').default(7).notNull(),
+  max_forecast_days: int('max_forecast_days').default(45).notNull(),
+  production_weekday: int('production_weekday'),
+  production_shift: varchar('production_shift', { length: 30 }),
+  submission_weekday: int('submission_weekday'),
+  submission_time: varchar('submission_time', { length: 5 }),
+  reminder_weekday: int('reminder_weekday'),
+  reminder_time: varchar('reminder_time', { length: 5 }),
+  // Feed Forecast Engine row 69 / Feed Forecast row 8: the scheduled tentative Feed Plan run is tenant
+  // configuration (the Triple C default is Wednesday 09:00), never a constant. Null = not scheduled (0167).
+  tentative_plan_weekday: int('tentative_plan_weekday'),
+  tentative_plan_time: varchar('tentative_plan_time', { length: 5 }),
+  physical_count_weekday: int('physical_count_weekday'),
+  physical_count_time: varchar('physical_count_time', { length: 5 }),
+  truck_target_kg: decimal('truck_target_kg', { precision: 14, scale: 2 }),
+  bulk_multiple_kg: decimal('bulk_multiple_kg', { precision: 14, scale: 2 }),
+  // TDD Engine Step 8 / Dashboard row 60: configured safety stock. Null on a company row means 0 (the Worked
+  // Example's buffer); null on a farm row means "inherit the company's".
+  safety_stock_kg: decimal('safety_stock_kg', { precision: 14, scale: 2 }),
+  bag_size_kg: decimal('bag_size_kg', { precision: 14, scale: 2 }),
+  capacity_warning_pct: decimal('capacity_warning_pct', { precision: 5, scale: 2 }).default('90.00').notNull(),
+  bag_tolerance_pct: decimal('bag_tolerance_pct', { precision: 5, scale: 2 }),
+  finance_variance_pct: decimal('finance_variance_pct', { precision: 5, scale: 2 }).default('5.00').notNull(),
+  finance_variance_amount: decimal('finance_variance_amount', { precision: 18, scale: 2 }),
+  is_active: boolean('is_active').default(true).notNull(),
+  // MySQL unique indexes allow repeated NULL values, so indexing nullable
+  // farm_id cannot enforce the one-active-row-per-scope contract. Active rows
+  // receive a non-null, type-prefixed scope identity; inactive rows remain NULL
+  // and may retain history without colliding.
+  active_scope_key: varchar('active_scope_key', { length: 38 }).generatedAlwaysAs(
+    sql`IF(\`is_active\`, IF(\`farm_id\` IS NULL, 'C:', CONCAT('F:', \`farm_id\`)), NULL)`,
+    { mode: 'stored' },
+  ),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_by: varchar('updated_by', { length: 36 }),
+}, (table) => ({
+  companyFarmActiveUnique: uniqueIndex('uq_feed_planning_setting_active_scope').on(table.company_id, table.active_scope_key),
+  companyIndex: index('idx_feed_planning_setting_company').on(table.company_id),
+}));
+
+/** Explicit, append-only saves of the Feed Forecast and its dated evidence. */
+export const feedForecastRun = mysqlTable('feed_forecast_run', {
+  run_id: varchar('run_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  run_code: varchar('run_code', { length: 80 }).notNull(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  version: int('version').notNull(),
+  planning_date: date('planning_date', { mode: 'string' }).notNull(),
+  view: varchar('view', { length: 20 }).notNull(),
+  from_date: date('from_date', { mode: 'string' }).notNull(),
+  to_date: date('to_date', { mode: 'string' }).notNull(),
+  period_id: varchar('period_id', { length: 36 }).references((): AnyMySqlColumn => reportingPeriod.period_id, { onDelete: 'restrict' }),
+  source_cutoff_at: timestamp('source_cutoff_at', { mode: 'string' }).notNull(),
+  source_snapshot: json('source_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
+  output_snapshot: json('output_snapshot').$type<{ version: string; hash: string; lineCount: number; display?: unknown }>().notNull(),
+  config_snapshot: json('config_snapshot').$type<{ version: string; hash: string; values: unknown }>().notNull(),
+  created_by: varchar('created_by', { length: 36 }).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  archived_at: timestamp('archived_at', { mode: 'string' }),
+  archived_by: varchar('archived_by', { length: 36 }),
+}, (table) => ({
+  farmVersionUnique: uniqueIndex('uq_feed_forecast_run_farm_version').on(table.farm_id, table.version),
+  companyCodeUnique: uniqueIndex('uq_feed_forecast_run_company_code').on(table.company_id, table.run_code),
+  tenantFarmIndex: index('idx_feed_forecast_run_tenant_farm').on(table.tenant_id, table.farm_id),
+  tenantFarmArchiveIndex: index('idx_feed_forecast_run_tenant_farm_archive').on(table.tenant_id, table.farm_id, table.archived_at),
+}));
+
+export const feedForecastRunLine = mysqlTable('feed_forecast_run_line', {
+  run_line_id: varchar('run_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  run_id: varchar('run_id', { length: 36 }).notNull().references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
+  forecast_date: date('forecast_date', { mode: 'string' }).notNull(),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references((): AnyMySqlColumn => batchHeader.batch_id, { onDelete: 'restrict' }),
+  shed_id: varchar('shed_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  destination_location_id: varchar('destination_location_id', { length: 36 }).references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  required_item_id: varchar('required_item_id', { length: 36 }).notNull().references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  current_item_id: varchar('current_item_id', { length: 36 }).references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  head_count: int('head_count').notNull(),
+  feed_rate_kg: decimal('feed_rate_kg', { precision: 18, scale: 6 }).notNull(),
+  opening_stock_kg: decimal('opening_stock_kg', { precision: 18, scale: 4 }).notNull(),
+  confirmed_receipt_kg: decimal('confirmed_receipt_kg', { precision: 18, scale: 4 }).notNull(),
+  daily_demand_kg: decimal('daily_demand_kg', { precision: 18, scale: 4 }).notNull(),
+  projected_closing_kg: decimal('projected_closing_kg', { precision: 18, scale: 4 }).notNull(),
+  shortage_date: date('shortage_date', { mode: 'string' }),
+  recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  required_on_date: date('required_on_date', { mode: 'string' }),
+  provenance_snapshot: json('provenance_snapshot').$type<Record<string, unknown>>().notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  runIndex: index('idx_feed_forecast_run_line_run').on(table.run_id),
+  destinationItemIndex: index('idx_feed_forecast_run_line_destination_item').on(table.destination_location_id, table.required_item_id),
+}));
+
+/** Retained weekly Tentative/Actual Feed Plan document versions. */
+export const feedPlan = mysqlTable('feed_plan', {
+  plan_id: varchar('plan_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  plan_code: varchar('plan_code', { length: 80 }).notNull(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  source_run_id: varchar('source_run_id', { length: 36 }).references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
+  production_date: date('production_date', { mode: 'string' }).notNull(),
+  plan_week: varchar('plan_week', { length: 6 }).notNull(),
+  plan_type: varchar('plan_type', { length: 20 }).notNull(), // TENTATIVE, ACTUAL
+  version: int('version').notNull(),
+  source_from: date('source_from', { mode: 'string' }).notNull(),
+  source_to: date('source_to', { mode: 'string' }).notNull(),
+  created_by: varchar('created_by', { length: 36 }).notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  companyCodeUnique: uniqueIndex('uq_feed_plan_company_code').on(table.company_id, table.plan_code),
+  farmWeekVersionUnique: uniqueIndex('uq_feed_plan_farm_week_version').on(table.farm_id, table.plan_week, table.version),
+  tenantFarmWeekIndex: index('idx_feed_plan_tenant_farm_week').on(table.tenant_id, table.farm_id, table.plan_week),
+}));
+
+export const feedPlanLine = mysqlTable('feed_plan_line', {
+  plan_line_id: varchar('plan_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  plan_id: varchar('plan_id', { length: 36 }).notNull().references(() => feedPlan.plan_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  projected_target_kg: decimal('projected_target_kg', { precision: 18, scale: 4 }).notNull(),
+  adjustment_factor: decimal('adjustment_factor', { precision: 18, scale: 6 }).notNull(),
+  tentative_qty_kg: decimal('tentative_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  requested_qty_kg: decimal('requested_qty_kg', { precision: 18, scale: 4 }),
+  mill_approved_qty_kg: decimal('mill_approved_qty_kg', { precision: 18, scale: 4 }),
+  variance_qty_kg: decimal('variance_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  history_snapshot: json('history_snapshot').$type<Array<{
+    from: string;
+    to: string;
+    actualKg: number;
+    expectedKg: number;
+  }>>().notNull(),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  planItemUnique: uniqueIndex('uq_feed_plan_line_plan_item').on(table.plan_id, table.item_id),
+  planIndex: index('idx_feed_plan_line_plan').on(table.plan_id),
+}));
+
+/** Dated physical silo-count evidence. Approval and posting are completed by Task 6. */
+export const feedStockCount = mysqlTable('feed_stock_count', {
+  count_id: varchar('count_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  count_no: varchar('count_no', { length: 80 }).notNull(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  counted_at: timestamp('counted_at', { mode: 'string' }).notNull(),
+  schedule_source: varchar('schedule_source', { length: 20 }).notNull(), // SCHEDULED, ON_DEMAND
+  status: varchar('status', { length: 30 }).default('DRAFT').notNull(), // DRAFT, PENDING_APPROVAL, APPROVED, POSTED, REJECTED
+  approval_request_id: varchar('approval_request_id', { length: 36 }),
+  stock_adjustment_id: varchar('stock_adjustment_id', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }).notNull(),
+  submitted_by: varchar('submitted_by', { length: 36 }),
+  submitted_at: timestamp('submitted_at', { mode: 'string' }),
+  approved_by: varchar('approved_by', { length: 36 }),
+  approved_at: timestamp('approved_at', { mode: 'string' }),
+  posted_by: varchar('posted_by', { length: 36 }),
+  posted_at: timestamp('posted_at', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_by: varchar('updated_by', { length: 36 }),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  // 0167: WEEKLY physical count or MONTHLY stock take (FARM / FEED_MILL) for a Reporting Period.
+  count_type: varchar('count_type', { length: 10 }).default('WEEKLY').notNull(),
+  stock_take_type: varchar('stock_take_type', { length: 20 }),
+  reporting_period_id: varchar('reporting_period_id', { length: 36 }),
+}, (table) => ({
+  periodLocationUnique: uniqueIndex('uq_feed_stock_count_period_location').on(table.farm_id, table.reporting_period_id),
+  occurrenceUnique: uniqueIndex('uq_feed_stock_count_occurrence').on(table.farm_id, table.counted_at),
+  companyNoUnique: uniqueIndex('uq_feed_stock_count_company_no').on(table.company_id, table.count_no),
+  tenantFarmIndex: index('idx_feed_stock_count_tenant_farm').on(table.tenant_id, table.farm_id),
+  approvalFk: foreignKey({
+    columns: [table.approval_request_id],
+    foreignColumns: [approvalRequest.request_id],
+    name: 'feed_stock_count_approval_fk',
+  }).onDelete('restrict'),
+  adjustmentFk: foreignKey({
+    columns: [table.stock_adjustment_id],
+    foreignColumns: [stockAdjustment.adjustment_id],
+    name: 'feed_stock_count_adjustment_fk',
+  }).onDelete('restrict'),
+}));
+
+export const feedStockCountLine = mysqlTable('feed_stock_count_line', {
+  count_line_id: varchar('count_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  count_id: varchar('count_id', { length: 36 }).notNull().references(() => feedStockCount.count_id, { onDelete: 'restrict' }),
+  silo_id: varchar('silo_id', { length: 36 }).notNull().references((): AnyMySqlColumn => locationMaster.location_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references((): AnyMySqlColumn => itemMaster.item_id, { onDelete: 'restrict' }),
+  system_qty_kg: decimal('system_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  counted_qty_kg: decimal('counted_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  variance_qty_kg: decimal('variance_qty_kg', { precision: 18, scale: 4 }).notNull(),
+  variance_pct_absolute: decimal('variance_pct_absolute', { precision: 12, scale: 6 }).notNull(),
+  reason_id: varchar('reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
+  unit_cost_base: decimal('unit_cost_base', { precision: 18, scale: 6 }),
+  variance_value_base: decimal('variance_value_base', { precision: 18, scale: 4 }),
+  base_currency_id: varchar('base_currency_id', { length: 36 }).notNull().references(() => currencyMaster.currency_id, { onDelete: 'restrict' }),
+  local_currency_id: varchar('local_currency_id', { length: 36 }).references(() => currencyMaster.currency_id, { onDelete: 'restrict' }),
+  rate_id: varchar('rate_id', { length: 36 }).references(() => exchangeRate.rate_id, { onDelete: 'restrict' }),
+  rate_snapshot: json('rate_snapshot').$type<Record<string, unknown>>(),
+  variance_value_local: decimal('variance_value_local', { precision: 18, scale: 4 }),
+  monetary_status: varchar('monetary_status', { length: 30 }).notNull(), // RESOLVED, MISSING_COST, MISSING_RATE
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  siloItemUnique: uniqueIndex('uq_feed_stock_count_line_silo_item').on(table.count_id, table.silo_id, table.item_id),
+  countIndex: index('idx_feed_stock_count_line_count').on(table.count_id),
 }));
 
 // ==========================================
@@ -301,6 +517,15 @@ export const userMaster = mysqlTable('user_master', {
   user_type: varchar('user_type', { length: 20 }).default('STAFF').notNull(),
   employee_id: varchar('employee_id', { length: 50 }),
   department: varchar('department', { length: 100 }),
+  // Department as a Cost Center Master identity of type DEPARTMENT (decisions,
+  // 1 Oct: "both users and locations reference that identity"). The free-text
+  // `department` above stays as the legacy label for existing callers.
+  // Nullable and additive; validated in UserService, migration is Task 12.
+  department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // WP1c (Rishi's 4 Oct list): the Direct Transfer right lives here — User
+  // Setup — and is the ONE source the requisition's create/update reads; the
+  // posting path gates on the same flag. Previously the checkbox was ungated.
+  direct_transfer_allowed: boolean('direct_transfer_allowed').default(false).notNull(),
   designation: varchar('designation', { length: 100 }),
   profile_photo_url: varchar('profile_photo_url', { length: 500 }),
   lang_pref_id: varchar('lang_pref_id', { length: 36 }),
@@ -720,6 +945,8 @@ export const itemMaster = mysqlTable('item_master', {
   item_code: varchar('item_code', { length: 255 }).notNull(),
   item_name: varchar('item_name', { length: 200 }).notNull(),
   item_type: varchar('item_type', { length: 30 }).notNull(),
+  diet_no: int('diet_no'), // TDD Master Setup §2 / Loading Sheet row 65: Diet number 1 to 14
+  feed_form: varchar('feed_form', { length: 10 }), // BULK | BAGGED; feed items only (12 Oct)
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
   sub_category: varchar('sub_category', { length: 100 }), // Legacy text sub_category field
@@ -1039,6 +1266,16 @@ export const locationMaster = mysqlTable('location_master', {
   // the high (over-stock) level of a SILO, in KG. Null = not checked.
   low_level_kg: decimal('low_level_kg', { precision: 12, scale: 2 }),
   high_level_kg: decimal('high_level_kg', { precision: 12, scale: 2 }),
+  // MILL capacities are entered/displayed in TON but stored canonically in KG.
+  // Nullable because these facts apply only when location_type = MILL.
+  mill_daily_capacity_kg: decimal('mill_daily_capacity_kg', { precision: 14, scale: 2 }),
+  mill_hourly_capacity_kg: decimal('mill_hourly_capacity_kg', { precision: 14, scale: 2 }),
+  mill_bulk_daily_allocation_kg: decimal('mill_bulk_daily_allocation_kg', { precision: 14, scale: 2 }),
+  mill_bagged_daily_allocation_kg: decimal('mill_bagged_daily_allocation_kg', { precision: 14, scale: 2 }),
+  // BIN is the inventory-bearing child of a MILL. Capacity is canonical KG;
+  // bin_feed_type is BULK or BAGGED and controls assignment compatibility.
+  bin_capacity_kg: decimal('bin_capacity_kg', { precision: 14, scale: 2 }),
+  bin_feed_type: varchar('bin_feed_type', { length: 10 }),
   // FARM rows only — feed requisition rounding and cycle (Requisition §1 rows
   // 27–28, checkpoints 22 and 27); defaults are the workbook's.
   feed_bulk_multiple_kg: int('feed_bulk_multiple_kg').default(3000),
@@ -1049,6 +1286,15 @@ export const locationMaster = mysqlTable('location_master', {
   downtime_days_required: int('downtime_days_required'),
   last_cleaned_date: date('last_cleaned_date', { mode: 'string' }),
   last_disinfected_date: date('last_disinfected_date', { mode: 'string' }),
+  // The location's department — a Cost Center Master row of type DEPARTMENT
+  // (decisions, 1 Oct: "both users and locations reference that identity").
+  // A Store requisition's sender department is read from here, never compared
+  // as free text. Nullable and additive; migration is Task 12.
+  department_id: varchar('department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // The farm's (or mill's) own Cost Centre — decisions, 11 Oct: every inventory
+  // journal line posted against a location under this FARM/MILL carries it.
+  // Distinct from department_id (a DEPARTMENT-type identity). Nullable.
+  cost_center_id: varchar('cost_center_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
   is_active: boolean('is_active').default(true).notNull(),
   status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
   created_by: varchar('created_by', { length: 36 }),
@@ -1088,11 +1334,56 @@ export const siloShedLink = mysqlTable('silo_shed_link', {
   company_id: varchar('company_id', { length: 36 }),
   silo_id: varchar('silo_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
   shed_id: varchar('shed_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'cascade' }),
+  // Master r8: the dates this silo serves the shed. NULL on both = always.
+  effective_from: date('effective_from', { mode: 'string' }),
+  effective_to: date('effective_to', { mode: 'string' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
   uqSiloShed: uniqueIndex('uq_silo_shed_link').on(table.silo_id, table.shed_id),
   shedIdx: index('idx_silo_shed_link_shed').on(table.shed_id),
+}));
+
+export const productionSlotMaster = mysqlTable('production_slot_master', {
+  slot_id: varchar('slot_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  slot_code: varchar('slot_code', { length: 50 }).notNull(),
+  slot_name: varchar('slot_name', { length: 100 }).notNull(),
+  start_time: time('start_time').notNull(),
+  end_time: time('end_time').notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqScopedCode: uniqueIndex('uq_prod_slot_scope_code').on(table.tenant_id, table.company_id, table.slot_code),
+  companyIndex: index('idx_prod_slot_company').on(table.company_id),
+}));
+
+export const binDietAssignment = mysqlTable('bin_diet_assignment', {
+  assignment_id: varchar('assignment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  bin_location_id: varchar('bin_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  feed_item_id: varchar('feed_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  production_date: date('production_date', { mode: 'string' }).notNull(),
+  production_slot_id: varchar('production_slot_id', { length: 36 }).references(() => productionSlotMaster.slot_id, { onDelete: 'restrict' }),
+  diet_priority: int('diet_priority').notNull(),
+  is_active: boolean('is_active').default(true).notNull(),
+  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  uqBinDateSlot: uniqueIndex('uq_bin_diet_date_slot').on(table.bin_location_id, table.production_date, table.production_slot_id),
+  companyDateIndex: index('idx_bin_diet_company_date').on(table.company_id, table.production_date),
+  itemDateIndex: index('idx_bin_diet_item_date').on(table.feed_item_id, table.production_date),
 }));
 
 // ==========================================
@@ -2129,8 +2420,14 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   std_teats: int('std_teats'),
   season_type: varchar('season_type', { length: 20 }),
   feed_item_id: varchar('feed_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  feed_form: varchar('feed_form', { length: 10 }), // TDD Master Setup row 37: BULK | BAGGED
   feed_qty_per_head_per_day_kg: decimal('feed_qty_per_head_per_day_kg', { precision: 8, scale: 4 }),
   feed_wastage_pct: decimal('feed_wastage_pct', { precision: 5, scale: 2 }),
+  // 0170, Master Setup r30/r38: effective-dated feed rows for advance diet-change planning. NULL = always effective.
+  effective_from: date('effective_from', { mode: 'string' }),
+  effective_to: date('effective_to', { mode: 'string' }),
+  // 0171, Master Setup r30/r39: farm-level override. NULL = the company or breed default row.
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
   std_body_weight_kg: decimal('std_body_weight_kg', { precision: 8, scale: 3 }),
   std_adg_gpd: decimal('std_adg_gpd', { precision: 8, scale: 2 }), // standard Average Daily Gain, grams/day
   std_fcr: decimal('std_fcr', { precision: 5, scale: 3 }),
@@ -2153,6 +2450,7 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   kpi_lower_limit: decimal('kpi_lower_limit', { precision: 18, scale: 4 }),
   kpi_upper_limit: decimal('kpi_upper_limit', { precision: 18, scale: 4 }),
   alert_severity: varchar('alert_severity', { length: 10 }), // INFO, WARNING, CRITICAL
+  kpi_alert_period: varchar('kpi_alert_period', { length: 10 }), // DAILY, WEEKLY, MONTHLY (stored only; alert evaluation unchanged)
   notes: text('notes'),
   is_active: boolean('is_active').default(true).notNull(),
   created_by: varchar('created_by', { length: 36 }),
@@ -2281,7 +2579,7 @@ export const batchInputLine = mysqlTable('batch_input_line', {
   rate: decimal('rate', { precision: 18, scale: 6 }),
   amount: decimal('amount', { precision: 18, scale: 4 }),
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: varchar('serial_no', { length: 100 }),
+  serial_no: text('serial_no'),
 }, (table) => ({
   batchFk: foreignKey({
     columns: [table.batch_id],
@@ -2994,6 +3292,8 @@ export const batchDailyData = mysqlTable(
     alert_triggered: boolean('alert_triggered').default(false).notNull(),
     alert_note: varchar('alert_note', { length: 500 }),
     remarks: varchar('remarks', { length: 500 }),
+    // Checkpoint 28: empty bags counted for a bagged-feed consumption entry (0169).
+    empty_bags: int('empty_bags'),
     created_by: varchar('created_by', { length: 36 }),
     updated_by: varchar('updated_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })
@@ -3417,13 +3717,20 @@ export const reportingPeriod = mysqlTable('reporting_period', {
   end_date: date('end_date', { mode: 'string' }).notNull(),
   stock_take_date: date('stock_take_date', { mode: 'string' }).notNull(),
   production_start_date: date('production_start_date', { mode: 'string' }).notNull(),
-  is_active: boolean('is_active').default(true).notNull(),
-  status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+  is_active: boolean('is_active').default(false).notNull(),
+  status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
   created_by: varchar('created_by', { length: 36 }),
   updated_by: varchar('updated_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  // 0167: period close (r31/r32), separate from the master-data lifecycle `status`.
+  period_status: varchar('period_status', { length: 10 }).default('OPEN').notNull(), // OPEN, CLOSED
+  closed_by: varchar('closed_by', { length: 36 }),
+  closed_at: timestamp('closed_at', { mode: 'string' }),
+  reopened_by: varchar('reopened_by', { length: 36 }),
+  reopened_at: timestamp('reopened_at', { mode: 'string' }),
+  reopen_reason: varchar('reopen_reason', { length: 500 }),
 }, (table) => ({
   uqCode: uniqueIndex('uq_reporting_period_code').on(table.tenant_id, table.company_id, table.period_code),
   idxDates: index('idx_reporting_period_dates').on(table.tenant_id, table.company_id, table.start_date),
@@ -3468,6 +3775,32 @@ export const feedAlert = mysqlTable('feed_alert', {
   farmStatus: index('idx_feed_alert_farm_status').on(table.farm_id, table.status),
 }));
 
+/**
+ * What the feed scheduler ran (0167). One row per job run; run_key (job|farm|period) is unique for a
+ * SCHEDULED run, so a job runs once per farm and period however many ticks or API instances see it.
+ * A MANUAL ("Run now") run has a NULL run_key and may repeat; the notices it raises are still
+ * deduplicated by feed_alert's own unique active_key.
+ */
+export const feedScheduleLog = mysqlTable('feed_schedule_log', {
+  run_id: varchar('run_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull(),
+  farm_id: varchar('farm_id', { length: 36 }),
+  job_code: varchar('job_code', { length: 30 }).notNull(),
+  trigger_type: varchar('trigger_type', { length: 20 }).notNull(), // SCHEDULED, MANUAL
+  period_key: varchar('period_key', { length: 20 }).notNull(),
+  run_key: varchar('run_key', { length: 191 }),
+  status: varchar('status', { length: 20 }).default('RUNNING').notNull(), // RUNNING, DONE, FAILED
+  summary: json('summary').$type<Record<string, unknown>>(),
+  error_message: text('error_message'),
+  started_at: timestamp('started_at', { mode: 'string' }).notNull(),
+  finished_at: timestamp('finished_at', { mode: 'string' }),
+  triggered_by: varchar('triggered_by', { length: 36 }),
+}, (table) => ({
+  uqRunKey: uniqueIndex('uq_feed_schedule_log_run_key').on(table.run_key),
+  idxJob: index('idx_feed_schedule_log_job').on(table.tenant_id, table.job_code, table.started_at),
+}));
+
 // ==========================================
 // 9. INVENTORY ENGINE (Phase 3)
 // ==========================================
@@ -3509,7 +3842,15 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
   category_id: varchar('category_id', { length: 36 }).references(() => itemCategoryMaster.category_id, { onDelete: 'restrict' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
-});
+}, (table) => ({
+  countCutoffIndex: index('idx_inventory_ledger_count_cutoff').on(
+    table.tenant_id,
+    table.company_id,
+    table.warehouse_id,
+    table.posting_date,
+    table.created_at,
+  ),
+}));
 
 // FIFO matching: which inbound (receipt) ledger rows an outbound (consumption)
 // ledger row drew its quantity/cost from.
@@ -3900,11 +4241,113 @@ export const stockTransferLine = mysqlTable('stock_transfer_line', {
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
   uom: varchar('uom', { length: 20 }).notNull(),
   // Same tracking contract as stock transfer line — carried from the shipment leg
-  // onto the receipt leg by writeTransferEntries() so a lot/serial doesn't lose
+  // onto the receipt leg (the receipt copies what the shipment consumed) so a lot/serial doesn't lose
   // its identity crossing warehouses.
   lot_no: varchar('lot_no', { length: 50 }),
-  serial_no: text('serial_no'),
-  remarks: text('remarks'),
+  serial_no: varchar('serial_no', { length: 100 }),
+  remarks: varchar('remarks', { length: 500 }),
+  // Part E (0147): the requisition line this transfer line fulfils — set when a Store
+  // requisition is released; NULL on every hand-made transfer.
+  requisition_line_id: varchar('requisition_line_id', { length: 36 }),
+}, (table) => ({
+  requisitionLineIdx: index('idx_stock_transfer_line_requisition_line').on(table.requisition_line_id),
+}));
+
+// ---------------------------------------------------------------------------
+// Staged transfer execution (plan Task 10). Append-only partial events against
+// the stock_transfer order above; the atomic DRAFT→POSTED path stays and is
+// re-implemented as a direct transfer (one shipment + one matching receipt in
+// one transaction). Cumulative quantities are derived by summing the events —
+// never stored on the order line.
+// ---------------------------------------------------------------------------
+
+// Pre-shipment lot/serial allocations per transfer line (spec
+// "stock_transfer_tracking_assignment"). The shipment event copies the line's
+// assignments; the receipt copies them from the shipment.
+export const stockTransferTrackingAssignment = mysqlTable('stock_transfer_tracking_assignment', {
+  assignment_id: varchar('assignment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'cascade' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'cascade' }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  lineIdx: index('idx_tracking_assignment_line').on(table.line_id),
+}));
+
+// One append-only shipment event. `quantity` is the event's own quantity;
+// the line's cumulative shipped quantity is the sum of its events.
+export const transferShipment = mysqlTable('transfer_shipment', {
+  shipment_id: varchar('shipment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  shipment_no: varchar('shipment_no', { length: 50 }).notNull(),
+  shipment_date: date('shipment_date', { mode: 'string' }).notNull(),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  transferIdx: index('idx_transfer_shipment_transfer').on(table.transfer_id),
+}));
+
+export const transferShipmentLine = mysqlTable('transfer_shipment_line', {
+  shipment_line_id: varchar('shipment_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  shipment_id: varchar('shipment_id', { length: 36 }).notNull().references(() => transferShipment.shipment_id, { onDelete: 'cascade' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'restrict' }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  // Copied from the line's tracking assignments at shipment time.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+});
+
+// One append-only receipt event, tied to the shipment it receives against —
+// which is what makes "a receipt cannot precede its shipment" structural.
+export const transferReceipt = mysqlTable('transfer_receipt', {
+  receipt_id: varchar('receipt_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  shipment_id: varchar('shipment_id', { length: 36 }).references(() => transferShipment.shipment_id, { onDelete: 'set null' }),
+  receipt_no: varchar('receipt_no', { length: 50 }).notNull(),
+  receipt_date: date('receipt_date', { mode: 'string' }).notNull(),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => ({
+  transferIdx: index('idx_transfer_receipt_transfer').on(table.transfer_id),
+  shipmentIdx: index('idx_transfer_receipt_shipment').on(table.shipment_id),
+}));
+
+export const transferReceiptLine = mysqlTable('transfer_receipt_line', {
+  receipt_line_id: varchar('receipt_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  receipt_id: varchar('receipt_id', { length: 36 }).notNull().references(() => transferReceipt.receipt_id, { onDelete: 'cascade' }),
+  shipment_line_id: varchar('shipment_line_id', { length: 36 }).references(() => transferShipmentLine.shipment_line_id, { onDelete: 'set null' }),
+  line_id: varchar('line_id', { length: 36 }).notNull().references(() => stockTransferLine.line_id, { onDelete: 'restrict' }),
+  quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  // Copied from the shipment line (spec: receipt copies from shipment), and
+  // declared exactly as 0146 creates it: the merge that brought this table in
+  // had added a `remarks` column no migration creates and widened serial_no to
+  // text, which made every receipt insert fail with "Unknown column 'remarks'"
+  // — Drizzle names every schema column in the statement, set or not. The
+  // sibling transferShipmentLine and the DTO's @MaxLength(100) agree on 100.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+  // 0165 (W2T): feed TO receipt controls. variance_qty = shipped − (previously
+  // received + this receipt) on the line; a shortfall needs variance_reason
+  // (Checkpoints row 26). bag_count for BAGGED feed (row 27), delivery note and
+  // loading sheet (Silo TO Receipt rows 17-18). NULL on common receipts' optional fields.
+  variance_qty: decimal('variance_qty', { precision: 18, scale: 4 }),
+  variance_reason: varchar('variance_reason', { length: 500 }),
+  bag_count: int('bag_count'),
+  delivery_note_no: varchar('delivery_note_no', { length: 80 }),
+  loading_sheet_id: varchar('loading_sheet_id', { length: 36 }),
+  loading_sheet_no: varchar('loading_sheet_no', { length: 80 }),
 });
 
 export const stockAdjustment = mysqlTable('stock_adjustment', {
@@ -4213,6 +4656,78 @@ export const approvalRequestRelations = relations(approvalRequest, ({ one }) => 
   decider: one(userMaster, { fields: [approvalRequest.decided_by], references: [userMaster.user_id], relationName: 'approval_decider' }),
 }));
 
+/** Feed-only mill consolidation document. Common requisitions never enter this flow. */
+export const feedConsolidation = mysqlTable('feed_consolidation', {
+  consolidation_id: varchar('consolidation_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  consolidation_no: varchar('consolidation_no', { length: 50 }).notNull().unique(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  production_week: varchar('production_week', { length: 8 }).notNull(),
+  consolidation_date: date('consolidation_date', { mode: 'string' }).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  status: varchar('status', { length: 30 }).notNull().default('DRAFT'),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  tenantWeekIdx: index('idx_feed_consolidation_tenant_week').on(table.tenant_id, table.production_week),
+}));
+
+export const feedConsolidationLine = mysqlTable('feed_consolidation_line', {
+  consolidation_line_id: varchar('consolidation_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  consolidation_id: varchar('consolidation_id', { length: 36 }).notNull().references(() => feedConsolidation.consolidation_id, { onDelete: 'cascade' }),
+  requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'restrict' }),
+  requisition_line_id: varchar('requisition_line_id', { length: 36 }).notNull().references(() => requisitionLine.line_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  // Immutable source snapshots keep a consolidation report stable if an
+  // editable draft line is later changed or its master label is renamed.
+  destination_silo_id: varchar('destination_silo_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  requested_delivery_date: date('requested_delivery_date', { mode: 'string' }),
+  production_date: date('production_date', { mode: 'string' }),
+  requested_qty_kg: decimal('requested_qty_kg', { precision: 14, scale: 4 }).notNull(),
+  mill_approved_qty_kg: decimal('mill_approved_qty_kg', { precision: 14, scale: 4 }).notNull(),
+  adjustment_reason: varchar('adjustment_reason', { length: 500 }),
+  bc_to_no: varchar('bc_to_no', { length: 100 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  requisitionLineUnique: uniqueIndex('uq_feed_consolidation_requisition_line').on(table.requisition_line_id),
+  consolidationIdx: index('idx_feed_consolidation_line_consolidation').on(table.consolidation_id),
+}));
+
+/** Feed-only mill loading instruction, created when a consolidation is created. */
+export const feedLoadingSheet = mysqlTable('feed_loading_sheet', {
+  loading_sheet_id: varchar('loading_sheet_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  loading_sheet_no: varchar('loading_sheet_no', { length: 80 }).notNull().unique(),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  consolidation_id: varchar('consolidation_id', { length: 36 }).notNull().references(() => feedConsolidation.consolidation_id, { onDelete: 'cascade' }),
+  consolidation_line_id: varchar('consolidation_line_id', { length: 36 }).notNull().references(() => feedConsolidationLine.consolidation_line_id, { onDelete: 'cascade' }),
+  requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'restrict' }),
+  requisition_line_id: varchar('requisition_line_id', { length: 36 }).notNull().references(() => requisitionLine.line_id, { onDelete: 'restrict' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  destination_silo_id: varchar('destination_silo_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  mill_loading_bin_id: varchar('mill_loading_bin_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  requested_qty_kg: decimal('requested_qty_kg', { precision: 14, scale: 4 }).notNull(),
+  mill_approved_qty_kg: decimal('mill_approved_qty_kg', { precision: 14, scale: 4 }).notNull(),
+  scheduled_qty_kg: decimal('scheduled_qty_kg', { precision: 14, scale: 4 }).notNull(),
+  requested_delivery_date: date('requested_delivery_date', { mode: 'string' }),
+  production_date: date('production_date', { mode: 'string' }),
+  compartment_no: varchar('compartment_no', { length: 50 }),
+  kg_loaded: decimal('kg_loaded', { precision: 14, scale: 4 }),
+  loaded_by: varchar('loaded_by', { length: 36 }),
+  loaded_at: timestamp('loaded_at', { mode: 'string' }),
+  shipment_id: varchar('shipment_id', { length: 36 }),
+  shipment_no: varchar('shipment_no', { length: 80 }),
+  estimated_arrival_at: datetime('estimated_arrival_at', { mode: 'string' }),
+  status: varchar('status', { length: 30 }).notNull().default('DRAFT'),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  lineUnique: uniqueIndex('uq_feed_loading_sheet_consolidation_line').on(table.consolidation_line_id),
+  tenantStatusIdx: index('idx_feed_loading_sheet_tenant_status').on(table.tenant_id, table.status),
+}));
+
 /**
  * Phase 9 Requisition MVP — a first-class requisition document (header +
  * lines) that rides the approval engine instead of the old free-text request.
@@ -4242,13 +4757,44 @@ export const requisition = mysqlTable('requisition', {
   justification: text('justification'),
   approval_request_id: varchar('approval_request_id', { length: 36 }).references(() => approvalRequest.request_id, { onDelete: 'set null' }),
   linked_po_no: varchar('linked_po_no', { length: 50 }),
+  // Common requisition header (Rishi's 1 Oct specification, plan Task 8). All
+  // nullable and additive — no migration SQL in this task; `status` above stays
+  // the compatibility projection during this plan and requisition.rules.ts
+  // projects it onto the three state dimensions when these columns are null.
+  requisition_date: date('requisition_date', { mode: 'string' }),
+  main_location_id: varchar('main_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  // Snapshots: the name/department recorded on the document stay as they were
+  // at submission even if the user later renames or changes department; the
+  // source IDs stay for audit linkage.
+  requester_user_id: varchar('requester_user_id', { length: 36 }).references(() => userMaster.user_id, { onDelete: 'set null' }),
+  requester_name: varchar('requester_name', { length: 200 }),
+  requester_department_id: varchar('requester_department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  sender_department_id: varchar('sender_department_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'set null' }),
+  // Three separate state dimensions (spec "Common requisition"), each nullable:
+  // approval OPEN/PENDING_APPROVAL/APPROVED/REJECTED,
+  // document OPEN/APPROVED/RELEASED/CANCELLED,
+  // fulfilment NOT_APPLICABLE/TRANSFER_OPEN/PARTIALLY_SHIPPED/SHIPPED/PARTIALLY_RECEIVED/RECEIVED.
+  approval_status: varchar('approval_status', { length: 30 }),
+  document_status: varchar('document_status', { length: 30 }),
+  fulfilment_status: varchar('fulfilment_status', { length: 40 }),
+  // Business status stays independent of external integration status. Purchase
+  // release records BC_PENDING here; no BC call exists (global constraint).
+  integration_status: varchar('integration_status', { length: 40 }),
+  from_location_id: varchar('from_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  to_location_id: varchar('to_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  direct_transfer: boolean('direct_transfer'), // null on legacy rows; explicit on new documents
+  released_by: varchar('released_by', { length: 36 }),
+  released_at: timestamp('released_at', { mode: 'string' }),
   // Feed requisition header (Requisition and Loading Sheet §1). Null on ITEM/FA/SERVICE documents.
   requisition_type: varchar('requisition_type', { length: 20 }), // FEED_FORECAST, MANUAL (row 7)
   source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
-  purpose: varchar('purpose', { length: 30 }), // INTERNAL_TRANSFER (row 31)
+  purpose: varchar('purpose', { length: 30 }), // FEED: INTERNAL_TRANSFER (row 31). Common requisitions: STORE | PURCHASE (Task 8).
   supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
+  linked_transfer_id: varchar('linked_transfer_id', { length: 36 }), // Req. §1 row 39: the Transfer Order created for this requisition
   priority: varchar('priority', { length: 30 }), // row 34
   forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
+  feed_forecast_run_id: varchar('feed_forecast_run_id', { length: 36 }).references(() => feedForecastRun.run_id, { onDelete: 'restrict' }),
+  feed_consolidation_id: varchar('feed_consolidation_id', { length: 36 }).references(() => feedConsolidation.consolidation_id, { onDelete: 'set null' }),
   production_date: date('production_date', { mode: 'string' }),
   submission_deadline: date('submission_deadline', { mode: 'string' }), // row 35
   remarks: text('remarks'), // row 36
@@ -4259,7 +4805,36 @@ export const requisition = mysqlTable('requisition', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
   updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
-});
+}, (table) => ({
+  feedForecastRunUnique: uniqueIndex('uq_requisition_feed_forecast_run').on(table.feed_forecast_run_id),
+  feedConsolidationIdx: index('idx_requisition_feed_consolidation').on(table.feed_consolidation_id),
+  linkedTransferFk: foreignKey({
+    columns: [table.linked_transfer_id],
+    foreignColumns: [stockTransfer.transfer_id],
+    name: 'requisition_linked_transfer_fk',
+  }).onDelete('set null'),
+}));
+
+/**
+ * A feed requisition may release into several transfers when its lines use
+ * different mill BIN assignments or destination SILOs. Common requisitions
+ * retain requisition.linked_transfer_id; this table is feed-only evidence of
+ * the one-to-many release decision.
+ */
+export const feedRequisitionTransfer = mysqlTable('feed_requisition_transfer', {
+  link_id: varchar('link_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  requisition_id: varchar('requisition_id', { length: 36 }).notNull().references(() => requisition.requisition_id, { onDelete: 'cascade' }),
+  transfer_id: varchar('transfer_id', { length: 36 }).notNull().references(() => stockTransfer.transfer_id, { onDelete: 'restrict' }),
+  bin_assignment_id: varchar('bin_assignment_id', { length: 36 }).notNull().references(() => binDietAssignment.assignment_id, { onDelete: 'restrict' }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  transferUnique: uniqueIndex('uq_feed_req_transfer_transfer').on(table.transfer_id),
+  pairUnique: uniqueIndex('uq_feed_req_transfer_pair').on(table.requisition_id, table.transfer_id),
+  tenantRequisitionIndex: index('idx_feed_req_transfer_tenant_requisition').on(table.tenant_id, table.requisition_id),
+  assignmentIndex: index('idx_feed_req_transfer_assignment').on(table.bin_assignment_id),
+}));
 
 export const requisitionLine = mysqlTable('requisition_line', {
   line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
@@ -4269,7 +4844,8 @@ export const requisitionLine = mysqlTable('requisition_line', {
   resource_id: varchar('resource_id', { length: 36 }).references(() => resourceMaster.resource_id, { onDelete: 'set null' }),
   description: varchar('description', { length: 200 }),
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
-  uom: varchar('uom', { length: 20 }).notNull(),
+  // Nullable from 0149: an FA/Service line is Description + Qty only (Rishi, 5 Oct).
+  uom: varchar('uom', { length: 20 }),
   est_rate: decimal('est_rate', { precision: 18, scale: 6 }),
   // Feed line (Requisition and Loading Sheet §2). `quantity` is Requested Qty KG.
   destination_location_id: varchar('destination_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
@@ -4280,18 +4856,86 @@ export const requisitionLine = mysqlTable('requisition_line', {
   lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
   system_balance_kg: decimal('system_balance_kg', { precision: 18, scale: 4 }),
   daily_requirement_kg: decimal('daily_requirement_kg', { precision: 18, scale: 4 }),
-  days_remaining: int('days_remaining'),
+  days_remaining: decimal('days_remaining', { precision: 10, scale: 1 }), // Silo Balance row 9: "Displayed to 1 decimal" (0143 widened INT; 0144 widened 6,1 -> 10,1, range regression)
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', { precision: 18, scale: 4 }),
+  mill_approved_qty_kg: decimal('mill_approved_qty_kg', { precision: 18, scale: 4 }), // Consolidation row 126
+  recommended_delivery_date: date('recommended_delivery_date', { mode: 'string' }), // drafted date; edits need remarks (Req. row 29)
+  exceeds_silo_capacity: boolean('exceeds_silo_capacity').default(false).notNull(), // Engine Step 8 free-capacity warning
   bag_count: int('bag_count'),
   proposed_delivery_date: date('proposed_delivery_date', { mode: 'string' }),
   needs_silo_changeover: boolean('needs_silo_changeover').default(false).notNull(),
   // Ruling M9: set when the farm hand-edits a drafted quantity, so an
   // auto-draft rerun (Task 8) keeps this line instead of overwriting it.
   quantity_edited: boolean('quantity_edited').default(false).notNull(),
+  // The requisition header is the sole relational run link. One aggregate
+  // requisition line can be supported by many dated run lines; keeping those
+  // IDs together avoids an independently mutable FK that can contradict the
+  // header's run.
+  feed_forecast_run_line_ids: json('feed_forecast_run_line_ids').$type<string[]>(),
+  // Common requisition line transfer quantities (plan Task 8): requested lives
+  // in `quantity`; to-ship/to-receive are the authorized targets, shipped/
+  // received accumulate from Task 10's events. All nullable and additive.
+  // Balance to Ship and Remaining to Receive are derived in
+  // requisition.rules.ts and deliberately not persisted.
+  from_location_id: varchar('from_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  to_location_id: varchar('to_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'set null' }),
+  qty_to_ship: decimal('qty_to_ship', { precision: 18, scale: 4 }),
+  qty_shipped: decimal('qty_shipped', { precision: 18, scale: 4 }),
+  qty_to_receive: decimal('qty_to_receive', { precision: 18, scale: 4 }),
+  qty_received: decimal('qty_received', { precision: 18, scale: 4 }),
+  // WP1c Item Tracking (Rishi's 4 Oct list): the line's lot/serial assignment,
+  // written through the document's Item Tracking, flowed onto the linked
+  // transfer's lines at release; a tracked line refuses shipment without it.
+  lot_no: varchar('lot_no', { length: 50 }),
+  serial_no: varchar('serial_no', { length: 100 }),
+  // Feed requisitions alone may carry a controlled exception/override reason.
+  reason_id: varchar('reason_id', { length: 36 }).references(() => reasonMaster.reason_id, { onDelete: 'restrict' }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
+
+/**
+ * Task 9 (B1, Rishi 3 Oct): which batches in which houses a feed requisition
+ * order line is for. The order line stays one destination silo and item
+ * (Engine Step 8 rounds per compartment); this is its breakdown — Engine Step 9
+ * "draft lines per farm, batch, house, destination silo, item and required
+ * date", MOM Feed and Logistic 21 Aug 2026 "Per Batch, Per House, and Per
+ * Silo". Written by the auto-draft from the forecast's daily rows (demand
+ * summed over the window) and replaced on each rerun; manual lines have none.
+ */
+export const requisitionLineBatch = mysqlTable('requisition_line_batch', {
+  line_batch_id: varchar('line_batch_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  line_id: varchar('line_id', { length: 36 }).notNull(),
+  batch_id: varchar('batch_id', { length: 36 }).notNull(),
+  // 0145 (3 Oct, D1 fix): an ANIMAL_WISE/REGISTERED batch's stage travels in
+  // its own column now — batch_id holds only the genuine batch_header PK
+  // (previously a `<batch_id>:<stage_id>` composite that was 73 chars wide
+  // and never a real FK target, so every write for such a batch failed with
+  // ER_DATA_TOO_LONG). Every row written since 0145 carries its stage group's
+  // identity stage (the batch's starting stage in the window — for a
+  // BATCH_WISE batch, its own stage); NULL only on rows written before 0145.
+  // (The 0145 SQL comment says "NULL for a BATCH_WISE row" — wrong, but that
+  // file is applied and is not edited.)
+  stage_id: varchar('stage_id', { length: 36 }),
+  shed_id: varchar('shed_id', { length: 36 }),
+  heads: int('heads'),
+  feed_rate_kg: decimal('feed_rate_kg', { precision: 18, scale: 6 }),
+  lifecycle_ref_id: varchar('lifecycle_ref_id', { length: 36 }),
+  demand_kg: decimal('demand_kg', { precision: 18, scale: 4 }).notNull(),
+  first_demand_date: date('first_demand_date', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  // 0145: widened from (line_id, batch_id, shed_id) — once batch_id is the
+  // real PK, two stage groups of the same batch feeding the same shed would
+  // otherwise collide on this index (or silently dedupe), which is why the
+  // index rebuild is required, not optional (3 Oct ruling).
+  uqLineBatchShed: uniqueIndex('uq_requisition_line_batch').on(table.line_id, table.batch_id, table.stage_id, table.shed_id),
+  lineFk: foreignKey({ columns: [table.line_id], foreignColumns: [requisitionLine.line_id], name: 'requisition_line_batch_line_id_fk' }).onDelete('cascade'),
+  batchFk: foreignKey({ columns: [table.batch_id], foreignColumns: [batchHeader.batch_id], name: 'requisition_line_batch_batch_id_fk' }),
+  stageFk: foreignKey({ columns: [table.stage_id], foreignColumns: [stageMaster.stage_id], name: 'requisition_line_batch_stage_id_fk' }).onDelete('set null'),
+  shedFk: foreignKey({ columns: [table.shed_id], foreignColumns: [locationMaster.location_id], name: 'requisition_line_batch_shed_id_fk' }).onDelete('set null'),
+}));
 
 export const requisitionRelations = relations(requisition, ({ one, many }) => ({
   company: one(companyMaster, { fields: [requisition.company_id], references: [companyMaster.company_id] }),

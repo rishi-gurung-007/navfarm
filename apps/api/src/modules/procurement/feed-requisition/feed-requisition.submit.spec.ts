@@ -9,6 +9,8 @@ import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast
 import { addDaysIso, serverToday } from './feed-requisition.rules';
 import { FeedRequisitionService, isEditableFeedRequisition } from './feed-requisition.service';
 
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
+
 /**
  * D25 (Rishi, 27 Sep): the farm drafts, edits and submits a feed requisition;
  * the farm's own approvers approve or reject it in the Approvals inbox. Run
@@ -62,13 +64,13 @@ function setup(queues: Map<unknown, unknown[][]>) {
   const ref = {} as { cls: ClsService };
   const { db, log } = recordingDb(queues, () => ref.cls);
   const cls = (ref.cls = transactionCls(db));
-  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
+  const forecast = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB);
   const approvals = new ApprovalService(cls, new AuditLogService(cls), {} as any);
   const evaluated: Array<{ args: unknown[]; inTx: boolean }> = [];
   const alerts: any = {
     evaluateFarmSafely: jest.fn(async (...args: unknown[]) => { evaluated.push({ args, inTx: cls.get('tenantPostingTransaction') === true }); }),
   };
-  const service = new FeedRequisitionService(cls, forecast, approvals, alerts, {} as any, {} as any);
+  const service = new FeedRequisitionService(cls, forecast, approvals, alerts, {} as any, {} as any, FEED_SETTINGS_STUB);
   service.onModuleInit();
   const as = <T>(scope: FarmScope, work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   const writes = () => log.filter((e) => e.op !== 'select');
@@ -77,7 +79,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
     .filter((e) => e.op === 'insert' && e.table === schema.auditLog)
     .flatMap((e) => (Array.isArray(e.values) ? e.values : [e.values]))
     .map((v: any) => ({ action: v.action, newValues: v.new_values, oldValues: v.old_values }));
-  return { service, approvals, evaluated, as, writes, audits };
+  return { service, approvals, forecast, evaluated, as, writes, audits };
 }
 
 describe('isEditableFeedRequisition (D25)', () => {
@@ -87,6 +89,126 @@ describe('isEditableFeedRequisition (D25)', () => {
     expect(isEditableFeedRequisition({ status: 'PENDING_APPROVAL', approval_request_id: null })).toBe(true);
     expect(isEditableFeedRequisition({ status: 'PENDING_APPROVAL', approval_request_id: 'ar-1' })).toBe(false);
     expect(isEditableFeedRequisition({ status: 'APPROVED', approval_request_id: 'ar-1' })).toBe(false);
+  });
+});
+
+describe('Feed requisition approval authority (Task 7)', () => {
+  const FARM_MANAGER = { userId: 'u-manager', userType: 'FARM_MANAGER' };
+  const MANAGER_GRANT = {
+    moduleCode: 'PROCUREMENT', resource: 'REQUISITION',
+    canView: true, canCreate: true, canEdit: true, canDelete: false, canApprove: true, canExport: false, canPrint: false,
+  };
+  const REQUESTED_BY_MANAGER = { ...REQUEST, requested_by: 'u-manager' };
+
+  it('refuses a Farm Manager approving the manual requisition they submitted', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(writes()).toEqual([]);
+  });
+
+  /**
+   * decisions.md 2026-10-04: "Tenant and Company admins may approve their own
+   * requisitions" supersedes the refusal above for exactly these two types,
+   * common and feed requisitions alike. The point under test is
+   * feed-requisition.service.ts's own inline check (enforcement point 3 of
+   * three — it is not the shared requisition.rules.ts isSelfApproval, because
+   * it also keys on the approval request's requested_by, which the common
+   * row does not carry) — this proves it agrees with the common path's rule
+   * on exactly which user types are exempt.
+   */
+  it.each(['TENANT_ADMIN', 'COMPANY_ADMIN', 'OPERATIONAL_ADMIN'] as const)(
+    'lets a %s approve the manual feed requisition they submitted themselves, and still records them as the approver',
+    async (userType) => {
+      const admin = { userId: 'u-manager', userType };
+      const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+        [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+        [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+        [schema.requisitionLine, [[LINE_6000]]],
+        [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+      ]));
+      await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', admin)))
+        .resolves.toMatchObject({ status: 'APPROVED' });
+      const requisitionWrite = writes().find((e) => e.table === schema.requisition)!;
+      expect(requisitionWrite.set).toMatchObject({ status: 'APPROVED', approved_by: 'u-manager' });
+    },
+  );
+
+  it.each(['STANDARD_USER'] as const)(
+    'still refuses a %s approving the manual feed requisition they submitted',
+    async (userType) => {
+      const nonExempt = { userId: 'u-manager', userType };
+      const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+        [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+        [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+        [schema.requisitionLine, [[LINE_6000]]],
+        [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+      ]));
+      await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', nonExempt)))
+        .rejects.toBeInstanceOf(ForbiddenException);
+      expect(writes()).toEqual([]);
+    },
+  );
+
+  it('still refuses a SYSTEM_ADMIN approving their own manual feed requisition — not decided; follows the old rule until Rishi confirms it', async () => {
+    const systemAdmin = { userId: 'u-manager', userType: 'SYSTEM_ADMIN' };
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'MANUAL_ENTRY', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', systemAdmin)))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(writes()).toEqual([]);
+  });
+
+  it('lets a Farm Manager approve their own farm system forecast draft (D25)', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'AUTO_FORECAST', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .resolves.toMatchObject({ status: 'APPROVED' });
+    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'APPROVED' });
+  });
+
+  it('treats a stock-take or diet-change trigger as a system document too', async () => {
+    const { approvals, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUESTED_BY_MANAGER], [{ ...REQUESTED_BY_MANAGER, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, source: 'STOCK_TAKE_TRIGGERED', created_by: 'u-manager' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+      [schema.userRoleAssignment, [[MANAGER_GRANT]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', FARM_MANAGER)))
+      .resolves.toMatchObject({ status: 'APPROVED' });
+    expect(writes().some((e) => e.table === schema.requisition)).toBe(true);
+  });
+
+  it('keeps an approved requisition immutable: neither an edit nor a resubmit writes anything', async () => {
+    const approved = { ...PENDING_ROW, status: 'APPROVED', source: 'MANUAL_ENTRY' };
+    const editor = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [approved]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(editor.as(COMPANY_ADMIN_SCOPE, () => editor.service.update('req-1', { remarks: 'changed' }, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(editor.writes()).toEqual([]);
+
+    const resubmit = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [approved]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    await expect(resubmit.as(COMPANY_ADMIN_SCOPE, () => resubmit.service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(resubmit.writes()).toEqual([]);
   });
 });
 
@@ -140,6 +262,20 @@ describe('FeedRequisitionService.submit (D25)', () => {
     expect(ok.writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ remarks: 'Mill closed Friday' });
   });
 
+  it('names the exception reason, not blank parens, when an item-exception line has no joined item name (M7)', async () => {
+    // linesForCheck's item_master LEFT JOIN can fail to resolve a name (the item was later removed);
+    // before M7 that fell back to '' specifically for an exception line, so this read "Line 1 ()".
+    const exceptionLine = { line_seq: 1, description: 'Exception: Vet instruction', quantity: '6000.0000', recommended: '6000.0000' };
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[exceptionLine]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(new BadRequestException('Line 1 (Exception: Vet instruction): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).'));
+    expect(writes()).toEqual([]);
+  });
+
   it('answers not found to a farm user of another farm, before anything is written', async () => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([[schema.requisition, [[{ farm_id: 'farm-other', company_id: 'co-1' }]]]]));
     await expect(as(OWN_FARM_SCOPE, () => service.submit('req-1', {}, 'tenant-1', FARM_USER))).rejects.toBeInstanceOf(NotFoundException);
@@ -158,6 +294,17 @@ describe('FeedRequisitionService.submit (D25)', () => {
 });
 
 describe('Feed requisition decided in the Approvals inbox (D25)', () => {
+  it('refreshes an Actual Feed Plan after an approved run-linked requisition commits', async () => {
+    const { approvals, forecast, as } = setup(new Map<unknown, unknown[][]>([
+      [schema.approvalRequest, [[REQUEST], [{ ...REQUEST, status: 'APPROVED' }]]],
+      [schema.requisition, [[{ ...PENDING_ROW, production_date: '2026-10-08', feed_forecast_run_id: 'run-1' }], [{ productionDate: '2026-10-08', feedForecastRunId: 'run-1' }]]],
+      [schema.requisitionLine, [[LINE_6000]]],
+    ]));
+    const refresh = jest.spyOn(forecast, 'generateFeedPlanVersion').mockResolvedValue({} as any);
+    await as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN));
+    expect(refresh).toHaveBeenCalledWith('farm-grs', '2026-10-08', 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' });
+  });
+
   it('approving updates the requisition and the request together, then re-evaluates alerts after commit', async () => {
     const { approvals, as, writes, evaluated } = setup(new Map<unknown, unknown[][]>([
       [schema.approvalRequest, [[REQUEST], [{ ...REQUEST, status: 'APPROVED' }]]],
@@ -266,5 +413,82 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
     ]));
     await expect(as(COMPANY_ADMIN_SCOPE, () => approvals.approve('ar-1', 'tenant-1', ADMIN)))
       .rejects.toThrow('Requisition REQ-GRS-2026-00041 is not waiting for this approval.');
+  });
+});
+
+describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edit', () => {
+  it('refuses a bulk quantity off the 3,000 kg multiple without remarks, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple. Remarks are required (checkpoint 16).'));
+    expect(writes()).toEqual([]);
+  });
+
+  it('accepts the same line when remarks give the reason', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }], []]],
+      [schema.approvalRequest, [[]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { remarks: 'Half compartment' }, 'tenant-1', ADMIN));
+    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'PENDING_APPROVAL' });
+  });
+
+  it('lets the farm escalate the priority of a requisition it may edit', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [{ ...REQ_ROW, priority: 'WARNING' }], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'CRITICAL' } as any, 'tenant-1', ADMIN));
+    expect(writes().find((e) => e.op === 'update' && e.table === schema.requisition)!.set).toMatchObject({ priority: 'CRITICAL' });
+  });
+
+  it('refuses to lower the priority, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'INFO' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow('Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Info.');
+    expect(writes()).toEqual([]);
+  });
+
+  it('will not change the priority of a requisition waiting for approval', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [PENDING_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { priority: 'CRITICAL_FIRST_PRIORITY' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow(/can no longer be changed/);
+    expect(writes()).toEqual([]);
+  });
+
+  it('applies an escalated priority inside submit, in the same transaction, and the approval urgency follows it', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [{ ...REQ_ROW, priority: 'WARNING' }], VIEW]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+      [schema.requisitionLine, [[LINE_6000], []]],
+      [schema.approvalRequest, [[]]],
+    ]));
+    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { priority: 'CRITICAL' } as any, 'tenant-1', ADMIN));
+    const header = writes().find((e) => e.op === 'update' && e.table === schema.requisition)!;
+    expect(header.set).toMatchObject({ status: 'PENDING_APPROVAL', priority: 'CRITICAL' });
+    expect(header.inTx).toBe(true);
+    expect(writes().find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values).toMatchObject({ urgency: 'HIGH' });
+  });
+
+  it('refuses a lowering priority on submit, writing nothing', async () => {
+    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
+      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
+    ]));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { priority: 'INFO' } as any, 'tenant-1', ADMIN)))
+      .rejects.toThrow('Priority can only be escalated');
+    expect(writes()).toEqual([]);
   });
 });

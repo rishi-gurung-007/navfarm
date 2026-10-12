@@ -13,6 +13,7 @@ export const USER_TYPES = [
   'TENANT_ADMIN',
   'COMPANY_ADMIN',
   'OPERATIONAL_ADMIN',
+  'FARM_MANAGER',
   'STANDARD_USER',
 ] as const;
 
@@ -21,8 +22,14 @@ export type UserType = (typeof USER_TYPES)[number];
 /** Types that manage tenant structure itself (companies, tenant-wide users). */
 export const TENANT_LEVEL_USER_TYPES: readonly UserType[] = ['SYSTEM_ADMIN', 'TENANT_ADMIN'];
 
+/** Farm-bound personas have one assigned farm; their authority differs, not their boundary. */
+export const FARM_BOUND_USER_TYPES: readonly UserType[] = ['FARM_MANAGER', 'STANDARD_USER'];
+
 export const isTenantLevelUserType = (userType: unknown): boolean =>
   typeof userType === 'string' && (TENANT_LEVEL_USER_TYPES as readonly string[]).includes(userType);
+
+export const isFarmBoundUserType = (userType: unknown): boolean =>
+  typeof userType === 'string' && (FARM_BOUND_USER_TYPES as readonly string[]).includes(userType);
 
 /**
  * Higher is more privileged. Anything off the ladder — including the legacy

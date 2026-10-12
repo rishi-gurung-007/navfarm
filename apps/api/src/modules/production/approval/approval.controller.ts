@@ -20,7 +20,7 @@ export class ApprovalController {
   @ApiOperation({ summary: 'List approval requests' })
   async findAll(@Query() query: QueryApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.approvalService.findAll(query, tenantId);
+    const data = await this.approvalService.findAll(query, tenantId, req.user?.userType);
     return { success: true, message: 'Approval requests retrieved successfully.', data };
   }
 
@@ -29,15 +29,24 @@ export class ApprovalController {
   @ApiOperation({ summary: 'Pending / approved / rejected counts for the tab badges' })
   async counts(@Query() query: QueryApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.approvalService.counts(query, tenantId);
+    const data = await this.approvalService.counts(query, tenantId, req.user?.userType);
     return { success: true, message: 'Approval counts retrieved successfully.', data };
+  }
+
+  @Get('counts-requisitions')
+  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @ApiOperation({ summary: 'Pending requisition approvals — the inbox card that links to the Requisitions hub (WP1b)' })
+  async countsRequisitions(@Query() query: QueryApprovalDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.approvalService.countsRequisitions(query, tenantId, req.user?.userType);
+    return { success: true, message: 'Pending requisition approvals retrieved.', data };
   }
 
   @Get(':id')
   @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
   async findOne(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.approvalService.findOne(id, tenantId);
+    const data = await this.approvalService.findOne(id, tenantId, req.user?.userType);
     return { success: true, message: 'Approval request retrieved successfully.', data };
   }
 

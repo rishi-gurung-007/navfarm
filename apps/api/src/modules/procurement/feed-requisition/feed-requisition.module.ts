@@ -4,14 +4,20 @@ import { FeedForecastModule } from '../../inventory/feed-forecast/feed-forecast.
 import { FeedAlertModule } from '../../inventory/feed-alert/feed-alert.module';
 import { SiloFeedModule } from '../../inventory/silo-feed/silo-feed.module';
 import { InventoryLedgerModule } from '../../inventory/inventory-ledger/inventory-ledger.module';
+import { FeedSettingsModule } from '../../inventory/feed-settings/feed-settings.module';
+import { StockTransferModule } from '../../inventory/stock-transfer/stock-transfer.module';
 import { FeedRequisitionController } from './feed-requisition.controller';
 import { FeedRequisitionService } from './feed-requisition.service';
+import { FeedConsolidationService } from './feed-consolidation.service';
+import { FeedLoadingService } from './feed-loading.service';
 
-// Ruling C2: RequisitionModule is deliberately not imported — Nest would mount
-// its generic /requisition controller along with it, and that route stays off.
+// Feed requisitions live on /feed-requisition, with their own rules. Ruling C2
+// (generic /requisition unmounted) was lifted by Part E Task 13: RequisitionModule
+// is now registered in app.module, and every generic mutation refuses a FEED row,
+// so this module still does not import it and nothing feed goes through it.
 @Module({
-  imports: [ApprovalModule, FeedForecastModule, FeedAlertModule, SiloFeedModule, InventoryLedgerModule],
+  imports: [ApprovalModule, FeedForecastModule, FeedAlertModule, SiloFeedModule, InventoryLedgerModule, FeedSettingsModule, StockTransferModule],
   controllers: [FeedRequisitionController],
-  providers: [FeedRequisitionService],
+  providers: [FeedRequisitionService, FeedConsolidationService, FeedLoadingService],
 })
 export class FeedRequisitionModule {}

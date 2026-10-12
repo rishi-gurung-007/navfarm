@@ -140,7 +140,7 @@ describe('planAlerts — frequency (Master Setup §4 rows 52–54)', () => {
 
 describe('planAlerts — diet change (checkpoint 30)', () => {
   const change = {
-    batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', fromItemId: 'r1', fromItemName: 'Weaner Diet R1',
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', fromItemId: 'r1', fromItemName: 'Weaner Diet R1',
     toItemId: 'r2', toItemName: 'Weaner Diet R2', changeDate: '2026-09-26', nextSourceType: 'SILO' as const, nextSourceCode: 'GRS/SILO-002',
   };
 
@@ -149,6 +149,24 @@ describe('planAlerts — diet change (checkpoint 30)', () => {
     expect(plan.raise).toHaveLength(1);
     expect(plan.raise[0]).toMatchObject({ subjectType: 'BATCH', subjectId: 'b', itemId: 'r2', observedValue: 3, dedupKey: 'rule-diet|b|r2|2026-09-26' });
     expect(plan.raise[0].message).toBe('WG-2026-38 in GRS/SHED-003 changes from Weaner Diet R1 to Weaner Diet R2 on 26/09/26 (in 3 days). Next diet silo: GRS/SILO-002.');
+  });
+
+  /**
+   * Task 9b fix round 1, finding 2: for an ANIMAL_WISE/REGISTERED stage group
+   * DietChange.batchId is the engine's 73-char composite; subject_id is
+   * varchar(36), so the insert failed (ER_DATA_TOO_LONG) and the swallowed
+   * error meant DIET_CHANGE alerts were never raised for such a farm. The
+   * subject is the real batch; the dedup key may keep the composite (it is
+   * what tells two stage groups' changes apart).
+   */
+  it('names the real batch as the subject of a stage group\'s change, keeping the composite only in the dedup key', () => {
+    const composite = 'a1b2c3d4-0000-4000-8000-000000000001:a1b2c3d4-0000-4000-8000-0000000000ff';
+    const real = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const plan = planAlerts(base({ rules: [dietRule], dietChanges: [{ ...change, batchId: composite, realBatchId: real as any }] }));
+    expect(plan.raise).toHaveLength(1);
+    expect(plan.raise[0].subjectId).toBe(real);
+    expect(plan.raise[0].subjectId.length).toBeLessThanOrEqual(36);
+    expect(plan.raise[0].dedupKey).toBe(`rule-diet|${composite}|r2|2026-09-26`);
   });
 
   it('says so when no silo holds the next diet', () => {
@@ -211,5 +229,40 @@ describe('planAlerts — levelsOnly (evaluation after a stock posting)', () => {
     const plan = planAlerts(base({ levelsOnly: true, rules: [lowRule, dietRule], silos: [silo1(900)], active: [openDiet] }));
     expect(plan.raise.map((c) => c.rule.eventType)).toEqual(['FEED_BELOW_L1']);
     expect(plan.resolve).toEqual([]);
+  });
+});
+
+describe('planAlerts — pushed events (brief B)', () => {
+  const planRule: AlertRuleFact = { ...aboveRule, ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0 };
+  const open = active({ alertId: 'p1', ruleId: 'rule-plan', eventType: 'PLAN_AVAILABLE', subjectType: 'FEED_PLAN', subjectId: 'plan-1', dedupKey: 'rule-plan|plan-1', observedValue: null });
+
+  it('keeps an open PLAN_AVAILABLE alert while its rule is on and its plan is still the live one', () => {
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open] }))).toEqual({ raise: [], renotify: [], escalate: [], resolve: [] });
+  });
+
+  it('resolves it RULE_OFF when its rule is turned off or deleted', () => {
+    expect(planAlerts(base({ rules: [lowRule, { ...planRule, isActive: false }], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
+  });
+
+  it('resolves it when its plan became approved or was superseded, and not after a levels-only pass', () => {
+    const closedPlans = { 'plan-1': 'SUPERSEDED' as const };
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans })).resolve).toEqual([{ alertId: 'p1', reason: 'SUPERSEDED' }]);
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans: { 'plan-1': 'APPROVED' } })).resolve).toEqual([{ alertId: 'p1', reason: 'APPROVED' }]);
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans, levelsOnly: true })).resolve).toEqual([]);
+  });
+
+  it('leaves an alert of an unknown event type alone, as before', () => {
+    const other = active({ alertId: 'x1', ruleId: 'gone', eventType: 'SOMETHING_NEW', dedupKey: 'gone|1' });
+    expect(planAlerts(base({ rules: [lowRule], active: [other] })).resolve).toEqual([]);
+  });
+});
+
+describe('planAlerts — a switched-off rule (RULE_OFF)', () => {
+  it('resolves the open alerts of an inactive rule of any event type as RULE_OFF, and keeps those of an active one', () => {
+    const offSilo: AlertRuleFact = { ...aboveRule, isActive: false };
+    const open = active({ alertId: 'o1', ruleId: aboveRule.ruleId, eventType: 'FEED_ABOVE', dedupKey: `${aboveRule.ruleId}|s1` });
+    expect(planAlerts(base({ rules: [lowRule, offSilo], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'o1', reason: 'RULE_OFF' }]);
   });
 });

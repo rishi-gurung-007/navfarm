@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, ValidateIf, IsIn, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, ValidateIf, IsIn, IsArray, IsObject } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -18,6 +18,17 @@ export class CreateLocationDto {
   @IsString()
   @IsOptional()
   lob_id?: string;
+
+  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  @IsOptional()
+  cost_center_id?: string | null;
 
   /** @deprecated Compatibility input for legacy callers. New records use parent_location_id. */
   @IsUUID()
@@ -76,13 +87,13 @@ export class CreateLocationDto {
   // twice (client request, 2026-09-22). ValidateIf keys off the DTO's own
   // location_type field, so this still runs before the entity is loaded.
   @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
+  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
   @IsNumber()
   @Min(0)
   max_capacity?: number;
 
   @ApiProperty({ description: 'Capacity unit representation. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => dto.location_type !== 'SILO')
+  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
   @IsString()
   @IsNotEmpty()
   capacity_uom?: string;
@@ -142,6 +153,11 @@ export class CreateLocationDto {
   @IsUUID('4', { each: true })
   attached_sheds?: string[];
 
+  @ApiProperty({ description: 'Master r8: per attached shed UUID, the dates this silo serves it ({ effective_from, effective_to }, YYYY-MM-DD, either may be null). No dates = always.', required: false })
+  @IsOptional()
+  @IsObject()
+  attached_shed_dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
+
   @ApiProperty({ description: 'Alert when silo stock covers less than this many days of consumption. Required when location_type = SILO.', required: false })
   @IsInt()
   @IsOptional()
@@ -159,23 +175,6 @@ export class CreateLocationDto {
   @IsOptional()
   storage_name?: string;
 
-  // Spec D3: Feed Forecast's refill date is run-down minus this many days.
-  // Per farm because delivery distance is per farm; applies to FARM rows.
-  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_refill_buffer_days?: number;
-
-  // Spec D19: Required On = Date to Refill - this many days; default 2.
-  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_lead_time_days?: number;
-
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
   @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
@@ -190,30 +189,45 @@ export class CreateLocationDto {
   @Min(0)
   high_level_kg?: number | null;
 
-  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
+  @ApiProperty({ description: 'MILL daily production capacity entered in metric tonnes.', required: false })
+  @IsNumber()
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bulk_multiple_kg?: number;
-
-  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bag_size_kg?: number;
-
-  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_truck_target_kg?: number;
-
-  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
-  @IsOptional()
-  @IsInt()
   @Min(0)
-  @Max(6)
-  feed_production_weekday?: number;
+  mill_daily_capacity_ton?: number;
+
+  @ApiProperty({ description: 'MILL hourly production capacity entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_hourly_capacity_ton?: number;
+
+  @ApiProperty({ description: 'MILL daily bulk allocation entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bulk_daily_allocation_ton?: number;
+
+  @ApiProperty({ description: 'MILL daily bagged allocation entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bagged_daily_allocation_ton?: number;
+
+  @ApiProperty({ description: 'BIN physical capacity entered in metric tonnes.', required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  bin_capacity_ton?: number;
+
+  @ApiProperty({ description: 'Feed form held by a BIN.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  bin_feed_type?: 'BULK' | 'BAGGED';
+
+  @ApiProperty({ description: 'Feed Type of a SILO (Requisition r15): BULK or BAGGED. Stored as feed_in_bags; SILO only.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  silo_feed_type?: 'BULK' | 'BAGGED';
 
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
@@ -235,6 +249,17 @@ export class UpdateLocationDto {
   @IsString()
   @IsOptional()
   lob_id?: string;
+
+  @ApiProperty({ required: false, description: 'Department identity — a Cost Center Master row of type DEPARTMENT' })
+  @IsUUID()
+  @IsOptional()
+  department_id?: string;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  @IsOptional()
+  cost_center_id?: string | null;
 
   /** @deprecated Compatibility input; canonical hierarchy uses parent_location_id. */
   @IsUUID()
@@ -342,6 +367,11 @@ export class UpdateLocationDto {
   @IsUUID('4', { each: true })
   attached_sheds?: string[];
 
+  @ApiProperty({ description: 'Master r8: per attached shed UUID, the dates this silo serves it ({ effective_from, effective_to }, YYYY-MM-DD, either may be null). No dates = always.', required: false })
+  @IsOptional()
+  @IsObject()
+  attached_shed_dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
+
   @ApiProperty({ required: false })
   @IsInt()
   @IsOptional()
@@ -359,21 +389,6 @@ export class UpdateLocationDto {
   @IsOptional()
   storage_name?: string;
 
-  @ApiProperty({ description: 'Feed Forecast: the refill date is this many days before a silo runs out. Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_refill_buffer_days?: number;
-
-  // Spec D19: Required On = Date to Refill - this many days; default 2.
-  @ApiProperty({ description: 'Feed Forecast: Required On is this many days before the Date to Refill (spec D19, default 2). Applies to FARM.', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(30)
-  feed_lead_time_days?: number;
-
   // Master Setup §1 row 10: low feed alert at or below this System Balance.
   @ApiProperty({ description: 'SILO: low feed alert when System Balance is at or below this many KG. Required on a silo (D22).', required: false, nullable: true })
   @IsOptional()
@@ -388,30 +403,45 @@ export class UpdateLocationDto {
   @Min(0)
   high_level_kg?: number | null;
 
-  @ApiProperty({ description: 'FARM: bulk feed orders round up to this many kilograms (Requisition §1 row 28, default 3000).', required: false })
+  @ApiProperty({ required: false })
+  @IsNumber()
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bulk_multiple_kg?: number;
-
-  @ApiProperty({ description: 'FARM: bagged feed rounds to whole bags of this many kilograms (checkpoint 27, default 50).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_bag_size_kg?: number;
-
-  @ApiProperty({ description: 'FARM: normal bulk truck load in KG — a planning target, not a cap (Requisition §1 row 27, default 30000).', required: false })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  feed_truck_target_kg?: number;
-
-  @ApiProperty({ description: 'FARM: weekday feed is produced for this farm, 0 = Sunday … 6 = Saturday. The requisition deadline is the day before (default Sunday, so Saturday).', required: false })
-  @IsOptional()
-  @IsInt()
   @Min(0)
-  @Max(6)
-  feed_production_weekday?: number;
+  mill_daily_capacity_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_hourly_capacity_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bulk_daily_allocation_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  mill_bagged_daily_allocation_ton?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  bin_capacity_ton?: number;
+
+  @ApiProperty({ required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  bin_feed_type?: 'BULK' | 'BAGGED';
+
+  @ApiProperty({ description: 'Feed Type of a SILO (Requisition r15): BULK or BAGGED. Stored as feed_in_bags; SILO only.', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'])
+  @IsOptional()
+  silo_feed_type?: 'BULK' | 'BAGGED';
 
   @ApiProperty({ required: false })
   @IsBoolean()
@@ -506,8 +536,11 @@ export class QueryLocationDto extends MasterListQueryDto {
 
   @ApiProperty({ description: 'Filter by active status', required: false })
   @IsOptional()
+  @Transform(({ value }) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return raw === 'true' || raw === true ? true : raw === 'false' || raw === false ? false : raw;
+  })
   @IsBoolean()
-  @Type(() => Boolean)
   isActive?: boolean;
 
   @ApiProperty({ description: 'Search location code or name', required: false })

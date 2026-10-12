@@ -4,6 +4,7 @@ import { AnyMySqlColumn } from 'drizzle-orm/mysql-core';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../core/database/schema';
+import { isFarmBoundUserType } from './user-type-hierarchy';
 
 /**
  * Farm scope — the second access boundary beside company/area.
@@ -17,8 +18,8 @@ import * as schema from '../core/database/schema';
 export const FARM_SCOPE_KEY = 'farmScope';
 export const FARM_SCOPED_KEY = 'farmScoped';
 
-/** User types whose operational reads are bounded by LOB and, for a standard user, one farm. */
-export const RESTRICTED_USER_TYPES = ['OPERATIONAL_ADMIN', 'STANDARD_USER'];
+/** User types whose operational reads are bounded by LOB and, for farm-bound personas, one farm. */
+export const RESTRICTED_USER_TYPES = ['OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'];
 
 export interface FarmScope {
   /** The one farm in force, or null for every farm the company scope allows. */
@@ -82,13 +83,13 @@ export async function resolveFarmScope(db: Db, input: ResolveFarmScopeInput): Pr
   // Company-bound users must never become tenant-wide merely because a client
   // omitted the active-company header. Tenant/system admins legitimately have
   // no fixed company and remain unbounded until they select one.
-  const assignedCompanyId = ['COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'STANDARD_USER'].includes(user.userType)
+  const assignedCompanyId = ['COMPANY_ADMIN', 'OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'].includes(user.userType)
     ? user.companyId
     : null;
   const companyId = activeArea?.company_id ?? activeCompanyId ?? assignedCompanyId ?? null;
   const lobId = restricted ? activeArea!.lob_id : null;
 
-  if (user.userType === 'STANDARD_USER') {
+  if (isFarmBoundUserType(user.userType)) {
     if (!user.farmId) throw new ForbiddenException('No farm is assigned to this user.');
     if (requested && requested !== user.farmId) throw new ForbiddenException('Not authorized for this farm.');
     if (!(await activeFarmOfCompany(db, user.farmId, companyId ?? undefined, tenantId))) {
@@ -165,6 +166,24 @@ export function restrictedScopeConditions(
   if (columns.lobId && scope.lobId) conditions.push(eq(columns.lobId, scope.lobId));
   if (columns.companyId && scope.companyId) conditions.push(eq(columns.companyId, scope.companyId));
   return conditions;
+}
+
+/**
+ * The restricted-LOB boundary of a requisition (WP1e — decisions.md 2026-10-04,
+ * last entry): a requisition's line of business is **its farm's**
+ * (`location_master.lob_id`), not its company's — `company_master` has no
+ * `lob_id` column in any database, and the old raw-SQL subquery against it
+ * (requisition.service.ts / feed-requisition.service.ts) 500'd every restricted
+ * user's requisition read with ER_BAD_FIELD_ERROR before any check could run.
+ * A requisition with no farm, and a farm with no LOB, is visible to every LOB —
+ * the same carve-out assertLocationOnActiveFarm applies to a NULL location lob.
+ * The columns are interpolated drizzle columns, so tsc sees them.
+ */
+export function requisitionFarmLobCondition(scope: FarmScope, farmIdColumn: AnyMySqlColumn): SQL | null {
+  if (!scope.restricted || !scope.lobId) return null;
+  return sql`(${farmIdColumn} IS NULL OR ${farmIdColumn} IN (
+    SELECT rf.location_id FROM location_master rf WHERE rf.lob_id IS NULL OR rf.lob_id = ${scope.lobId}
+  ))`;
 }
 
 export function assertCompanyInScope(scope: FarmScope, companyId: string): void {

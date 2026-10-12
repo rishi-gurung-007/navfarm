@@ -9,6 +9,8 @@ import {
   IsBoolean,
   IsArray,
   ArrayMaxSize,
+  IsInt,
+  Min,
   MaxLength,
 } from 'class-validator';
 
@@ -113,6 +115,16 @@ export class CreateBatchDailyDataDto {
   @IsOptional()
   @IsUUID()
   item_id?: string;
+
+  @ApiProperty({
+    description:
+      'Bagged feed CONSUMPTION only — the empty bags counted for this entry. Reconciled on POST Day against the quantity posted (bags x configured bag size, within the bag tolerance); a mismatch is flagged, not refused (workbook checkpoint 28).',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  empty_bags?: number;
 
   @ApiProperty({ required: false })
   @IsOptional()

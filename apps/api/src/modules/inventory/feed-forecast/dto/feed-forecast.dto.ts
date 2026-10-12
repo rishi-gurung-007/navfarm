@@ -29,7 +29,7 @@ export class QueryFeedForecastDto {
   @IsDateString()
   from?: string;
 
-  @ApiProperty({ description: 'CUSTOM only: the last day; defaults to from + 7, at most from + 45 and planning date + 45', required: false })
+  @ApiProperty({ description: 'CUSTOM only: the last day; defaults to from + 6 (7 days inclusive), at most from + 45 and planning date + 45', required: false })
   @IsOptional()
   @IsDateString()
   to?: string;
@@ -40,6 +40,18 @@ export class QueryFeedForecastDto {
   periodId?: string;
 }
 
+export class QuerySiloStatusDto extends QueryFeedForecastDto {
+  @ApiProperty({ description: 'Selected Shed. Omit to bootstrap the Farm Shed options without calculating facts.', required: false })
+  @IsOptional()
+  @IsUUID()
+  shedId?: string;
+
+  @ApiProperty({ description: 'Selected Silo linked to the selected Shed. Omit to bootstrap Silo options without calculating facts.', required: false })
+  @IsOptional()
+  @IsUUID()
+  siloId?: string;
+}
+
 export class QueryFeedPeriodsDto {
   @ApiProperty({ description: 'Farm whose company periods are listed', required: false })
   @IsOptional()
@@ -47,54 +59,27 @@ export class QueryFeedPeriodsDto {
   farmId?: string;
 }
 
-/**
- * D32, narrowed by D38 to five: the refill buffer left this screen for the
- * silo's own Silo Reorder Days. The per-farm settings, edited on Settings → Inventory Setup →
- * Feed Planning. Same bounds the Location form used before they moved. Every
- * one is optional and every one accepts null, which clears it back to the
- * client default (@IsOptional skips validation for null as well as for a
- * missing key, so a clear is not bounds-checked); a key left out is not
- * touched. feed-forecast.service.ts checks the same bounds again, so the rule
- * holds whether or not a caller came through the validation pipe.
- */
-export class UpdateFeedFarmSettingsDto {
-  @ApiProperty({ description: 'Required On is this many days before the Date to Refill (D19, default 2). 0-30, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(30)
-  feed_lead_time_days?: number | null;
+export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
 
-  @ApiProperty({ description: 'Bulk feed orders round up to this many kilograms (default 3000). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_bulk_multiple_kg?: number | null;
-
-  @ApiProperty({ description: 'Bagged feed rounds to whole bags of this many kilograms (default 50). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_bag_size_kg?: number | null;
-
-  @ApiProperty({ description: 'Normal bulk truck load in KG — a planning target, not a cap (default 30000). 1 or more, null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
-  feed_truck_target_kg?: number | null;
-
-  @ApiProperty({ description: 'Weekday the mill produces this farm\'s feed, 0 = Sunday to 6 = Saturday (default 0). null clears.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(6)
-  feed_production_weekday?: number | null;
+export class GenerateFeedPlanDto extends QueryFeedPeriodsDto {
+  @ApiProperty({ description: 'Production date whose ISO week identifies the retained plan version' })
+  @IsDateString()
+  productionDate!: string;
 }
 
-/**
- * D41: a silo's own feed planning values, edited from Settings → Inventory
- * Setup → Feed Planning. Only these three; the same bounds the Location form
- * uses, and feed-forecast.service.ts re-checks the level pair against the
- * silo's capacity with the silo form's own rule.
- */
-export class UpdateSiloPlanningDto {
-  @ApiProperty({ description: 'Low feed level in KG — the level a low-feed alert fires at.', required: false, nullable: true })
-  @IsOptional() @IsNumber() @Min(0)
-  low_level_kg?: number | null;
+/** Compare Report filters: one MILL (default: the first), a production date, and DAY or its ISO WEEK. */
+export class QueryMillCompareDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsUUID()
+  millId?: string;
 
-  @ApiProperty({ description: 'High feed level in KG — the over-stock notice level.', required: false, nullable: true })
-  @IsOptional() @IsNumber() @Min(0)
-  high_level_kg?: number | null;
+  @ApiProperty({ description: 'Production date (YYYY-MM-DD); with period WEEK, any date in the ISO week' })
+  @IsDateString()
+  date!: string;
 
-  @ApiProperty({ description: 'Days before run-down this silo must be refilled (D38). 0-365.', required: false, nullable: true })
-  @IsOptional() @IsInt() @Min(0) @Max(365)
-  silo_reorder_days?: number | null;
+  @ApiProperty({ required: false, enum: ['DAY', 'WEEK'] })
+  @IsOptional()
+  @IsIn(['DAY', 'WEEK'])
+  period?: 'DAY' | 'WEEK';
 }

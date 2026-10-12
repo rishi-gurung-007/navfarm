@@ -13,8 +13,12 @@ import { CreateAlertRuleDto, QueryAlertRuleDto, UpdateAlertRuleDto } from './ale
 const table = schema.alertRule;
 const nowTs = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
+/** HEAD_OF_FARM is alert-rule legacy configuration, never a stored user type. */
+export const normalizeFeedRecipientRole = (role: string): string =>
+  role === 'HEAD_OF_FARM' ? 'OPERATIONAL_ADMIN' : role;
+
 /**
- * The five rules the feed workbook itself seeds per company (0118's own
+ * The rules the feed workbook itself seeds (first five) per company (0118's own
  * INSERT, verbatim): FEED-BELOW-L1 (§4 column F, CRITICAL_FIRST_PRIORITY,
  * escalating after 4h to HEAD_OF_FARM), FEED-ABOVE (checkpoint 13, INFO),
  * DIET-CHANGE (checkpoint 30, 3 days, WARNING), REQ-REMINDER (Q6's Friday
@@ -32,7 +36,26 @@ const DEFAULT_RULES: Array<{
   { notification_code: 'DIET-CHANGE', notification_name: 'Diet change within 3 days', event_type: 'DIET_CHANGE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 3, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'REQ-REMINDER', notification_name: 'Requisition not yet approved', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 1, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
   { notification_code: 'REQ-OVERDUE', notification_name: 'Requisition deadline reached', event_type: 'REQ_DEADLINE', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['FARM_MANAGER', 'HEAD_OF_FARM'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'PLAN-AVAILABLE', notification_name: 'Feed plan available', event_type: 'PLAN_AVAILABLE', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  // W4G1 (11 Oct). The days in threshold_value are the look-ahead window for the two evaluated events; the pushed ones ignore it.
+  { notification_code: 'MILL-DISPATCH', notification_name: 'Feed dispatched from the mill', event_type: 'MILL_DISPATCH', trigger_entity: 'LOADING_SHEET', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'MILL-ADJUSTED', notification_name: 'Mill approved a different quantity', event_type: 'MILL_ADJUSTED', trigger_entity: 'CONSOLIDATION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'RECEIPT-VARIANCE', notification_name: 'Feed receipt short of shipment', event_type: 'RECEIPT_VARIANCE', trigger_entity: 'RECEIPT', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['HEAD_OF_FARM', 'MILL_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'NO-NEXT-FEED-ROW', notification_name: 'No next feed row for a batch', event_type: 'NO_NEXT_FEED_ROW', trigger_entity: 'BATCH', threshold_reference: 'FIXED_VALUE', threshold_value: 7, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'NEXT-DIET-NO-SILO', notification_name: 'No silo for the next diet', event_type: 'NEXT_DIET_NO_SILO', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 7, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'CAPACITY-EXCEEDED', notification_name: 'Approved demand exceeds mill capacity', event_type: 'CAPACITY_EXCEEDED', trigger_entity: 'CONSOLIDATION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'CRITICAL', recipient_roles: ['MILL_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  // W5A (11 Oct). SHORTFALL / NOT_DRAFTED / TRUCK_TARGET are evaluated (Engine rows 60-62; threshold = kg that must be exceeded, 0 = any);
+  // AUTO_DRAFTED (Req. row 80), STOCK_TAKE_DUE (Master row 45; threshold = days before the stock take date) and CHANGEOVER (checkpoint 5) are pushed.
+  { notification_code: 'SHORTFALL', notification_name: 'Projected shortfall in a silo', event_type: 'SHORTFALL', trigger_entity: 'SILO', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'NOT-DRAFTED', notification_name: 'Shortfall with no requisition drafted', event_type: 'NOT_DRAFTED', trigger_entity: 'SILO', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'TRUCK-TARGET', notification_name: 'Farm order below the truck target', event_type: 'TRUCK_TARGET', trigger_entity: 'FEED_PLAN', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'AUTO-DRAFTED', notification_name: 'Requisition auto-drafted for review', event_type: 'AUTO_DRAFTED', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'INFO', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'STOCK-TAKE-DUE', notification_name: 'Monthly stock take due', event_type: 'STOCK_TAKE_DUE', trigger_entity: 'STOCK_TAKE', threshold_reference: 'FIXED_VALUE', threshold_value: 3, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER', 'HEAD_OF_FARM'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
+  { notification_code: 'CHANGEOVER', notification_name: 'Silo changeover needed before approval', event_type: 'CHANGEOVER', trigger_entity: 'REQUISITION', threshold_reference: 'FIXED_VALUE', threshold_value: 0, priority_level: 'WARNING', recipient_roles: ['FARM_MANAGER'], delivery_channel: 'IN_APP', frequency: 'ONCE', escalation_after_hours: null, escalation_role: null },
 ];
+
+/** The recipient and escalation codes the default rules use: user types, not Role Master rows (decisions 11 Oct). */
+const DEFAULT_RULE_USER_TYPES: string[] = [...new Set(DEFAULT_RULES.flatMap((r) => [...r.recipient_roles, ...(r.escalation_role ? [r.escalation_role] : [])]))];
 
 /**
  * Alerts and Notifications Master CRUD (Master Setup §4). Scoped like every
@@ -97,7 +120,8 @@ export class AlertRuleService {
     // the list reads back, so a company created after 0118 still sees them.
     const scope = this.cls.get<MasterScope | undefined>('masterScope');
     const companyId = scope?.kind ? scope.companyId : query.companyId;
-    if (companyId) await this.ensureDefaultRules(companyId, tenantId);
+    // Rishi, 12 Oct: no default rules are created on read — a new company's Alert Rules start blank.
+    void companyId;
     const conditions = [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table, query.companyId)];
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.eventType) conditions.push(eq(table.event_type, query.eventType));
@@ -156,6 +180,43 @@ export class AlertRuleService {
     if (clash) throw new ConflictException(`Only one low feed rule applies per silo; ${clash.notification_code} already covers these farms.`);
   }
 
+  /**
+   * Rows 50 and 54 (W4G2): recipient and escalation roles are Role Master codes
+   * of the rule's company (every company of the tenant for a tenant-wide rule).
+   * A code the rule already stores is left alone, so a legacy free-text value
+   * that was working keeps working; only a code being added is checked.
+   */
+  async roleOptions(tenantId: string, companyId?: string | null) {
+    const R = schema.roleMaster;
+    const scope = this.cls.get<MasterScope | undefined>('masterScope');
+    const company = companyId ?? (scope?.kind ? scope.companyId : null);
+    const rows = await this.db.select({ role_code: R.role_code, role_name: R.role_name }).from(R)
+      .innerJoin(schema.companyMaster, eq(schema.companyMaster.company_id, R.company_id))
+      .where(and(eq(schema.companyMaster.tenant_id, tenantId), eq(R.is_active, true), ...(company ? [eq(R.company_id, company)] : [])));
+    const byCode = new Map<string, { role_code: string; role_name: string }>();
+    for (const row of rows) if (!byCode.has(row.role_code)) byCode.set(row.role_code, row);
+    // Decisions 11 Oct: the user types the default rules send to are valid recipients too; a Role Master row of the same code wins.
+    for (const code of DEFAULT_RULE_USER_TYPES) if (!byCode.has(code)) byCode.set(code, { role_code: code, role_name: code.split('_').map((w) => w[0] + w.slice(1).toLowerCase()).join(' ') });
+    return [...byCode.values()].sort((a, b) => a.role_code.localeCompare(b.role_code));
+  }
+
+  private async assertRoles(
+    next: { recipient_roles?: string[] | null; escalation_role?: string | null },
+    stored: { recipient_roles?: string[] | null; escalation_role?: string | null } | null,
+    companyId: string | null | undefined,
+    tenantId: string,
+  ) {
+    const keep = new Set([...(stored?.recipient_roles ?? []), stored?.escalation_role].filter(Boolean).map((c) => String(c).toUpperCase()));
+    const asked = [...(next.recipient_roles ?? []), next.escalation_role].filter(Boolean).map((c) => String(c).toUpperCase());
+    const added = [...new Set(asked.filter((code) => !keep.has(code)))];
+    if (!added.length) return;
+    const known = new Set((await this.roleOptions(tenantId, companyId)).map((r) => r.role_code.toUpperCase()));
+    const unknown = added.filter((code) => !known.has(code));
+    if (unknown.length) {
+      throw new BadRequestException(`Role code ${unknown.join(', ')} is not in the Role Master for this company. Pick the recipient roles from the Role Master.`);
+    }
+  }
+
   private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {
     await this.audit.log({ tenantId: row.tenant_id, companyId: row.company_id || undefined, userId: user?.userId, action, entityName: 'alert_rule', entityId: row.rule_id, oldValues, newValues: row });
     return row;
@@ -166,6 +227,7 @@ export class AlertRuleService {
     this.assertShape({ ...dto, recipient_roles: dto.recipient_roles ?? [] });
     await this.assertSingleLowRule({ event_type: dto.event_type, company_id: dto.company_id ?? null, farm_id: dto.farm_id ?? null, is_active: true }, tenantId);
     await this.assertFarm(dto.farm_id, dto.company_id, tenantId);
+    await this.assertRoles({ recipient_roles: dto.recipient_roles, escalation_role: dto.escalation_role }, null, dto.company_id, tenantId);
     const rule_id = randomUUID();
     await this.db.insert(table).values({
       rule_id, tenant_id: tenantId, company_id: dto.company_id ?? null, notification_code: code,
@@ -199,6 +261,11 @@ export class AlertRuleService {
     this.assertShape(merged);
     await this.assertSingleLowRule({ event_type: merged.event_type, company_id: before.company_id, farm_id: merged.farm_id ?? null, is_active: before.is_active }, tenantId, id);
     await this.assertFarm(merged.farm_id, before.company_id, tenantId);
+    await this.assertRoles(
+      { recipient_roles: dto.recipient_roles, escalation_role: dto.escalation_role },
+      { recipient_roles: before.recipient_roles as string[], escalation_role: before.escalation_role },
+      before.company_id, tenantId,
+    );
     await this.db.update(table).set({
       notification_name: dto.notification_name?.trim() ?? before.notification_name,
       ...merged,

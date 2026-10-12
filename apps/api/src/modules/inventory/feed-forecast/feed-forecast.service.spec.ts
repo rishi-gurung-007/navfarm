@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
@@ -6,10 +6,17 @@ import { buildInputBatches, FeedForecastService, locationLobConditions, projectS
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
+import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { buildFeedForecast, ForecastInput, todayLocal } from './feed-forecast.engine';
-import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope } from '../../../common/farm-scope';
+import { activeFarmOfCompany, FARM_SCOPE_KEY, farmScope, type FarmScope } from '../../../common/farm-scope';
 import * as schema from '../../../core/database/schema';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
+
+// A minimal real stub for the direct-construct call sites below that
+// never reach computeForFarm's real body (resolveFarm throws first, or the
+// private method under test bypasses it); FeedForecastService.feedSettings
+// is a required constructor parameter now (Important 3, fix round 2).
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } as any;
 
 // The engine has its own spec (feed-forecast.engine.spec.ts) against the
 // workbook's worked example; here it is a spy, so these tests pin only what the
@@ -42,18 +49,24 @@ function dbWithFarmLob(lobId: string | null): object {
   };
 }
 
-const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1', leadTimeDays: 0 };
+const FARM = { id: 'farm-A', code: 'VIL100', name: 'Village 100', companyId: 'comp-1' };
 
 describe('FeedForecastService', () => {
   let service: FeedForecastService;
   let cls: ClsService;
   let loadFarm: jest.SpyInstance;
   let loadInput: jest.SpyInstance;
+  let feedSettings: { resolveForFeedPlanning: jest.Mock };
 
   beforeEach(async () => {
     (buildFeedForecast as jest.Mock).mockClear();
     (activeFarmOfCompany as jest.Mock).mockReset().mockResolvedValue(true);
     cls = transactionCls({});
+    // Task 4: safety stock, bulk multiple and bag size come from
+    // FeedSettingsService (Task 2) now; this default stub matches the
+    // documented defaults (safety stock 0, bulk multiple 3000 KG, bag size
+    // 50 KG) unless a test overrides it.
+    feedSettings = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FeedForecastService,
@@ -63,6 +76,7 @@ describe('FeedForecastService', () => {
         { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: feedSettings },
       ],
     }).compile();
     service = module.get(FeedForecastService);
@@ -90,6 +104,25 @@ describe('FeedForecastService', () => {
     expect(loadFarm).toHaveBeenCalledWith('farm-A', 'tenant-1');
   });
 
+  it('report rows and sources carry the silo / store NAME beside the code (Engine r70, rows 8-9; Rishi 4 Oct)', async () => {
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    loadInput.mockResolvedValueOnce({ input: {}, flags: [], stageBlocks: [], sourceNames: { 'GRA100/SILO-001': 'Weaner silo', 'GRA100/STORE-01': 'Main store' } });
+    const day = (sourceType: 'SILO' | 'STORE' | 'NONE', sourceCode: string | null, itemId: string) => ({
+      batchId: 'b1', batchNo: 'B1', shedCode: 'S1', stageCode: 'WEANER', itemId, itemNo: itemId, itemName: itemId, sourceType, sourceCode,
+      date: todayLocal(), currentInventoryKg: 100, heads: 10, perDayIntakeKg: 5, daysOfStock: 20, sharedBatchCount: 1, indicative: false, runDownDate: null,
+    });
+    (buildFeedForecast as jest.Mock).mockReturnValueOnce({
+      rows: [], flags: [], dietChanges: [],
+      daily: [day('SILO', 'GRA100/SILO-001', 'i1'), day('STORE', 'GRA100/STORE-01', 'i2'), day('NONE', null, 'i3')],
+      sources: [{ sourceType: 'SILO', sourceCode: 'GRA100/SILO-001', locationId: 's1', itemId: 'i1' }],
+    });
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.rows.map((r) => [r.sourceCode, r.sourceName])).toEqual([
+      ['GRA100/SILO-001', 'Weaner silo'], ['GRA100/STORE-01', 'Main store'], [null, null],
+    ]);
+    expect(report.sources[0]).toMatchObject({ sourceCode: 'GRA100/SILO-001', sourceName: 'Weaner silo' });
+  });
+
   it('an unrestricted caller must name a farm', async () => {
     await expect(service.getForecast({}, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(BadRequestException);
   });
@@ -110,6 +143,19 @@ describe('FeedForecastService', () => {
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
   });
 
+  it('uses the configured Maximum Forecast Days for the span check, 45 when unset (checkpoint 15)', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, maxForecastDays: 14 } as any);
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-10-10' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow('Choose a range of at most 14 days.');
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-10-09' }, 'tenant-1', 'TENANT_ADMIN')).resolves.toBeDefined();
+  });
+
+  it('never lets a configured Maximum Forecast Days exceed the 45-day horizon', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, maxForecastDays: 90 } as any);
+    await expect(service.getForecast({ farmId: 'farm-A', from: '2026-09-25', to: '2026-11-10' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow('Choose a range of at most 45 days.');
+  });
+
   it('rejects an impossible calendar day', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'comp-1', lobId: null });
     await expect(service.getForecast({ farmId: 'farm-A', from: '2026-02-27', to: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN')).rejects.toThrow(
@@ -118,9 +164,12 @@ describe('FeedForecastService', () => {
     expect(loadFarm).not.toHaveBeenCalled();
   });
 
-  it('happy path: planning date is the farm day, from/to default to it..+7, stock is read as of it, the loaded input goes to the engine as-is, loader flags are appended', async () => {
+  it('happy path: planning date is the farm day, from/to default to it..+6 (7 days inclusive), stock is read as of it, the loaded input goes to the engine as-is plus configured safety stock, loader flags are appended', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(new Date(2026, 8, 25, 10, 30));
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    // Task 4 Step 1: the settings stub answers a configured safety stock; it
+    // must reach the engine, and the farm's old leadTimeDays key must not.
+    feedSettings.resolveForFeedPlanning.mockResolvedValue({ safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 });
     const input = { planningDate: '2026-09-25', marker: 'loaded' } as unknown as ForecastInput;
     loadInput.mockResolvedValueOnce({ input, flags: [{ kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }], stageBlocks: [] });
     (buildFeedForecast as jest.Mock).mockReturnValueOnce({
@@ -129,19 +178,35 @@ describe('FeedForecastService', () => {
 
     const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1');
 
-    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-02', 'tenant-1', {
-      stockDate: '2026-09-25', horizonTo: '2026-10-02', headerCutoff: '2026-09-25',
+    expect(loadInput).toHaveBeenCalledWith(FARM, '2026-09-25', '2026-09-25', '2026-10-01', 'tenant-1', {
+      stockDate: '2026-09-25', horizonTo: '2026-10-01', headerCutoff: '2026-09-25',
     });
-    expect(buildFeedForecast).toHaveBeenCalledWith(input);
+    expect(feedSettings.resolveForFeedPlanning).toHaveBeenCalledWith('comp-1', 'farm-A');
+    expect(buildFeedForecast).toHaveBeenCalledWith(expect.objectContaining({ planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 }));
+    expect((buildFeedForecast as jest.Mock).mock.calls[0][0]).not.toHaveProperty('leadTimeDays');
     expect(result).toEqual({
-      planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-02', horizonTo: '2026-10-02',
-      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' }, leadTimeDays: 0,
-      rows: [{ batchNo: 'B1' }], daily: [],
+      planningDate: '2026-09-25', today: '2026-09-25', timeZone: null, from: '2026-09-25', to: '2026-10-01', horizonTo: '2026-10-01',
+      farm: { id: 'farm-A', code: 'VIL100', name: 'Village 100' },
+      settings: { safetyStockKg: 500, bulkMultipleKg: 3000, bagSizeKg: 50 },
+      rows: [{ batchNo: 'B1' }], daily: [], sourceBalances: [],
       // The engine's flags, then the loader's own (a batch placed on no known shed).
       flags: [{ kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B1' }, { kind: 'BATCH_SHED_UNKNOWN', batchNo: 'B2' }],
       sources: [], dietChanges: [],
+      sourceNames: {}, sourceFeedTypes: {}, stageNames: {}, nextStageDiets: [], itemCodes: {},
       stages: [],
+      sourceSnapshot: expect.objectContaining({
+        hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        values: { engineInput: { planningDate: '2026-09-25', marker: 'loaded', safetyStockKg: 500 } },
+      }),
     });
+    expect(result).not.toHaveProperty('leadTimeDays');
+  });
+
+  it('with no `to`, the planning window is 7 days inclusive: 23 to 29 Sep (Worked Example; Engine §5 row 67)', async () => {
+    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
+    loadInput.mockResolvedValueOnce({ input: {}, flags: [], stageBlocks: [] });
+    const result = await service.computeForFarm('farm-A', 'comp-1', 'tenant-1', { planningDate: '2026-09-23' }, { today: '2026-09-23', timeZone: null } as any);
+    expect([result.from, result.to]).toEqual(['2026-09-23', '2026-09-29']);
   });
 
   it('the stage blocks loadInput built reach the computed result unchanged', async () => {
@@ -181,6 +246,7 @@ describe('FeedForecastService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
         ],
       }).compile();
       const lobService = module.get(FeedForecastService);
@@ -247,6 +313,7 @@ describe('FeedForecastService', () => {
             { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
           ],
         }).compile();
         const tenantService = module.get(FeedForecastService);
@@ -281,6 +348,7 @@ describe('FeedForecastService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
         ],
       }).compile();
       const tenantService = module.get(FeedForecastService);
@@ -321,7 +389,7 @@ describe('FeedForecastService', () => {
     it('an OPERATIONAL_ADMIN naming a farm of another LOB gets NotFound', async () => {
       const lobCls = transactionCls(dbWithFarmLob('lob-2'));
       useFarmScope(lobCls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-      const lobService = new FeedForecastService(lobCls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
+      const lobService = new FeedForecastService(lobCls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB);
       await expect(lobService.resolveFarm('farm-B', 'tenant-1', 'OPERATIONAL_ADMIN')).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -408,6 +476,7 @@ describe('FeedForecastService', () => {
             { provide: AuditLogService, useValue: { log: jest.fn() } },
         // D41: the silos on Feed Planning; the report never asks it anything.
         { provide: SiloFeedService, useValue: { currentItems: jest.fn(async () => new Map()) } },
+        { provide: FeedSettingsService, useValue: { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 })) } },
           ],
         }).compile();
         const localService = module.get(FeedForecastService);
@@ -439,6 +508,68 @@ describe('FeedForecastService', () => {
   });
 });
 
+/**
+ * Task 4 fix round 2, Important 4 (Rishi's ruling): feed settings are
+ * company/farm-level configuration, not LOB-scoped data, so
+ * computeForFarm reads (via resolveForFeedPlanning) them outside the restricted
+ * LOB assertion FeedSettingsService.resolve() otherwise applies. Unlike
+ * every other spec touching this path, this one uses the REAL
+ * FeedSettingsService (not a mock) over a real, non-stubbed ClsService
+ * (transactionCls + cls.run/.set — useFarmScope would hide the mutation
+ * resolveForFeedPlanning makes, the same reasoning as the 'effective farm
+ * scope' spec above) so the actual assertLobInScope rule is exercised, not
+ * assumed. The DB check behind this ruling: nf_devco.location_master has
+ * SILO rows with lob_id NULL today and the column is nullable — one
+ * data-entry away for a FARM row too.
+ */
+describe('FeedSettingsService.resolveForFeedPlanning — feed settings are read outside the restricted LOB assertion (Important 4)', () => {
+  function databaseAnswering(...answers: unknown[][]) {
+    const queue = [...answers];
+    const select = jest.fn(() => {
+      const rows = queue.shift() ?? [];
+      const chain: any = {
+        from: () => chain, leftJoin: () => chain, where: () => chain, orderBy: () => chain,
+        limit: async () => rows,
+        then: (resolve: (v: unknown[]) => unknown, reject: (e: unknown) => unknown) => Promise.resolve(rows).then(resolve, reject),
+      };
+      return chain;
+    });
+    return { select };
+  }
+
+  // FeedSettingsService.resolve reads, in order: company_master (for the
+  // timezone), feed_planning_setting (none configured here), then the farm
+  // row itself — for the LOB assertion only — with lob_id: null.
+  const dbAnswers = () => databaseAnswering(
+    [{ company_id: 'co-1', default_timezone_id: 'UTC' }],
+    [],
+    [{ location_id: 'farm-null-lob', company_id: 'co-1', lob_id: null }],
+  );
+  const RESTRICTED_SCOPE: FarmScope = { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-1' };
+
+  it('confirms the upstream bug is real: FeedSettingsService.resolve itself 403s a restricted caller on a NULL-lob_id farm', async () => {
+    const cls = transactionCls(dbAnswers());
+    await cls.run(async () => {
+      cls.set(FARM_SCOPE_KEY, RESTRICTED_SCOPE);
+      await expect(new FeedSettingsService(cls).resolve('co-1', 'farm-null-lob')).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  it('resolveForFeedPlanning reads the same farm\'s settings without the 403, and restores the caller\'s own scope afterward', async () => {
+    const cls = transactionCls(dbAnswers());
+    await cls.run(async () => {
+      cls.set(FARM_SCOPE_KEY, RESTRICTED_SCOPE);
+      const feedSettings = new FeedSettingsService(cls);
+
+      const result = await feedSettings.resolveForFeedPlanning('co-1', 'farm-null-lob');
+
+      expect(result).toEqual(expect.objectContaining({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 }));
+      // The neutralized scope used for the nested read must not leak back out to the caller.
+      expect(farmScope(cls)).toEqual(RESTRICTED_SCOPE);
+    });
+  });
+});
+
 describe('projectSegments', () => {
   const stage = (stageId: string, stageCode: string, durationDays: number | null, nextStageId: string | null, isActive = true, minDays: number | null = null): StageInfo => ({
     stageId, stageCode, durationDays, nextStageId, isActive, minDays,
@@ -459,9 +590,11 @@ describe('projectSegments', () => {
     ]);
   });
 
-  it('leaves the current segment open when it outlasts the range', () => {
+  it('projects the known lifecycle beyond the displayed range for First Shortage calculation', () => {
     expect(projectSegments('S1', '2026-09-20', '2026-09-20', '2026-09-29', stages)).toEqual([
-      { stageId: 'S1', stageCode: 'WEANER', start: '2026-09-20', end: null, projected: false },
+      { stageId: 'S1', stageCode: 'WEANER', start: '2026-09-20', end: '2026-09-29', projected: false },
+      { stageId: 'S2', stageCode: 'GROWER', start: '2026-09-30', end: '2026-10-04', projected: true },
+      { stageId: 'S3', stageCode: 'FINISHER', start: '2026-10-05', end: null, projected: true },
     ]);
   });
 
@@ -615,6 +748,10 @@ describe('buildInputBatches', () => {
       ['b1:GIL', 'BATCH-1 · GILT', 12, 'GIL'],
       ['b1:GES', 'BATCH-1 · GESTATION', 30, 'GES'],
     ]);
+    // D1 (3 Oct, Task 9b): `batchId` is the 73-char-capable composite this engine keys its own
+    // rows by (never a batch_header PK); `realBatchId` must always be the genuine PK ('b1'), the
+    // same for every stage group of this physical batch — this is what every writer must persist.
+    expect(batches.every((b) => b.realBatchId === 'b1')).toBe(true);
   });
 
   // Ruling (final review, I2 + follow-up): a BATCH_WISE batch whose animals
@@ -712,10 +849,11 @@ describe('buildInputBatches', () => {
   });
 });
 
-describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2)', () => {
-  function draftDb(into: unknown[], out: unknown[]) {
+describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2; Part E Task 4b)', () => {
+  /** Answers the selects in call order: into, out, then shipped and received per line. */
+  function draftDb(into: unknown[], out: unknown[], shipped: unknown[] = [], received: unknown[] = []) {
     const wheres: unknown[] = [];
-    const results = [into, out];
+    const results = [into, out, shipped, received];
     const chain = () => {
       const rows = results.shift() ?? [];
       const self: any = {
@@ -730,35 +868,116 @@ describe('loadDraftTransfers — D19 booked transfers (Q2, Ruling M2)', () => {
     return { db: { select: () => chain() }, wheres };
   }
   const render = (w: unknown) => new MySqlDialect().sqlToQuery(w as any);
-
-  it('reads DRAFT transfers dated from the stock date to the horizon, into (+) and out of (−) the farm\'s locations', async () => {
-    const { db, wheres } = draftDb(
-      [{ warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
-      [{ warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '6000.0000' }],
-    );
+  const load = async (db: object, ids: string[], lobId: string | null = null, restricted = false) => {
     const cls = transactionCls(db);
-    useFarmScope(cls, { farmId: 'farm-A', restricted: false, companyId: 'comp-1', lobId: null });
-    const out = await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any) as any).loadDraftTransfers(['s1', 'st'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    useFarmScope(cls, { farmId: 'farm-A', restricted, companyId: 'comp-1', lobId });
+    return (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any)
+      .loadDraftTransfers(ids, 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+  };
+  const R1 = { item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28' };
+
+  it('reads open transfers up to the horizon, into (+) and out of (−) the farm\'s locations — no lower bound on posting_date (fix round 1, Important 2)', async () => {
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...R1, qty: '6000.0000' }],
+      [{ line_id: 'L1', warehouse_id: 'st', ...R1, qty: '6000.0000' }],
+    );
+    const out = await load(db, ['s1', 'st']);
+    // Nothing shipped yet: the whole line is pending at both ends.
     expect(out).toEqual([
-      { warehouse_id: 's1', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: 6000 },
-      { warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: -6000 },
+      { warehouse_id: 's1', ...R1, qty: 6000 },
+      { warehouse_id: 'st', ...R1, qty: -6000 },
     ]);
     const [into, from] = wheres.map(render);
     for (const q of [into, from]) {
-      expect(q.sql).toMatch(/`posting_date` >= \?/);
+      // An open transfer dated before the stock date must not be dropped by
+      // a lower bound — see the test below. Only the upper bound (horizon) remains.
+      expect(q.sql).not.toMatch(/`posting_date` >= \?/);
       expect(q.sql).toMatch(/`posting_date` <= \?/);
-      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', '2026-09-26', '2026-10-10']));
+      expect(q.sql).toMatch(/`status` in \(\?, \?, \?\)/);
+      expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1', 'DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED', '2026-10-10']));
+      expect(q.params).not.toContain('POSTED');
       expect(q.sql).not.toMatch(/`lob_id`/);
     }
     expect(into.sql).toMatch(/`to_warehouse_id` in/);
     expect(from.sql).toMatch(/`from_warehouse_id` in/);
   });
 
+  // Fix round 1, Important 2: a transfer dated before the stock date, shipped
+  // but unreceived, used to vanish — loadDraftTransfers filtered it out with
+  // gte(posting_date, stockDate), and even if it had not, the engine's walk
+  // only visits dates from stockDate on (feed-forecast.engine.ts: walkDates =
+  // dateRange(stockDate, horizonTo)), so a row dated before stockDate would
+  // never match any walk date either. The fix drops the lower bound on the
+  // query AND dates the outstanding quantity at max(posting_date, stockDate),
+  // so it lands on the stock date instead of being silently unreachable.
+  it('an open transfer dated before the stock date is dated AT the stock date, not dropped (ordered 10, shipped 6, unreceived)', async () => {
+    const early = { ...R1, posting_date: '2026-09-20' }; // before stockDate 2026-09-26
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...early, qty: '10' }], // destination (into)
+      [{ line_id: 'L1', warehouse_id: 'st', ...early, qty: '10' }], // source (out)
+      [{ line_id: 'L1', qty: '6' }], // shipped
+      [], // nothing received
+    );
+    const out = await load(db, ['s1', 'st']);
+    const clamped = { ...early, posting_date: '2026-09-26' };
+    expect(out).toEqual([
+      { warehouse_id: 's1', ...clamped, qty: 10 }, // pendingIn = ordered − received = 10
+      { warehouse_id: 'st', ...clamped, qty: -4 },  // pendingOut = ordered − shipped = 4
+    ]);
+    const [into, from] = wheres.map(render);
+    for (const q of [into, from]) {
+      expect(q.sql).not.toMatch(/`posting_date` >= \?/);
+    }
+  });
+
+  it('counts only what is outstanding: ordered 10, shipped 6, received 4 → source −4, destination +6', async () => {
+    // The shipment already took 6 out of the source in the ledger and the
+    // receipt already put 4 into the destination; counting the line in full
+    // as well was the double count at both ends.
+    const { db, wheres } = draftDb(
+      [{ line_id: 'L1', warehouse_id: 's1', ...R1, qty: '10.0000' }],
+      [{ line_id: 'L1', warehouse_id: 'st', ...R1, qty: '10.0000' }],
+      [{ line_id: 'L1', qty: '6.0000' }],
+      [{ line_id: 'L1', qty: '4.0000' }],
+    );
+    const out = await load(db, ['s1', 'st']);
+    expect(out).toEqual([
+      { warehouse_id: 's1', ...R1, qty: 6 },   // 2 in transit + 4 not yet shipped
+      { warehouse_id: 'st', ...R1, qty: -4 },  // 4 not yet shipped
+    ]);
+    // The event sums are read for exactly the lines found, cancelled/deleted events excluded.
+    const [, , shipped, received] = wheres.map(render);
+    for (const q of [shipped, received]) {
+      expect(q.params).toEqual(expect.arrayContaining(['L1', 'tenant-1']));
+      expect(q.sql).toMatch(/`deleted_at` is null/);
+    }
+  });
+
+  it('a line fully shipped and received contributes nothing; lines on one key are summed', async () => {
+    const { db } = draftDb(
+      [
+        { line_id: 'L1', warehouse_id: 's1', ...R1, qty: '10' },
+        { line_id: 'L2', warehouse_id: 's1', ...R1, qty: '5' },
+        { line_id: 'L3', warehouse_id: 's1', ...R1, qty: '3' },
+      ],
+      [],
+      [{ line_id: 'L1', qty: '10' }, { line_id: 'L2', qty: '2' }],
+      [{ line_id: 'L1', qty: '10' }],
+    );
+    const out = await load(db, ['s1']);
+    // L1 done (0), L2 5 − 0 received = 5, L3 untouched 3.
+    expect(out).toEqual([{ warehouse_id: 's1', ...R1, qty: 8 }]);
+  });
+
+  it('no open line means no event reads', async () => {
+    const { db, wheres } = draftDb([], []);
+    expect(await load(db, ['s1'])).toEqual([]);
+    expect(wheres).toHaveLength(2);
+  });
+
   it('a restricted caller only sees drafts of its own LOB\'s items, as the ledger read does', async () => {
     const { db, wheres } = draftDb([], []);
-    const cls = transactionCls(db);
-    useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: 'lob-1' });
-    await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any) as any).loadDraftTransfers(['s1'], 'comp-1', 'tenant-1', '2026-09-26', '2026-10-10');
+    await load(db, ['s1'], 'lob-1', true);
     for (const q of wheres.map(render)) {
       expect(q.sql).toMatch(/`item_master`\.`lob_id` = \?/);
       expect(q.params).toContain('lob-1');
@@ -794,20 +1013,21 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', lifecycleId: 'row-r1', sourceType: 'SILO', sourceCode: 'GRS/SILO-001',
     currentInventoryKg: 1500, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000,
     daysOfStock: 0, sharedBatchCount: 1, indicative: true,
-    runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-19', overdue: true, ...over,
+    runDownDate: '2026-09-23', ...over,
   });
   const computed = {
     planningDate: '2026-09-23', today: '2026-09-23', timeZone: 'Africa/Harare', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07',
-    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' }, leadTimeDays: 2, rows: [],
+    farm: { id: 'farm-A', code: 'GRS', name: 'Grasmere' },
+    settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 }, rows: [],
     daily: [daily(), daily({ date: '2026-09-24', currentInventoryKg: 0 }), daily({ date: '2026-09-25', currentInventoryKg: 0 })],
-    flags: [], sources: [], dietChanges: [], stages: [],
+    flags: [], sources: [], dietChanges: [], stages: [], sourceNames: { 'GRS/SILO-001': 'Weaner silo' },
   };
   const september = { periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' };
 
   beforeEach(() => {
     const cls = transactionCls({});
     useFarmScope(cls, { farmId: 'farm-A', restricted: true, companyId: 'comp-1', lobId: null });
-    service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any);
+    service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB);
     jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-23', timeZone: 'Africa/Harare' });
     compute = jest.spyOn(service, 'computeForFarm').mockResolvedValue(computed as any);
   });
@@ -816,17 +1036,93 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     const report = await service.getForecast({ view: 'WEEKLY' }, 'tenant-1', 'STANDARD_USER');
     expect(compute).toHaveBeenCalledWith(
       'farm-A', 'comp-1', 'tenant-1',
+      // Worked Example / Engine §5 row 67: the computed range is the 7-day window; only horizonTo reaches 45 days.
       { from: '2026-09-23', to: '2026-09-29', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
       { today: '2026-09-23', timeZone: 'Africa/Harare' },
     );
     expect(report.rows).toHaveLength(1);
     expect(report.rows[0]).toMatchObject({ date: '2026-09-23', dateTo: '2026-09-25', days: 3, intakeKg: 6000, currentInventoryKg: 1500, itemNo: 'FEED-R1' });
-    expect(report).toMatchObject({ view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare', leadTimeDays: 2 });
+    expect(report).toMatchObject({
+      view: 'WEEKLY', forecastFrom: '2026-09-23', forecastNote: null, period: null, timeZone: 'Africa/Harare',
+      settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 },
+    });
+  });
+
+  it('first load (no `to`): CUSTOM and WEEKLY compute and return the 7-day window, 23 Sep to 29 Sep, not the 45-day reach (Worked Example; Engine §5 row 67)', async () => {
+    for (const view of ['CUSTOM', 'WEEKLY'] as const) {
+      compute.mockClear();
+      const report = await service.getForecast({ view }, 'tenant-1', 'STANDARD_USER');
+      expect(compute.mock.calls[0][3]).toEqual({ from: '2026-09-23', to: '2026-09-29', planningDate: '2026-09-23', horizonTo: '2026-11-07' });
+      expect(report).toMatchObject({ from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' });
+    }
+  });
+
+  it('an explicit `to` 45 days out is still computed as sent; 46 days is refused', async () => {
+    await service.getForecast({ from: '2026-09-23', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-23', to: '2026-11-07' });
+    compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
+      FeedForecastService.prototype.computeForFarm.apply(service, args));
+    await expect(service.getForecast({ from: '2026-09-23', to: '2026-11-08' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(BadRequestException);
+  });
+
+  it('keeps true shortage evidence internal to save/draft calculations so ordinary GET source fields stay compatible', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      sources: [{
+        sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 'silo-1', itemId: 'r1', itemName: 'R1',
+        balanceKg: 500, planningDayDemandKg: 100, firstDemandDate: '2026-09-23', firstDayDemandKg: 100,
+        walkDemandKg: 700, daysLeft: 5, runDownDate: '2026-09-27', shortageDate: '2026-09-29',
+        isNextDiet: false, noSiloHoldsItem: false, lifecycleIds: ['life-1'], thresholdKg: 100,
+        incomingKg: 0, shortfallKg: 200, safetyStockKg: 0, deliveryDayOpeningKg: 100,
+      }],
+    } as any);
+
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+
+    expect(report.sources[0]).toMatchObject({ runDownDate: '2026-09-27', sourceName: 'Weaner silo' });
+    expect(report.sources[0]).not.toHaveProperty('shortageDate');
+    expect(report).not.toHaveProperty('sourceSnapshot');
   });
 
   it('DAILY: one date, the planning date unless another is chosen', async () => {
     await service.getForecast({ view: 'DAILY', from: '2026-09-25' }, 'tenant-1', 'STANDARD_USER');
     expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-25', to: '2026-09-25', horizonTo: '2026-11-07' });
+  });
+
+  it('FF1 (Rishi 5 Oct) — DAILY without an explicit `to` shows every date through run-down, not just the selected date', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      daily: [
+        daily({ date: '2026-09-23' }),
+        daily({ date: '2026-09-24', currentInventoryKg: 0 }),
+        daily({ date: '2026-09-30', currentInventoryKg: 0, runDownDate: '2026-09-30' }),
+      ],
+    });
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+    // The computation window stays the 1-day default (requisition evidence
+    // unchanged); the DISPLAYED rows run through the run-down date.
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-23', to: '2026-09-23' });
+    expect(report.rows.map((r) => r.date)).toEqual(['2026-09-23', '2026-09-24', '2026-09-30']);
+  });
+
+  it('FF1 — WEEKLY without an explicit `to` groups consecutive 7-day buckets through the group containing run-down', async () => {
+    const days: string[] = [];
+    for (let d = 23; d <= 30; d++) days.push(`2026-09-${d}`);
+    days.push('2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05');
+    compute.mockResolvedValueOnce({
+      ...computed,
+      daily: days.map((date) => daily({ date, currentInventoryKg: 0, runDownDate: '2026-10-05' })),
+    });
+    const report = await service.getForecast({ view: 'WEEKLY' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute.mock.calls[0][3]).toMatchObject({ from: '2026-09-23', to: '2026-09-29' });
+    expect(report.rows.map((r) => `${r.date}..${r.dateTo}`)).toEqual([
+      '2026-09-23..2026-09-29', '2026-09-30..2026-10-05',
+    ]);
+  });
+
+  it('FF1 — an explicit `to` is never widened: CUSTOM and PERIOD stay exactly as typed', async () => {
+    const report = await service.getForecast({ view: 'CUSTOM', from: '2026-09-23', to: '2026-09-29' }, 'tenant-1', 'STANDARD_USER');
+    expect(report.rows.every((r) => r.date <= '2026-09-29' && r.dateTo <= '2026-09-29')).toBe(true);
   });
 
   it('PERIOD: From/To come from the period covering the planning date; days before the planning date are not forecast (Q7)', async () => {
@@ -903,21 +1199,40 @@ describe('FeedForecastService.getForecast — views, periods and the report (Pla
     await expect(service.getForecast({ from: '2026-11-01', to: '2026-11-07' }, 'tenant-1', 'STANDARD_USER')).resolves.toBeDefined();
   });
 
-  it('CUSTOM with only `from` near the edge: the 400 says the default from + 7 runs past the reach, since no `to` was sent', async () => {
-    compute.mockImplementationOnce((...args: Parameters<FeedForecastService['computeForFarm']>) =>
-      FeedForecastService.prototype.computeForFarm.apply(service, args));
-    await expect(service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER')).rejects.toThrow(
-      new BadRequestException(
-        'The range would end 08/11/26, after the last forecast day 07/11/26. Choose an end date on or before 07/11/26.',
-      ),
+  it('CUSTOM with only `from` near the edge: to defaults to from + 6 = Nov7, which is exactly the reach', async () => {
+    // from + 6 = Nov7 is the last day inside the 45-day reach, so the default window is accepted.
+    expect(compute).not.toHaveBeenCalled(); // sanity guard
+    await service.getForecast({ from: '2026-11-01' }, 'tenant-1', 'STANDARD_USER');
+    expect(compute).toHaveBeenCalledWith(
+      'farm-A', 'comp-1', 'tenant-1',
+      { from: '2026-11-01', to: '2026-11-07', planningDate: '2026-09-23', horizonTo: '2026-11-07' },
+      { today: '2026-09-23', timeZone: 'Africa/Harare' },
     );
   });
 
-  it('passes the stage block through from the computed forecast', async () => {
+  it('keeps stage projection internal and omits the old public stages block', async () => {
     const block = { batchId: 'b', batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', currentStageCode: 'WEANER', currentFrom: '2026-09-01' };
     compute.mockResolvedValueOnce({ ...computed, stages: [block] } as any);
     const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
-    expect(report.stages).toEqual([block]);
+    expect(report).not.toHaveProperty('stages');
+  });
+
+  it('returns deduplicated source balance points with the configured source name', async () => {
+    compute.mockResolvedValueOnce({
+      ...computed,
+      sourceBalances: [{
+        date: '2026-09-23', sourceType: 'SILO', sourceCode: 'GRS/SILO-001', locationId: 'silo-1',
+        itemId: 'r1', itemNo: 'FEED-R1', itemName: 'R1', currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'R1',
+        openingSystemBalanceKg: 1500, confirmedReceiptKg: 0, dailyUseKg: 2000, projectedClosingBalanceKg: 0,
+        recommendedQtyKg: 4500, firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23', runDownDate: '2026-09-23',
+      }],
+    } as any);
+
+    const report = await service.getForecast({ view: 'DAILY' }, 'tenant-1', 'STANDARD_USER');
+
+    expect(report.sourceBalances).toEqual([
+      expect.objectContaining({ locationId: 'silo-1', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', dailyUseKg: 2000 }),
+    ]);
   });
 
   it('listPeriods answers the farm company\'s periods after resolving the farm', async () => {
@@ -945,13 +1260,14 @@ describe('loadPeriods — the company\'s own reporting periods only (Ruling M5)'
       orderBy: async () => rows,
     };
     const cls = transactionCls({ select: () => self });
-    const out = await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any) as any).loadPeriods('comp-1', 'tenant-1');
+    const out = await (new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB) as any).loadPeriods('comp-1', 'tenant-1');
     expect(out).toEqual([{ periodId: 'p9', periodCode: '2026-09', startDate: '2026-08-30', endDate: '2026-09-26', stockTakeDate: '2026-09-26', productionStartDate: '2026-09-27' }]);
     const q = new MySqlDialect().sqlToQuery(wheres[0] as any);
     expect(q.sql).toMatch(/`company_id` = \?/);
     expect(q.sql).not.toMatch(/`company_id` is null/);
     expect(q.sql).toMatch(/`deleted_at` is null/);
     expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'comp-1']));
+    expect(q.params).toContain(true);
   });
 });
 
@@ -967,7 +1283,7 @@ describe('stageBlocksFor — current / next stage block (field spec supporting b
   ]);
   const sheds = new Map([['h3', 'GRS/SHED-003']]);
   const batch = (stageId: string, stageCode: string, start: string) => ({
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId, stageCode, start, end: null, projected: false }],
   });
 

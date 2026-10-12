@@ -9,7 +9,7 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
     return field.emptyMultipleLabel ?? "All (no restriction)";
   }
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return field?.emptyLabel ?? "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value.join(", ");
@@ -44,9 +44,20 @@ export function MasterFieldValue({ field, value, record }: {
 
   // If pre-loaded details exist on record for attached_sheds
   if (field?.key === "attached_sheds" && Array.isArray((record as any)?.attached_shed_details)) {
-    const details = (record as any).attached_shed_details as Array<{ location_code?: string; location_name?: string }>;
+    const details = (record as any).attached_shed_details as Array<{ location_code?: string; location_name?: string; effective_from?: string | null; effective_to?: string | null }>;
     if (details.length === 0) return <>{field?.emptyMultipleLabel ?? "None attached"}</>;
-    return <>{details.map((d) => [d.location_code, d.location_name].filter(Boolean).join(" — ")).join(", ")}</>;
+    // Master r8: a dated link is shown with its dates; an undated one reads as before.
+    const day = (d?: string | null) => (d ? String(d).slice(0, 10) : "");
+    return <>{details.map((d) => {
+      const label = [d.location_code, d.location_name].filter(Boolean).join(" — ");
+      return d.effective_from || d.effective_to ? `${label} (${day(d.effective_from) || "…"} → ${day(d.effective_to) || "…"})` : label;
+    }).join(", ")}</>;
+  }
+
+  // Master r16: Feed in Silo opens the item record.
+  if (field?.key === "silo_feed_item" && typeof value === "string" && value && typeof (record as any)?.silo_feed_item_id === "string") {
+    const [code, ...rest] = value.split(" — ");
+    return <><a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{code}</a>{rest.length ? ` — ${rest.join(" — ")}` : ""}</>;
   }
 
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(val);

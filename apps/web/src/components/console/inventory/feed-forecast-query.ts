@@ -5,8 +5,12 @@
  * its default: in particular the planning date is then today in the farm's
  * time zone (spec D16), which the browser does not know.
  */
+import type { TranslationKeys } from "@/utils/translations";
+
 export const FORECAST_VIEWS = ["DAILY", "WEEKLY", "PERIOD", "CUSTOM"] as const;
 export type ForecastView = (typeof FORECAST_VIEWS)[number];
+/** The words for each view, shared by the View selects and the run history. */
+export const FORECAST_VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
 
 export interface ForecastQueryState {
   farmId: string;

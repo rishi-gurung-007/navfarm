@@ -37,7 +37,7 @@ export class CreateOperationalAreaDto {
 
   @IsEnum(PreseedSource)
   @IsOptional()
-  preseed_source?: PreseedSource = PreseedSource.TENANT;
+  preseed_source?: PreseedSource; // accepted for old clients, ignored
 
   @IsBoolean()
   @IsOptional()

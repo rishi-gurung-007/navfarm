@@ -10,12 +10,11 @@ import {
   Save,
   RefreshCw,
   Warehouse,
-  Info,
   Plus,
   Trash2,
   Layers,
 } from "lucide-react";
-import { getStoredUser, NavUser, getActiveLob, getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
+import { getStoredUser, NavUser, getActiveLob, getActiveOperationalAreaId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -108,9 +107,6 @@ export default function AreaSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
-
-  const [preseedLoading, setPreseedLoading] = useState(false);
-  const [preseedMsg, setPreseedMsg] = useState("");
 
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [staffEmail, setStaffEmail] = useState("");
@@ -220,29 +216,6 @@ export default function AreaSettingsPage() {
     }
   };
 
-  const handleSyncMasterData = async () => {
-    const compId = getActiveCompanyId();
-    if (!compId) return;
-    setPreseedLoading(true);
-    setPreseedMsg("");
-    try {
-      const res = unwrap<Row>(await api.post(`/operational-area/preseed-company/${compId}`, {}));
-      // Report what the API actually cloned rather than a fixed claim about
-      // "14 datasets" — the old copy said that even when the call failed.
-      setPreseedMsg(
-        t("asSyncDone", {
-          items: String(res?.itemsCloned ?? 0),
-          breeds: String(res?.breedsAvailable ?? 0),
-        })
-      );
-    } catch (err: any) {
-      setPreseedMsg(err?.message || t("asSyncFailed"));
-    } finally {
-      setPreseedLoading(false);
-      setTimeout(() => setPreseedMsg(""), 5000);
-    }
-  };
-
   if (!ready || !user) return null;
 
   const lobLabel = tLob(lobFamily);
@@ -267,10 +240,6 @@ export default function AreaSettingsPage() {
         sticky={false}
         actions={
           <div className="flex items-center gap-2.5">
-            <Button variant="outline" size="sm" onClick={handleSyncMasterData} disabled={preseedLoading} className="h-8 gap-1.5 text-xs font-medium">
-              <RefreshCw className={`h-3.5 w-3.5 ${preseedLoading ? "animate-spin" : ""}`} />
-              {t("asSyncMasterCatalog")}
-            </Button>
             <Button size="sm" onClick={handleSaveSettings} disabled={saving || loading || !areaId} className="nf-btn-primary h-8 gap-1.5 text-xs font-medium">
               {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               {saving ? t("asSaving") : t("asSaveSettings")}
@@ -286,12 +255,6 @@ export default function AreaSettingsPage() {
         </div>
       )}
       {saveError && <InlineAlert variant="danger">{saveError}</InlineAlert>}
-      {preseedMsg && (
-        <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-blue-500/20 bg-blue-500/10 p-3 text-xs font-semibold text-blue-700 dark:text-blue-400">
-          <Info className="h-4 w-4 shrink-0" />
-          <span>{preseedMsg}</span>
-        </div>
-      )}
 
       {loading ? (
         <LoadingState label={t("asLoading")} />
@@ -504,7 +467,7 @@ export default function AreaSettingsPage() {
                 <Layers className="h-4 w-4 text-[var(--accent)]" />
                 <span>{t("asCatalogHeader")}</span>
               </div>
-              <p className="leading-relaxed text-[var(--text-secondary)]">{t("asCatalogNote", { lob: lobLabel })}</p>
+              <p className="leading-relaxed text-[var(--text-secondary)]">{t("asLobMasterNote", { lob: lobLabel })}</p>
               <Button variant="outline" size="sm" onClick={() => router.push("/master-data")} className="mt-1 w-full text-xs font-medium">
                 {t("asOpenMasterData")}
               </Button>

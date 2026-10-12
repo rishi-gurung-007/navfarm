@@ -1,0 +1,13 @@
+-- WP1c addendum (decisions.md 2026-10-05, Rishi: "follow the file shared").
+-- His common-requisition list makes a Fixed Asset or Service line
+-- "Description + Qty only", so those lines carry no unit of measure. The
+-- column was NOT NULL, which made such a document impossible to save at all.
+--
+-- This is a RELAXING modify, the same shape as 0142: the column is widened to
+-- accept NULL. Nothing is dropped and no existing row becomes invalid — every
+-- row that has a unit today keeps it, and ITEM lines still require one (the
+-- DTO enforces that per kind, since the database cannot).
+--
+-- 0146 stays reserved for the deferred feed-era drop and MUST be journalled
+-- with a `when` greater than this file's (drizzle applies by `when`, not idx).
+ALTER TABLE `requisition_line` MODIFY COLUMN `uom` varchar(20);

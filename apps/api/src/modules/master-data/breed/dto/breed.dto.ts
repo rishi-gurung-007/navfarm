@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, Matches, MaxLength } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -522,6 +522,8 @@ const blankToNull = ({ value }: { value: unknown }) => (value === '' ? null : va
  * @IsIn can't see a row added after the API started. Either limit may be
  * left open, not both.
  */
+export const KPI_TOLERANCE_TYPES = ['UPPER', 'LOWER'] as const;
+
 export class KpiThresholdRowDto {
   @ApiProperty({ description: 'A kpi_metric_master metric_code' })
   @IsString()
@@ -544,7 +546,43 @@ export class KpiThresholdRowDto {
   @IsString()
   @IsIn(ALERT_SEVERITIES)
   severity: string;
+
+  @ApiProperty({ required: false, nullable: true, description: 'The KPI average value for this stage' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  average_value?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'The KPI unit (a UOM code)' })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  uom?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, enum: ['DAILY', 'WEEKLY', 'MONTHLY'], description: "This KPI's own period; empty means use the header KPI period" })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY'])
+  kpi_period?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'Tolerance around average_value, 0 to 100 percent' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  tolerance_pct?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, enum: KPI_TOLERANCE_TYPES, description: 'UPPER alerts above average + tolerance, LOWER below average - tolerance' })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_TOLERANCE_TYPES)
+  tolerance_type?: string | null;
 }
+
+export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY', 'MONTHLY'] as const;
 
 /** One resource this breed needs at this stage, chosen from Resource Master. */
 export class ResourceRequirementRowDto {
@@ -637,33 +675,62 @@ export class CreateBreedLifecycleStageDto {
   @Min(0)
   feed_qty_per_head_per_day_kg?: number;
 
+  @ApiProperty({ description: 'Feed form for this stage: BULK (silo) or BAGGED (TDD Master Setup row 37)', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'], { message: 'Feed Form must be BULK or BAGGED.' })
+  @IsOptional()
+  feed_form?: string;
+
   @ApiProperty({ description: 'Allowance for feed wastage in forecast calculation, %', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(100, { message: 'Feed Wastage % cannot be more than 100.' })
   @Min(0)
   feed_wastage_pct?: number;
+
+  @ApiProperty({ description: 'Farm (FARM location) this feed row overrides the default for. Blank = the company or breed default. Master Setup r30/r39.', required: false })
+  @ValidateIf((o) => o.farm_id !== undefined && o.farm_id !== null && o.farm_id !== '')
+  @IsString()
+  @MaxLength(36)
+  @IsOptional()
+  farm_id?: string | null;
+
+  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
+  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_from?: string | null;
+
+  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
+  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_to?: string | null;
 
   @ApiProperty({ description: 'Expected average body weight at end of this range, KG', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99999.999, { message: 'Std Body Weight cannot be more than 99,999.999 kg.' })
   @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ description: 'Standard Average Daily Gain, grams/day', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(999999.99, { message: 'Std ADG cannot be more than 999,999.99 g/day.' })
   @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ description: 'Standard Feed Conversion Ratio', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std FCR cannot be more than 99.999 (a typical FCR is about 1.5 to 4).' })
   @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ description: 'Acceptable mortality percentage for this stage/range', required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std Mortality Rate % must be below 100.' })
   @Min(0)
   std_mortality_rate_pct?: number;
 
@@ -727,6 +794,13 @@ export class CreateBreedLifecycleStageDto {
   @IsOptional()
   @IsIn(ALERT_SEVERITIES)
   alert_severity?: string;
+
+  @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_ALERT_PERIODS)
+  kpi_alert_period?: string | null;
 
   @ApiProperty({ description: 'Instructions for farm staff, shown as a tooltip on the data entry screen', required: false })
   @IsString()
@@ -803,33 +877,62 @@ export class UpdateBreedLifecycleStageDto {
   @Min(0)
   feed_qty_per_head_per_day_kg?: number;
 
-  @ApiProperty({ required: false })
-  @IsNumber()
+  @ApiProperty({ description: 'Feed form for this stage: BULK (silo) or BAGGED (TDD Master Setup row 37)', required: false, enum: ['BULK', 'BAGGED'] })
+  @IsIn(['BULK', 'BAGGED'], { message: 'Feed Form must be BULK or BAGGED.' })
   @IsOptional()
-  @Min(0)
-  feed_wastage_pct?: number;
+  feed_form?: string;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(100, { message: 'Feed Wastage % cannot be more than 100.' })
+  @Min(0)
+  feed_wastage_pct?: number;
+
+  @ApiProperty({ description: 'Farm (FARM location) this feed row overrides the default for. Blank = the company or breed default. Master Setup r30/r39.', required: false })
+  @ValidateIf((o) => o.farm_id !== undefined && o.farm_id !== null && o.farm_id !== '')
+  @IsString()
+  @MaxLength(36)
+  @IsOptional()
+  farm_id?: string | null;
+
+  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
+  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_from?: string | null;
+
+  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
+  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
+  @IsOptional()
+  effective_to?: string | null;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  @Max(99999.999, { message: 'Std Body Weight cannot be more than 99,999.999 kg.' })
   @Min(0)
   std_body_weight_kg?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(999999.99, { message: 'Std ADG cannot be more than 999,999.99 g/day.' })
   @Min(0)
   std_adg_gpd?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std FCR cannot be more than 99.999 (a typical FCR is about 1.5 to 4).' })
   @Min(0)
   std_fcr?: number;
 
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
+  @Max(99.999, { message: 'Std Mortality Rate % must be below 100.' })
   @Min(0)
   std_mortality_rate_pct?: number;
 
@@ -893,6 +996,13 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   @IsIn(ALERT_SEVERITIES)
   alert_severity?: string;
+
+  @ApiProperty({ description: 'How often the KPI alerts for this row are looked at', enum: KPI_ALERT_PERIODS, required: false, nullable: true })
+  @Transform(blankToNull)
+  @IsString()
+  @IsOptional()
+  @IsIn(KPI_ALERT_PERIODS)
+  kpi_alert_period?: string | null;
 
   @ApiProperty({ required: false })
   @IsString()

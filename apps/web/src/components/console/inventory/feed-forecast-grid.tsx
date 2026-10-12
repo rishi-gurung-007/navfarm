@@ -1,232 +1,564 @@
 "use client";
 
-/**
- * Inventory -> Feed Forecast: the report grid and the stage table (Feed
- * Forecast Plan R, the client's field specification of 26 Sep, spec
- * D16–D19; laid out for the fixed-height page in Plan S, review C).
- * Presentational only — feed-forecast-panel.tsx fetches, these render.
- * Dates are DD/MM/YY (D16). Current Inventory is the System Balance
- * (checkpoint 37), never "physical stock".
- *
- * One line per row; numbers right-aligned with two decimals; Batch No and
- * Item held while the grid scrolls sideways; a batch + item's consecutive
- * dates grouped (a separator where a group starts, every second group
- * shaded) so eight near-identical rows do not read as a wall.
- */
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { Inbox, Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { ScrollTable } from "@/components/ui/scroll-table";
+import { Dialog } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "./feed-format";
+import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
 
-/** One grid line as GET /feed-forecast sends it (apps/api …/feed-forecast.view.ts ReportRow). */
+/** W2D W7: a planned feed requisition opens in the Feed Forecast requisition tab. */
+export const feedRequisitionHref = (id: string) => `/inventory/feed-forecast?tab=feed-requisition&id=${encodeURIComponent(id)}`;
+
 export interface ReportRow {
   key: string;
+  farmId: string;
   batchId: string;
+  batchGroupId: string;
+  /** Composite "BATCH · STAGE" label for a stage group; kept for older responses. */
   batchNo: string;
+  /** The batch number alone (Rishi, 10 Oct: the stage has its own column). Absent on responses saved before it. */
+  plainBatchNo?: string;
+  shedId: string | null;
   shedCode: string;
   stageCode: string;
+  stageName?: string | null;
+  /** The line's stage is a projected change from the stage the group is in today. */
+  stageProjected?: boolean;
   itemId: string;
   itemNo: string;
   itemName: string;
   sourceType: "SILO" | "STORE" | "NONE";
+  feedType: "BULK" | "BAGGED";
   sourceCode: string | null;
+  sourceName: string | null;
+  sourceLocationId: string | null;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
   date: string;
   dateTo: string;
   days: number;
   currentInventoryKg: number;
+  openingSystemBalanceKg: number;
+  confirmedReceiptsKg: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  otherOutflowKg?: number;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
   heads: number;
+  feedRateKg: number;
   perDayIntakeKg: number;
   intakeKg: number;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
   daysOfStock: number | null;
   sharedBatchCount: number;
   indicative: boolean;
   runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean;
 }
 
-/** The current / next stage of one batch (apps/api …/feed-forecast.service.ts StageBlock). */
-export interface StageBlock {
-  batchId: string;
-  batchNo: string;
-  shedCode: string;
-  currentStageCode: string;
-  currentFrom: string;
-  currentTo: string | null;
-  nextStageCode: string | null;
-  nextFrom: string | null;
-  nextTo: string | null;
-  /** D36: the earliest day the change could happen, on an event-based stage with a range. */
-  stageChangeEarliest: string | null;
-  stageChangeDate: string | null;
-  stageChangeOverdue: boolean;
+export interface SourceBalancePoint {
+  date: string;
+  sourceType: "SILO" | "STORE";
+  sourceCode: string;
+  sourceName: string | null;
+  locationId: string;
+  itemId: string;
+  itemNo: string;
+  itemName: string;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  /** Stock that left other than by feeding (negative adjustment, transfer out): 0 or more, shown only in the balance dialog. */
+  otherOutflowKg?: number;
+  /** Part of otherOutflowKg: a negative ledger opening recovered from this day's stock. */
+  usedBeforeReceivedKg?: number;
+  incomingReferences?: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
+  runDownDate: string | null;
 }
 
-// `any` for the key, as Plan R's Task 9 brief specified: useLanguage's t is
-// typed to TranslationKeys and the specs hand in a string-keyed mock.
 type Translate = (key: any, vars?: any) => string;
 
-/**
- * The field specification's Report Grid in its order, with two of ours: Source
- * after Planning Date (D6) and the feed that leaves the silo, wastage
- * included, last (D17).
- */
-// D33 (Rishi, 28 Sep): exactly the field specification's twelve columns, in its
-// order. "Source" and "Feed incl. Wastage (Kg)" were ours, not the client's, and
-// "Shared by N" went with Source — it was a badge inside that cell.
 export const GRID_COLUMNS = [
-  "ffColBatchNo", "ffColItemName", "ffColItemNo", "ffColShedNo", "ffColPlanningDate",
-  "ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock",
-  "ffColRunDown", "ffColDateToRefill", "ffColRequiredOn",
+  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
+  "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
+  "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
 
-export const STAGE_COLUMNS = ["ffStgBatch", "ffStgShed", "ffStgCurrent", "ffStgFrom", "ffStgTo", "ffStgNext", "ffStgChange"] as const;
-
-const RIGHT_ALIGNED = new Set<string>(["ffColCurrentInventoryKg", "ffColCurrentPigs", "ffColPerDayIntakeKg", "ffColDaysOfStock"]);
-
-/** Days of Stock and Run-Down count to two different things; the header title says which. */
-const HEADER_HINT: Partial<Record<(typeof GRID_COLUMNS)[number], string>> = {
-  ffColDaysOfStock: "ffDaysOfStockHint",
-  ffColRunDown: "ffRunDownHint",
-};
-
-/** Kilograms, grouped, always two decimals (review C: consistent decimals). */
-export function fmtKg(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export interface ColumnSlot {
+  key: string;
+  label: string;
+  dateStart: string;
+  dateEnd: string;
 }
 
-/** Consecutive rows of one batch + item + source + stage form a group. */
-export function groupRows(rows: ReportRow[]): Array<{ row: ReportRow; start: boolean; alt: boolean }> {
-  let group = -1;
-  let previous = "";
-  return rows.map((row) => {
-    const key = `${row.batchId}|${row.itemId}|${row.sourceCode ?? ""}|${row.stageCode}`;
-    const start = key !== previous;
-    if (start) {
-      group += 1;
-      previous = key;
+export interface PivotedFeedRow extends ReportRow {
+  closingBySlot: Record<string, number>;
+  balanceBySlot: Record<string, BalanceCell>;
+}
+
+export interface BalanceCell {
+  openingKg: number;
+  confirmedReceiptKg: number;
+  openTransferKg: number;
+  plannedIncomingKg: number;
+  otherOutflowKg: number;
+  usedBeforeReceivedKg: number;
+  dailyUseKg: number;
+  closingKg: number;
+  incomingReferences: Array<{ kind: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string; expectedDate?: string; overdue?: boolean }>;
+}
+
+/** Rishi, 12 Oct: no quantity in the calculation is negative. The API sends none; this also keeps an older saved run honest. */
+function nonNegative(value: number | null | undefined): number {
+  return Number.isFinite(value) && (value as number) > 0 ? (value as number) : 0;
+}
+
+export function diffDaysIso(a: string, b: string): number {
+  const [ya, ma, da] = a.split("-").map(Number);
+  const [yb, mb, db] = b.split("-").map(Number);
+  return Math.round((Date.UTC(yb, mb - 1, db) - Date.UTC(ya, ma - 1, da)) / 86400000);
+}
+
+export function addDaysIso(isoDate: string, n: number): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + n)).toISOString().slice(0, 10);
+}
+
+function sourceKey(locationId: string | null, sourceCode: string | null, itemId: string): string {
+  return `${locationId ?? sourceCode ?? "NONE"}|${itemId}`;
+}
+
+function forecastLineKey(row: ReportRow): string {
+  return [
+    row.batchGroupId,
+    row.shedId ?? row.shedCode,
+    row.stageCode,
+    row.itemId,
+    row.sourceType,
+    row.sourceLocationId ?? row.sourceCode ?? "NONE",
+  ].join("|");
+}
+
+/**
+ * DAILY and CUSTOM API results contain one record per date. The grid puts
+ * dates across columns, so those records must first become one logical line.
+ * Stage and item remain in the identity so a diet/stage change is still shown
+ * as a separate line rather than being hidden inside the date columns.
+ */
+function collapseForecastLines(rows: ReportRow[]): ReportRow[] {
+  const lines = new Map<string, ReportRow>();
+
+  for (
+    const row of [...rows].sort((left, right) =>
+      left.date.localeCompare(right.date),
+    )
+  ) {
+    const key = forecastLineKey(row);
+    const line = lines.get(key);
+
+    if (!line) {
+      // First chronological row becomes the base line.
+      // Its runDownDate and deliveryDate are based on the
+      // displayed Opening Balance + Daily Use.
+      lines.set(key, { ...row, key });
+      continue;
     }
-    return { row, start, alt: group % 2 === 1 };
-  });
+
+    line.dateTo =
+      row.dateTo > line.dateTo
+        ? row.dateTo
+        : line.dateTo;
+
+    line.days += row.days;
+    line.intakeKg += row.intakeKg;
+    line.confirmedReceiptsKg += row.confirmedReceiptsKg;
+    line.openTransferMovementKg = (line.openTransferMovementKg ?? 0) + (row.openTransferMovementKg ?? 0);
+    line.plannedIncomingKg = (line.plannedIncomingKg ?? 0) + (row.plannedIncomingKg ?? 0);
+    line.otherOutflowKg = (line.otherOutflowKg ?? 0) + (row.otherOutflowKg ?? 0);
+    line.incomingReferences = [...(line.incomingReferences ?? []), ...(row.incomingReferences ?? [])];
+
+    line.recommendedQtyKg = Math.max(
+      line.recommendedQtyKg,
+      row.recommendedQtyKg,
+    );
+
+    line.sharedBatchCount = Math.max(
+      line.sharedBatchCount,
+      row.sharedBatchCount,
+    );
+
+    line.indicative =
+      line.indicative || row.indicative;
+
+    // Keep earliest physical shortage evidence if needed internally.
+    if (
+      row.firstShortageDate &&
+      (!line.firstShortageDate ||
+        row.firstShortageDate < line.firstShortageDate)
+    ) {
+      line.firstShortageDate =
+        row.firstShortageDate;
+    }
+
+    if (row.deliveryDate && (!line.deliveryDate || row.deliveryDate < line.deliveryDate)) {
+      line.deliveryDate = row.deliveryDate;
+    }
+
+    if (row.runDownDate && (!line.runDownDate || row.runDownDate < line.runDownDate)) {
+      line.runDownDate = row.runDownDate;
+    }
+  }
+
+  return [...lines.values()];
 }
 
+function slotFor(date: string, view: string | undefined, from: string): ColumnSlot {
+  if (view === "WEEKLY") {
+    const start = addDaysIso(from, Math.max(0, Math.floor(diffDaysIso(from, date) / 7)) * 7);
+    const end = addDaysIso(start, 6);
+    return { key: start, label: `${formatDateShort(start)} – ${formatDateShort(end)}`, dateStart: start, dateEnd: end };
+  }
+  return { key: date, label: formatDateShort(date), dateStart: date, dateEnd: date };
+}
+
+/**
+ * Batch facts stay on report rows; dated stock comes only from the one-per-
+ * source balance series. A shared silo therefore appears on each consuming
+ * batch line without its closing balance ever being summed.
+ */
+export function pivotForecastRows(
+  rows: ReportRow[],
+  sourceBalances: SourceBalancePoint[] = [],
+  view?: string,
+  from?: string,
+): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
+  const baseFrom =
+    from ||
+    sourceBalances[0]?.date ||
+    rows[0]?.date ||
+    "";
+
+  const pointsBySource =
+    new Map<string, SourceBalancePoint[]>();
+
+  for (
+    const point of [...sourceBalances].sort(
+      (left, right) =>
+        left.date.localeCompare(right.date),
+    )
+  ) {
+    const key = sourceKey(
+      point.locationId,
+      point.sourceCode,
+      point.itemId,
+    );
+
+    pointsBySource.set(
+      key,
+      [
+        ...(pointsBySource.get(key) ?? []),
+        point,
+      ],
+    );
+  }
+
+  const slots = new Map<string, ColumnSlot>();
+
+  const pivoted =
+    collapseForecastLines(rows).map((row) => {
+      const closingBySlot:
+        Record<string, number> = {};
+      const balanceBySlot: Record<string, BalanceCell> = {};
+
+      const points =
+        pointsBySource.get(
+          sourceKey(
+            row.sourceLocationId,
+            row.sourceCode,
+            row.itemId,
+          ),
+        ) ?? [];
+
+      if (points.length) {
+        for (const point of points) {
+          // A source balance is physical and shared, but a calculation line
+          // displays it only while that batch/stage/item has applicable demand.
+          if (point.date < row.date || point.date > row.dateTo) continue;
+
+          const slot = slotFor(
+            point.date,
+            view,
+            baseFrom,
+          );
+
+          slots.set(slot.key, slot);
+
+          // For WEEKLY, chronological traversal means
+          // the final day in the week becomes the
+          // displayed weekly closing balance.
+          closingBySlot[slot.key] = point.projectedClosingBalanceKg;
+          const previous = balanceBySlot[slot.key];
+          balanceBySlot[slot.key] = previous
+            ? {
+                ...previous,
+                confirmedReceiptKg: previous.confirmedReceiptKg + nonNegative(point.confirmedReceiptKg),
+                openTransferKg: previous.openTransferKg + nonNegative(point.openTransferMovementKg),
+                plannedIncomingKg: previous.plannedIncomingKg + nonNegative(point.plannedIncomingKg),
+                otherOutflowKg: previous.otherOutflowKg + nonNegative(point.otherOutflowKg),
+                usedBeforeReceivedKg: previous.usedBeforeReceivedKg + nonNegative(point.usedBeforeReceivedKg),
+                dailyUseKg: previous.dailyUseKg + point.dailyUseKg,
+                closingKg: point.projectedClosingBalanceKg,
+                incomingReferences: [...previous.incomingReferences, ...(point.incomingReferences ?? [])],
+              }
+            : {
+                openingKg: nonNegative(point.openingSystemBalanceKg),
+                confirmedReceiptKg: nonNegative(point.confirmedReceiptKg),
+                openTransferKg: nonNegative(point.openTransferMovementKg),
+                plannedIncomingKg: nonNegative(point.plannedIncomingKg),
+                otherOutflowKg: nonNegative(point.otherOutflowKg),
+                usedBeforeReceivedKg: nonNegative(point.usedBeforeReceivedKg),
+                dailyUseKg: point.dailyUseKg,
+                closingKg: point.projectedClosingBalanceKg,
+                incomingReferences: [...(point.incomingReferences ?? [])],
+              };
+        }
+      } else {
+        const slot = slotFor(
+          row.dateTo || row.date,
+          view,
+          baseFrom,
+        );
+
+        slots.set(slot.key, slot);
+
+        closingBySlot[slot.key] =
+          row.projectedClosingBalanceKg;
+        balanceBySlot[slot.key] = {
+          openingKg: nonNegative(row.openingSystemBalanceKg),
+          confirmedReceiptKg: nonNegative(row.confirmedReceiptsKg),
+          openTransferKg: nonNegative(row.openTransferMovementKg),
+          plannedIncomingKg: nonNegative(row.plannedIncomingKg),
+          otherOutflowKg: nonNegative(row.otherOutflowKg),
+          usedBeforeReceivedKg: 0,
+          dailyUseKg: row.dailyUseKg,
+          closingKg: row.projectedClosingBalanceKg,
+          incomingReferences: [...(row.incomingReferences ?? [])],
+        };
+      }
+
+      const inWindow = (date: string | null) =>
+        !!date && date >= row.date && date <= row.dateTo;
+
+      return {
+        ...row,
+        closingBySlot,
+        balanceBySlot,
+        firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
+        deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
+      };
+    });
+
+  return {
+    pivoted,
+    columns: [...slots.values()].sort(
+      (left, right) =>
+        left.dateStart.localeCompare(
+          right.dateStart,
+        ),
+    ),
+  };
+}
+
+export function fmtKg(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  if (!Number.isFinite(value)) return "Not available";
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Batch, Stage and House stay pinned; the offsets are the widths of the pinned columns before each.
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
-const ITEM_COL = { "--sticky-left": "12.5rem" } as CSSProperties;
+const STAGE_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
+const HOUSE_COL = { "--sticky-left": "17rem" } as CSSProperties;
+
+/** The batch number alone — a stage group's composite label is cut back when an older response has no plainBatchNo. */
+function batchNoOnly(row: ReportRow): string {
+  if (row.plainBatchNo) return row.plainBatchNo;
+  const at = row.batchNo.lastIndexOf(" · ");
+  return at === -1 || row.batchGroupId === row.batchId ? row.batchNo : row.batchNo.slice(0, at);
+}
+
+function stageLabel(row: ReportRow, t: Translate): string {
+  const stage = row.stageName || row.stageCode;
+  return row.stageProjected ? t("ffStageProjected", { stage }) : stage;
+}
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const NUM = "text-right tabular-nums";
 const MUTED = "text-[var(--text-muted)]";
-const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
 
-function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]">{children}</td>
-    </tr>
-  );
+/** Planned requisition refs, each linked to its feed requisition; explanatory text when none. */
+function PlannedReferences({ references, empty }: { references: ReportRow["incomingReferences"]; empty: string }) {
+  const planned = (references ?? []).filter((reference) => reference.kind === "PLANNED_REQUISITION" && reference.referenceNo);
+  if (!planned.length) return <>{empty}</>;
+  return <>{planned.map((reference, index) => <span key={`${reference.referenceId ?? reference.referenceNo}-${index}`}>
+    {index > 0 && ", "}
+    <RecordLink code={reference.referenceNo} href={reference.referenceId ? feedRequisitionHref(reference.referenceId) : null} />
+  </span>)}</>;
 }
 
-export function FeedForecastGrid({ rows, loading, t }: { rows: ReportRow[]; loading: boolean; horizonTo: string | null; t: Translate }) {
+function StateRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
+  return <tr><td colSpan={colSpan} className="px-3 py-10 text-center text-xs text-[var(--text-secondary)]">{children}</td></tr>;
+}
+
+export function FeedForecastGrid({
+  rows,
+  sourceBalances = [],
+  view,
+  from,
+  loading,
+  t,
+}: {
+  rows: ReportRow[];
+  sourceBalances?: SourceBalancePoint[];
+  view?: string;
+  from?: string;
+  loading: boolean;
+  t: Translate;
+}) {
+  const { pivoted, columns } = pivotForecastRows(rows, sourceBalances, view, from);
+  const totalCols = GRID_COLUMNS.length + columns.length;
+  const [selectedBalance, setSelectedBalance] = useState<{
+    row: PivotedFeedRow;
+    column: ColumnSlot;
+    balance: BalanceCell;
+  } | null>(null);
+  // One silo/item/date is one physical movement. Shared batch rows still show
+  // the same balance, but the planned-incoming badge is shown only once.
+  const shownIncoming = new Set<string>();
   return (
-    <ScrollTable label={t("ffGridLabel")}>
+    <>
+    <ScrollTable label={t("ffGridLabel")} className="w-full">
       <thead>
         <tr>
-          {GRID_COLUMNS.map((c, i) => (
-            <th
-              key={c}
-              scope="col"
-              title={HEADER_HINT[c] ? t(HEADER_HINT[c]) : undefined}
-              data-sticky-col={i === 0 ? "true" : i === 1 ? "last" : undefined}
-              style={i === 0 ? BATCH_COL : i === 1 ? ITEM_COL : undefined}
-              className={cn(TH, i === 0 && "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem]", i === 1 && "min-w-[13rem]", RIGHT_ALIGNED.has(c) && "text-right")}
-            >
-              {t(c)}
-            </th>
-          ))}
+          <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColBatch")}</th>
+          <th scope="col" data-sticky-col="true" style={STAGE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColStage")}</th>
+          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "min-w-[11rem]")}>{t("ffColHouse")}</th>
+          <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
+          <th scope="col" className={TH}>{t("ffColSiloName")}</th>
+          <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
+          <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColHeadCount")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColFeedRate")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColOpeningSystemBalance")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColConfirmedReceipts")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColOpenTransfers")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColPlannedFeedAdded")}</th>
+          <th scope="col" className={TH}>{t("ffColPlannedFeedReference")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColDailyUse")}</th>
+          {columns.map((column) => <th key={column.key} scope="col" className={cn(TH, NUM, "min-w-[8rem] bg-[var(--table-header-alt)]")} title={t("ffProjectedClosingOn", { date: column.label })}>{column.label}</th>)}
+          <th scope="col" className={TH}>{t("ffColFirstShortage")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColRecommendedQty")}</th>
+          <th scope="col" className={TH}>{t("ffColDeliveryDate")}</th>
         </tr>
       </thead>
       <tbody>
         {loading ? (
-          <StateRow colSpan={GRID_COLUMNS.length}>
-            <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} /> {t("ffLoading")}
-          </StateRow>
-        ) : rows.length === 0 ? (
-          <StateRow colSpan={GRID_COLUMNS.length}>
-            <Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} /> {t("ffNoRows")}
-          </StateRow>
-        ) : (
-          groupRows(rows).map(({ row, start, alt }) => (
-            <tr key={row.key} data-group-start={start ? "true" : undefined} data-group-alt={alt ? "true" : undefined}>
-              <td data-sticky-col="true" style={BATCH_COL} title={row.batchNo} className={cn(TD, "w-[12.5rem] min-w-[12.5rem] max-w-[12.5rem] truncate font-medium", !start && MUTED)}>{row.batchNo}</td>
-              <td data-sticky-col="last" style={ITEM_COL} title={row.itemName} className={cn(TD, "min-w-[13rem] max-w-[14rem] truncate", !start && MUTED)}>{row.itemName}</td>
-              <td className={cn(TD, MUTED)}>{row.itemNo || "—"}</td>
-              <td className={cn(TD, MUTED)}>{row.shedCode || "—"}</td>
-              <td className={TD}>{row.days > 1 ? `${formatDateShort(row.date)} – ${formatDateShort(row.dateTo)}` : formatDateShort(row.date)}</td>
-              <td className={cn(TD, NUM)}>{fmtKg(row.currentInventoryKg)}</td>
-              <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
-              <td className={cn(TD, NUM)}>{fmtKg(row.perDayIntakeKg)}</td>
-              <td className={cn(TD, NUM)}>
-                <span className="inline-flex items-center justify-end gap-1.5">
-                  {row.indicative && <Badge variant="warning" className={SMALL_BADGE}>{t("ffIndicative")}</Badge>}
-                  <span>{row.daysOfStock ?? "—"}</span>
-                </span>
-              </td>
-              <td className={cn(TD, !row.runDownDate && MUTED)}>{formatDateShort(row.runDownDate)}</td>
-              <td className={cn(TD, !row.refillDate && MUTED)}>{formatDateShort(row.refillDate)}</td>
-              <td className={TD}>
-                <span className={cn(!row.requiredOn && MUTED)}>{formatDateShort(row.requiredOn)}</span>
-                {row.overdue && <Badge variant="danger" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffOverdue")}</Badge>}
-              </td>
-            </tr>
-          ))
-        )}
+          <StateRow colSpan={totalCols}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} />{t("ffLoading")}</StateRow>
+        ) : pivoted.length === 0 ? (
+          <StateRow colSpan={totalCols}><Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} />{t("ffNoRows")}</StateRow>
+        ) : pivoted.map((row, index) => (
+          <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
+            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}><RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} /></td>
+            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
+            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
+            <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
+            <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
+            <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
+            <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
+            <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.openingSystemBalanceKg))}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.confirmedReceiptsKg))}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.openTransferMovementKg ?? 0)}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.plannedIncomingKg ?? 0)}</td>
+            <td className={TD}><PlannedReferences references={row.incomingReferences} empty={t("ffNoPlannedFeed")} /></td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
+            {columns.map((column) => {
+              const value = row.closingBySlot[column.key];
+              const balance = row.balanceBySlot[column.key];
+              const sourceKey = `${row.sourceLocationId ?? row.sourceCode ?? "NONE"}|${row.itemId}|${column.key}`;
+              const hasExpectedIncoming = !!balance && (balance.plannedIncomingKg > 0 || balance.openTransferKg > 0);
+              const showIncoming = hasExpectedIncoming && !shownIncoming.has(sourceKey);
+              if (showIncoming) shownIncoming.add(sourceKey);
+              return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>
+                <button
+                  type="button"
+                  className="group w-full text-right hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                  aria-label={t("ffBalanceExplainAria", { date: column.label })}
+                  onClick={() => balance && setSelectedBalance({ row, column, balance })}
+                >
+                  {/* Rishi, 11 Oct: no second line in the cell. The balance on a
+                      day feed arrives is coloured; clicking it opens the dialog
+                      that itemises the planned feed and expected transfer. */}
+                  <span
+                    data-incoming={showIncoming ? "true" : undefined}
+                    title={showIncoming ? t("ffIncomingCellHint") : undefined}
+                    className={cn("block", showIncoming && "font-semibold text-[var(--accent)]")}
+                  >{fmtKg(value)}</span>
+                </button>
+              </td>;
+            })}
+            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : t("ffNoShortageProjected")}</td>
+            <td className={cn(TD, NUM)}>{fmtKg(row.recommendedQtyKg)}</td>
+            <td className={TD}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : t("ffNoDeliveryRequired")}</td>
+          </tr>
+        ))}
       </tbody>
     </ScrollTable>
-  );
-}
-
-/** The current / next stage of each batch (field spec supporting block), one table row per batch and stage. */
-export function FeedForecastStages({ stages, t }: { stages: StageBlock[]; t: Translate }) {
-  return (
-    <ScrollTable label={t("ffStagesTitle")}>
-      <thead>
-        <tr>
-          {STAGE_COLUMNS.map((c, i) => (
-            <th key={c} scope="col" data-sticky-col={i === 0 ? "last" : undefined} style={i === 0 ? BATCH_COL : undefined} className={cn(TH, i === 0 && "min-w-[8.5rem]")}>
-              {t(c)}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {stages.length === 0 ? (
-          <StateRow colSpan={STAGE_COLUMNS.length}>{t("ffNoStages")}</StateRow>
-        ) : (
-          stages.map((s) => (
-            // A batch with concurrent stages (a registered breeding batch) has one row per stage.
-            <tr key={`${s.batchId}|${s.currentStageCode}`}>
-              <td data-sticky-col="last" style={BATCH_COL} className={cn(TD, "min-w-[8.5rem] font-medium")}>{s.batchNo}</td>
-              <td className={cn(TD, MUTED)}>{s.shedCode || "—"}</td>
-              <td className={TD}>{s.currentStageCode}</td>
-              <td className={TD}>{formatDateShort(s.currentFrom)}</td>
-              <td className={TD}>{formatDateShort(s.currentTo)}</td>
-              <td className={TD}>{s.nextStageCode ?? "—"}</td>
-              <td className={TD}>
-                {/* D36: an event-based stage's change is a window — "earliest – latest (expected)";
-                    a dated stage's change is a day. Either can still be overdue (not posted). */}
-                {s.stageChangeEarliest
-                  ? `${formatDateShort(s.stageChangeEarliest)} – ${formatDateShort(s.stageChangeDate)} (${t("ffChangeExpected")})`
-                  : formatDateShort(s.stageChangeDate)}
-                {s.stageChangeOverdue && <Badge variant="warning" className={cn("ml-1.5", SMALL_BADGE)}>{t("ffStageChangeNotPosted")}</Badge>}
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </ScrollTable>
+    <Dialog
+      open={!!selectedBalance}
+      onClose={() => setSelectedBalance(null)}
+      title={selectedBalance ? t("ffBalanceExplainTitle", { date: selectedBalance.column.label }) : ""}
+      description={selectedBalance ? `${selectedBalance.row.sourceCode ?? t("ffNoSource")} · ${selectedBalance.row.itemName}` : undefined}
+      maxWidth="sm"
+      footer={<Button type="button" onClick={() => setSelectedBalance(null)}>{t("close")}</Button>}
+    >
+      {selectedBalance && <div className="space-y-4 text-sm">
+        <p className="text-[var(--text-secondary)]">{t("ffBalanceExplainBody")}</p>
+        <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-secondary)] p-4 font-mono text-sm">
+          <div>{t("ffBalanceOpening", { kg: fmtKg(selectedBalance.balance.openingKg) })}</div>
+          {selectedBalance.balance.plannedIncomingKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.plannedIncomingKg)} KG {t("ffPlannedShort")}</div>}
+          {selectedBalance.balance.openTransferKg > 0 && <div className="text-[var(--accent)]">+ {fmtKg(selectedBalance.balance.openTransferKg)} KG {t("ffExpectedTransferShort")}</div>}
+          {selectedBalance.balance.confirmedReceiptKg > 0 && <div>+ {fmtKg(selectedBalance.balance.confirmedReceiptKg)} KG {t("ffConfirmedReceiptShort")}</div>}
+          {selectedBalance.balance.usedBeforeReceivedKg > 0 && <div>− {fmtKg(selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffUsedBeforeReceivedShort")}</div>}
+          {selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg > 0.0001 && <div>− {fmtKg(selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffOtherMovementsShort")}</div>}
+          <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t("ffDailyUseShort")}</div>
+          <div className="mt-2 border-t border-[var(--border)] pt-2 font-semibold">= {fmtKg(selectedBalance.balance.closingKg)} KG {t("ffClosingBalanceShort")}</div>
+        </div>
+        {selectedBalance.balance.incomingReferences.some((reference) => reference.referenceNo || reference.relatedReferenceNo) && <div className="space-y-1 text-xs text-[var(--text-secondary)]">
+          {selectedBalance.balance.incomingReferences.filter((reference) => reference.referenceNo || reference.relatedReferenceNo).map((reference, index) => <div key={`${reference.kind}-${reference.referenceNo ?? reference.relatedReferenceNo}-${index}`}>
+            {reference.kind === "PLANNED_REQUISITION" ? t("ffPlannedIncomingReference", { references: reference.referenceNo }) : t("ffExpectedTransferReference", { transfer: reference.referenceNo, requisition: reference.relatedReferenceNo ?? t("ffNoSource") })}
+            {reference.expectedDate && <> · {t("ffExpectedDate", { date: formatDateShort(reference.expectedDate) })}</>}
+          </div>)}
+        </div>}
+      </div>}
+    </Dialog>
+    </>
   );
 }

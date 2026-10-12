@@ -1,6 +1,6 @@
-import { Req, Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Req, Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
-import { CurrencyService } from './currency.service';
+import { CurrencyService, ExchangeRateWriteScope } from './currency.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -24,6 +24,18 @@ import {
 export class CurrencyController {
   constructor(private readonly currencyService: CurrencyService) {}
 
+  private exchangeRateWriteScope(req: any): ExchangeRateWriteScope {
+    if (req.headers?.['x-workspace-scope'] === 'TENANT') {
+      if (!['SYSTEM_ADMIN', 'TENANT_ADMIN'].includes(req.user?.userType)) {
+        throw new ForbiddenException('Only a System or Tenant Admin can change legacy tenant-wide exchange rates.');
+      }
+      return { companyId: null, allowLegacyWrite: true };
+    }
+    const companyId = req.headers?.['x-active-company-id'] || req.user?.companyId;
+    if (!companyId) throw new BadRequestException('Select a company workspace to change exchange rates.');
+    return { companyId, allowLegacyWrite: false };
+  }
+
   @Get()
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'view')
   @ApiOperation({ summary: 'List currencies matching filters' })
@@ -43,10 +55,10 @@ export class CurrencyController {
 
   @Post('rates')
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'create')
-  @ApiOperation({ summary: 'Record an exchange rate. Reads 1 USD = <rate> of the quoted currency.' })
+  @ApiOperation({ summary: "Record a conversion rate; an omitted source uses the active company's base currency." })
   async createRate(@Body() body: CreateExchangeRateDto, @Req() req: any) {
-    const companyId = req.headers['x-workspace-scope'] === 'TENANT' ? null : (req.headers['x-active-company-id'] || req.user?.companyId);
-    const data = await this.currencyService.createRate(body, companyId);
+    const scope = this.exchangeRateWriteScope(req);
+    const data = await this.currencyService.createRate(body, scope.companyId);
     return { success: true, message: 'Exchange rate recorded successfully.', data };
   }
 
@@ -54,8 +66,8 @@ export class CurrencyController {
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'edit')
   @ApiOperation({ summary: 'Update an exchange rate' })
   @ApiParam({ name: 'rateId', description: 'Exchange rate UUID' })
-  async updateRate(@Param('rateId') rateId: string, @Body() body: UpdateExchangeRateRowDto) {
-    const data = await this.currencyService.updateRate(rateId, body);
+  async updateRate(@Param('rateId') rateId: string, @Body() body: UpdateExchangeRateRowDto, @Req() req: any) {
+    const data = await this.currencyService.updateRate(rateId, body, this.exchangeRateWriteScope(req));
     return { success: true, message: 'Exchange rate updated successfully.', data };
   }
 
@@ -63,8 +75,8 @@ export class CurrencyController {
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'delete')
   @ApiOperation({ summary: 'Delete an exchange rate' })
   @ApiParam({ name: 'rateId', description: 'Exchange rate UUID' })
-  async deleteRate(@Param('rateId') rateId: string) {
-    const data = await this.currencyService.deleteRate(rateId);
+  async deleteRate(@Param('rateId') rateId: string, @Req() req: any) {
+    const data = await this.currencyService.deleteRate(rateId, this.exchangeRateWriteScope(req));
     return { success: true, message: 'Exchange rate deleted successfully.', data };
   }
 
@@ -72,13 +84,14 @@ export class CurrencyController {
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'create')
   @ApiOperation({ summary: 'Register/Update conversion exchange rate' })
   async updateExchangeRate(@Body() body: UpdateExchangeRateDto, @Req() req: any) {
+    const scope = this.exchangeRateWriteScope(req);
     return this.currencyService.updateExchangeRate(
       body.fromCurrencyId,
       body.toCurrencyId,
       body.rate,
       body.source,
       body.rateDate,
-      req.headers['x-workspace-scope'] === 'TENANT' ? null : (req.headers['x-active-company-id'] || req.user?.companyId),
+      scope.companyId,
     );
   }
 

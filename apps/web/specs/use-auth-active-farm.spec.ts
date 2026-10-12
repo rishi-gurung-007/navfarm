@@ -32,6 +32,17 @@ describe('useAuth — active farm', () => {
     expect(getActiveFarmId()).toBe('farm-own');
   });
 
+  it('a FARM_MANAGER is fixed to their assigned farm and cannot switch farms', async () => {
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'FARM_MANAGER', farmId: 'farm-own' }));
+    localStorage.setItem('active_farm_id', 'farm-other');
+
+    const { getActiveFarmId, setActiveFarmId } = await loadHook();
+    setActiveFarmId('farm-third');
+
+    expect(getActiveFarmId()).toBe('farm-own');
+    expect(localStorage.getItem('active_farm_id')).toBe('farm-other');
+  });
+
   it('an admin can select and clear an active farm', async () => {
     localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'COMPANY_ADMIN' }));
 

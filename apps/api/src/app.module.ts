@@ -1,6 +1,7 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ClsModule } from 'nestjs-cls';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DatabaseModule } from './core/database/database.module';
 import { TenantModule } from './modules/core/tenant/tenant.module';
 import { CompanyModule } from './modules/core/company/company.module';
@@ -26,6 +27,7 @@ import { BreedModule } from './modules/master-data/breed/breed.module';
 import { FarmModule } from './modules/master-data/farm/farm.module';
 import { WarehouseModule } from './modules/master-data/warehouse/warehouse.module';
 import { LocationModule } from './modules/master-data/location/location.module';
+import { BinDietAssignmentModule } from './modules/master-data/bin-diet-assignment/bin-diet-assignment.module';
 import { LocationTypeModule } from './modules/master-data/location-type/location-type.module';
 import { ShedModule } from './modules/master-data/shed/shed.module';
 import { ItemCategoryModule } from './modules/master-data/item-category/item-category.module';
@@ -48,7 +50,10 @@ import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module'
 import { CostCenterModule } from './modules/finance/cost-center/cost-center.module';
 import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inventory-ledger.module';
 import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
+import { FeedSettingsModule } from './modules/inventory/feed-settings/feed-settings.module';
 import { FeedAlertModule } from './modules/inventory/feed-alert/feed-alert.module';
+import { FeedSchedulerModule } from './modules/inventory/feed-scheduler/feed-scheduler.module';
+import { FeedStockCountModule } from './modules/inventory/feed-stock-count/feed-stock-count.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
@@ -65,6 +70,7 @@ import { ResourceLedgerModule } from './modules/production/resource-ledger/resou
 import { AlertModule } from './modules/production/alert/alert.module';
 import { ApprovalModule } from './modules/production/approval/approval.module';
 import { FeedRequisitionModule } from './modules/procurement/feed-requisition/feed-requisition.module';
+import { RequisitionModule } from './modules/procurement/requisition/requisition.module';
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
@@ -94,6 +100,9 @@ import { SystemController } from './system/system.controller';
     // Global Drizzle Database connection pool
     DatabaseModule,
 
+    // Timers for the feed scheduler (brief B). FEED_SCHEDULER_ENABLED=false disables its tick.
+    ScheduleModule.forRoot(),
+
     TenantModule,
     CompanyModule,
     PlanModule,
@@ -118,6 +127,7 @@ import { SystemController } from './system/system.controller';
     FarmModule,
     WarehouseModule,
     LocationModule,
+    BinDietAssignmentModule,
     LocationTypeModule,
     ShedModule,
     ItemCategoryModule,
@@ -140,7 +150,10 @@ import { SystemController } from './system/system.controller';
     CostCenterModule,
     InventoryLedgerModule,
     FeedForecastModule,
+    FeedSettingsModule,
     FeedAlertModule,
+    FeedSchedulerModule,
+    FeedStockCountModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,
     StockTransferModule,
@@ -156,8 +169,16 @@ import { SystemController } from './system/system.controller';
     ResourceLedgerModule,
     AlertModule,
     ApprovalModule,
-    // Feed requisitions (Plan B). The generic RequisitionModule stays unregistered (Ruling C2).
+    // Feed requisitions (Plan B) on /feed-requisition.
     FeedRequisitionModule,
+    // Common requisitions (Item / Fixed Asset / Service) on /requisition.
+    // Ruling C2 (26 Sep) kept this unregistered so a FEED row could not be
+    // approved or changed through the generic routes. Part E Task 13 lifts C2:
+    // every generic mutation now refuses doc_type FEED with a 400 pointing to
+    // /feed-requisition (assertNotFeedRequisition / assertEditable), and the
+    // inbox handler it registers answers REQUISITION requests only — the feed's
+    // are FEED_REQUISITION. GET /requisition may list FEED rows, read-only.
+    RequisitionModule,
     MilkModule,
     QcParameterModule,
     QcModule,

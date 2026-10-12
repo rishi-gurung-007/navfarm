@@ -148,7 +148,9 @@ export class OperationalAreaService {
       area_code: dto.area_code.toUpperCase(),
       area_name: dto.area_name,
       description: dto.description || null,
-      preseed_source: dto.preseed_source || PreseedSource.TENANT,
+      // Areas never copy master data (client ruling, 12 Oct): they read their
+      // company's, filtered by LOB. A client-sent preseed_source is ignored.
+      preseed_source: PreseedSource.NONE,
       is_active: dto.is_active ?? true,
       created_by: userId || null,
     });
@@ -214,10 +216,6 @@ export class OperationalAreaService {
       userId,
     });
     return { success: true, message: `Operational Area '${area.area_name}' deactivated.` };
-  }
-
-  async preseedCompanyMasterDataFromTenant(_companyId: string) {
-    throw new BadRequestException('Tenant templates are copied when a company is created. Existing company masters are independent; repeated preseed is no longer supported.');
   }
 
   /**

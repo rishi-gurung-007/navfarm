@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
+import { and } from 'drizzle-orm';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { ApprovalService } from './approval.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -155,14 +156,13 @@ describe('ApprovalService farm scope', () => {
     expect(where.sql).toContain('batch_header bf');
   });
 
-  it('shows a company admin the company\'s farm documents, but still not batchless farmless rows', async () => {
+  it('shows a company admin the company\'s farm documents', async () => {
     useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
 
     await service.findAll({} as any, 'tenant-1');
 
     const where = renderedWhere();
     expect(where).toContain('`approval_request`.`farm_id` IN (SELECT ls.location_id FROM location_master ls WHERE ls.company_id = ?)');
-    expect(where).not.toContain('`approval_request`.`farm_id` is null');
   });
 
   it('shows a tenant admin with nothing selected every row, farmless ones included', async () => {
@@ -171,6 +171,161 @@ describe('ApprovalService farm scope', () => {
     await service.findAll({} as any, 'tenant-1');
 
     expect(renderedWhere()).toContain('`approval_request`.`farm_id` is null');
+  });
+
+  /**
+   * D1 (Part E live verification): a common requisition (Item/FA/Service) can
+   * have neither a batch nor a farm. Before this fix the batchless-and-farmless
+   * OR branch only ever matched for a tenant-wide caller (no company, not
+   * restricted), so a company-scoped admin — not restricted, no farm, but with
+   * a selected/assigned company — got 0 rows and a 404 on open, even for a
+   * request raised in their own company. GET /approval?doc_type=REQUISITION
+   * returned 5 rows for the tenant admin and 0 for the company admin on the
+   * same data (RQ-00009).
+   */
+  describe('D1: common requisitions with no farm and no batch', () => {
+    it('shows a company admin their own company\'s farmless, batchless request', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const where = renderedWhere();
+      // The OR now has a branch for batchless+farmless rows reachable by this
+      // scope, AND (outside the OR) the row's company must equal the scope's —
+      // together these are what let the company admin see their own
+      // company's rows and nothing of another company's.
+      expect(where).toContain('`approval_request`.`batch_id` is null');
+      expect(where).toContain('`approval_request`.`farm_id` is null');
+      expect(where).toContain('`approval_request`.`company_id` = ?');
+    });
+
+    it('does not show a farm-bound user any farmless, batchless request', async () => {
+      // FARM_MANAGER / STANDARD_USER: restricted and farm-bound. They must
+      // keep seeing only their farm's documents (the existing D25 branch) —
+      // the batchless+farmless branch must not be in the OR at all for them.
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const where = renderedWhere();
+      expect(where).not.toContain('`approval_request`.`farm_id` is null');
+      // Their farm-bound branches are untouched by this fix.
+      expect(where).toContain('`approval_request`.`farm_id` IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ? OR lf.farm_id = ?)');
+      expect(where).toContain('batch_header bf');
+    });
+
+    it('shows a non-restricted user who has an active farm selected the company\'s farmless, batchless requests too (Rishi, 4 Oct, Option A)', async () => {
+      // A COMPANY_ADMIN or TENANT_ADMIN who has selected an active farm (via
+      // x-active-farm-id) gets exactly this scope shape per resolveFarmScope's
+      // else-branch — restricted: false, farmId set. Rishi ruled (4 Oct,
+      // Option A) that this user must still see company-wide requisitions
+      // belonging to no farm, so the guard no longer gates on farmId at all —
+      // only `restricted` decides this branch. The farm-bound test below
+      // (restricted: true, same farmId) is what makes that one remaining
+      // condition load-bearing: the two cases differ only in `restricted`,
+      // so a guard that lost that check would fail one of them.
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const where = renderedWhere();
+      expect(where).toContain('`approval_request`.`batch_id` is null');
+      expect(where).toContain('`approval_request`.`farm_id` is null');
+      expect(where).toContain('`approval_request`.`company_id` = ?');
+      // Their farm-bound branch (D25) is still in the OR too — this scope can
+      // see both a farm's documents and the company's farmless ones.
+      expect(where).toContain('`approval_request`.`farm_id` IN (SELECT ls.location_id FROM location_master ls WHERE ls.company_id = ?)');
+    });
+
+    it('still requires the row\'s company to equal the scope\'s, so one company admin cannot read another company\'s row', async () => {
+      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      // The company equality sits outside the OR (AND'd with it), so it bounds
+      // every branch including the new batchless+farmless one — a row whose
+      // company_id is 'co-2' can never satisfy `company_id = 'co-1'`.
+      expect(q.sql).toContain('`approval_request`.`company_id` = ?');
+      expect(q.params).toContain('co-1');
+      expect(q.params).not.toContain('co-2');
+    });
+  });
+
+  /**
+   * decisions.md 2026-10-04 (second entry): "the tenant and company admin
+   * should be able to approve all requisitions, theirs and others" — a
+   * TENANT_ADMIN or COMPANY_ADMIN must see (and, in decide(), reach) a
+   * requisition raised by/for a farm other than whichever farm happens to be
+   * active in their session. Before this, an active farm narrowed the
+   * farm-bound OR branch to exactly that farm for every doc type, including
+   * REQUISITION/FEED_REQUISITION — a company admin with farm-g active could
+   * not even see farm-h's pending requisition, let alone decide it. The fix
+   * is scoped to requisition doc types only (an extra OR branch bounded by
+   * doc_type, company boundary still enforced outside the OR) — every other
+   * approval kind (health, stage, GRN, stock count…) keeps the existing
+   * active-farm narrowing untouched.
+   */
+  describe('decisions.md 2026-10-04: admins decide every requisition in scope, not just their own', () => {
+    it('drops the active-farm narrowing for requisition doc types when the caller is a COMPANY_ADMIN', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'COMPANY_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).toContain('`approval_request`.`doc_type`');
+      expect(q.params).toContain('REQUISITION');
+      expect(q.params).toContain('FEED_REQUISITION');
+      // The company boundary (outside the OR) still applies to every branch, this one included.
+      expect(q.sql).toContain('`approval_request`.`company_id` = ?');
+      expect(q.params).toContain('co-1');
+      // The ordinary farm-bound branch (D25) is still present too — this scope can decide both.
+      expect(q.sql).toContain('`approval_request`.`farm_id` IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ? OR lf.farm_id = ?)');
+    });
+
+    it('does the same for a TENANT_ADMIN, tenant-wide when no company is selected', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: null, lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'TENANT_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).toContain('`approval_request`.`doc_type`');
+      expect(q.params).toContain('REQUISITION');
+      // No company filter at all — unbounded, same as the pre-existing tenant-admin rule.
+      expect(q.sql).not.toContain('`approval_request`.`company_id` = ?');
+    });
+
+    it('adds nothing for a non-exempt type (FARM_MANAGER) — the active-farm narrowing stays exactly as before', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+
+      await service.findAll({} as any, 'tenant-1', 'FARM_MANAGER');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      // WP1b: the inbox now excludes requisitions for every caller, so the
+      // distinguishing assertion is the ABSENCE of the admin-exemption OR
+      // branch — the kinds appear only inside the exclusion's NOT IN, never
+      // as a standalone `or …doc_type in` widening path.
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
+      expect(q.sql).toContain('`approval_request`.`doc_type` not in');
+    });
+
+    it('adds nothing when no user type is given at all (existing callers that have not threaded it through)', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
+    });
+
+    it('still refuses a SYSTEM_ADMIN the bypass — not decided; follows the old (farm-bound) rule', async () => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+
+      await service.findAll({} as any, 'tenant-1', 'SYSTEM_ADMIN');
+
+      const q = dialect.sqlToQuery(capturedWhere as any);
+      expect(q.sql).not.toMatch(/or `approval_request`\.`doc_type` in/);
+    });
   });
 
   it('lists rows of the active area AND rows that carry no area yet (Plan S follow-up)', async () => {
@@ -418,5 +573,192 @@ describe('ApprovalService farm documents (D25)', () => {
     const { service, log } = setup(new Map<unknown, unknown[][]>([[schema.approvalRequest, [[PENDING]]]]));
     await expect(service.approve('ar-1', 'tenant-1')).rejects.toThrow('No handler is registered for FEED_REQUISITION documents.');
     expect(log).toEqual([]);
+  });
+
+  /**
+   * Bug found live (WP1 check, 4 Oct): decide()'s own read-back of the row it
+   * just decided (`return this.findOne(requestId, tenantId)`, no third
+   * argument) did not carry the caller's userType — so a COMPANY_ADMIN who
+   * reached another farm's request through the new admin-exemption branch in
+   * farmConditions() had their *decision* committed-then-rolled-back,
+   * because the read-back right after used the farm-only visibility and threw
+   * "Approval request not found.", aborting the whole transaction. Proven
+   * here by asserting farmConditions() receives the same userType on both of
+   * decide()'s calls — the lock and the read-back — not by SQL filtering
+   * (this suite's db double doesn't evaluate WHERE clauses; the live check,
+   * recorded in wp1-report.md, is what caught this against a real database).
+   */
+  it("decide()'s read-back after committing passes the same userType as its lock — the admin-exemption fix must survive it", async () => {
+    const { service, log } = setup(new Map<unknown, unknown[][]>([[schema.approvalRequest, [[PENDING], [{ ...PENDING, status: 'APPROVED' }]]]]));
+    service.registerDocumentHandler('FEED_REQUISITION', {
+      decide: async () => undefined,
+      withdraw: async () => undefined,
+    });
+    const farmConditionsSpy = jest.spyOn(service as any, 'farmConditions');
+    await service.approve('ar-1', 'tenant-1', { userId: 'u-admin', userType: 'COMPANY_ADMIN' });
+    expect(farmConditionsSpy.mock.calls.map((c) => c[0])).toEqual(['COMPANY_ADMIN', 'COMPANY_ADMIN']);
+    expect(log.filter((e) => e.table === schema.approvalRequest && e.op === 'update')).toHaveLength(1);
+  });
+});
+
+/**
+ * Rishi, 7 Oct: common requisitions appear in Approvals as well as the
+ * Requisition hub. Feed requisitions remain on Feed Forecast. The hub's
+ * waiting filter still reuses the inbox visibility predicate so scope cannot
+ * drift between the two decision surfaces.
+ */
+describe('common requisitions in Approvals and the shared waiting predicate', () => {
+  let service: ApprovalService;
+  let cls: ReturnType<typeof transactionCls>;
+  const dialect = new MySqlDialect();
+  let capturedWhere: unknown;
+  const renderedWhere = () => dialect.sqlToQuery(capturedWhere as any).sql;
+
+  const chain: any = {
+    from: () => chain,
+    leftJoin: () => chain,
+    where: (cond: unknown) => { capturedWhere = cond; return chain; },
+    orderBy: () => chain,
+    groupBy: () => chain,
+    limit: () => chain,
+    offset: () => chain,
+  };
+  // findOne awaits the chain directly (no offset), and counts* destructures
+  // its single-row result — a thenable chain answers both with one row-less list.
+  chain.then = (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve([]).then(resolve, reject);
+  const mockDb = { select: jest.fn(() => chain) };
+
+  beforeEach(async () => {
+    capturedWhere = undefined;
+    cls = transactionCls(mockDb);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: cls },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get<ApprovalService>(ApprovalService);
+  });
+
+  it.each(['COMPANY_ADMIN', 'FARM_MANAGER', undefined] as const)(
+    'EQUIVALENCE: the hub waiting predicate carries farmConditions(%s) verbatim plus the requisition kinds',
+    async (userType) => {
+      useFarmScope(cls, { farmId: 'farm-g', restricted: userType === 'FARM_MANAGER', companyId: 'co-1', lobId: userType === 'FARM_MANAGER' ? 'lob-pig' : null });
+      // One copy, literally: requisitionRequestConditions must SPREAD the
+      // inbox predicate's own conditions (the same objects the inbox call
+      // returns), extended with the kinds narrowing — not a re-implementation.
+      const farmConditionsSpy = jest.spyOn(service as any, 'farmConditions');
+      const conditions = service.requisitionRequestConditions(userType);
+      expect(farmConditionsSpy).toHaveBeenCalledWith(userType);
+      const inboxConditions = farmConditionsSpy.mock.results[0].value as unknown[];
+      expect(conditions.length).toBe(inboxConditions.length + 1);
+      for (let i = 0; i < inboxConditions.length; i++) expect(conditions[i]).toBe(inboxConditions[i]);
+      // …and the narrowing is the requisition kinds.
+      const hub = dialect.sqlToQuery(and(...conditions)!);
+      expect(hub.sql).toContain('`approval_request`.`doc_type` in');
+      expect(hub.params).toContain('REQUISITION');
+      expect(hub.params).toContain('FEED_REQUISITION');
+    },
+  );
+
+  it('the inbox list includes common requisitions and excludes only feed requisitions', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    await service.findAll({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    const sql = renderedWhere();
+    expect(sql).toContain('`approval_request`.`doc_type` not in');
+    expect(sql).toMatch(/not in \(\?\)/);
+    const params = dialect.sqlToQuery(capturedWhere as any).params;
+    expect(params).toContain('FEED_REQUISITION');
+    expect(params.at(-1)).toBe('FEED_REQUISITION');
+  });
+
+  it('the inbox counts include common requisitions and exclude only feed requisitions', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    await service.counts({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    const q = dialect.sqlToQuery(capturedWhere as any);
+    expect(q.sql).toMatch(/`approval_request`.`doc_type` not in \(\?\)/);
+    expect(q.params).toContain('FEED_REQUISITION');
+    expect(q.params.at(-1)).toBe('FEED_REQUISITION');
+  });
+
+  // A per-table queue double (same shape as the D25 suite's setup) for the
+  // two calls below, whose result shape the chain mock above cannot answer.
+  const queueDb = (rows: unknown[][]) => {
+    const db: any = {
+      select: jest.fn(() => {
+        let table: unknown;
+        const self: any = {
+          from: (t: unknown) => { table = t; return self; },
+          leftJoin: () => self, where: () => self, orderBy: () => self, limit: () => self,
+          then: (ok: any, err: any) => Promise.resolve().then(() => rows.shift() ?? []).then(ok, err),
+        };
+        void table;
+        return self;
+      }),
+    };
+    return db;
+  };
+
+  it('findOne still reaches requisition kinds — the hub decides through /approval/:id/approve', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(queueDb([[{ request_id: 'ar-1', doc_type: 'REQUISITION' }]])) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    const row = await module.get<ApprovalService>(ApprovalService).findOne('ar-1', 'tenant-1', 'COMPANY_ADMIN');
+    expect(row.doc_type).toBe('REQUISITION');
+  });
+
+  it("the hub's pending-requisition count renders the same waiting predicate with PENDING and the company boundary", async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(queueDb([[{ n: 7 }]])) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    const result = await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    expect(result).toEqual({ PENDING: 7 });
+  });
+
+  // WP1g: the Requisition page lists common kinds only, so the inbox card's
+  // count must count the same set — a pending FEED_REQUISITION is decided on
+  // Feed Forecast -> Requisition and would make the card disagree with the page.
+  it('the card count is bounded to the common REQUISITION request type, never FEED_REQUISITION', async () => {
+    useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    const wheres: unknown[] = [];
+    const db: any = {
+      select: jest.fn(() => {
+        const self: any = {
+          from: () => self,
+          where: (w: unknown) => { wheres.push(w); return self; },
+          then: (ok: any, err: any) => Promise.resolve([{ n: 2 }]).then(ok, err),
+        };
+        return self;
+      }),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ApprovalService,
+        { provide: ClsService, useValue: transactionCls(db) },
+        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn() } },
+      ],
+    }).compile();
+    await module.get<ApprovalService>(ApprovalService).countsRequisitions({} as any, 'tenant-1', 'COMPANY_ADMIN');
+    const { MySqlDialect } = require('drizzle-orm/mysql-core');
+    const q = new MySqlDialect().sqlToQuery(wheres[0] as any);
+    // the helper's own kind list, narrowed: the admin branch of farmConditions
+    // still names both kinds, the final kind filter names only the common one.
+    expect(q.sql.match(/`doc_type` in \(\?\)/g)).toHaveLength(1);
+    expect(q.params.slice(-1)).toEqual(['REQUISITION']);
   });
 });

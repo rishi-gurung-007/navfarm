@@ -10,9 +10,15 @@
  *   opening)` (columns G–H). Engine Step 8 "Bulk rounding defaults to 3000 KG
  *   per compartment … Bagged rounds to 50 KG". Silo free capacity is not
  *   applied (Q9 of Plan B).
- * - Delivery date: the field specification's Required On (Plan R, Q4) —
- *   run-down − refill buffer − lead time — or the planning date once that has
- *   passed; `to` when nothing runs down in the window.
+ * - Delivery date (Requisition §1 row 29): the first projected shortage date,
+ *   or the planning date once that has passed; `to` when nothing is short in
+ *   the window. A farm that edits it away from the drafted date must give
+ *   remarks (deliveryDateNeedsRemarks), the same checkpoint 18 treats a
+ *   quantity deviation.
+ * - Capacity warning (Engine Step 8): the order plus the day's opening
+ *   compared against the silo's own `silo_capacity_kg` — always canonical KG,
+ *   never converted here — flagged, never capped (checkpoint 17 is the truck
+ *   target's rule, not this one's).
  * - System Balance and the low-level test (Ruling I4): the ledger as it stands
  *   now, the figure FEED_BELOW_L1 alerts on, handed in by the service as
  *   `currentBalanceKg`. The forecast's own `balanceKg` is the start of the
@@ -24,8 +30,8 @@
  * Plan R changes Plan B's drafts on purpose (Ruling I4): the need is the
  * shortfall to the low level with booked transfers counted, not requirement −
  * opening; the line is dated Required On, not the run-down; and because the
- * first shortage date is now D19's run-down (to the low level, on a day with
- * demand or an outflow — 7f3469e), priority follows that earlier date. None of
+ * first shortage date is the first day demand cannot be met, distinct from
+ * D19's earlier low-level run-down. None of
  * it moves the Worked Example: no low level and nothing incoming, so R1 still
  * drafts 6,000 kg and R2 9,000 kg.
  * - Bag count: Requisition §1 row 23, quantity ÷ bag size (default 50).
@@ -42,7 +48,7 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, dayShort, diffDays, todayLocal, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import { addDays, dayShort, diffDays, todayLocal, type BatchPk, type DailyForecastRow, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
 export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
@@ -52,9 +58,11 @@ export interface FarmFeedSettings {
   bagSizeKg: number;
   truckTargetKg: number;
   productionWeekday: number;
+  /** TDD Engine Step 8 / Dashboard row 60: added to every silo-item shortfall. */
+  safetyStockKg: number;
 }
 
-export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 };
+export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0, safetyStockKg: 0 };
 
 /** Checkpoint 18: "deviates more than 20 percent from Recommended Qty". */
 export const DEVIATION_LIMIT = 0.2;
@@ -64,6 +72,8 @@ export interface DestinationInfo {
   locationType: 'SILO' | 'STORE';
   feedInBags: boolean | null;
   lowLevelKg: number | null;
+  /** silo_capacity_kg — always canonical KG (the service converts TON on write); null when not set. Engine Step 8. */
+  capacityKg: number | null;
 }
 
 export interface DraftLine {
@@ -84,7 +94,14 @@ export interface DraftLine {
   unroundedNeedKg: number;
   recommendedQtyKg: number;
   bagCount: number | null;
+  /** Req. row 29: the first projected shortage date, clamped to the planning date; `to` when nothing is short. */
+  recommendedDeliveryDate: string;
   proposedDeliveryDate: string;
+  /** Engine Step 8: the order plus the day's opening would exceed the silo's capacity. A warning, never a cap. */
+  exceedsSiloCapacity: boolean;
+  /** What the capacity warning was computed from, kept so a rerun can re-test it against a quantity the farm kept. */
+  capacityKg: number | null;
+  deliveryDayOpeningKg: number;
   belowLowLevel: boolean;
   needsSiloChangeover: boolean;
 }
@@ -103,7 +120,9 @@ export function lineKey(destinationLocationId: string, itemId: string): string {
 }
 
 /** Requisition §1 row 15: Feed Type from Location Master. Nothing is recorded today, so a silo is bulk, a store bags (Q10). */
-export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>): FeedType {
+export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>, itemForm?: FeedType | null): FeedType {
+  // Rishi 12 Oct: the item's own Bulk/Bagged (item_master.feed_form, else its type code) is what is rounded and counted.
+  if (itemForm) return itemForm;
   if (dest.feedInBags === true) return 'BAGGED';
   if (dest.feedInBags === false) return 'BULK';
   return dest.locationType === 'STORE' ? 'BAGGED' : 'BULK';
@@ -135,6 +154,11 @@ export function productionCycle(planningDate: string, productionWeekday: number)
   return { productionDate, submissionDeadline: addDaysIso(productionDate, -1) };
 }
 
+/** Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG. */
+export function exceedsCapacity(quantityKg: number, deliveryDayOpeningKg: number, capacityKg: number | null): boolean {
+  return capacityKg !== null && quantityKg + deliveryDayOpeningKg > capacityKg + 1e-6;
+}
+
 export function recommendLines(args: {
   planningDate: string;
   to: string;
@@ -147,23 +171,31 @@ export function recommendLines(args: {
    * (pure callers, tests) the forecast's start-of-day balance stands in.
    */
   currentBalanceKg?: Map<string, number>;
+  /** Manual lines retain forecast evidence even when no system order is needed. */
+  includeZeroNeed?: boolean;
+  /** item id -> the item's own Bulk/Bagged (resolveItemFeedForm); it wins over the destination's Feed Type. */
+  itemForms?: Map<string, FeedType>;
 }): DraftLine[] {
-  const { planningDate, to, sources, destinations, settings, currentBalanceKg } = args;
+  const { planningDate, to, sources, destinations, settings, currentBalanceKg, includeZeroNeed = false, itemForms } = args;
   const lines: DraftLine[] = [];
   for (const s of sources) {
     // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
     // "Never offset next diet with stock of current diet" still holds because each source is one container and one item.
     const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
-    const runsDownInWindow = s.runDownDate !== null && s.runDownDate <= to;
-    if (unroundedNeedKg <= 0 && !runsDownInWindow) continue;
-    const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null };
-    const feedType = feedTypeOf(dest);
-    // A silo that lands exactly on its level still needs the next delivery: the smallest order, one compartment or bag.
-    const recommendedQtyKg = unroundedNeedKg > 0
-      ? roundOrderKg(unroundedNeedKg, feedType, settings)
-      : feedType === 'BULK' ? settings.bulkMultipleKg : settings.bagSizeKg;
+    if (unroundedNeedKg <= 0 && !includeZeroNeed) continue; // Engine Step 8: automatic drafts contain shortage lines only.
+    const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null, capacityKg: null };
+    const feedType = feedTypeOf(dest, itemForms?.get(s.itemId));
+    const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
     const key = lineKey(s.locationId, s.itemId);
-    const systemBalanceKg = currentBalanceKg ? round3(currentBalanceKg.get(key) ?? 0) : s.balanceKg;
+    const systemBalanceKg = currentBalanceKg ? Math.max(0, round3(currentBalanceKg.get(key) ?? 0)) : s.balanceKg; // never below zero (Rishi, 12 Oct)
+    // Req. row 29: derived from the earliest projected shortage; nothing short in the window → the window's end.
+    // 9d D1: the shortage is looked for over the forecast's standard horizon, so it can fall past `to`; that is
+    // "nothing short in the window" too — the order window stays `to`.
+    const shortage = s.shortageDate && s.shortageDate <= to ? s.shortageDate : null;
+    const recommendedDeliveryDate = shortage ? (shortage < planningDate ? planningDate : shortage) : to;
+    // Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG.
+    const capacityKg = dest.locationType === 'SILO' ? dest.capacityKg : null;
+    const exceedsSiloCapacity = exceedsCapacity(recommendedQtyKg, s.deliveryDayOpeningKg, capacityKg);
     lines.push({
       key,
       destinationLocationId: s.locationId,
@@ -179,18 +211,25 @@ export function recommendLines(args: {
       // Requisition §2 row 50 "Daily consumption for this silo": today's, or for a next diet its first day's.
       dailyRequirementKg: s.planningDayDemandKg > 0 ? s.planningDayDemandKg : s.firstDayDemandKg,
       daysRemaining: s.daysLeft,
-      firstShortageDate: s.runDownDate,
+      firstShortageDate: s.shortageDate ?? null,
       unroundedNeedKg,
       recommendedQtyKg,
       bagCount: bagCountFor(recommendedQtyKg, feedType, settings),
-      // Q4 (Plan R): the field specification's Required On "is the date used to populate the auto-drafted
-      // Requisition line"; one already past is due now. Nothing runs down in the window: `to`, as before.
-      proposedDeliveryDate: s.requiredOn ? (s.requiredOn < planningDate ? planningDate : s.requiredOn) : to,
+      recommendedDeliveryDate,
+      proposedDeliveryDate: recommendedDeliveryDate,
+      exceedsSiloCapacity,
+      capacityKg,
+      deliveryDayOpeningKg: s.deliveryDayOpeningKg,
       belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });
   }
   return lines;
+}
+
+/** Req. row 29: "Farm Manager can edit with reason" — remarks only when the farm moved the date off the forecast's. */
+export function deliveryDateNeedsRemarks(line: { recommendedDeliveryDate: string | null; proposedDeliveryDate: string }): boolean {
+  return line.recommendedDeliveryDate !== null && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
 }
 
 export function requisitionPriority(planningDate: string, lines: Pick<DraftLine, 'belowLowLevel' | 'firstShortageDate'>[]): Priority {
@@ -210,13 +249,27 @@ export interface ExistingDraftLine {
   recommendedQtyKg: number | null;
   /** requisition_line.quantity_edited (Ruling M9): the farm changed this quantity by hand. */
   quantityEdited?: boolean;
+  /** requisition_line.recommended_delivery_date / proposed_delivery_date: a proposed date that differs from the drafted one was moved by the farm (Req. row 29). */
+  recommendedDeliveryDate?: string | null;
+  proposedDeliveryDate?: string | null;
 }
 
 export interface DraftUpsertPlan {
   insert: DraftLine[];
-  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number }[];
+  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number; keepDeliveryDate: boolean; priorProposedDeliveryDate: string | null }[];
   remove: string[];
   keep: string[];
+}
+
+/**
+ * Req. row 29, "Farm Manager can edit with reason": a delivery date that no
+ * longer matches the recommendation it was drafted with was moved by the farm,
+ * and a rerun leaves it alone — the same rule wasEdited applies to a quantity.
+ * A line drafted with no recommended date (written before the column existed,
+ * or manual) has nothing to differ from.
+ */
+export function deliveryDateWasMoved(line: Pick<ExistingDraftLine, 'recommendedDeliveryDate' | 'proposedDeliveryDate'>): boolean {
+  return !!line.recommendedDeliveryDate && !!line.proposedDeliveryDate && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
 }
 
 /**
@@ -245,7 +298,10 @@ export function planDraftUpsert(existing: ExistingDraftLine[], covered: Set<stri
     wantedKeys.add(line.key);
     const prior = byKey.get(line.key);
     if (!prior) plan.insert.push(line);
-    else plan.update.push({ lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg });
+    else plan.update.push({
+      lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg,
+      keepDeliveryDate: deliveryDateWasMoved(prior), priorProposedDeliveryDate: prior.proposedDeliveryDate ?? null,
+    });
   }
   for (const prior of existing) {
     if (wantedKeys.has(prior.key)) continue;
@@ -270,6 +326,20 @@ export interface ApprovalLine {
   itemName: string;
   quantityKg: number;
   recommendedQtyKg: number | null;
+  /** null on a manual line (nothing to differ from) — deliveryDateNeedsRemarks, Req. row 29. */
+  recommendedDeliveryDate: string | null;
+  proposedDeliveryDate: string;
+  /**
+   * Review finding (Important 4, Task 9): the header table (row 36) requires
+   * Remarks on an item exception too, not only a 20% deviation or a moved
+   * delivery date. True when the line's own exception reason (row 13,
+   * description = "Exception: …") is on record — the per-line reason itself
+   * is already enforced at PUT (lineChangeProblems); this is the separate
+   * header-level rule the brief asks for.
+   */
+  itemException?: boolean;
+  /** A1 (10 Oct), checkpoint 16: the line's Feed Type — only a BULK line is held to the bulk order multiple. */
+  feedType?: FeedType | null;
 }
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -280,7 +350,7 @@ const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 }
  * one field on the header (row 36), so one set of remarks covers every line.
  * The deadline day itself is still on time — only a later day is the exception.
  */
-export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null }): string[] {
+export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null; bulkMultipleKg?: number }): string[] {
   if (!args.lines.length) return ['A requisition needs at least one line to be approved.'];
   if (args.remarks?.trim()) return [];
   const problems: string[] = [];
@@ -288,9 +358,195 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
     if (deviationNeedsRemarks(l.recommendedQtyKg, l.quantityKg)) {
       problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`);
     }
+    if (deliveryDateNeedsRemarks(l)) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): the delivery date differs from the forecast's. Remarks are required (Requisition row 29).`);
+    }
+    if (l.itemException) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`);
+    }
+    if (l.feedType === 'BULK' && args.bulkMultipleKg && isOffBulkMultiple(l.quantityKg, args.bulkMultipleKg)) {
+      problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(args.bulkMultipleKg)} kg bulk order multiple. Remarks are required (checkpoint 16).`);
+    }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
     problems.push(`The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`);
   }
   return problems;
+}
+
+/**
+ * A1 (10 Oct), checkpoint 16: "Any exception requires approved reason" — a
+ * bulk quantity that is not a whole number of compartments (Req. row 28, the
+ * bulk order multiple). Same 1e-6 tolerance roundOrderKg uses.
+ */
+export function isOffBulkMultiple(quantityKg: number, bulkMultipleKg: number): boolean {
+  if (!(bulkMultipleKg > 0)) return false;
+  const compartments = Math.round((quantityKg / bulkMultipleKg) * 1e6) / 1e6;
+  return Math.abs(compartments - Math.round(compartments)) > 1e-6;
+}
+
+/** Requisition §1 row 34, highest first. */
+export const PRIORITY_ORDER: readonly Priority[] = ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'];
+const PRIORITY_WORDS: Record<Priority, string> = { CRITICAL_FIRST_PRIORITY: 'Critical first priority', CRITICAL: 'Critical', WARNING: 'Warning', INFO: 'Info' };
+
+/** A rerun may raise a stored priority but never lower it: the farm's escalation (row 34) outranks a recomputed one. */
+export function keepHigherPriority(stored: string | null | undefined, computed: Priority): Priority {
+  const s = PRIORITY_ORDER.indexOf(stored as Priority);
+  if (s < 0) return computed;
+  return s < PRIORITY_ORDER.indexOf(computed) ? (stored as Priority) : computed;
+}
+
+/** The levels the farm may choose now: the saved one and every higher one, highest first (what priorityChangeProblem allows). */
+export function priorityEscalations(current: string | null | undefined): Priority[] {
+  const at = PRIORITY_ORDER.indexOf(current as Priority);
+  return at < 0 ? [] : PRIORITY_ORDER.slice(0, at + 1) as Priority[];
+}
+
+/**
+ * A1 (10 Oct), Requisition §1 row 34 "Yes - can escalate": the farm may raise
+ * the priority the forecast set, never lower it. null when the change is allowed.
+ */
+export function priorityChangeProblem(current: string | null | undefined, requested: Priority): string | null {
+  const from = PRIORITY_ORDER.indexOf(current as Priority);
+  if (from < 0) return null;
+  if (PRIORITY_ORDER.indexOf(requested) <= from) return null;
+  return `Priority can only be escalated (Requisition row 34): ${PRIORITY_WORDS[current as Priority]} cannot be lowered to ${PRIORITY_WORDS[requested]}.`;
+}
+
+/**
+ * A1 (10 Oct): the list's status filter. RELEASED lives in document_status and
+ * the transfer states in fulfilment_status; everything else (the approval
+ * workflow, IN_CONSOLIDATION) in requisition.status.
+ */
+const FULFILMENT_FILTERS = new Set(['TRANSFER_OPEN', 'PARTIALLY_SHIPPED', 'SHIPPED', 'PARTIALLY_RECEIVED', 'RECEIVED']);
+export function feedListStatusFilter(status: string): { column: 'status' | 'document_status' | 'fulfilment_status'; value: string } {
+  if (status === 'RELEASED') return { column: 'document_status', value: status };
+  if (FULFILMENT_FILTERS.has(status)) return { column: 'fulfilment_status', value: status };
+  return { column: 'status', value: status };
+}
+
+/**
+ * Requisition row 13 and checkpoint 4, when the farm changes a line's feed
+ * item or destination silo. An item the line's lifecycle row does not require
+ * is an exception and needs a reason; a silo still holding another feed with
+ * stock cannot take this one (one feed per silo — choose a silo holding this
+ * item or an empty one). A store holds many items, so only a silo is tested.
+ * A line with no lifecycle requirement (a manual line) has nothing to differ from.
+ */
+export const ITEM_EXCEPTION_PROBLEM = 'Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).';
+export const SILO_HOLDS_OTHER_PROBLEM = 'Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).';
+
+export function lineChangeProblems(line: {
+  requiredItemId: string | null;
+  itemId: string;
+  exceptionReason: string | null;
+  destination: { locationType: 'SILO' | 'STORE'; heldItemId: string | null; heldBalanceKg: number };
+}): string[] {
+  const problems: string[] = [];
+  if (line.requiredItemId !== null && line.itemId !== line.requiredItemId && !line.exceptionReason?.trim()) {
+    problems.push(ITEM_EXCEPTION_PROBLEM);
+  }
+  const d = line.destination;
+  if (d.locationType === 'SILO' && d.heldItemId !== null && d.heldItemId !== line.itemId && d.heldBalanceKg > 1e-6) {
+    problems.push(SILO_HOLDS_OTHER_PROBLEM);
+  }
+  return problems;
+}
+
+/**
+ * The exception reason lives in the line's own `description` column (Task 9:
+ * no new column), prefixed so it is never mistaken for an item name.
+ */
+export const EXCEPTION_PREFIX = 'Exception: ';
+export function exceptionReasonOf(description: string | null | undefined): string | null {
+  return description?.startsWith(EXCEPTION_PREFIX) ? description.slice(EXCEPTION_PREFIX.length) : null;
+}
+
+/**
+ * Spec §6a (Rishi, 3 Oct): "A manual feed line's item is checked against the
+ * lifecycle-required item for that silo's sheds; a different item needs a
+ * recorded exception reason (Req. row 13)." The required items at a
+ * destination are those the forecast demands there in the draft window (the
+ * engine's sources). Returns the line's own item when it is one of them, a
+ * demanded item when it is not (so lineChangeProblems reports the exception),
+ * and null when nothing is demanded there.
+ */
+export function requiredItemForManualLine(sources: Array<{ locationId: string; itemId: string }>, destinationId: string, itemId: string): string | null {
+  const here = [...new Set(sources.filter((s) => s.locationId === destinationId).map((s) => s.itemId))].sort();
+  if (!here.length) return null;
+  return here.includes(itemId) ? itemId : here[0];
+}
+
+/** Requisition §1 row 17 "Breed Lifecycle Row Reference": e.g. `L-LINE WEANER days 25–27`. */
+const CALC_UNIT_WORD: Record<string, string> = { DAY: 'days', WEEK: 'weeks', MONTH: 'months' };
+export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: string | null; period_from?: number | null; period_to?: number | null; calc_unit?: string | null }): string | null {
+  if (!r.breed_code && !r.stage_code) return null;
+  const unit = r.calc_unit ? (CALC_UNIT_WORD[r.calc_unit] ?? r.calc_unit.toLowerCase()) : 'days';
+  const range = r.period_from != null && r.period_to != null ? ` ${unit} ${r.period_from}–${r.period_to}` : '';
+  return `${[r.breed_code, r.stage_code].filter(Boolean).join(' ')}${range}`;
+}
+
+export interface LineBreakdownRow {
+  /** The genuine batch_header PK — never the engine's composite aggregation key (D1, 3 Oct). */
+  batchId: BatchPk;
+  /**
+   * The stage group's identity stage (DailyForecastRow.groupStageId) — NOT the
+   * stage of the first day with demand, which a group projected into another
+   * group's stage would share with it, duplicating (line, batch, stage, shed)
+   * on uq_requisition_line_batch (Task 9b fix round 1).
+   */
+  stageId: string | null;
+  batchNo: string;
+  shedId: string | null;
+  shedCode: string;
+  heads: number;
+  feedRateKg: number;
+  lifecycleRefId: string | null;
+  demandKg: number;
+  firstDemandDate: string;
+}
+
+/**
+ * B1 (Rishi, 3 Oct): which batches in which houses each silo/item order line
+ * is for — Engine Step 9 "draft lines per farm, batch, house, destination
+ * silo, item and required date"; MOM Feed and Logistic 21 Aug 2026 "Per
+ * Batch, Per House, and Per Silo". Grouped from the forecast's daily rows by
+ * lineKey(destination, item), then by (batch, house), demand summed over the
+ * planning window. Heads, rate and lifecycle row are the first day with
+ * demand's — the figures the order was raised on. A row with no destination
+ * (nothing feeds it), outside the window, or with no demand adds nothing.
+ */
+export function buildLineBreakdown(daily: Pick<DailyForecastRow,
+  'date' | 'batchId' | 'realBatchId' | 'groupStageId' | 'batchNo' | 'shedId' | 'shedCode' | 'itemId' | 'destinationLocationId' | 'heads' | 'feedRateKg' | 'demandKg' | 'lifecycleId'>[],
+from: string, to: string): Map<string, LineBreakdownRow[]> {
+  const byLine = new Map<string, Map<string, LineBreakdownRow>>();
+  const ordered = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  for (const d of ordered) {
+    if (!d.destinationLocationId || d.date < from || d.date > to || !(d.demandKg > 0)) continue;
+    const key = lineKey(d.destinationLocationId, d.itemId);
+    const rows = byLine.get(key) ?? new Map<string, LineBreakdownRow>();
+    byLine.set(key, rows);
+    const shedId = d.shedId ?? null;
+    // Grouped on the engine's own composite key (d.batchId): it already keeps an ANIMAL_WISE/REGISTERED
+    // batch's stage groups apart (buildInputBatches), so two stages of the same batch in the same shed
+    // produce two breakdown rows here. What gets PERSISTED below is `d.realBatchId`/`d.groupStageId` — the
+    // genuine PK and the group's identity stage, one-to-one with this key — never the key itself (D1, 3 Oct).
+    // Not the day's own stage: a group projected into another group's stage would then share its
+    // (batch, stage, shed) and the insert would fail on uq_requisition_line_batch (9b fix round 1).
+    const rowKey = `${d.batchId}|${shedId ?? ''}`;
+    const prior = rows.get(rowKey);
+    if (prior) {
+      prior.demandKg = round3(prior.demandKg + d.demandKg);
+      continue;
+    }
+    rows.set(rowKey, {
+      batchId: d.realBatchId, stageId: d.groupStageId || null, batchNo: d.batchNo, shedId, shedCode: d.shedCode, heads: d.heads, feedRateKg: d.feedRateKg,
+      lifecycleRefId: d.lifecycleId || null, demandKg: round3(d.demandKg), firstDemandDate: d.date,
+    });
+  }
+  const out = new Map<string, LineBreakdownRow[]>();
+  for (const [key, rows] of byLine) {
+    out.set(key, [...rows.values()].sort((a, b) => a.batchNo.localeCompare(b.batchNo) || a.shedCode.localeCompare(b.shedCode)));
+  }
+  return out;
 }

@@ -9,7 +9,6 @@ import { CreateCompanyDto, UpdateCompanyDto, QueryCompanyDto } from './dto/compa
 import * as crypto from 'crypto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { seedDefaultCompanyRoles } from '../role/default-role-seed';
-import { copyCompanyMasterTemplates } from './copy-master-templates';
 import { isTenantLevelUserType } from '../../../common/user-type-hierarchy';
 
 /** Seeded in bootstrap-database.ts. */
@@ -178,8 +177,9 @@ export class CompanyService {
         is_active: true,
       });
 
+      // A new company starts with blank master data (client ruling, 12 Oct):
+      // copyCompanyMasterTemplates is deliberately no longer called here.
       // Seed the four starter roles (SUPER_ADMIN/MANAGER/ACCOUNTANT/OPERATOR)
-      await copyCompanyMasterTemplates(tx, tenantId, companyId);
       const { superAdminRoleId: roleId } = await seedDefaultCompanyRoles(tx, companyId);
 
       if (userPayload?.userId) {

@@ -6,22 +6,18 @@ import { NumberSeriesService } from '../number-series/number-series.service';
 import { StageService } from '../../production/stage/stage.service';
 
 /**
- * The whole new-tenant defect in one chain.
+ * The new-tenant chain after the 12 Oct ruling: a company starts BLANK.
  *
  * 1. tenant signup seeds tenant-template Number Series rows (STAGE included)
- *    and a placeholder company — simulated here as the store's initial state,
- *    exactly what TenantService.signup writes;
- * 2. the Setup Wizard's step 1 claims that placeholder in place — the branch
- *    that used to skip copyCompanyMasterTemplates;
- * 3. the company-scoped STAGE series must then exist, with its own counter
- *    starting at zero independently of the tenant template's;
- * 4. Stage preview and create at company scope must resolve, lock and
- *    generate against that company row — not the tenant template, and not
- *    "no series configured".
+ *    and a placeholder company — simulated as the store's initial state;
+ * 2. the Setup Wizard's step 1 claims that placeholder in place and copies
+ *    nothing, so the company owns no number series until it creates one;
+ * 3. Stage preview/create at company scope never falls back to the tenant
+ *    template: without a company series the code is entered by hand, and once
+ *    the company has its own series it counts independently of the template.
  *
- * Everything between is the real code: SetupWizardService, the real
- * copyCompanyMasterTemplates planning and writes, NumberSeriesService and
- * StageService, over one in-memory store. Conditions are evaluated by
+ * Everything between is the real code: SetupWizardService, NumberSeriesService
+ * and StageService, over one in-memory store. Conditions are evaluated by
  * rendering them with sqlToQuery (the same trick master-data-scope.spec.ts
  * uses), so the scope clauses under test are the real ones, not stubs.
  */
@@ -180,7 +176,7 @@ describe('new tenant -> wizard claims placeholder -> Stage preview/create', () =
     industry_type: 'Piggery',
   } as any;
 
-  it('snapshots the STAGE series on claim and generates from an independent company counter', async () => {
+  it('copies no number series on claim; a series the company creates counts independently', async () => {
     const store: Record<string, Row[]> = {
       no_series: [tenantStageTemplate()],
       company_master: [placeholderCompany()],
@@ -196,30 +192,23 @@ describe('new tenant -> wizard claims placeholder -> Stage preview/create', () =
     const saved = await wizard.saveStep1Profile(profile);
     expect(saved.company_code).toBe('TRIPLEC');
 
-    // The company now owns its own STAGE series...
-    const companyStage = store.no_series.find(
-      (row) => row.code === 'STAGE' && row.company_id === PLACEHOLDER_ID,
-    );
-    expect(companyStage).toBeDefined();
-    // ...with a counter that starts independently of the tenant template's 99.
-    expect(companyStage!.current_seq).toBe(0);
-    expect(companyStage!.last_no_used).toBeNull();
-    expect(store.no_series.find((row) => row.id === 'tpl-stage')!.current_seq).toBe(99);
-    expect(store.no_series.filter((row) => row.code === 'STAGE')).toHaveLength(2);
+    // Blank company: nothing was copied from the tenant template.
+    expect(store.no_series).toHaveLength(1);
+    expect(store.no_series.some((row) => row.company_id === PLACEHOLDER_ID)).toBe(false);
+    await expect(numberSeries.previewCode({ master: 'STAGE' } as any, TENANT, PLACEHOLDER_ID))
+      .resolves.toMatchObject({ generated: false, allowManual: true });
 
-    // Preview at company scope resolves the company row, not the template.
+    // The company then creates its own STAGE series (as a user would).
+    const companyStage = tenantStageTemplate({ id: 'co-stage', company_id: PLACEHOLDER_ID, current_seq: 0, last_no_used: null });
+    store.no_series.push(companyStage);
+
     const preview = await numberSeries.previewCode({ master: 'STAGE' } as any, TENANT, PLACEHOLDER_ID);
     expect(preview).toMatchObject({ generated: true, seriesCode: 'STAGE', preview: 'STG-001' });
-
-    // Locking takes the company row — exact scope, the same row generation uses.
     const locked = await numberSeries.lockSeries('STAGE', TENANT, PLACEHOLDER_ID);
-    expect(locked.id).not.toBe('tpl-stage');
-    expect(locked.company_id).toBe(PLACEHOLDER_ID);
+    expect(locked.id).toBe('co-stage');
 
-    // Generation advances only the company counter; the template stays at 99.
     await expect(numberSeries.generateNext('STAGE', TENANT, PLACEHOLDER_ID)).resolves.toBe('STG-001');
-    expect(companyStage!.current_seq).toBe(1);
-    expect(companyStage!.last_no_used).toBe('STG-001');
+    expect(companyStage.current_seq).toBe(1);
     expect(store.no_series.find((row) => row.id === 'tpl-stage')!.current_seq).toBe(99);
   });
 
@@ -237,7 +226,7 @@ describe('new tenant -> wizard claims placeholder -> Stage preview/create', () =
     await expect(numberSeries.lockSeries('STAGE', TENANT, PLACEHOLDER_ID)).rejects.toThrow(/not found/);
   });
 
-  it('Stage create through the wizard-onboarded company consumes the company counter', async () => {
+  it('Stage create in a blank wizard-onboarded company asks for a code, then consumes its own series', async () => {
     const store: Record<string, Row[]> = {
       no_series: [tenantStageTemplate()],
       company_master: [placeholderCompany()],
@@ -258,8 +247,7 @@ describe('new tenant -> wizard claims placeholder -> Stage preview/create', () =
       numberSeries,
       { resolve: jest.fn().mockResolvedValue({ nob_id: 'nob-1', lob_id: 'lob-1' }) } as any,
     );
-
-    const created = await stage.create({
+    const dto = {
       stage_name: 'Grower',
       stage_category: 'PRODUCTIVE',
       stage_sequence: 13,
@@ -267,13 +255,17 @@ describe('new tenant -> wizard claims placeholder -> Stage preview/create', () =
       auto_move_on_day: 42,
       typical_duration_days: 42,
       company_id: PLACEHOLDER_ID,
-    } as any, TENANT);
+    } as any;
+
+    // Blank company: the tenant template is not used, so a code must be typed.
+    await expect(stage.create(dto, TENANT)).rejects.toThrow(/no number series is configured/);
+
+    const companyStage = tenantStageTemplate({ id: 'co-stage', company_id: PLACEHOLDER_ID, current_seq: 0, last_no_used: null });
+    store.no_series.push(companyStage);
+    const created = await stage.create(dto, TENANT);
 
     expect(created.stage_code).toBe('STG-001');
-    const companyStage = store.no_series.find(
-      (row) => row.code === 'STAGE' && row.company_id === PLACEHOLDER_ID,
-    );
-    expect(companyStage!.current_seq).toBe(1);
+    expect(companyStage.current_seq).toBe(1);
     // The tenant template's counter never moved.
     expect(store.no_series.find((row) => row.id === 'tpl-stage')!.current_seq).toBe(99);
   });

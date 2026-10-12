@@ -2,18 +2,21 @@
  * Silo and store stock for the forecast, shaped from ledger sums (Plan R,
  * spec D19; open questions Q2 and Q6). Pure — the service reads the rows
  * (InventoryLedgerService.getFeedStockAsOf for posted stock, its own query
- * for DRAFT transfers) and this decides what they mean:
+ * for the outstanding part of open transfers) and this decides what they mean:
  * - A silo holds one item (D8). Its item is the one with the largest positive
  *   opening balance; an empty silo takes the item of the first transfer or
  *   receipt booked into it, so the shed that will eat it finds its source.
- * - Incoming is every posted non-feeding movement and every DRAFT transfer
- *   from the stock date on, signed. A silo's movements of another item are
+ * - Incoming is every posted non-feeding movement and the outstanding part of
+ *   every open transfer (outstandingTransferQty) from the stock date on, signed. A silo's movements of another item are
  *   dropped — it can only take a different item once empty (D8), and that is
  *   the changeover the requisition flags, not stock the forecast can use.
- * - An opening below zero is carried as it is (follow-up ruling): it is ledger
- *   truth — feed posted before the item's only receipt — and the engine nets
- *   it against that day's inflow before clamping at empty. Zeroing it here
- *   would show a receipt of 40,000 over 4,200 already fed as 40,000 on hand.
+ * - An opening below zero is passed on as it is: it is ledger truth (feed posted
+ *   before the item's receipt) and the engine needs the raw figure to raise a note.
+ *   The engine — not this file — shows and carries it as 0 (Rishi, 12 Oct: negative
+ *   stock is impossible), which supersedes the earlier follow-up ruling that netted
+ *   it against that day's receipt.
+ * - Movements keep their sign here. The engine counts only the positive ones as
+ *   Confirmed Receipts and reports the negative ones as other outflows.
  * - Feed is counted in KG only. A silo holding anything in another unit, or a
  *   store holding a *feed* item in one, is refused, as Plan A did: adding bags
  *   to kilograms would move every date the report shows.
@@ -24,8 +27,22 @@ import type { ForecastInput, IncomingFeed } from './feed-forecast.engine';
 
 const EPS = 0.0001;
 
+/**
+ * The part of a transfer line the ledger does not hold yet (Part E Task 4b).
+ * A shipment has already written −shipped at the source and a receipt
+ * +received at the destination, so what is still to come is:
+ *   pendingOut (source)      = ordered − shipped
+ *   pendingIn  (destination) = (shipped − received) + (ordered − shipped) = ordered − received
+ * Ordered 10, shipped 6, received 4 → pendingOut 4, pendingIn 6. Clamped at 0:
+ * the event bounds forbid shipping or receiving past the order, but a
+ * negative here would read as stock appearing from nowhere.
+ */
+export function outstandingTransferQty(ordered: number, shipped: number, received: number): { pendingOut: number; pendingIn: number } {
+  return { pendingOut: Math.max(0, ordered - shipped), pendingIn: Math.max(0, ordered - received) };
+}
+
 export function stockAsOf(args: {
-  silos: { siloId: string; siloCode: string; lowLevelKg: number | null; reorderDays?: number | null }[];
+  silos: { siloId: string; siloCode: string; lowLevelKg: number | null }[];
   store: { storeId: string; storeCode: string } | null;
   feedItemIds: Set<string>;
   opening: FeedStockRow[];
@@ -51,7 +68,10 @@ export function stockAsOf(args: {
     const k = `${r.warehouse_id}|${r.item_id}`;
     openingKg.set(k, (openingKg.get(k) ?? 0) + r.qty);
   }
-  const flows = [...args.movements, ...args.drafts]
+  const flows = [
+    ...args.movements.map((movement) => ({ ...movement, kind: 'CONFIRMED_LEDGER' as const })),
+    ...args.drafts.map((movement) => ({ ...movement, kind: 'OPEN_TRANSFER' as const })),
+  ]
     .filter((r) => r.uom === 'KG' && Math.abs(r.qty) >= EPS)
     .sort((a, b) => (a.posting_date < b.posting_date ? -1 : a.posting_date > b.posting_date ? 1 : 0));
 
@@ -65,15 +85,12 @@ export function stockAsOf(args: {
     const itemId = held[0]?.itemId ?? firstIn?.item_id ?? null;
     // The resident's own opening, negative included — for an item first booked in, what was fed of it before.
     const balanceKg = itemId ? openingKg.get(`${s.siloId}|${itemId}`) ?? 0 : 0;
-    // D38: the refill buffer is this silo's own reorder days; undefined stays
-    // undefined so the engine's standard 2 applies (a store has none at all).
     return {
       siloId: s.siloId,
       siloCode: s.siloCode,
       itemId,
       balanceKg,
       lowLevelKg: s.lowLevelKg,
-      ...(s.reorderDays !== undefined ? { reorderDays: s.reorderDays } : {}),
     };
   });
   const residentOf = new Map(silos.map((s) => [s.siloId, s.itemId]));
@@ -95,7 +112,17 @@ export function stockAsOf(args: {
     } else if (!isStoreFeed(f)) {
       continue;
     }
-    incoming.push({ locationId: f.warehouse_id, itemId: f.item_id, date: f.posting_date, kg: f.qty });
+    incoming.push({
+      locationId: f.warehouse_id,
+      itemId: f.item_id,
+      date: f.expected_date ?? f.posting_date,
+      kg: f.qty,
+      kind: f.kind,
+      ...(f.reference_id ? { referenceId: f.reference_id } : {}),
+      ...(f.reference_no ? { referenceNo: f.reference_no } : {}),
+      ...(f.related_reference_no ? { relatedReferenceNo: f.related_reference_no } : {}),
+      ...(f.expected_date ? { expectedDate: f.expected_date } : {}),
+    });
   }
   return { silos, store, incoming };
 }

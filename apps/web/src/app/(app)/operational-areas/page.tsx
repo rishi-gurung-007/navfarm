@@ -33,7 +33,6 @@ interface OperationalArea {
   lob_id: string;
   farm_id?: string;
   description?: string;
-  preseed_source: string;
   is_active: boolean;
   created_at?: string;
 }
@@ -55,7 +54,6 @@ export default function OperationalAreasPage() {
     nob_id: "",
     lob_id: "",
     description: "",
-    preseed_source: "TENANT", // TENANT, COMPANY, NONE
   });
 
   const activeCompanyId = getActiveCompanyId();
@@ -257,12 +255,6 @@ export default function OperationalAreasPage() {
                     style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)", color: "var(--text-secondary)" }}
                   >
                     <div className="flex justify-between">
-                      <span style={{ color: "var(--text-muted)" }}>{t("oaMasterDataSource")}</span>
-                      <span className="font-medium" style={{ color: "var(--text-primary)" }}>
-                        {area.preseed_source === "COMPANY" ? "Company Master Data" : "Tenant Master Templates"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>{t("oaOperationalStatus")}</span>
                       <span className="font-medium" style={{ color: "var(--success)" }}>{t("oaActiveUnit")}</span>
                     </div>
@@ -357,31 +349,6 @@ export default function OperationalAreasPage() {
                       </option>
                     ))}
                   </select>
-                </div>
-              </div>
-
-              {/* Pre-Seeding Source Option */}
-              <div>
-                <label className="nf-text-label mb-1.5 block text-(--text-muted)">{t("oaPreseedFromRequired")}</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: "TENANT", label: t("oaSrcTenantMaster"), desc: "Global catalog templates" },
-                    { id: "COMPANY", label: t("oaSrcCompanyMaster"), desc: "Existing company items" },
-                    { id: "NONE", label: t("oaSrcBlankSetup"), desc: "No pre-seeding" },
-                  ].map((src) => (
-                    <div
-                      key={src.id}
-                      onClick={() => setForm({ ...form, preseed_source: src.id })}
-                      className={`cursor-pointer rounded-[var(--radius-sm)] border p-2.5 text-left transition-all ${
-                        form.preseed_source === src.id
-                          ? "border-(--accent) bg-(--accent-muted) ring-1 ring-(--accent)/30"
-                          : "border-(--border) bg-(--surface-raised) hover:bg-(--surface)"
-                      }`}
-                    >
-                      <p className="text-xs font-bold text-(--text-primary)">{src.label}</p>
-                      <p className="text-[10px] text-(--text-muted) mt-0.5">{src.desc}</p>
-                    </div>
-                  ))}
                 </div>
               </div>
 

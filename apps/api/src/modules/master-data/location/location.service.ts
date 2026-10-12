@@ -1,6 +1,8 @@
+import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { assertDepartmentIdentity } from '../../../common/department-identity';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
 import { eq, ne, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
@@ -13,6 +15,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { generateCompositeCode } from '../../system/number-series/composite-code.util';
 import { segmentFields } from '../../system/number-series/code-format.util';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import { assertSiloLevels } from '../../inventory/silo-feed/silo-levels';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
@@ -22,7 +25,7 @@ import { assertCodeUnchanged } from '../../../common/master-code';
  * twice — a new type that inventory should hold (a tenant's own BINS, say)
  * joins this list once and both the tree and the /warehouse projection agree.
  */
-export const WAREHOUSE_LOCATION_TYPES = ['STORE', 'SILO'];
+export const WAREHOUSE_LOCATION_TYPES = ['STORE', 'SILO', 'BIN'];
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -111,6 +114,22 @@ export function siloCapacityForDisplay(
   return (uom?.toUpperCase() === 'TON' ? kg / 1000 : kg).toString();
 }
 
+/** MILL/BIN form capacities are always metric tonnes; storage is always KG. */
+export function capacityTonToKg(value: number | string | null | undefined): string | null {
+  if (value == null || value === '') return null;
+  const ton = Number(value);
+  if (!Number.isFinite(ton)) return null;
+  return (ton * 1000).toString();
+}
+
+/** Inverse of capacityTonToKg for an edit form; prevents untouched saves multiplying twice. */
+export function capacityKgForTonDisplay(value: number | string | null | undefined): string | null {
+  if (value == null || value === '') return null;
+  const kg = Number(value);
+  if (!Number.isFinite(kg)) return null;
+  return (kg / 1000).toString();
+}
+
 /** One silo on a shed's record view (checklist 1a). Read-only. */
 export interface AttachedSilo {
   location_id: string;
@@ -127,7 +146,33 @@ export class LocationService {
     private readonly auditService: AuditLogService,
     private readonly numberSeriesService: NumberSeriesService,
     private readonly siloFeedService: SiloFeedService,
+    // W4G2: the forecast's own silo facts (Master Setup rows 13-20); absent in unit tests and never fatal.
+    @Optional() private readonly forecast?: FeedForecastService,
   ) {}
+
+  /** The Cost Centre field lives on a FARM or MILL only (decisions, 11 Oct). */
+  private assertCostCentreOwnerType(locationType: string | null | undefined) {
+    if (locationType !== 'FARM' && locationType !== 'MILL') {
+      throw new BadRequestException('Cost Centre can be set on a FARM or MILL only.');
+    }
+  }
+
+  /** An active, non-deleted Cost Center Master row of exactly this company. */
+  private async assertCostCentreOfCompany(costCenterId: string, tenantId: string, companyId: string | null | undefined) {
+    const [row] = await this.db
+      .select({
+        tenant_id: schema.costCenterMaster.tenant_id,
+        company_id: schema.costCenterMaster.company_id,
+        is_active: schema.costCenterMaster.is_active,
+        deleted_at: schema.costCenterMaster.deleted_at,
+      })
+      .from(schema.costCenterMaster)
+      .where(eq(schema.costCenterMaster.cost_center_id, costCenterId))
+      .limit(1);
+    if (!row || row.tenant_id !== tenantId || row.is_active === false || row.deleted_at || !companyId || row.company_id !== companyId) {
+      throw new BadRequestException('Cost Centre must be an active cost center of this company.');
+    }
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -297,9 +342,10 @@ export class LocationService {
     // executor, so the series row's SELECT ... FOR UPDATE (or, for a child
     // location, the sibling count it guards) stays locked until the insert
     // below commits — two concurrent creates cannot produce the same code.
+    // A typed code is validated as a LOCATION code. seriesCode is a series row's
+    // code (it can be NS-FARM), not a master name — passing it failed "Invalid
+    // master code." on the test server (11 Oct).
     const locationCode = dto.location_code?.trim()
-      // manualCode() takes the MASTER ('LOCATION'), not the series code: the series
-      // found above may be named anything (NS-LOCATION), and that is not a master.
       ? await this.numberSeriesService.manualCode('LOCATION', dto.location_code, tenantId, companyId, typeCode)
       : await this.generateLocationCode(seriesCode, locationType, tenantId, companyId, parent, tx);
 
@@ -351,20 +397,24 @@ export class LocationService {
       silo_reorder_days: dto.silo_reorder_days ?? null,
       low_level_kg: dto.storage_type === 'SILO' && dto.low_level_kg != null ? String(dto.low_level_kg) : null,
       high_level_kg: dto.storage_type === 'SILO' && dto.high_level_kg != null ? String(dto.high_level_kg) : null,
-      ...(dto.feed_bulk_multiple_kg !== undefined ? { feed_bulk_multiple_kg: dto.feed_bulk_multiple_kg } : {}),
-      ...(dto.feed_bag_size_kg !== undefined ? { feed_bag_size_kg: dto.feed_bag_size_kg } : {}),
-      ...(dto.feed_truck_target_kg !== undefined ? { feed_truck_target_kg: dto.feed_truck_target_kg } : {}),
-      ...(dto.feed_production_weekday !== undefined ? { feed_production_weekday: dto.feed_production_weekday } : {}),
+      mill_daily_capacity_kg: capacityTonToKg(dto.mill_daily_capacity_ton),
+      mill_hourly_capacity_kg: capacityTonToKg(dto.mill_hourly_capacity_ton),
+      mill_bulk_daily_allocation_kg: capacityTonToKg(dto.mill_bulk_daily_allocation_ton),
+      mill_bagged_daily_allocation_kg: capacityTonToKg(dto.mill_bagged_daily_allocation_ton),
+      bin_capacity_kg: capacityTonToKg(dto.bin_capacity_ton),
+      bin_feed_type: dto.bin_feed_type ?? null,
       downtime_days_required: dto.downtime_days_required ?? null,
       storage_name: dto.storage_name ?? null,
-      feed_in_bags: null,
-      // Left out entirely, not written as null, when the caller sends nothing
-      // — the column defaults to 2 and 0 respectively, and a create that never
-      // mentioned feed timing should get that default rather than lose it.
-      ...(dto.feed_refill_buffer_days !== undefined ? { feed_refill_buffer_days: dto.feed_refill_buffer_days } : {}),
-      ...(dto.feed_lead_time_days !== undefined ? { feed_lead_time_days: dto.feed_lead_time_days } : {}),
+      department_id: dto.department_id || null,
+      cost_center_id: dto.cost_center_id || null,
+      // Feed Type (Requisition r15): only set when the silo form sends it; unset stays null, which readers treat as BULK.
+      feed_in_bags: typeCode === 'SILO' && dto.silo_feed_type ? dto.silo_feed_type === 'BAGGED' : null,
+      // The feed-era farm columns (refill buffer, lead time, bulk multiple, bag
+      // size, truck target, production weekday) are no longer written here
+      // (TDD Master Setup §1-3); they keep their column defaults on create.
       is_active: true,
-      status: 'ACTIVE',
+      // Checkpoint 1: a silo with no shed linked is saved INACTIVE.
+      status: typeCode === 'SILO' && !(dto.attached_sheds?.length) ? 'INACTIVE' : 'ACTIVE',
       extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
@@ -380,6 +430,7 @@ export class LocationService {
         siloId: locationId,
         farmId: location.farm_id,
         shedIds: dto.attached_sheds,
+        dates: dto.attached_shed_dates,
         tenantId,
         companyId,
         userId: userPayload?.userId || null,
@@ -416,9 +467,21 @@ export class LocationService {
       tenantId: string;
       companyId: string | null;
       userId?: string | null;
+      /** Master r8: shedId -> the dates this silo serves it. A shed with no entry keeps the dates it has. */
+      dates?: Record<string, { effective_from?: string | null; effective_to?: string | null }>;
     },
   ) {
     const { siloId, farmId, tenantId, companyId, userId } = params;
+    const dateOf = (shedId: string) => {
+      const d = params.dates?.[shedId];
+      return d ? { effective_from: d.effective_from || null, effective_to: d.effective_to || null } : null;
+    };
+    for (const shedId of new Set(params.shedIds)) {
+      const d = dateOf(shedId);
+      if (d?.effective_from && d.effective_to && d.effective_to < d.effective_from) {
+        throw new BadRequestException('An attached shed\'s Effective To date cannot be before its Effective From date.');
+      }
+    }
     // The same shed twice in one payload is one attachment, not two.
     const shedIds = [...new Set(params.shedIds)];
 
@@ -495,8 +558,18 @@ export class LocationService {
           company_id: companyId,
           silo_id: siloId,
           shed_id: shedId,
+          ...(dateOf(shedId) ?? {}),
           created_by: userId || null,
         })));
+      }
+      for (const shedId of shedIds.filter((id) => existingShedIds.has(id))) {
+        const d = dateOf(shedId);
+        if (!d) continue;
+        await tx.update(schema.siloShedLink).set(d).where(and(
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          eq(schema.siloShedLink.silo_id, siloId),
+          eq(schema.siloShedLink.shed_id, shedId),
+        ));
       }
     }
   }
@@ -519,6 +592,7 @@ export class LocationService {
       .where(and(
         eq(schema.siloShedLink.tenant_id, tenantId),
         eq(schema.siloShedLink.shed_id, shedId),
+        siloShedLinkEffectiveOn(todayIso()),
         isNull(schema.locationMaster.deleted_at),
       ));
     if (!rows.length) return [];
@@ -551,12 +625,14 @@ export class LocationService {
     return rows.map((row) => row.shed_id);
   }
 
-  private async attachedSheds(siloId: string, tenantId: string): Promise<Array<{ location_id: string; location_code: string; location_name: string }>> {
+  private async attachedSheds(siloId: string, tenantId: string): Promise<Array<{ location_id: string; location_code: string; location_name: string; effective_from: string | null; effective_to: string | null }>> {
     const rows = await this.db
       .select({
         location_id: schema.locationMaster.location_id,
         location_code: schema.locationMaster.location_code,
         location_name: schema.locationMaster.location_name,
+        effective_from: schema.siloShedLink.effective_from,
+        effective_to: schema.siloShedLink.effective_to,
       })
       .from(schema.siloShedLink)
       .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.shed_id))
@@ -584,9 +660,15 @@ export class LocationService {
     const shaped = {
       ...row,
       silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+      mill_daily_capacity_ton: capacityKgForTonDisplay(row.mill_daily_capacity_kg),
+      mill_hourly_capacity_ton: capacityKgForTonDisplay(row.mill_hourly_capacity_kg),
+      mill_bulk_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bulk_daily_allocation_kg),
+      mill_bagged_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bagged_daily_allocation_kg),
+      bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
     } as T & {
+      silo_feed_type?: 'BULK' | 'BAGGED';
       attached_sheds?: string[];
-      attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string }>;
+      attached_shed_details?: Array<{ location_id: string; location_code: string; location_name: string; effective_from?: string | null; effective_to?: string | null }>;
       attached_silos?: AttachedSilo[];
       current_feed_item_code?: string | null;
       current_feed_item_name?: string | null;
@@ -599,6 +681,7 @@ export class LocationService {
       shaped.attached_silos = await this.attachedSilos(row.location_id, row.company_id, tenantId);
     }
     if (row.location_type === 'SILO') {
+      shaped.silo_feed_type = (row as any).feed_in_bags === true ? 'BAGGED' : 'BULK';
       shaped.attached_sheds = await this.attachedShedIds(row.location_id, tenantId);
       shaped.attached_shed_details = await this.attachedSheds(row.location_id, tenantId);
       // company_id is required to create a SILO (create() enforces it), so a
@@ -609,8 +692,82 @@ export class LocationService {
         : null;
       shaped.current_feed_item_code = current?.item_code ?? null;
       shaped.current_feed_item_name = current?.item_description ?? null;
+      Object.assign(shaped, await this.siloFeedFacts(row as any, current ?? null, tenantId));
     }
     return shaped;
+  }
+
+  /**
+   * Checkpoint 1 (W4G2): a SILO is made ACTIVE only with at least one shed
+   * linked through silo_shed_link. `shedCount` is the set the silo will have
+   * after this save (the posted list, or what is linked now).
+   */
+  private assertSiloHasShed(shedCount: number) {
+    if (shedCount < 1) {
+      throw new ConflictException('A silo cannot be ACTIVE until at least one shed is linked to it. Attach a shed to the silo first.');
+    }
+  }
+
+  /**
+   * Master Setup rows 13-20, read-only on the SILO record. Every figure is the
+   * forecast's own silo status (ledger balance, latest posted stock count, last
+   * posted receipt, next diet date) — no second balance formula. A silo the
+   * forecast does not plan (INACTIVE, no settings) falls back to what the
+   * ledger holds now; anything still unknown stays null and the screen says
+   * "Not available".
+   */
+  private async siloFeedFacts(
+    row: { location_id: string; farm_id?: string | null; parent_location_id?: string | null; company_id?: string | null },
+    current: { item_id?: string; item_code: string; item_description: string | null; on_hand_qty: number; uoms: string[] } | null,
+    tenantId: string,
+  ) {
+    const none = {
+      silo_feed_item: null as string | null,
+      silo_feed_item_id: null as string | null,
+      first_shortage_date: null as string | null,
+      available_stock_kg: null as number | null,
+      system_balance_kg: null as number | null,
+      last_approved_count_kg: null as number | null,
+      last_approved_count_at: null as string | null,
+      last_feed_receipt_date: null as string | null,
+      next_diet_change_date: null as string | null,
+    };
+    const farmId = row.farm_id || row.parent_location_id;
+    if (this.forecast && farmId && row.company_id) {
+      try {
+        const { statuses } = await this.forecast.currentSiloStatuses(farmId, row.company_id, tenantId);
+        const status = statuses.find((s) => s.siloId === row.location_id);
+        if (status) {
+          const item = status.feedInSiloItemCode
+            ? `${status.feedInSiloItemCode}${status.feedInSiloItemName ? ` — ${status.feedInSiloItemName}` : ''}`
+            : null;
+          return {
+            silo_feed_item: item,
+            silo_feed_item_id: item && current?.item_code === status.feedInSiloItemCode ? (current.item_id ?? null) : null,
+            first_shortage_date: status.firstShortageDate ? String(status.firstShortageDate).slice(0, 10) : null,
+            available_stock_kg: item ? status.systemBalanceKg : null,
+            system_balance_kg: item ? status.systemBalanceKg : null,
+            last_approved_count_kg: status.lastApprovedCountKg,
+            last_approved_count_at: status.lastApprovedCountAt ? String(status.lastApprovedCountAt).slice(0, 10) : null,
+            last_feed_receipt_date: status.lastFeedReceiptDate ? String(status.lastFeedReceiptDate).slice(0, 10) : null,
+            next_diet_change_date: status.nextDietDate,
+          };
+        }
+      } catch {
+        // A farm whose forecast cannot run still has a silo record to read.
+      }
+    }
+    if (current) {
+      const kgOnly = (current.uoms ?? ['KG']).every((u) => u === 'KG');
+      return {
+        ...none,
+        silo_feed_item: `${current.item_code}${current.item_description ? ` — ${current.item_description}` : ''}`,
+        silo_feed_item_id: current.item_id ?? null,
+        available_stock_kg: kgOnly ? current.on_hand_qty : null,
+        system_balance_kg: kgOnly ? current.on_hand_qty : null,
+      };
+    }
+    return none;
   }
 
   private async assertNoHierarchyCycle(id: string, parentId: string, tenantId: string) {
@@ -646,6 +803,26 @@ export class LocationService {
       throw new ConflictException(
         'A silo needs a Silo Capacity, a capacity unit (KG or TON) and a Refill Lead Time (days).'
       );
+    }
+  }
+
+  private assertMillBinFields(dto: CreateLocationDto, locationType: string) {
+    if (locationType === 'MILL') {
+      const fields = [
+        dto.mill_daily_capacity_ton,
+        dto.mill_hourly_capacity_ton,
+        dto.mill_bulk_daily_allocation_ton,
+        dto.mill_bagged_daily_allocation_ton,
+      ];
+      if (fields.some((value) => value == null)) {
+        throw new ConflictException('A MILL requires Daily Capacity, Hourly Capacity, Bulk Daily Allocation and Bagged Daily Allocation in TON.');
+      }
+      if (Number(dto.mill_bulk_daily_allocation_ton) + Number(dto.mill_bagged_daily_allocation_ton) > Number(dto.mill_daily_capacity_ton)) {
+        throw new ConflictException('Bulk Daily Allocation plus Bagged Daily Allocation cannot exceed Daily Capacity.');
+      }
+    }
+    if (locationType === 'BIN' && (dto.bin_capacity_ton == null || dto.bin_feed_type == null)) {
+      throw new ConflictException('A BIN requires Bin Capacity TON and Feed Type (BULK or BAGGED).');
     }
   }
 
@@ -892,16 +1069,38 @@ export class LocationService {
       throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
     }
 
+    // Department is a Cost Center Master identity of type DEPARTMENT (decisions,
+    // 1 Oct) — validated before any type/parent/series work, and only when one
+    // is supplied, so every existing create is untouched.
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId,
+        companyId: dto.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
+    if (dto.cost_center_id) {
+      this.assertCostCentreOwnerType(dto.location_type);
+      await this.assertCostCentreOfCompany(dto.cost_center_id, tenantId, dto.company_id);
+    }
+
     const companyId = dto.company_id;
     const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
     const typeCode = locationType.type_code;
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const configuredParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const allowedParentTypes = typeCode === 'MILL' ? [] : typeCode === 'BIN' ? ['MILL'] : configuredParentTypes;
+
+    this.assertMillBinFields(dto, typeCode);
 
     // parent_location_id is the single canonical hierarchy. Legacy ancestry
     // columns are derived below only to keep older operational flows working.
     let locationLevel = 1;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     if (allowedParentTypes.length === 0 && dto.parent_location_id) {
+      if (typeCode === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
       throw new ConflictException(`${locationType.type_name} is a root location and cannot have a parent.`);
     }
     if (dto.parent_location_id) {
@@ -912,6 +1111,12 @@ export class LocationService {
         isNull(schema.locationMaster.deleted_at),
       )).limit(1);
       if (!parent) throw new NotFoundException(`Parent Location '${dto.parent_location_id}' not found.`);
+      if (typeCode === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
+      if (typeCode === 'BIN' && (parent.location_type !== 'MILL' || parent.is_active !== true)) {
+        throw new ConflictException('A BIN must be created under an active MILL in the same company.');
+      }
       if (!allowedParentTypes.includes(parent.location_type)) {
         throw new ConflictException(`${locationType.type_name} must be created under ${allowedParentTypes.join(' or ')}.`);
       }
@@ -927,6 +1132,34 @@ export class LocationService {
     // and the sheds it actually feeds are the attached_sheds set below.
     if (typeCode === 'SILO' && parent?.location_type !== 'FARM') {
       throw new ConflictException('A SILO must be created under a FARM.');
+    }
+    if (typeCode === 'MILL' && parent) {
+      throw new ConflictException('A MILL is a root location and cannot have a parent.');
+    }
+    if (typeCode === 'BIN' && (!parent || parent.location_type !== 'MILL' || parent.is_active !== true)) {
+      throw new ConflictException('A BIN must be created under an active MILL in the same company.');
+    }
+
+    // MILL/BIN have dedicated TON fields; generic livestock/area/biosecurity
+    // columns do not describe them and are never accepted as substitutes.
+    if (typeCode === 'MILL' || typeCode === 'BIN') {
+      dto.area_size = undefined;
+      dto.area_unit = undefined;
+      dto.max_capacity = undefined;
+      dto.capacity_uom = undefined;
+      dto.current_count = undefined;
+      dto.is_quarantine_zone = undefined;
+      dto.downtime_days_required = undefined;
+    }
+    if (typeCode !== 'MILL') {
+      dto.mill_daily_capacity_ton = undefined;
+      dto.mill_hourly_capacity_ton = undefined;
+      dto.mill_bulk_daily_allocation_ton = undefined;
+      dto.mill_bagged_daily_allocation_ton = undefined;
+    }
+    if (typeCode !== 'BIN') {
+      dto.bin_capacity_ton = undefined;
+      dto.bin_feed_type = undefined;
     }
 
     // 3.5. This location's area, plus everything already under the same parent,
@@ -960,6 +1193,9 @@ export class LocationService {
     // and then ignoring it would report a save that did nothing.
     if (dto.attached_sheds?.length && typeCode !== 'SILO') {
       throw new BadRequestException('Only a SILO can have attached sheds.');
+    }
+    if (dto.silo_feed_type !== undefined && typeCode !== 'SILO') {
+      throw new BadRequestException('Only a SILO has a Feed Type.');
     }
 
     // 5. area_unit / capacity_uom must resolve to a real UOM
@@ -1077,8 +1313,8 @@ export class LocationService {
       const scope = this.cls.get<{ kind?: string; companyId?: string | null }>('masterScope');
       const companyId = scope?.kind ? scope.companyId : query.companyId;
       const allowed = await this.resolveLocationType(query.parentForType, tenantId, companyId)
-        .then((type) => this.allowedParentTypes(type.allowed_parent_types))
-        .catch(() => [] as string[]);
+        .then((type) => (type.type_code === 'BIN' ? ['MILL'] : this.allowedParentTypes(type.allowed_parent_types)))
+        .catch(() => (query.parentForType === 'BIN' ? ['MILL'] : [] as string[]));
       const eligibleParents = allowed.filter((t) => !['PEN', 'CAGE'].includes(t.toUpperCase()));
       conditions.push(eligibleParents.length ? inArray(schema.locationMaster.location_type, eligibleParents) : sql`1 = 0`);
     }
@@ -1181,8 +1417,14 @@ export class LocationService {
       data: rows.map((row) => ({
         ...row,
         silo_capacity_kg: siloCapacityForDisplay(row.silo_capacity_kg, row.silo_capacity_uom),
+        mill_daily_capacity_ton: capacityKgForTonDisplay(row.mill_daily_capacity_kg),
+        mill_hourly_capacity_ton: capacityKgForTonDisplay(row.mill_hourly_capacity_kg),
+        mill_bulk_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bulk_daily_allocation_kg),
+        mill_bagged_daily_allocation_ton: capacityKgForTonDisplay(row.mill_bagged_daily_allocation_kg),
+        bin_capacity_ton: capacityKgForTonDisplay(row.bin_capacity_kg),
         ...(row.location_type === 'SILO'
           ? {
+              silo_feed_type: (row as any).feed_in_bags === true ? 'BAGGED' : 'BULK',
               attached_sheds: attachedBySilo.get(row.location_id) || [],
               current_feed_item_code: currentItemBySilo.get(row.location_id)?.item_code ?? null,
               current_feed_item_name: currentItemBySilo.get(row.location_id)?.item_description ?? null,
@@ -1216,8 +1458,41 @@ export class LocationService {
 
     const effectiveLocationType = dto.location_type !== undefined ? dto.location_type : location.location_type;
     const effectiveCompanyId = dto.company_id !== undefined ? dto.company_id : location.company_id;
+
+    if (effectiveLocationType === 'MILL' || effectiveLocationType === 'BIN') {
+      dto.area_size = undefined;
+      dto.area_unit = undefined;
+      dto.max_capacity = undefined;
+      dto.capacity_uom = undefined;
+      dto.current_count = undefined;
+      dto.is_quarantine_zone = undefined;
+      dto.downtime_days_required = undefined;
+    }
+
+    if (effectiveLocationType === 'MILL') {
+      const storedDailyTon = capacityKgForTonDisplay(location.mill_daily_capacity_kg);
+      const storedHourlyTon = capacityKgForTonDisplay(location.mill_hourly_capacity_kg);
+      const storedBulkTon = capacityKgForTonDisplay(location.mill_bulk_daily_allocation_kg);
+      const storedBaggedTon = capacityKgForTonDisplay(location.mill_bagged_daily_allocation_kg);
+      const effectiveMill = {
+        mill_daily_capacity_ton: dto.mill_daily_capacity_ton ?? (storedDailyTon == null ? undefined : Number(storedDailyTon)),
+        mill_hourly_capacity_ton: dto.mill_hourly_capacity_ton ?? (storedHourlyTon == null ? undefined : Number(storedHourlyTon)),
+        mill_bulk_daily_allocation_ton: dto.mill_bulk_daily_allocation_ton ?? (storedBulkTon == null ? undefined : Number(storedBulkTon)),
+        mill_bagged_daily_allocation_ton: dto.mill_bagged_daily_allocation_ton ?? (storedBaggedTon == null ? undefined : Number(storedBaggedTon)),
+      } as CreateLocationDto;
+      this.assertMillBinFields(effectiveMill, 'MILL');
+    }
+    if (effectiveLocationType === 'BIN') {
+      const storedBinTon = capacityKgForTonDisplay(location.bin_capacity_kg);
+      const effectiveBin = {
+        bin_capacity_ton: dto.bin_capacity_ton ?? (storedBinTon == null ? undefined : Number(storedBinTon)),
+        bin_feed_type: dto.bin_feed_type ?? location.bin_feed_type,
+      } as CreateLocationDto;
+      this.assertMillBinFields(effectiveBin, 'BIN');
+    }
     const locationType = await this.resolveLocationType(effectiveLocationType, tenantId, effectiveCompanyId);
-    const allowedParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const configuredParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
+    const allowedParentTypes = effectiveLocationType === 'MILL' ? [] : effectiveLocationType === 'BIN' ? ['MILL'] : configuredParentTypes;
     const effectiveParentId = dto.parent_location_id !== undefined ? dto.parent_location_id : location.parent_location_id;
     let parent: typeof schema.locationMaster.$inferSelect | undefined;
     let newLocationLevel: number | undefined;
@@ -1232,6 +1507,12 @@ export class LocationService {
         isNull(schema.locationMaster.deleted_at),
       )).limit(1);
       if (!parent) throw new NotFoundException(`Parent Location '${effectiveParentId}' not found.`);
+      if (effectiveLocationType === 'MILL') {
+        throw new ConflictException('A MILL is a root location and cannot have a parent.');
+      }
+      if (effectiveLocationType === 'BIN' && (parent.location_type !== 'MILL' || parent.is_active !== true)) {
+        throw new ConflictException('A BIN must be placed under an active MILL in the same company.');
+      }
       if (!allowedParentTypes.includes(parent.location_type)) {
         throw new ConflictException(`${locationType.type_name} must be placed under ${allowedParentTypes.join(' or ')}.`);
       }
@@ -1247,6 +1528,9 @@ export class LocationService {
     // re-parenting cannot quietly undo what create() refused.
     if (effectiveLocationType === 'SILO' && parent?.location_type !== 'FARM') {
       throw new ConflictException('A SILO must be placed under a FARM.');
+    }
+    if (effectiveLocationType === 'BIN' && (!parent || parent.location_type !== 'MILL' || parent.is_active !== true)) {
+      throw new ConflictException('A BIN must be placed under an active MILL in the same company.');
     }
 
     // SILO locations must carry silo tracking fields — validate against effective values so a
@@ -1270,6 +1554,28 @@ export class LocationService {
     // attached_sheds is the silo's own field; see create().
     if (dto.attached_sheds !== undefined && effectiveLocationType !== 'SILO') {
       throw new BadRequestException('Only a SILO can have attached sheds.');
+    }
+
+    if (dto.silo_feed_type !== undefined && effectiveLocationType !== 'SILO') {
+      throw new BadRequestException('Only a SILO has a Feed Type.');
+    }
+
+    // Checkpoint 1: becoming ACTIVE, or being emptied of sheds while ACTIVE, needs a shed.
+    if (effectiveLocationType === 'SILO') {
+      const wasActive = location.status === 'ACTIVE' && location.is_active !== false;
+      const willBeActive = (dto.status !== undefined ? dto.status : location.status) === 'ACTIVE'
+        && (dto.is_active !== undefined ? dto.is_active : location.is_active) !== false;
+      // Block (a) a silo becoming ACTIVE with no shed, or (b) an ACTIVE silo that has sheds being saved with none.
+      // An already-ACTIVE silo that never had a shed (older data) stays editable for unrelated fields, even when
+      // the form sends attached_sheds: [].
+      if (willBeActive) {
+        const requested = dto.attached_sheds !== undefined ? new Set(dto.attached_sheds).size : null;
+        if (!wasActive) {
+          this.assertSiloHasShed(requested ?? (await this.attachedShedIds(id, tenantId)).length);
+        } else if (requested === 0 && (await this.attachedShedIds(id, tenantId)).length > 0) {
+          this.assertSiloHasShed(0);
+        }
+      }
     }
 
     if (dto.area_unit !== undefined) {
@@ -1300,6 +1606,19 @@ export class LocationService {
       if (dto.max_capacity !== undefined) {
         await this.assertChildTotalFitsWithinCapacity(id, effectiveCapacity, tenantId);
       }
+    }
+
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId,
+        companyId: effectiveCompanyId,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
+    if (dto.cost_center_id) {
+      this.assertCostCentreOwnerType(effectiveLocationType);
+      await this.assertCostCentreOfCompany(dto.cost_center_id, tenantId, effectiveCompanyId);
     }
 
     const updates: any = {
@@ -1378,6 +1697,14 @@ export class LocationService {
     }
     if (dto.low_level_kg !== undefined) updates.low_level_kg = dto.low_level_kg == null ? null : String(dto.low_level_kg);
     if (dto.high_level_kg !== undefined) updates.high_level_kg = dto.high_level_kg == null ? null : String(dto.high_level_kg);
+    if (dto.mill_daily_capacity_ton !== undefined) updates.mill_daily_capacity_kg = capacityTonToKg(dto.mill_daily_capacity_ton);
+    if (dto.mill_hourly_capacity_ton !== undefined) updates.mill_hourly_capacity_kg = capacityTonToKg(dto.mill_hourly_capacity_ton);
+    if (dto.mill_bulk_daily_allocation_ton !== undefined) updates.mill_bulk_daily_allocation_kg = capacityTonToKg(dto.mill_bulk_daily_allocation_ton);
+    if (dto.mill_bagged_daily_allocation_ton !== undefined) updates.mill_bagged_daily_allocation_kg = capacityTonToKg(dto.mill_bagged_daily_allocation_ton);
+    if (dto.bin_capacity_ton !== undefined) updates.bin_capacity_kg = capacityTonToKg(dto.bin_capacity_ton);
+    if (dto.bin_feed_type !== undefined) updates.bin_feed_type = dto.bin_feed_type;
+    // Written only when sent; an update that omits it leaves the stored Feed Type alone.
+    if (dto.silo_feed_type !== undefined) updates.feed_in_bags = dto.silo_feed_type === 'BAGGED';
     if (effectiveLocationType !== 'SILO') {
       updates.silo_capacity_kg = null;
       updates.silo_capacity_uom = null;
@@ -1388,13 +1715,9 @@ export class LocationService {
     // D28: a saved pen, shed or crate loses the legacy 'SILO' storage type.
     if (clearsLegacyStorageType) updates.storage_type = null;
     if (dto.downtime_days_required !== undefined) updates.downtime_days_required = dto.downtime_days_required;
-    if (dto.feed_refill_buffer_days !== undefined) updates.feed_refill_buffer_days = dto.feed_refill_buffer_days;
-    if (dto.feed_lead_time_days !== undefined) updates.feed_lead_time_days = dto.feed_lead_time_days;
-    if (dto.feed_bulk_multiple_kg !== undefined) updates.feed_bulk_multiple_kg = dto.feed_bulk_multiple_kg;
-    if (dto.feed_bag_size_kg !== undefined) updates.feed_bag_size_kg = dto.feed_bag_size_kg;
-    if (dto.feed_truck_target_kg !== undefined) updates.feed_truck_target_kg = dto.feed_truck_target_kg;
-    if (dto.feed_production_weekday !== undefined) updates.feed_production_weekday = dto.feed_production_weekday;
     if (dto.storage_name !== undefined) updates.storage_name = dto.storage_name;
+    if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
+    if (dto.cost_center_id !== undefined) updates.cost_center_id = dto.cost_center_id || null;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
@@ -1408,6 +1731,7 @@ export class LocationService {
           siloId: id,
           farmId: parent?.location_id || location.farm_id,
           shedIds: dto.attached_sheds,
+          dates: dto.attached_shed_dates,
           tenantId,
           companyId: location.company_id,
           userId: userPayload?.userId || null,
@@ -1493,6 +1817,7 @@ export class LocationService {
       return location;
     }
 
+    if (location.location_type === 'SILO') this.assertSiloHasShed((await this.attachedShedIds(id, tenantId)).length);
     const updates = {
         is_active: true,
         status: 'ACTIVE',

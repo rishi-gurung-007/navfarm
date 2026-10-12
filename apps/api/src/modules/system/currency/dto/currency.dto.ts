@@ -191,18 +191,16 @@ export class QueryCurrencyDto extends MasterListQueryDto {
 }
 
 /**
- * A rate row as the Exchange Rates tab creates it. from_currency_id is optional
- * and defaults to USD in the service: the client anchors every rate to the US
- * dollar and enters it as "1 USD = X" (Rishi, 2026-09-11), so the tab asks only
- * for the other side.
+ * A rate row as the Exchange Rates tab creates it. from_currency_id is optional;
+ * an omitted value resolves to the active company's canonical base currency.
  */
 export class CreateExchangeRateDto {
-  @ApiProperty({ description: 'Currency being quoted. The rate reads 1 USD = <rate> of this.', example: '20000000-2000-2000-2000-200000000003' })
+  @ApiProperty({ description: 'Currency being quoted by the rate.', example: '20000000-2000-2000-2000-200000000003' })
   @IsString()
   @IsNotEmpty()
   to_currency_id: string;
 
-  @ApiProperty({ description: 'Base currency. Defaults to USD when omitted.', required: false })
+  @ApiProperty({ description: "Source currency. Defaults to the active company's base currency when omitted.", required: false })
   @IsString()
   @IsOptional()
   from_currency_id?: string;

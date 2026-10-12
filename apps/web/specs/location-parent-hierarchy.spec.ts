@@ -9,17 +9,20 @@ const typeOptions = [
   { type_code: "FARM", type_name: "Farm", allowed_parent_types: [] },
   { type_code: "SHED", type_name: "Shed", allowed_parent_types: ["FARM"] },
   { type_code: "PEN", type_name: "Pen", allowed_parent_types: ["SHED"] },
+  { type_code: "MILL", type_name: "Mill", allowed_parent_types: [] },
+  { type_code: "BIN", type_name: "Bin", allowed_parent_types: ["MILL"] },
 ];
 
 describe("Location parent hierarchy", () => {
-  it("hides Parent Location for a level 1 root type", () => {
-    expect(entityRestrictionState(parentField, { location_type: "FARM" }, { "/location-type": typeOptions }))
+  it.each(["FARM", "MILL"])("hides Parent Location for root type %s", (typeCode) => {
+    expect(entityRestrictionState(parentField, { location_type: typeCode }, { "/location-type": typeOptions }))
       .toEqual(expect.objectContaining({ hidden: true, allowedCodes: [] }));
   });
 
   it.each([
     ["SHED", ["FARM"]],
     ["PEN", ["SHED"]],
+    ["BIN", ["MILL"]],
   ])("requires %s to select only its immediately preceding type", (typeCode, allowedCodes) => {
     expect(parentField.required).toBe(true);
     expect(entityRestrictionState(parentField, { location_type: typeCode }, { "/location-type": typeOptions }))

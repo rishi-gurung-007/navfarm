@@ -8,7 +8,7 @@ import { buildFeedForecast, ForecastInput } from './feed-forecast.engine';
  * SILO2 R2 1,000 kg).
  */
 const workedExample: ForecastInput = {
-  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 0,
+  planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
   sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
   silos: [
     { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 },
@@ -18,7 +18,7 @@ const workedExample: ForecastInput = {
   items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
   itemCodes: { r1: 'FEED-R1', r2: 'FEED-R2' },
   batches: [{
-    batchId: 'b', batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
+    batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000,
     segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }],
   }],
   feedRows: [
@@ -41,10 +41,10 @@ describe('buildFeedForecast — daily rows on the Worked Example', () => {
     expect(daily.map((d) => d.currentInventoryKg)).toEqual([1500, 0, 0, 1000, 0, 0, 0]);
     expect(daily[0]).toMatchObject({
       batchNo: 'WG-2026-38', shedCode: 'GRS/SHED-003', stageCode: 'WEANER', itemName: 'Weaner Diet R1', sourceCode: 'GRS/SILO-001',
-      heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, demandKg: 2000, daysOfStock: 0, sharedBatchCount: 1,
-      runDownDate: '2026-09-23', refillDate: '2026-09-21', requiredOn: '2026-09-21', overdue: true,
+      heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, demandKg: 2000, daysOfStock: 0.8, sharedBatchCount: 1,
+      runDownDate: '2026-09-23',
     });
-    expect(daily[3]).toMatchObject({ sourceCode: 'GRS/SILO-002', perDayIntakeKg: 2500, daysOfStock: 0, runDownDate: '2026-09-26' });
+    expect(daily[3]).toMatchObject({ sourceCode: 'GRS/SILO-002', perDayIntakeKg: 2500, daysOfStock: 0.4, runDownDate: '2026-09-26' });
   });
 
   it('flags R1 rows indicative (their silo stops being eaten on 26 Sep) and R2 rows not (Q13)', () => {
@@ -60,15 +60,15 @@ const row = (over: Partial<FeedRow> = {}): FeedRow => ({
 describe('buildFeedForecast — D34: wastage dropped, demand is heads × rate', () => {
   it('shows 100 kg intake and 100 kg demand — the row carries 10% wastage and it is ignored (D34)', () => {
     const input: ForecastInput = {
-      planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', leadTimeDays: 2,
+      planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23',
       sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
       silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525 }],
       store: null, items: { r1: 'Grower Diet' },
-      batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+      batches: [{ batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] }],
       feedRows: [row({ wastagePct: 10 })],
     };
-    expect(buildFeedForecast(input).daily[0]).toMatchObject({ perDayIntakeKg: 100, demandKg: 100, daysOfStock: 5, itemNo: '' });
+    expect(buildFeedForecast(input).daily[0]).toMatchObject({ perDayIntakeKg: 100, demandKg: 100, daysOfStock: 5.3, itemNo: '' });
   });
 });
 
@@ -76,11 +76,11 @@ describe('buildFeedForecast — D36: rows inside a stage-change window are indic
   // FLUSH from 1 Sep: earliest change 4 Sep (changeWindowStart), planned (latest) 6 Sep — the
   // segment ends 5 Sep. Rows on 4–5 Sep sit inside the window and are indicative; 3 Sep is not.
   const input: ForecastInput = {
-    planningDate: '2026-09-03', from: '2026-09-03', to: '2026-09-05', leadTimeDays: 2,
+    planningDate: '2026-09-03', from: '2026-09-03', to: '2026-09-05',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 100000 }],
     store: null, items: { r1: 'Flush Diet' },
-    batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+    batches: [{ batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [{
         stageId: 'flush', stageCode: 'FLUSH', start: '2026-09-01', end: '2026-09-05', projected: false,
         changeWindowStart: '2026-09-04',
@@ -109,7 +109,7 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
   // Shed H1 has SILO-001 (R1, 1,000 kg) and SILO-002 (R2, 500 kg). GR-01 eats R1 all week; GR-02 eats R1 until
   // 25 Sep and R2 from 26 Sep (its own breed's rows: R1 days 1–25, R2 from day 26, stage entered 1 Sep).
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
     silos: [
       { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1000 },
@@ -118,9 +118,9 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
     store: null,
     items: { r1: 'Grower R1', r2: 'Grower R2' },
     batches: [
-      { batchId: 'b1', batchNo: 'GR-01', breedId: 'l', shedId: 'h1', heads: 100,
+      { batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-01', breedId: 'l', shedId: 'h1', heads: 100,
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
-      { batchId: 'b2', batchNo: 'GR-02', breedId: 'l2', shedId: 'h1', heads: 100,
+      { batchId: 'b2', realBatchId: 'b2' as any, batchNo: 'GR-02', breedId: 'l2', shedId: 'h1', heads: 100,
         segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
     ],
     feedRows: [
@@ -157,9 +157,9 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
     const sized: ForecastInput = {
       ...input,
       batches: [
-        { batchId: 'big', batchNo: 'GR-BIG', breedId: 'l', shedId: 'h1', heads: 200,
+        { batchId: 'big', realBatchId: 'big' as any, batchNo: 'GR-BIG', breedId: 'l', shedId: 'h1', heads: 200,
           segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
-        { batchId: 'small', batchNo: 'GR-SMALL', breedId: 'l', shedId: 'h1', heads: 50,
+        { batchId: 'small', realBatchId: 'small' as any, batchNo: 'GR-SMALL', breedId: 'l', shedId: 'h1', heads: 50,
           segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
       ],
       feedRows: [row()],
@@ -172,11 +172,11 @@ describe('buildFeedForecast — shared silo, one batch changes diet (Review Focu
 
 describe('buildFeedForecast — rows start at the planning date (Q7)', () => {
   const base: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25', leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-20', to: '2026-09-25',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 5000 }],
     store: null, items: { r1: 'Grower Diet' },
-    batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+    batches: [{ batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] }],
     feedRows: [row()],
   };
@@ -194,7 +194,7 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
   // 100 pigs at 1 kg = 100 kg/day from a 525 kg silo. The service passes posted receipts and non-feeding outflows
   // (a consumption, negative adjustment) dated inside the walk as signed `incoming`; the day's feeding is the forecast's.
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-26', leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-26',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1'] }],
     silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 525 }],
     store: null, items: { r1: 'Grower Diet' },
@@ -202,7 +202,7 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
       { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 1000 }, // a receipt posted on the 24th
       { locationId: 's1', itemId: 'r1', date: '2026-09-25', kg: -200 }, // a consumption posted on the 25th
     ],
-    batches: [{ batchId: 'b1', batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+    batches: [{ batchId: 'b1', realBatchId: 'b1' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
       segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] }],
     feedRows: [row()],
   };
@@ -211,7 +211,35 @@ describe('buildFeedForecast — Current Inventory takes the day\'s posted moveme
     // 525; 425 + 1,000 = 1,425; 1,325 − 200 = 1,125; 1,025.
     const { daily } = buildFeedForecast(input);
     expect(daily.map((d) => d.currentInventoryKg)).toEqual([525, 1425, 1125, 1025]);
-    expect(daily.map((d) => d.daysOfStock)).toEqual([5, 14, 11, 10]);
+    expect(daily.map((d) => d.daysOfStock)).toEqual([5.3, 14.3, 11.3, 10.3]); // 525, 1,425, 1,125, 1,025 ÷ 100, one decimal
+  });
+
+  it('adds confirmed, open-transfer and planned requisition stock separately before daily use', () => {
+    const classified: ForecastInput = {
+      ...input,
+      incoming: [
+        { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 100, kind: 'CONFIRMED_LEDGER', referenceNo: 'RCPT-1' },
+        { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 200, kind: 'OPEN_TRANSFER', referenceNo: 'TO-1' },
+        { locationId: 's1', itemId: 'r1', date: '2026-09-24', kg: 300, kind: 'PLANNED_REQUISITION', referenceNo: 'REQ-1' },
+      ],
+    };
+    const result = buildFeedForecast(classified);
+    expect(result.daily.find((row) => row.date === '2026-09-24')).toMatchObject({
+      currentInventoryKg: 1025,
+      openingStockKg: 425,
+      confirmedReceiptKg: 100,
+      openTransferMovementKg: 200,
+      plannedIncomingKg: 300,
+    });
+    expect(result.sourceBalances.find((row) => row.date === '2026-09-24')).toMatchObject({
+      openingSystemBalanceKg: 425,
+      confirmedReceiptKg: 100,
+      openTransferMovementKg: 200,
+      plannedIncomingKg: 300,
+      projectedClosingBalanceKg: 925,
+      incomingReferences: expect.arrayContaining([expect.objectContaining({ kind: 'PLANNED_REQUISITION', referenceNo: 'REQ-1' })]),
+    });
+    expect(result.daily.find((row) => row.date === '2026-09-25')?.currentInventoryKg).toBe(925);
   });
 });
 
@@ -219,11 +247,11 @@ describe('buildFeedForecast — daily rows with no source, and the sort tie-brea
   // No silo and no store: two sheds eat R1 from nowhere. The NONE "container" is not a real one, so it has no days
   // of stock and no sharing across sheds.
   const input: ForecastInput = {
-    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23', leadTimeDays: 2,
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-23',
     sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }, { shedId: 'h2', shedCode: 'GRS/SHED-002', siloIds: [] }],
     silos: [], store: null, items: { r1: 'Grower Diet' },
     batches: ['h1', 'h2'].map((shedId, i) => ({
-      batchId: `b${i}`, batchNo: `GR-2026-0${i}`, breedId: 'l', shedId, heads: 100,
+      batchId: `b${i}`, realBatchId: `b${i}` as any, batchNo: `GR-2026-0${i}`, breedId: 'l', shedId, heads: 100,
       segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }],
     })),
     feedRows: [row()],
@@ -239,9 +267,9 @@ describe('buildFeedForecast — daily rows with no source, and the sort tie-brea
       ...input,
       sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: [] }],
       batches: [
-        { batchId: 'z', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
-        { batchId: 'y', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
-        { batchId: 'a', batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'z', realBatchId: 'z' as any, batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'y', realBatchId: 'y' as any, batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-01', end: null, projected: false }] },
+        { batchId: 'a', realBatchId: 'a' as any, batchNo: 'GR-X', breedId: 'l', shedId: 'h1', heads: 10, segments: [{ stageId: 'finisher', stageCode: 'FINISHER', start: '2026-09-01', end: null, projected: false }] },
       ],
       feedRows: [row(), row({ lifecycleId: 'f', stageId: 'finisher' })],
     };

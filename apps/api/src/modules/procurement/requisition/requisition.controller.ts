@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
+import { mayDecideAnyRequisition } from './requisition.rules';
 import { RequisitionService } from './requisition.service';
-import { CreateRequisitionDto, DecideRequisitionDto } from './dto/requisition.dto';
+import { CreateRequisitionDto, DecideRequisitionDto, RequisitionReceiptDto, RequisitionShipmentDto, RequisitionTrackingDto, UpdateRequisitionDto } from './dto/requisition.dto';
 
 @ApiTags('Procurement Requisitions')
 @ApiBearerAuth()
@@ -18,10 +19,28 @@ export class RequisitionController {
   @Get()
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
   @ApiOperation({ summary: 'Requisitions visible in the active scope, newest first' })
-  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('status') status?: string) {
+  async findAll(@Req() req: any, @Query('company_id') companyId?: string, @Query('farm_id') farmId?: string, @Query('status') status?: string, @Query('doc_type') docType?: string, @Query('waiting_for_me') waitingForMe?: string, @Query('kind') kind?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.requisitions.findAll({ company_id: companyId, status }, tenantId);
+    const data = await this.requisitions.findAll(
+      { company_id: companyId, farm_id: farmId, status, doc_type: docType, waiting_for_me: waitingForMe === '1' || waitingForMe === 'true', kind: kind as 'common' | undefined },
+      tenantId,
+      // WP1b: the hub's waiting filter and the admin's farm-wide list need the
+      // caller's type; the predicate itself lives in ApprovalService.
+      { waitingForMe: waitingForMe === '1' || waitingForMe === 'true', userType: req.user?.userType, userId: req.user?.userId },
+    );
     return { success: true, message: 'Requisitions retrieved successfully.', data };
+  }
+
+  @Get('options')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'What the common requisition form may offer: items, locations, departments, the caller Direct Transfer right' })
+  async options(@Req() req: any, @Query('company_id') companyId: string, @Query('farm_id') farmId?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    if (!companyId) throw new BadRequestException('company_id is required.');
+    // WP1c: the caller rides along so the response can carry their own
+    // Direct Transfer right (the dialog disables the checkbox without it).
+    const data = await this.requisitions.options({ company_id: companyId, farm_id: farmId }, tenantId, req.user);
+    return { success: true, message: 'Requisition options retrieved.', data };
   }
 
   @Get(':id')
@@ -29,7 +48,12 @@ export class RequisitionController {
   @ApiParam({ name: 'id' })
   async findOne(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.requisitions.findOne(id, tenantId);
+    // WP1b: the hub's document dialog opens precisely the cross-farm rows an
+    // admin may decide — the read the dialog runs must span farms the way
+    // decide()'s lock does (the review's carried-forward item).
+    // Review p1f, I3: the caller rides along so the document says whether
+    // release() and receive() would let them (may_release, may_receive).
+    const data = await this.requisitions.findOne(id, tenantId, { bypassFarm: mayDecideAnyRequisition(req.user?.userType), caller: req.user });
     return { success: true, message: 'Requisition retrieved successfully.', data };
   }
 
@@ -40,6 +64,16 @@ export class RequisitionController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.create(dto, tenantId, req.user);
     return { success: true, message: 'Requisition drafted.', data };
+  }
+
+  @Put(':id')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Edit an Open requisition — header fields and all lines (spec §6a)', description: 'Full replace of the header and every line. Omitted remarks, required_date, justification, sender_department_id become null and direct_transfer becomes false; omitted requisition_date, main_location_id, requester_department_id and purpose keep their stored values. farm_id is ignored.' })
+  @ApiParam({ name: 'id' })
+  async update(@Param('id') id: string, @Body() dto: UpdateRequisitionDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.update(id, dto, tenantId, req.user);
+    return { success: true, message: 'Requisition saved.', data };
   }
 
   @Post(':id/submit')
@@ -70,6 +104,56 @@ export class RequisitionController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.requisitions.decide(id, dto, 'REJECTED', tenantId, req.user);
     return { success: true, message: 'Requisition rejected.', data };
+  }
+
+  @Post(':id/release')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
+  @ApiOperation({ summary: 'Release an approved requisition — Purchase records BC_PENDING, Store becomes TRANSFER_OPEN. Approval never implies release.' })
+  @ApiParam({ name: 'id' })
+  async release(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.release(id, tenantId, req.user);
+    return { success: true, message: 'Requisition released.', data };
+  }
+
+  @Post(':id/shipment')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Post a partial shipment against a released Store requisition (its linked transfer)' })
+  @ApiParam({ name: 'id' })
+  async ship(@Param('id') id: string, @Body() dto: RequisitionShipmentDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Shipment posted.', data: await this.requisitions.ship(id, dto, tenantId, req.user) };
+  }
+
+  @Post(':id/receipt')
+  // Rishi, 5 Oct: the requester receives and needs no separate receive
+  // permission. Who may post is decided in RequisitionService.receive (the
+  // requester, at the To sub-location's department), not by this guard.
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: 'Post a partial receipt against one shipment of a released Store requisition — the requester only, at the To sub-location department' })
+  @ApiParam({ name: 'id' })
+  async receive(@Param('id') id: string, @Body() dto: RequisitionReceiptDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Receipt posted.', data: await this.requisitions.receive(id, dto, tenantId, req.user) };
+  }
+
+  @Post(':id/item-tracking')
+  @RequirePermission('INVENTORY', 'STOCK_TRANSFER', 'edit')
+  @ApiOperation({ summary: 'Assign Lot/Serial to released Store requisition lines that have not shipped (the From department, like the shipment)' })
+  @ApiParam({ name: 'id' })
+  async assignTracking(@Param('id') id: string, @Body() dto: RequisitionTrackingDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, message: 'Item Tracking assigned.', data: await this.requisitions.assignTracking(id, dto, tenantId, req.user) };
+  }
+
+  @Post(':id/reopen')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({ summary: 'Return a rejected requisition to an editable Open draft; the decision history stays on its approval request' })
+  @ApiParam({ name: 'id' })
+  async reopen(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.requisitions.reopen(id, tenantId, req.user);
+    return { success: true, message: 'Requisition reopened.', data };
   }
 
   @Post(':id/link-po')

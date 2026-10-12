@@ -15,6 +15,7 @@ export interface SearchableSelectProps {
   valueKey?: string;
   labelKey?: string;
   getLabel?: (row: Row) => string;
+  getSelectedLabel?: (row: Row) => string;
   getLabelParts?: (row: Row) => string[];
   columnHeaders?: string[] | false;
   columns?: Array<{ key: string; label: string }>;
@@ -44,6 +45,7 @@ export function SearchableSelect({
   valueKey = "value",
   labelKey = "label",
   getLabel,
+  getSelectedLabel,
   getLabelParts,
   columnHeaders,
   columns,
@@ -75,28 +77,6 @@ export function SearchableSelect({
     if (row.code != null) return String(row.code);
     if (row[valueKey] != null) return String(row[valueKey]);
     return "";
-  };
-
-  // Which of a row's parts is its name. Callers usually pass [code, name, …], so the second part; but a
-  // picker that labels its columns otherwise (Description, Tracking) says where the name is.
-  const nameColumn = useMemo(() => {
-    const headers = Array.isArray(columnHeaders) ? columnHeaders : columns?.map((c) => c.label);
-    const at = headers ? headers.findIndex((h) => /^(name|description)$/i.test(h.trim())) : -1;
-    return at >= 0 ? at : 1;
-  }, [columnHeaders, columns]);
-
-  // The open list shows every column together; once a row is picked the field
-  // shows the name alone (the first part when there is no name).
-  const selectedRowLabel = (row: Row): string => {
-    if (getLabelParts) {
-      const parts = getLabelParts(row);
-      if (parts.length > 1) return parts[nameColumn] || parts[0] || defaultGetLabel(row);
-    }
-    if (row.shortLabel != null && String(row.shortLabel) !== "") return String(row.shortLabel);
-    if (row[labelKey] != null) return String(row[labelKey]);
-    if (row.name != null && String(row.name) !== "") return String(row.name);
-    if (row.title != null && String(row.title) !== "") return String(row.title);
-    return defaultGetLabel(row);
   };
 
   const effectiveColumnHeaders = useMemo(() => {
@@ -197,7 +177,7 @@ export function SearchableSelect({
       options={normalizedOptions}
       valueKey={valueKey}
       getLabel={defaultGetLabel}
-      getSelectedLabel={getLabel && !getLabelParts ? undefined : selectedRowLabel}
+      getSelectedLabel={getSelectedLabel}
       getLabelParts={effectiveGetLabelParts}
       columnHeaders={effectiveColumnHeaders}
       placeholder={placeholder}

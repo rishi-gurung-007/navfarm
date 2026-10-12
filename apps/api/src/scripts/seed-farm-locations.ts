@@ -37,6 +37,8 @@ const UOM_ADDITIONS = [{ code: 'HECTARE', name: 'Hectare', type: 'AREA' }];
 /** Porta houses 89 farrowing and service-line crates; the type did not exist. */
 const LOCATION_TYPE_ADDITIONS = [
   { code: 'CRATE', name: 'Crate', prefix: 'CRATE', allowedParents: ['SHED'] },
+  { code: 'MILL', name: 'Feed Mill', prefix: 'MILL', allowedParents: [] as string[] },
+  { code: 'BIN', name: 'Bin', prefix: 'BIN', allowedParents: ['MILL'] },
 ];
 
 /**

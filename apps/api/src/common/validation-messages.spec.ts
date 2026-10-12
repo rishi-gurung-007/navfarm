@@ -28,7 +28,7 @@ async function messagesFor(body: unknown): Promise<string[]> {
   try {
     await pipe.transform(body, { type: 'body', metatype: SampleDto });
   } catch (err) {
-    return (err as BadRequestException).getResponse()['message'];
+    return ((err as BadRequestException).getResponse() as { message?: string[] }).message ?? [];
   }
   return [];
 }

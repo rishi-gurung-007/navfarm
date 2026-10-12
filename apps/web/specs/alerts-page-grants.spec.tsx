@@ -43,6 +43,14 @@ const BATCH_ONLY = {
   userType: 'STANDARD_USER',
   permissions: [{ moduleCode: 'PRODUCTION', resource: 'BATCH', canView: true }],
 };
+const REPORTING_PERIOD_APPROVER = {
+  userId: 'u-calendar-approver',
+  userType: 'STANDARD_USER',
+  permissions: [{
+    moduleCode: 'MASTER_DATA', resource: 'REPORTING_PERIOD',
+    canView: true, canEdit: true, canApprove: true,
+  }],
+};
 
 const feedAlert = {
   alert_id: 'f1', company_id: 'co-1', farm_id: 'farm-vil', farm_code: 'VIL100', priority_level: 'CRITICAL_FIRST_PRIORITY',
@@ -65,6 +73,23 @@ describe('F1 — the Alerts page and the feed grant', () => {
   it('sanity: hasPermission separates the two grants', () => {
     expect(actual.hasPermission(FEED_ONLY as any, 'INVENTORY', 'LEDGER', 'can_view')).toBe(true);
     expect(actual.hasPermission(FEED_ONLY as any, 'PRODUCTION', 'BATCH', 'can_view')).toBe(false);
+  });
+
+  it('reads can_approve independently from can_edit', () => {
+    expect(actual.hasPermission(REPORTING_PERIOD_APPROVER as any, 'MASTER_DATA', 'REPORTING_PERIOD', 'can_approve')).toBe(true);
+    expect(actual.hasPermission({
+      ...REPORTING_PERIOD_APPROVER,
+      permissions: [{ ...REPORTING_PERIOD_APPROVER.permissions[0], canApprove: false }],
+    } as any, 'MASTER_DATA', 'REPORTING_PERIOD', 'can_approve')).toBe(false);
+  });
+
+  it('does not turn Operational Admin master editing into implicit approval', () => {
+    expect(actual.hasPermission({
+      userId: 'u-ops', userType: 'OPERATIONAL_ADMIN', permissions: [],
+    } as any, 'MASTER_DATA', 'REPORTING_PERIOD', 'can_approve')).toBe(false);
+    expect(actual.hasPermission({
+      ...REPORTING_PERIOD_APPROVER, userType: 'OPERATIONAL_ADMIN',
+    } as any, 'MASTER_DATA', 'REPORTING_PERIOD', 'can_approve')).toBe(true);
   });
 
   it('lets a feed-only user onto the page when it opts into the feed grant', async () => {

@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { requisitionListFields } from './feed-requisition.service';
@@ -21,5 +22,14 @@ describe('feed requisition list — correlated line totals', () => {
 
   it('never compares the line table with itself', () => {
     expect(sqlText).not.toMatch(/rl\.requisition_id = `requisition_id`/);
+  });
+});
+
+describe('A1 (10 Oct) — the list returns farm_id so the web can link the farm', () => {
+  it('selects requisition.farm_id', () => {
+    // Joined to location_master (which has its own farm_id) as findAll does: the column must name requisition.
+    const text = drizzle.mock().select(requisitionListFields()).from(schema.requisition)
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.requisition.farm_id)).toSQL().sql;
+    expect(text).toContain('`requisition`.`farm_id`');
   });
 });

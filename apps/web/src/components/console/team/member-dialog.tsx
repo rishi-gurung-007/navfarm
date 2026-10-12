@@ -13,9 +13,25 @@ import { Select } from "../../ui/select";
 import { Field, ReadField } from "../../ui/field";
 import { Badge } from "../../ui/badge";
 import { SearchableEntitySelect } from "../../../modules/master-data/SearchableEntitySelect";
-import { assignableUserTypes, isTenantLevelUserType } from "./user-access";
+import { assignableUserTypes, isTenantLevelUserType, userTypeLabel } from "./user-access";
 
 type Row = Record<string, any>;
+
+/**
+ * The rows out of a lookup response, whichever shape it arrives in.
+ *
+ * `api.get` returns the body untouched, and this dialog's four lookups do not
+ * agree on one: `/user/assignable-farms`, `/user/assignable-areas` and
+ * `/role/company/:id` answer with a bare array, while `/cost-center` is a
+ * paginated master endpoint and answers with `{ success, data, total, … }`.
+ * A bare `Array.isArray` check silently discarded the second kind, so the
+ * department picker reported that none existed on a company with three.
+ */
+const rowsOf = (payload: unknown): Row[] => {
+  if (Array.isArray(payload)) return payload;
+  const data = (payload as { data?: unknown } | null)?.data;
+  return Array.isArray(data) ? data : [];
+};
 
 export interface MemberDialogProps {
   mode: "create" | "edit";
@@ -83,9 +99,17 @@ export function MemberDialog({
     phone: member?.phone || "",
     employee_id: member?.employee_id || "",
     department: member?.department || "",
+    // WP1c (Rishi's 4 Oct list, "User Setup defines department"): the identity
+    // the Transfer Shipment/Receipt rules compare — a Cost Center of type
+    // DEPARTMENT, never free text (decisions, 1 Oct). The legacy `department`
+    // text column stays for the records that already carry one.
+    department_id: member?.department_id || "",
     designation: member?.designation || "",
     user_type: (isEdit ? member?.user_type : typeOptions[typeOptions.length - 1]) || "STANDARD_USER",
     farm_id: member?.farm_id || "",
+    // WP1c: the Direct Transfer right is an access grant on the user record —
+    // the ONE source the requisition reads. Never self-serviceable.
+    direct_transfer_allowed: member?.direct_transfer_allowed || false,
   });
   const [areaIds, setAreaIds] = useState<string[]>(
     (member?.operational_areas || []).map((a: Row) => a.area_id),
@@ -95,31 +119,34 @@ export function MemberDialog({
   const [farms, setFarms] = useState<Row[]>([]);
   const [areas, setAreas] = useState<Row[]>([]);
   const [roles, setRoles] = useState<Row[]>([]);
+  const [departments, setDepartments] = useState<Row[]>([]);
   const [lookupsLoading, setLookupsLoading] = useState(false);
   const [areaQuery, setAreaQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const isStandard = form.user_type === "STANDARD_USER";
+  const isFarmBound = form.user_type === "FARM_MANAGER" || form.user_type === "STANDARD_USER";
 
   // Farms, areas and roles all belong to the chosen company, and the first two
   // are narrowed by who is asking — an operational admin is only offered the
   // areas they hold themselves. The API decides all three; this only asks.
   useEffect(() => {
-    if (!companyId) { setFarms([]); setAreas([]); setRoles([]); return; }
+    if (!companyId) { setFarms([]); setAreas([]); setRoles([]); setDepartments([]); return; }
     let cancelled = false;
     setLookupsLoading(true);
     Promise.all([
       api.get(`/user/assignable-farms?companyId=${companyId}`).catch(() => []),
       api.get(`/user/assignable-areas?companyId=${companyId}`).catch(() => []),
       api.get(`/role/company/${companyId}`).catch(() => []),
+      api.get(`/cost-center?costCenterType=DEPARTMENT&companyId=${companyId}`).catch(() => []),
     ])
-      .then(([farmRows, areaRows, roleRows]) => {
+      .then(([farmRows, areaRows, roleRows, departmentRows]) => {
         if (cancelled) return;
-        setFarms(Array.isArray(farmRows) ? farmRows : []);
-        setAreas(Array.isArray(areaRows) ? areaRows : []);
+        setFarms(rowsOf(farmRows));
+        setAreas(rowsOf(areaRows));
+        setDepartments(rowsOf(departmentRows));
         // SUPER_ADMIN is not a role a console user is handed from this screen.
-        setRoles((Array.isArray(roleRows) ? roleRows : []).filter((r: Row) => r.role_code !== "SUPER_ADMIN" && r.role_code !== "SYSTEM_SUPER_ADMIN"));
+        setRoles(rowsOf(roleRows).filter((r: Row) => r.role_code !== "SUPER_ADMIN" && r.role_code !== "SYSTEM_SUPER_ADMIN"));
       })
       .finally(() => { if (!cancelled) setLookupsLoading(false); });
     return () => { cancelled = true; };
@@ -138,7 +165,7 @@ export function MemberDialog({
     event.preventDefault();
     setError("");
     if (!companyId) { setError(t("usrSelectCompanyFirst")); return; }
-    if (isStandard && !form.farm_id) { setError(t("tmFarmRequired")); return; }
+    if (isFarmBound && !form.farm_id) { setError(t("tmFarmRequired")); return; }
     setSaving(true);
     try {
       if (isEdit) {
@@ -147,6 +174,7 @@ export function MemberDialog({
           phone: form.phone,
           employee_id: form.employee_id,
           department: form.department,
+          department_id: form.department_id || null,
           designation: form.designation,
           operational_area_ids: areaIds,
         };
@@ -154,8 +182,9 @@ export function MemberDialog({
         // unchanged values keeps the API's "did this actually change?" check
         // quiet, and the form locks them anyway.
         if (!isSelf) payload.user_type = form.user_type;
-        // An empty string is not a UUID and a non-standard user has no farm.
-        if (isStandard && form.farm_id) payload.farm_id = form.farm_id;
+        if (!isSelf) payload.direct_transfer_allowed = form.direct_transfer_allowed;
+        // An empty string is not a UUID and a non-farm-bound user has no farm.
+        if (isFarmBound && form.farm_id) payload.farm_id = form.farm_id;
         await api.put(`/user/${member?.user_id}`, payload);
         const held = member?.roles?.[0];
         if (roleId && roleId !== held?.role_id) {
@@ -175,8 +204,10 @@ export function MemberDialog({
           user_type: form.user_type,
           employee_id: form.employee_id || undefined,
           department: form.department || undefined,
+          department_id: form.department_id || undefined,
           designation: form.designation || undefined,
-          farm_id: isStandard && form.farm_id ? form.farm_id : undefined,
+          farm_id: isFarmBound && form.farm_id ? form.farm_id : undefined,
+          direct_transfer_allowed: form.direct_transfer_allowed || undefined,
           operational_area_ids: areaIds,
         });
         if (roleId && created?.user_id) {
@@ -255,9 +286,25 @@ export function MemberDialog({
               <Input id="tm-employee-id" value={form.employee_id}
                 onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
             </Field>
-            <Field label={t("edmDepartment")} htmlFor="tm-department">
-              <Input id="tm-department" value={form.department}
-                onChange={(e) => setForm({ ...form, department: e.target.value })} />
+            <Field label={t("tmFieldDepartment")} htmlFor="tm-department-id"
+              hint={departments.length ? undefined : t("tmNoDepartmentsHint")}>
+              {/* The rule reads this id, so it is a Cost Center picker. A
+                  company with no DEPARTMENT cost centres yet shows the hint
+                  rather than an empty box with no explanation. */}
+              <SearchableEntitySelect
+                id="tm-department-id"
+                ariaLabel={t("tmFieldDepartment")}
+                value={form.department_id}
+                onChange={(next) => setForm({ ...form, department_id: next })}
+                onClear={form.department_id ? () => setForm({ ...form, department_id: "" }) : undefined}
+                options={departments}
+                valueKey="cost_center_id"
+                getLabel={(row) => `${row.cost_center_code ? `${row.cost_center_code} — ` : ""}${row.cost_center_name ?? ""}`}
+                getLabelParts={(row) => [row.cost_center_code ?? "", row.cost_center_name ?? ""]}
+                placeholder={t("tmDepartmentNone")}
+                searchPlaceholder={t("tmSearchDepartment")}
+                noMatchesLabel={t("tmNoMatches")}
+              />
             </Field>
             <Field label={t("edmDesignation")} htmlFor="tm-designation">
               <Input id="tm-designation" value={form.designation}
@@ -301,22 +348,22 @@ export function MemberDialog({
             )}
 
             {isSelf || typeOptions.length === 0 ? (
-              <ReadField label={t("tmFieldUserType")} value={(form.user_type || "").replace(/_/g, " ")} />
+              <ReadField label={t("tmFieldUserType")} value={userTypeLabel(form.user_type)} />
             ) : (
               <Field label={t("tmFieldUserType")} htmlFor="tm-user-type" required>
                 <Select id="tm-user-type" value={form.user_type}
                   onChange={(e) => setForm({ ...form, user_type: e.target.value })}>
                   {typeOptions.map((type) => (
-                    <option key={type} value={type}>{type.replace(/_/g, " ")}</option>
+                    <option key={type} value={type}>{userTypeLabel(type)}</option>
                   ))}
                 </Select>
               </Field>
             )}
 
-            {/* A farm is a standard user's boundary and nothing else's, so the
-                field appears for exactly that type — the rule the API applies
+            {/* A farm is a farm-bound user's boundary, so the
+                field appears for each fixed-farm persona — the rule the API applies
                 to `user_master.farm_id`. */}
-            {isStandard && (
+            {isFarmBound && (
               isSelf ? (
                 <ReadField
                   className="sm:col-span-2"
@@ -343,6 +390,34 @@ export function MemberDialog({
                   />
                 </Field>
               )
+            )}
+
+            {/* WP1c: the Direct Transfer right (Rishi's 4 Oct list: "user needs
+                right in User Setup to tick"). The API refuses a self-grant, so
+                the field is read-only on your own record. */}
+            {isSelf ? (
+              <ReadField
+                className="sm:col-span-2"
+                label={t("tmDirectTransfer")}
+                value={form.direct_transfer_allowed ? t("crqYes") : t("crqNo")}
+              />
+            ) : (
+              <Field
+                className="sm:col-span-2"
+                label={t("tmDirectTransfer")}
+                htmlFor="tm-direct-transfer"
+                tooltip={t("tmDirectTransferHint")}
+              >
+                <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-primary)" }}>
+                  <input
+                    id="tm-direct-transfer"
+                    type="checkbox"
+                    checked={form.direct_transfer_allowed}
+                    onChange={(e) => setForm({ ...form, direct_transfer_allowed: e.target.checked })}
+                  />
+                  {t("tmDirectTransferHint")}
+                </label>
+              </Field>
             )}
           </div>
 

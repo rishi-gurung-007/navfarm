@@ -49,4 +49,14 @@ describe('JwtStrategy.validate', () => {
     const user = await strategy.validate({ sub: 'user-1', type: 'access' } as any);
     expect(user).toMatchObject({ farmId: 'farm-1' });
   });
+
+  it.each([
+    ['STANDARD_USER', 'farm-1'],
+    ['FARM_MANAGER', 'farm-1'],
+    ['OPERATIONAL_ADMIN', null],
+  ])('carries a farm only for the farm-bound %s persona', async (userType, expectedFarmId) => {
+    user.user_type = userType;
+    user.farm_id = 'farm-1';
+    await expect(strategy.validate({ sub: 'user-1', type: 'access' })).resolves.toMatchObject({ farmId: expectedFarmId });
+  });
 });

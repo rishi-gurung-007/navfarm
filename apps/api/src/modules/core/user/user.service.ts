@@ -7,7 +7,8 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateUserDto, UpdateUserDto, QueryUserDto } from './dto/user.dto';
 import { UserDirectoryService } from '../../../core/database/user-directory.service';
-import { canAssignUserType, isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
+import { canAssignUserType, isFarmBoundUserType, isTenantLevelUserType, outranks } from '../../../common/user-type-hierarchy';
+import { assertDepartmentIdentity } from '../../../common/department-identity';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 /**
@@ -81,10 +82,21 @@ export class UserService {
       throw new ForbiddenException('You can only create users in your own tenant.');
     }
     await this.assertCompanyInReach(requester, dto.company_id, dto.tenant_id);
-    if (userType === 'STANDARD_USER' && !dto.farm_id) {
-      throw new BadRequestException('A standard user must be assigned to a farm.');
+    if (isFarmBoundUserType(userType) && !dto.farm_id) {
+      throw new BadRequestException(`A ${userType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
     if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, dto.company_id, dto.tenant_id);
+    // Department is a Cost Center Master identity of type DEPARTMENT, never
+    // free text (decisions, 1 Oct). Checked only when one is supplied, so the
+    // legacy free-text `department` path keeps working unchanged.
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId: dto.tenant_id,
+        companyId: dto.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
     const areaIds = await this.validateAreas(dto.operational_area_ids, dto.company_id, dto.tenant_id, requester);
 
     const existing = await this.db
@@ -113,10 +125,14 @@ export class UserService {
         user_type: userType,
         employee_id: dto.employee_id || null,
         department: dto.department || null,
+        department_id: dto.department_id || null,
+        // WP1c: the Direct Transfer right is granted here, in User Setup, by
+        // whoever may create the user; it is never self-service (see update).
+        direct_transfer_allowed: dto.direct_transfer_allowed ?? false,
         designation: dto.designation || null,
         timezone_pref_id: dto.timezone_pref_id || null,
-        // A farm is a standard user's boundary; on any other type it would mean nothing.
-        farm_id: userType === 'STANDARD_USER' ? dto.farm_id || null : null,
+        // Farm-bound personas share one fixed farm; authority remains distinct in the user-type ladder.
+        farm_id: isFarmBoundUserType(userType) ? dto.farm_id || null : null,
         invited_by: requester?.userId || null,
       });
       await tx.insert(schema.userCompanyAssignments).values({
@@ -223,6 +239,8 @@ export class UserService {
         user_type: schema.userMaster.user_type,
         employee_id: schema.userMaster.employee_id,
         department: schema.userMaster.department,
+        department_id: schema.userMaster.department_id,
+        direct_transfer_allowed: schema.userMaster.direct_transfer_allowed,
         designation: schema.userMaster.designation,
         is_active: schema.userMaster.is_active,
         last_login_at: schema.userMaster.last_login_at,
@@ -242,11 +260,12 @@ export class UserService {
   }
 
   /** Company, farm, operational areas and roles for a page of users, in four queries rather than per user. */
-  private async enrich<T extends { user_id: string; company_id: string | null; farm_id?: string | null }>(users: T[]) {
+  private async enrich<T extends { user_id: string; company_id: string | null; farm_id?: string | null; department_id?: string | null }>(users: T[]) {
     if (users.length === 0) return [];
     const userIds = users.map((u) => u.user_id);
     const companyIds = [...new Set(users.map((u) => u.company_id).filter((id): id is string => Boolean(id)))];
     const farmIds = [...new Set(users.map((u) => u.farm_id).filter((id): id is string => Boolean(id)))];
+    const departmentIds = [...new Set(users.map((u) => u.department_id).filter((id): id is string => Boolean(id)))];
 
     // Each branch below is either a Drizzle query or a plain array, so the
     // inferred element type is a union that collapses to `{}`. The four row
@@ -256,7 +275,7 @@ export class UserService {
     type AreaRow = { user_id: string; area_id: string; area_code: string; area_name: string; is_primary: boolean | null };
     type RoleRow = { user_id: string; assign_id: string; role_id: string; role_code: string; role_name: string };
 
-    const [companies, farms, areas, roles] = await Promise.all([
+    const [companies, farms, areas, roles, departments] = await Promise.all([
       companyIds.length
         ? this.db.select({ company_id: schema.companyMaster.company_id, company_code: schema.companyMaster.company_code, company_name: schema.companyMaster.company_name })
             .from(schema.companyMaster).where(inArray(schema.companyMaster.company_id, companyIds))
@@ -287,9 +306,15 @@ export class UserService {
         .from(schema.userRoleAssignment)
         .innerJoin(schema.roleMaster, eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id))
         .where(and(inArray(schema.userRoleAssignment.user_id, userIds), eq(schema.userRoleAssignment.is_active, true))),
+      // The department is a Cost Center of type DEPARTMENT (department_id); its name is what the directory shows.
+      departmentIds.length
+        ? this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
+            .from(schema.costCenterMaster).where(inArray(schema.costCenterMaster.cost_center_id, departmentIds))
+        : Promise.resolve([] as { cost_center_id: string; cost_center_name: string }[]),
     ]);
 
     const companyById = new Map((companies as CompanyRow[]).map((c) => [c.company_id, c] as const));
+    const departmentById = new Map((departments as { cost_center_id: string; cost_center_name: string }[]).map((d) => [d.cost_center_id, d.cost_center_name] as const));
     const farmById = new Map((farms as FarmRow[]).map((f) => [f.location_id, f] as const));
     const areaRows = areas as AreaRow[];
     const roleRows = roles as RoleRow[];
@@ -300,6 +325,7 @@ export class UserService {
       company_name: user.company_id ? companyById.get(user.company_id)?.company_name ?? null : null,
       farm_code: user.farm_id ? farmById.get(user.farm_id)?.location_code ?? null : null,
       farm_name: user.farm_id ? farmById.get(user.farm_id)?.location_name ?? null : null,
+      department_name: user.department_id ? departmentById.get(user.department_id) ?? null : null,
       operational_areas: areaRows.filter((a) => a.user_id === user.user_id).map(({ user_id: _u, ...a }) => a),
       roles: roleRows.filter((r) => r.user_id === user.user_id).map(({ user_id: _u, ...r }) => r),
     }));
@@ -364,16 +390,32 @@ export class UserService {
     if (isSelf && ((dto.farm_id !== undefined && dto.farm_id !== user.farm_id) || areasRequestedChange)) {
       throw new ForbiddenException('You cannot change your own farm or operational area assignment.');
     }
+    // WP1c: the Direct Transfer right is an access grant, so — like the farm
+    // and areas — it is an assignment someone above you makes, never
+    // self-service. The requisition reads this column as its ONE source.
+    if (isSelf && dto.direct_transfer_allowed !== undefined
+      && dto.direct_transfer_allowed !== (user as any).direct_transfer_allowed) {
+      throw new ForbiddenException('You cannot change your own Direct Transfer right.');
+    }
 
     const resultingType = typeChanged ? dto.user_type : user.user_type;
-    const resultingFarm = resultingType === 'STANDARD_USER' ? (dto.farm_id !== undefined ? dto.farm_id : user.farm_id) : null;
-    if (resultingType === 'STANDARD_USER' && !resultingFarm) {
-      throw new BadRequestException('A standard user must be assigned to a farm.');
+    const resultingFarm = isFarmBoundUserType(resultingType) ? (dto.farm_id !== undefined ? dto.farm_id : user.farm_id) : null;
+    if (isFarmBoundUserType(resultingType) && !resultingFarm) {
+      throw new BadRequestException(`A ${resultingType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
-    if (resultingType === 'STANDARD_USER' && dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, user.company_id, user.tenant_id);
+    if (isFarmBoundUserType(resultingType) && dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, user.company_id, user.tenant_id);
     const areaIds = areasRequestedChange
       ? await this.validateAreas(requestedAreaIds, user.company_id, user.tenant_id, requester)
       : undefined;
+
+    if (dto.department_id) {
+      await assertDepartmentIdentity(this.db, {
+        tenantId: user.tenant_id,
+        companyId: user.company_id,
+        departmentId: dto.department_id,
+        label: 'Department',
+      });
+    }
 
     const updates: any = {};
     if (dto.full_name !== undefined) updates.full_name = dto.full_name;
@@ -381,10 +423,12 @@ export class UserService {
     if (typeChanged) updates.user_type = dto.user_type;
     if (dto.employee_id !== undefined) updates.employee_id = dto.employee_id;
     if (dto.department !== undefined) updates.department = dto.department;
+    if (dto.department_id !== undefined) updates.department_id = dto.department_id || null;
     if (dto.designation !== undefined) updates.designation = dto.designation;
     if (dto.timezone_pref_id !== undefined) updates.timezone_pref_id = dto.timezone_pref_id;
+    if (dto.direct_transfer_allowed !== undefined) updates.direct_transfer_allowed = dto.direct_transfer_allowed;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
-    // Moving a standard user to another type clears the farm, which would
+    // Moving a farm-bound user to another type clears the farm, which would
     // otherwise sit on the row with no meaning.
     if (resultingFarm !== (user.farm_id ?? null)) updates.farm_id = resultingFarm;
 
@@ -476,7 +520,7 @@ export class UserService {
     return { deleted: true, user_id: id };
   }
 
-  /** Top-level active farms of a company, for the standard user's farm selector — the same rule create/update enforce. */
+  /** Top-level active farms of a company, for a farm-bound user's selector — the same rule create/update enforce. */
   async assignableFarms(companyId: string, requester: RequestingUser, activeCompanyId?: string) {
     await this.assertCompanyInReach(requester, companyId, requester.tenantId, activeCompanyId);
     return this.db

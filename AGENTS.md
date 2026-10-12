@@ -201,6 +201,80 @@ seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migratio
   represented by lines. Feed is an internal transfer, displayed as “Internal
   Feed Transfer”.
 
+### Requisitions — Part E, verified live 4 Oct 2026
+
+Evidence: `docs/VERIFICATION-2026-10-04-feed-part-e.md`.
+
+- **The common requisition is mounted**: `/api/v1/requisition` (RequisitionModule)
+  handles the kinds **ITEM** (purpose STORE or PURCHASE), **FA** and **SERVICE**
+  (line by resource or description). Its routes are create, PUT (only while
+  Open), submit, approve, reject, release, shipment, receipt, reopen and
+  link-po.
+- **FEED never goes through it.** One shared guard makes every generic mutation
+  refuse a FEED row with a 400, and the row stays unchanged. The DTO refuses
+  `doc_type: FEED` on create. Feed keeps `/feed-requisition` and its own
+  approval handler. A feed requisition stops at **Approved** and has no Release.
+- **Company boundary:** `/requisition` reads and writes only inside the selected
+  company. A foreign company returns 403.
+- **Approvals:** a creator cannot approve their own manual requisition (403).
+  `approved_by` is stamped from the deciding user. **Open defect D1 (4 Oct):**
+  the Approvals inbox (`ApprovalService.farmConditions`) hides approval rows
+  that have no farm and no batch from any company- or farm-scoped user. So
+  common requisitions are visible and approvable only by a tenant-scoped user.
+- **Store release creates a staged stock transfer.** Each line carries
+  `stock_transfer_line.requisition_line_id`. Ship and receive go through the
+  requisition and post one ledger row per event. Transfer status runs DRAFT →
+  IN_TRANSIT → PARTIALLY_RECEIVED → POSTED. The requisition's fulfilment runs
+  NOT_APPLICABLE / PARTIALLY_SHIPPED / SHIPPED / PARTIALLY_RECEIVED / RECEIVED,
+  from the line's qty_shipped and qty_received. Purchase, FA and Service release
+  set `integration_status = BC_PENDING`. A PO number is linked by hand
+  (link-po), because BC is not connected.
+- **Numbering:** common requisitions take the company Number Series with code
+  REQUISITION (on nf_devco this is the illustrative `RQ` series, 5 digits:
+  RQ-00001…), and skip numbers already in use. Without a series they fall back
+  to `REQ-YYYY-NNNN`. Feed requisitions keep `REQ-<FarmCode>-YYYY-NNNNN`.
+- **Where each kind is created:** **Approvals → Requisitions**
+  (`/approvals/requisitions`) lists every kind, and its New offers Feed, Item,
+  Fixed Asset and Service. **Inventory → Feed Forecast → "Internal Feed
+  Transfer" tab** (`?tab=feed-requisition`) offers **Feed only** (Rishi, 4 Oct).
+  Both open the same feed dialog and create the same document through
+  `/feed-requisition`. A manual feed line whose item differs from the
+  destination's forecast demand needs an exception reason (Requisition row 13).
+  The Approvals inbox shows both kinds as the full document, read-only.
+
+### Feed planning settings — what the forecast actually reads (3 Oct 2026)
+
+- The shortfall is **demand + safety stock − opening − confirmed incoming**.
+  There is **no lead time and no refill buffer** in it. `silo_reorder_days` and
+  `feed_wastage_pct` still exist as columns and master fields and the forecast
+  must not read them; do not reintroduce either into the calculation.
+- **Planning settings own the logistics values**, not `location_master`:
+  `FeedSettingsService.resolve(companyId, farmId?)` returns `safetyStockKg`,
+  `bagSizeKg`, `bulkMultipleKg`, `truckTargetKg` and `productionWeekday`, and
+  there is deliberately **no `leadTimeDays`**. Defaults: safety stock **0**,
+  bulk multiple **3000 KG**, bag size **50 KG**, truck target **30000 KG** (a
+  target, never a block), horizon 7 days by default and 45 maximum.
+- They are edited in the app at **Settings → Inventory Setup → Silo Feed
+  Setup**: a company row (safety stock, bag size) and a per-farm row (safety
+  stock, bag size, bulk multiple, truck target, production weekday), stored in
+  `feed_planning_setting` keyed by `active_scope_key` (`F:<farmId>` for a farm).
+  Only **Feed Type**, **Below Feed Level** and **Above Threshold** are per silo
+  on `location_master`. Verified by changing a farm's safety stock 0 → 500 in the
+  browser and watching every unrounded need rise by exactly 500.
+- The silo's Below Feed Level never enters the shortfall; it drives alerts only.
+  The silo balance is always labelled **“System Balance”** (cp. 37).
+- A requisition line carries a per batch + house breakdown
+  (`requisition_line_batch`); rounding and ordering stay per silo + item. Line
+  numbers are 10000-step and displayed as such; Days Remaining is displayed to
+  one decimal and stored `decimal(10,1)`.
+- **Known defect, open as of 3 Oct:** the engine keys a stage-split
+  (`animal_tracking = 'REGISTERED'`) batch as the composite `"<batchId>:<stageId>"`
+  (`feed-forecast.service.ts:499`), which does not fit `varchar(36)` —
+  `requisition_line_batch.batch_id` (which also has an FK to `batch_header`) or
+  `feed_forecast_run_line.batch_id`. Auto-draft and Save Run therefore return 500
+  on seven of the nine demo farms. Evidence:
+  `docs/VERIFICATION-2026-10-03-feed-tdd-part-a.md`.
+
 ### Silo topology
 
 - FARM, SHED, PEN and SILO are rows in `location_master`.
@@ -261,3 +335,14 @@ seed plan is `docs/superpowers/plans/2026-09-30-four-farm-feed-seed-and-migratio
 6. Update the relevant implementation plan and this section when scope or
    architecture changes, so another agent does not reconstruct history from
    stale workbook examples.
+7. **In a git worktree, nx builds and serves the wrong tree.** `nx run
+   api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
+   main checkout on 3 Oct, even with `--skip-nx-cache`, `NX_DAEMON=false` and the
+   worktree's own nx binary. Build the API with
+   `cd apps/api && NODE_ENV=production NX_WORKSPACE_ROOT_PATH=<worktree>
+   NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
+   ../../node_modules/.bin/webpack-cli build`, serve the web with
+   `cd apps/web && ../../node_modules/.bin/next dev --port 3002`, and run jest
+   with `../../node_modules/.bin/jest --maxWorkers=2`. Then **grep the bundle for
+   a string from your newest commit** before believing anything the API tells
+   you — a stale `dist/main.js` reports a fixed defect as still broken.

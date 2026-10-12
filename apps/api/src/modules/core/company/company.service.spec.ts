@@ -4,6 +4,11 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { MASTER_CONNECTION } from '../../../core/database/database.module';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import * as templateCopies from './copy-master-templates';
+
+jest.mock('./copy-master-templates', () => ({
+  copyCompanyMasterTemplates: jest.fn(),
+}));
 
 describe('CompanyService', () => {
   let service: CompanyService;
@@ -92,6 +97,25 @@ describe('CompanyService', () => {
 
     it('forbids a caller with no user context', async () => {
       await expect(service.create(createDto, 'tenant-123')).rejects.toThrow(ForbiddenException);
+    });
+
+    // Client ruling, 12 Oct: a new company starts with blank master data.
+    it('does not copy tenant master templates into a new company', async () => {
+      const copy = templateCopies.copyCompanyMasterTemplates as jest.Mock;
+      copy.mockClear();
+      const inserted: unknown[] = [];
+      // Any chain (select/from/where/limit, insert/values, update/set) resolves to [].
+      const chain: any = new Proxy(function () {}, {
+        get: (_t, prop) => (prop === 'then' ? (resolve: (v: unknown[]) => void) => resolve([]) : chain),
+        apply: () => chain,
+      });
+      const tx: any = { select: () => chain, update: () => chain, insert: (table: unknown) => { inserted.push(table); return chain; } };
+      mockDbSelect.mockReturnValue(chain);
+      mockDbSelect.mockReturnValueOnce(rows([{ max_companies: 5 }])); // plan limit lookup
+      (mockDb as any).transaction = jest.fn(async (work: (t: unknown) => Promise<unknown>) => work(tx));
+      await service.create(createDto, 'tenant-123', tenantAdmin).catch(() => undefined);
+      expect(inserted.length).toBeGreaterThan(0); // the company was being written
+      expect(copy).not.toHaveBeenCalled();
     });
   });
 

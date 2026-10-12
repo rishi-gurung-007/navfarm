@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -9,22 +9,27 @@ import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
-import { AlertRuleService } from '../../system/alert-rule/alert-rule.service';
-import { addDays, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
+import { AlertRuleService, normalizeFeedRecipientRole } from '../../system/alert-rule/alert-rule.service';
+import { diffDaysIso } from '../../procurement/feed-requisition/feed-requisition.rules';
+import { addDays, asBatchPk, dayShort, parseUtcTimestamp, todayInZone, todayLocal, utcTimestamp, type DietChange } from '../feed-forecast/feed-forecast.engine';
 import type { AlertFrequency, PriorityLevel } from '../../system/alert-rule/alert-rule.rules';
 import {
-  ActiveAlertFact, AlertPlan, AlertRuleFact, OpenRequisitionFact, SiloLevelFact, planAlerts,
+  ActiveAlertFact, AlertPlan, AlertRuleFact, DEFAULT_LOOKAHEAD_DAYS, FORECAST_EVENTS, FeedRowGapFact, ORDER_EVENTS, OpenRequisitionFact, OrderFacts, SiloLevelFact, planAlerts,
 } from './feed-alert.rules';
 
 // Every feed_alert timestamp is written and read in the one Plan B convention (UTC, see utcTimestamp in the engine).
 const ts = utcTimestamp;
 const parseTs = parseUtcTimestamp;
+const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 const num = (v: string | null) => (v == null ? null : Number(v));
 
 /** Feed requisitions not yet approved — the statuses a REQ_DEADLINE reminder is about (checkpoint 20). */
 const OPEN_FEED_REQ_STATUSES = ['AUTO_DRAFT', 'DRAFT', 'PENDING_APPROVAL'];
 /** Q1: admins see every alert of a farm in their scope; everyone else by role code. */
 const SEES_ALL = [...ADMIN_USER_TYPES, 'OPERATIONAL_ADMIN'];
+
+export type PushedEventType = 'MILL_DISPATCH' | 'MILL_ADJUSTED' | 'RECEIPT_VARIANCE' | 'CAPACITY_EXCEEDED' | 'AUTO_DRAFTED' | 'STOCK_TAKE_DUE' | 'CHANGEOVER';
+export type PushedSubjectType = 'LOADING_SHEET' | 'CONSOLIDATION' | 'RECEIPT' | 'DIET_DATE' | 'REQUISITION' | 'STOCK_TAKE';
 
 type AlertUser = { userId?: string; userType?: string };
 
@@ -34,9 +39,12 @@ export function visibleTo(
   seesAll: boolean,
 ): boolean {
   if (seesAll) return true;
-  const recipients = Array.isArray(alert.recipient_roles) ? (alert.recipient_roles as string[]) : [];
-  if (recipients.some((r) => roleCodes.includes(r))) return true;
-  return !!alert.escalated_at && !!alert.escalation_role && roleCodes.includes(alert.escalation_role);
+  const recipients = Array.isArray(alert.recipient_roles)
+    ? (alert.recipient_roles as string[]).map(normalizeFeedRecipientRole)
+    : [];
+  const normalizedRoleCodes = roleCodes.map(normalizeFeedRecipientRole);
+  if (recipients.some((r) => normalizedRoleCodes.includes(r))) return true;
+  return !!alert.escalated_at && !!alert.escalation_role && normalizedRoleCodes.includes(normalizeFeedRecipientRole(alert.escalation_role));
 }
 
 /**
@@ -90,13 +98,15 @@ export class FeedAlertService {
   ): Promise<AlertPlan & { forecastError?: string }> {
     const levelsOnly = !!opts.levelsOnly;
     // M8: a company created after 0118 has no rules until something ensures them.
-    await this.alertRules.ensureDefaultRules(companyId, tenantId);
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
     return this.systemFarmScope(farmId, companyId, async () => {
       const nowMs = Date.now();
       let rules = await this.loadRules(companyId, farmId, tenantId);
       // Caller contract (a): every silo of the farm, whichever one the posting touched.
       const silos = await this.loadSiloLevels(farmId, companyId, tenantId);
       let dietChanges: DietChange[] = [];
+      let feedRowGaps: FeedRowGapFact[] = [];
+      let noSiloHolds: string[] = [];
       let requisitions: OpenRequisitionFact[] = [];
       let forecastError: string | undefined;
       // D16/M6: today in the farm's zone, read once per evaluation, and the
@@ -110,11 +120,25 @@ export class FeedAlertService {
       try {
         ({ today, timeZone } = await this.forecast.farmToday(companyId, tenantId, nowMs));
         if (!levelsOnly) {
-          const dietRules = rules.filter((r) => r.isActive && r.eventType === 'DIET_CHANGE' && (r.farmId === null || r.farmId === farmId));
+          const dietRules = rules.filter((r) => r.isActive && FORECAST_EVENTS.includes(r.eventType) && (r.farmId === null || r.farmId === farmId));
           if (dietRules.length) {
-            // The forecast only needs to look as far ahead as the widest DIET_CHANGE window (checkpoint 15 caps it at 45).
-            const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => r.thresholdValue ?? 3)));
-            dietChanges = (await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) }, { today, timeZone })).dietChanges;
+            // The forecast only needs to look as far ahead as the widest rule window (checkpoint 15 caps it at 45).
+            const horizon = Math.min(45, Math.max(1, ...dietRules.map((r) => (r.thresholdValue && r.thresholdValue > 0 ? r.thresholdValue : r.eventType === 'DIET_CHANGE' ? 3 : DEFAULT_LOOKAHEAD_DAYS))));
+            const forecast = await this.forecast.computeForFarm(farmId, companyId, tenantId, { from: today, to: addDays(today, horizon) }, { today, timeZone });
+            dietChanges = forecast.dietChanges;
+            // W4G1: the engine names a gap by batch number; the alert's subject is the batch itself.
+            const gaps = (forecast.flags ?? []).filter((f): f is Extract<typeof f, { kind: 'NO_FEED_ROW' }> => f.kind === 'NO_FEED_ROW');
+            if (gaps.length) {
+              const batches = await this.db.select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no })
+                .from(schema.batchHeader).where(and(
+                  eq(schema.batchHeader.tenant_id, tenantId), eq(schema.batchHeader.company_id, companyId),
+                  inArray(schema.batchHeader.batch_no, [...new Set(gaps.map((g) => g.batchNo))]),
+                ));
+              const idOf = new Map(batches.map((b) => [b.batch_no, b.batch_id]));
+              feedRowGaps = gaps.filter((g) => idOf.has(g.batchNo))
+                .map((g) => ({ batchId: asBatchPk(idOf.get(g.batchNo)!), batchNo: g.batchNo, stageCode: g.stageCode, date: g.date }));
+            }
+            noSiloHolds = (forecast.flags ?? []).flatMap((f) => (f.kind === 'NO_SILO_HOLDS_ITEM' ? [`${f.shedCode}|${f.itemName}`] : []));
           }
         }
       } catch (error) {
@@ -127,16 +151,37 @@ export class FeedAlertService {
         // alone would resolve them as RULE_OFF.
         forecastError = (error as Error).message;
         this.logger.warn(`Diet-change alerts not evaluated for farm ${farmId}: ${forecastError}`);
-        rules = rules.filter((r) => r.eventType !== 'DIET_CHANGE');
+        rules = rules.filter((r) => !FORECAST_EVENTS.includes(r.eventType));
       }
       if (!levelsOnly) {
         requisitions = await this.loadOpenRequisitions(farmId, companyId, tenantId);
       }
+      // W5A (Engine rows 60-62): the silo statuses. A pass that cannot compute them sits those three events out, with their open alerts.
+      let orderFacts: OrderFacts | undefined;
+      let orderError: string | undefined;
+      if (!levelsOnly && rules.some((r) => r.isActive && ORDER_EVENTS.includes(r.eventType) && (r.farmId === null || r.farmId === farmId))) {
+        try {
+          orderFacts = await this.loadOrderFacts(farmId, companyId, tenantId);
+        } catch (error) {
+          orderError = (error as Error).message;
+          this.logger.warn(`Shortfall alerts not evaluated for farm ${farmId}: ${(error as Error).message}`);
+        }
+      }
+      if (!levelsOnly && !orderFacts) rules = rules.filter((r) => !ORDER_EVENTS.includes(r.eventType));
       let active = await this.loadActive(farmId, tenantId, timeZone);
-      if (forecastError) active = active.filter((a) => a.eventType !== 'DIET_CHANGE');
-      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, requisitions, active, levelsOnly });
+      if (forecastError) active = active.filter((a) => !FORECAST_EVENTS.includes(a.eventType));
+      const closedPlans = levelsOnly ? {} : await this.closedPlans(active, farmId, tenantId);
+      const plan = planAlerts({ today, nowMs, farmId, rules, silos, dietChanges, feedRowGaps, noSiloHolds, requisitions, orderFacts, active, levelsOnly, closedPlans });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
-      return forecastError ? { ...plan, forecastError } : plan;
+      if (!levelsOnly) {
+        try {
+          await this.resolveClearedChangeovers(farmId, companyId, tenantId, nowMs);
+        } catch (error) {
+          this.logger.warn(`Changeover alerts not re-checked for farm ${farmId}: ${(error as Error).message}`);
+        }
+      }
+      const failure = forecastError ?? orderError;
+      return failure ? { ...plan, forecastError: failure } : plan;
     });
   }
 
@@ -182,6 +227,220 @@ export class FeedAlertService {
     }
   }
 
+  /**
+   * PLAN_AVAILABLE (Master Setup row 45, "plan available") is pushed, not
+   * evaluated: the feed scheduler raises it for the farm's Feed Plan of the
+   * week (brief B). One open alert per active PLAN_AVAILABLE rule and plan,
+   * through the same unique active_key as every other alert; the rule's
+   * previous plan notice for this farm resolves as SUPERSEDED. A company with
+   * no PLAN_AVAILABLE rule gets no notice — no recipients are assumed.
+   */
+  async raisePlanAvailable(
+    farmId: string, companyId: string, tenantId: string,
+    plan: { planId: string; planCode: string; planType: string; productionDate: string },
+    nowMs: number = Date.now(),
+  ): Promise<{ rules: number; raised: number }> {
+    // The same seeding GET /alert-rule uses: a fresh database has no PLAN_AVAILABLE rule until it runs.
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
+    const rules = (await this.loadRules(companyId, farmId, tenantId))
+      .filter((r) => r.isActive && r.eventType === 'PLAN_AVAILABLE' && (r.farmId === null || r.farmId === farmId));
+    const now = ts(nowMs);
+    let raised = 0;
+    for (const rule of rules) {
+      const dedupKey = `${rule.ruleId}|${plan.planId}`;
+      await this.db.update(schema.feedAlert)
+        .set({ status: 'RESOLVED', active_key: null, resolved_at: now, resolved_reason: 'SUPERSEDED' })
+        .where(and(
+          eq(schema.feedAlert.tenant_id, tenantId), eq(schema.feedAlert.farm_id, farmId), eq(schema.feedAlert.rule_id, rule.ruleId),
+          eq(schema.feedAlert.status, 'ACTIVE'), sql`${schema.feedAlert.dedup_key} <> ${dedupKey}`,
+        ));
+      const kind = plan.planType === 'ACTUAL' ? 'Actual' : 'Tentative';
+      try {
+        await this.db.insert(schema.feedAlert).values({
+          alert_id: randomUUID(), tenant_id: tenantId, company_id: companyId, farm_id: farmId,
+          rule_id: rule.ruleId, notification_code: rule.notificationCode, event_type: rule.eventType, priority_level: rule.priorityLevel,
+          subject_type: 'FEED_PLAN', subject_id: plan.planId, item_id: null, dedup_key: dedupKey, active_key: dedupKey, status: 'ACTIVE',
+          title: `Feed plan available: ${plan.planCode}`.slice(0, 200),
+          message: `${kind} Feed Plan ${plan.planCode} for production on ${dayShort(plan.productionDate)} is ready to review.`,
+          observed_value: null, threshold_value: rule.thresholdValue == null ? null : String(rule.thresholdValue),
+          recipient_roles: rule.recipientRoles, raised_at: now, last_notified_at: now, notify_count: 1,
+        });
+        raised += 1;
+      } catch (error) {
+        if (!isDuplicateEntry(error)) throw error; // already raised for this plan
+      }
+    }
+    return { rules: rules.length, raised };
+  }
+
+  /**
+   * W4G1: the pushed events — MILL_DISPATCH (Req. rows 74–76), MILL_ADJUSTED (row 126), RECEIPT_VARIANCE (checkpoint 26)
+   * and CAPACITY_EXCEEDED (checkpoint 34). Same machinery as PLAN_AVAILABLE: one open alert per active rule of the
+   * event and `dedupSuffix`, through the unique active_key (a repeat is a no-op), scoped to the company and farm, in
+   * app only. A company with no active rule for the event gets no notice; no recipients are assumed.
+   */
+  async raiseEvent(
+    ctx: { farmId: string; companyId: string; tenantId: string },
+    input: {
+      eventType: PushedEventType; subjectType: PushedSubjectType; subjectId: string; dedupSuffix?: string;
+      itemId?: string | null; title: string; message: string; observedValue?: number | null; extraRecipientRoles?: string[];
+    },
+    nowMs: number = Date.now(),
+  ): Promise<{ rules: number; raised: number }> {
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
+    const rules = (await this.loadRules(ctx.companyId, ctx.farmId, ctx.tenantId))
+      .filter((r) => r.isActive && r.eventType === input.eventType && (r.farmId === null || r.farmId === ctx.farmId));
+    const now = ts(nowMs);
+    const suffix = input.dedupSuffix ?? input.subjectId;
+    let raised = 0;
+    for (const rule of rules) {
+      const dedupKey = `${rule.ruleId}|${suffix}`;
+      try {
+        await this.db.insert(schema.feedAlert).values({
+          alert_id: randomUUID(), tenant_id: ctx.tenantId, company_id: ctx.companyId, farm_id: ctx.farmId,
+          rule_id: rule.ruleId, notification_code: rule.notificationCode, event_type: rule.eventType, priority_level: rule.priorityLevel,
+          subject_type: input.subjectType, subject_id: input.subjectId, item_id: input.itemId ?? null, dedup_key: dedupKey, active_key: dedupKey, status: 'ACTIVE',
+          title: input.title.slice(0, 200), message: input.message,
+          observed_value: input.observedValue == null ? null : String(input.observedValue),
+          threshold_value: rule.thresholdValue == null ? null : String(rule.thresholdValue),
+          recipient_roles: [...new Set([...rule.recipientRoles, ...(input.extraRecipientRoles ?? [])])], raised_at: now, last_notified_at: now, notify_count: 1,
+        });
+        raised += 1;
+      } catch (error) {
+        if (!isDuplicateEntry(error)) throw error; // already open for this subject
+      }
+    }
+    return { rules: rules.length, raised };
+  }
+
+  /** raiseEvent for a posting's call site: an alert must never undo or fail the posting that raised it. */
+  async raiseEventSafely(...args: Parameters<FeedAlertService['raiseEvent']>): Promise<void> {
+    try {
+      await this.raiseEvent(...args);
+    } catch (error) {
+      this.logger.warn(`${args[1].eventType} alert not raised: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Closes the open alerts of `eventType` whose dedup key ends with one of `suffixes` (any farm of the company) —
+   * the condition they were raised for has cleared (CAPACITY_EXCEEDED).
+   */
+  async resolveEvent(
+    ctx: { companyId: string; tenantId: string }, eventType: PushedEventType, suffixes: string[], reason: 'RECOVERED' | 'CLOSED' = 'RECOVERED', nowMs: number = Date.now(),
+  ): Promise<void> {
+    if (!suffixes.length) return;
+    const A = schema.feedAlert;
+    await this.db.update(A)
+      .set({ status: 'RESOLVED', active_key: null, resolved_at: ts(nowMs), resolved_reason: reason })
+      .where(and(
+        eq(A.tenant_id, ctx.tenantId), eq(A.company_id, ctx.companyId), eq(A.event_type, eventType), eq(A.status, 'ACTIVE'),
+        or(...suffixes.map((suffix) => like(A.dedup_key, `%|${suffix.replace(/[\\%_]/g, '\\$&')}`)))!,
+      ));
+  }
+
+  /** W5A (Engine rows 60-62): the silo statuses over the standard window, reduced to what the three order events read. */
+  private async loadOrderFacts(farmId: string, companyId: string, tenantId: string): Promise<OrderFacts> {
+    const { statuses, truckTargetKg } = await this.forecast.currentSiloStatuses(farmId, companyId, tenantId);
+    return {
+      silos: statuses.map((s) => ({
+        siloId: s.siloId, siloCode: s.siloCode, itemId: s.currentDietItemId ?? s.feedInSiloItemId,
+        itemName: s.feedInSiloItemName, projectedShortfallKg: s.projectedShortfallKg, recommendedOrderKg: s.recommendedOrderKg,
+        requisitionStatus: s.requisitionStatus,
+      })),
+      farmTotalOrderKg: Math.round(statuses.reduce((sum, s) => sum + s.recommendedOrderKg, 0) * 1000) / 1000,
+      truckTargetKg,
+    };
+  }
+
+  /**
+   * Checkpoint 5: a CHANGEOVER alert (raised when a requisition with a changeover warning is submitted) closes once its
+   * silo no longer holds the old item (empty, or already the next item), or its requisition was rejected or cancelled.
+   * Its dedup key is `ruleId|requisitionId|siloId`; item_id is the item the requisition delivers.
+   */
+  private async resolveClearedChangeovers(farmId: string, companyId: string, tenantId: string, nowMs: number): Promise<void> {
+    const A = schema.feedAlert;
+    const open = await this.db.select().from(A).where(and(
+      eq(A.tenant_id, tenantId), eq(A.farm_id, farmId), eq(A.event_type, 'CHANGEOVER'), eq(A.status, 'ACTIVE'),
+    ));
+    for (const alert of open) {
+      const siloId = alert.dedup_key.split('|')[2];
+      let reason: 'RECOVERED' | 'CLOSED' | null = null;
+      try {
+        const [req] = alert.subject_id
+          ? await this.db.select({ status: schema.requisition.status }).from(schema.requisition).where(eq(schema.requisition.requisition_id, alert.subject_id)).limit(1)
+          : [];
+        if (!req || ['REJECTED', 'CANCELLED'].includes(req.status)) reason = 'CLOSED';
+        else if (siloId && alert.item_id) {
+          const own = (await this.siloFeed.currentItems([siloId], companyId, tenantId)).get(siloId) ?? null;
+          if (!own || own.item_id === alert.item_id || !(Number(own.on_hand_qty) > 0)) reason = 'RECOVERED';
+        }
+      } catch (error) {
+        this.logger.warn(`Changeover alert ${alert.alert_id} not re-checked: ${(error as Error).message}`);
+      }
+      if (reason) {
+        await this.db.update(A).set({ status: 'RESOLVED', active_key: null, resolved_at: ts(nowMs), resolved_reason: reason })
+          .where(and(eq(A.alert_id, alert.alert_id), eq(A.status, 'ACTIVE')));
+      }
+    }
+  }
+
+  /**
+   * Master Setup row 45, STOCK_TAKE_DUE: for a farm and its company's mills, each open Reporting Period whose stock
+   * take date is within the rule's days (default 3; overdue counts) and which has no POSTED monthly take for the
+   * location raises one alert (location + period). A period that is closed, or whose take has since posted, closes it.
+   * Run daily by the feed scheduler; the alert is addressed to the rule's roles.
+   */
+  async evaluateStockTakeDue(
+    ctx: { farmId: string; companyId: string; tenantId: string }, nowMs: number = Date.now(),
+  ): Promise<{ raised: number; resolved: number }> {
+    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
+    const rules = (await this.loadRules(ctx.companyId, ctx.farmId, ctx.tenantId))
+      .filter((r) => r.isActive && r.eventType === 'STOCK_TAKE_DUE' && (r.farmId === null || r.farmId === ctx.farmId));
+    const { today } = await this.forecast.farmToday(ctx.companyId, ctx.tenantId, nowMs);
+    const window = Math.max(0, ...rules.map((r) => r.thresholdValue ?? 3));
+    const P = schema.reportingPeriod;
+    const periods = await this.db.select().from(P).where(and(
+      eq(P.tenant_id, ctx.tenantId), or(eq(P.company_id, ctx.companyId), isNull(P.company_id)), isNull(P.deleted_at),
+      sql`${P.stock_take_date} >= DATE_SUB(${today}, INTERVAL 62 DAY)`,
+    ));
+    const L = schema.locationMaster;
+    const mills = await this.db.select({ id: L.location_id, code: L.location_code }).from(L).where(and(
+      eq(L.tenant_id, ctx.tenantId), eq(L.company_id, ctx.companyId), eq(L.location_type, 'MILL'), isNull(L.parent_location_id), eq(L.is_active, true), isNull(L.deleted_at),
+    ));
+    const [farm] = await this.db.select({ code: L.location_code }).from(L).where(eq(L.location_id, ctx.farmId)).limit(1);
+    const places = [{ id: ctx.farmId, code: farm?.code ?? 'farm', kind: 'farm' }, ...mills.map((m) => ({ id: m.id, code: m.code, kind: 'mill' }))];
+    const C = schema.feedStockCount;
+    let raised = 0;
+    let resolved = 0;
+    for (const place of places) {
+      const posted = periods.length ? await this.db.select({ period_id: C.reporting_period_id }).from(C).where(and(
+        eq(C.tenant_id, ctx.tenantId), eq(C.farm_id, place.id), eq(C.count_type, 'MONTHLY'), eq(C.status, 'POSTED'),
+        inArray(C.reporting_period_id, periods.map((p) => p.period_id)),
+      )) : [];
+      const taken = new Set(posted.map((r) => r.period_id));
+      const closing: string[] = [];
+      for (const period of periods) {
+        const suffix = `${period.period_id}|${place.id}`;
+        const left = diffDaysIso(today, period.stock_take_date);
+        if (taken.has(period.period_id) || period.period_status === 'CLOSED') { closing.push(suffix); continue; }
+        if (left > window) continue;
+        const when = left === 0 ? 'today' : left > 0 ? `in ${days(left)}` : `${days(-left)} ago`;
+        const out = await this.raiseEvent({ farmId: place.id, companyId: ctx.companyId, tenantId: ctx.tenantId }, {
+          eventType: 'STOCK_TAKE_DUE', subjectType: 'STOCK_TAKE', subjectId: period.period_id, dedupSuffix: suffix, observedValue: left,
+          title: `Stock take due: ${place.code}`,
+          message: `The monthly stock take for ${place.kind} ${place.code} in period ${period.period_code} is due ${dayShort(period.stock_take_date)} (${when}) and none is posted yet.`,
+        }, nowMs);
+        raised += out.raised;
+      }
+      if (closing.length) {
+        await this.resolveEvent({ companyId: ctx.companyId, tenantId: ctx.tenantId }, 'STOCK_TAKE_DUE', closing, 'RECOVERED', nowMs);
+        resolved += closing.length;
+      }
+    }
+    return { raised, resolved };
+  }
+
   async list(query: { farmId?: string; status?: 'ACTIVE' | 'RESOLVED' | 'ALL' }, tenantId: string, user: AlertUser) {
     const { farmId, companyId } = await this.forecast.resolveFarm(query.farmId, tenantId, user?.userType);
     const status = query.status ?? 'ACTIVE';
@@ -198,7 +457,7 @@ export class FeedAlertService {
       .orderBy(desc(schema.feedAlert.last_notified_at))
       .limit(200);
     const seesAll = SEES_ALL.includes(user?.userType ?? '');
-    const roleCodes = seesAll ? [] : await this.roleCodesOf(user?.userId, companyId);
+    const roleCodes = seesAll ? [] : [...await this.roleCodesOf(user?.userId, companyId), normalizeFeedRecipientRole(user?.userType ?? '')];
     return rows.filter((r) => visibleTo(r.alert, roleCodes, seesAll)).map((r) => ({ ...r.alert, farm_code: r.farm_code }));
   }
 
@@ -261,7 +520,7 @@ export class FeedAlertService {
     for (const r of rows) {
       if (companyOf.get(r.alert.farm_id) !== r.alert.company_id) continue;
       if (!seesAll && !rolesByCompany.has(r.alert.company_id)) {
-        rolesByCompany.set(r.alert.company_id, await this.roleCodesOf(user?.userId, r.alert.company_id));
+        rolesByCompany.set(r.alert.company_id, [...await this.roleCodesOf(user?.userId, r.alert.company_id), normalizeFeedRecipientRole(user?.userType ?? '')]);
       }
       if (visibleTo(r.alert, rolesByCompany.get(r.alert.company_id) ?? [], seesAll)) out.push({ ...r.alert, farm_code: r.farm_code });
     }
@@ -277,7 +536,8 @@ export class FeedAlertService {
     const resolved = await this.forecast.resolveFarm(row.farm_id, tenantId, user?.userType);
     if (resolved.farmId !== row.farm_id || resolved.companyId !== row.company_id) throw new NotFoundException('Alert not found.');
     const seesAll = SEES_ALL.includes(user?.userType ?? '');
-    if (!visibleTo(row, seesAll ? [] : await this.roleCodesOf(user?.userId, row.company_id), seesAll)) throw new NotFoundException('Alert not found.');
+    const roleCodes = seesAll ? [] : [...await this.roleCodesOf(user?.userId, row.company_id), normalizeFeedRecipientRole(user?.userType ?? '')];
+    if (!visibleTo(row, roleCodes, seesAll)) throw new NotFoundException('Alert not found.');
     const now = ts(Date.now());
     await this.db.update(schema.feedAlert).set({ acknowledged_by: user?.userId ?? null, acknowledged_at: now })
       .where(and(eq(schema.feedAlert.alert_id, alertId), eq(schema.feedAlert.tenant_id, tenantId)));
@@ -326,12 +586,13 @@ export class FeedAlertService {
     return rows.map((r) => r.code);
   }
 
-  /** Every rule of the company (or tenant-wide) that could apply to this farm — inactive ones too, so their open alerts resolve as RULE_OFF. */
+  /** Every rule of the company (or tenant-wide) that could apply to this farm — inactive ones too, but never a soft-deleted one: its open alerts resolve as RULE_OFF either way. */
   private async loadRules(companyId: string, farmId: string, tenantId: string): Promise<AlertRuleFact[]> {
     const rows = await this.db.select().from(schema.alertRule).where(and(
       eq(schema.alertRule.tenant_id, tenantId),
       or(eq(schema.alertRule.company_id, companyId), isNull(schema.alertRule.company_id)),
       or(eq(schema.alertRule.farm_id, farmId), isNull(schema.alertRule.farm_id)),
+      isNull(schema.alertRule.deleted_at),
     ));
     return rows.map((r) => ({
       ruleId: r.rule_id,
@@ -386,6 +647,29 @@ export class FeedAlertService {
         highLevelKg: num(s.high_level_kg),
       };
     });
+  }
+
+  /**
+   * The open PLAN_AVAILABLE alerts whose Feed Plan is no longer the one to act on: approved (ACTUAL) or
+   * followed by a later version of the same week.
+   */
+  private async closedPlans(active: ActiveAlertFact[], farmId: string, tenantId: string): Promise<Record<string, 'SUPERSEDED' | 'APPROVED'>> {
+    const planIds = [...new Set(active.filter((a) => a.eventType === 'PLAN_AVAILABLE' && a.subjectId).map((a) => a.subjectId as string))];
+    if (!planIds.length) return {};
+    const P = schema.feedPlan;
+    const subjects = await this.db.select({ plan_id: P.plan_id, plan_week: P.plan_week, version: P.version, plan_type: P.plan_type })
+      .from(P).where(and(eq(P.tenant_id, tenantId), eq(P.farm_id, farmId), inArray(P.plan_id, planIds)));
+    if (!subjects.length) return {};
+    const weeks = await this.db.select({ plan_week: P.plan_week, version: P.version })
+      .from(P).where(and(eq(P.tenant_id, tenantId), eq(P.farm_id, farmId), inArray(P.plan_week, [...new Set(subjects.map((s) => s.plan_week))])));
+    const latest = new Map<string, number>();
+    for (const w of weeks) latest.set(w.plan_week, Math.max(latest.get(w.plan_week) ?? 0, w.version));
+    const out: Record<string, 'SUPERSEDED' | 'APPROVED'> = {};
+    for (const s of subjects) {
+      if (s.plan_type === 'ACTUAL') out[s.plan_id] = 'APPROVED';
+      else if ((latest.get(s.plan_week) ?? 0) > s.version) out[s.plan_id] = 'SUPERSEDED';
+    }
+    return out;
   }
 
   /** Caller contract (c): unapproved feed requisitions of this farm only. */

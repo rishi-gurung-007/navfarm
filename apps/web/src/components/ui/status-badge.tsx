@@ -27,6 +27,10 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   PENDING: 'warning',
   APPROVED: 'success',
   REJECTED: 'danger',
+  // Stock transfer events (Part E Task 4b): stock on the road is normal
+  // progress; part arrived and part still owed needs someone to receive it.
+  IN_TRANSIT: 'accent',
+  PARTIALLY_RECEIVED: 'warning',
 
   // Batch / production lifecycle
   ACTIVE: 'success',

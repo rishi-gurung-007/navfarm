@@ -1,14 +1,16 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { companyCondition, masterScopeConditions, MasterScope } from '../../../common/master-data-scope';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { businessYearOf, generateBusinessYear, periodProblems, periodsOverlap } from './reporting-period.rules';
+import { assertPeriodCanClose, nothingToCount } from '../../inventory/feed-stock-count/monthly-stock-take.rules';
 import { CreateReportingPeriodDto, GenerateReportingPeriodsDto, QueryReportingPeriodDto, UpdateReportingPeriodDto } from './reporting-period.dto';
 
 const table = schema.reportingPeriod;
@@ -60,6 +62,13 @@ export class ReportingPeriodService {
       .where(and(eq(table.tenant_id, tenantId), companyCondition(table.company_id, companyId), isNull(table.deleted_at)));
   }
 
+  /** Serializes activation decisions for one exact company calendar. */
+  private async lockCompanyRows(companyId: string | null, tenantId: string): Promise<Row[]> {
+    return this.db.select().from(table)
+      .where(and(eq(table.tenant_id, tenantId), companyCondition(table.company_id, companyId), isNull(table.deleted_at)))
+      .for('update');
+  }
+
   private shape(p: { period_code: string; start_date: string; end_date: string; stock_take_date?: string | null }): Shaped {
     const period_code = p.period_code.trim().toUpperCase();
     const stock_take_date = p.stock_take_date || p.end_date; // Silo Balance and Stock Take row 37: "Auto = Period End Date"
@@ -95,7 +104,10 @@ export class ReportingPeriodService {
     const companyId = this.companyOf(dto.company_id);
     this.assertFree(shaped, await this.companyRows(companyId, tenantId));
     const period_id = randomUUID();
-    await this.db.insert(table).values({ period_id, tenant_id: tenantId, company_id: companyId, ...shaped, created_by: user?.userId, updated_by: user?.userId });
+    await this.db.insert(table).values({
+      period_id, tenant_id: tenantId, company_id: companyId, ...shaped,
+      status: 'DRAFT', is_active: false, created_by: user?.userId, updated_by: user?.userId,
+    });
     return this.log('CREATE', await this.findOne(period_id, tenantId), user);
   }
 
@@ -117,10 +129,28 @@ export class ReportingPeriodService {
   }
 
   async setActive(id: string, active: boolean, tenantId: string, user?: any) {
+    if (active) return this.activate(id, tenantId, user);
     const before = await this.findOne(id, tenantId);
-    if (active && !before.is_active) this.assertFree(before as unknown as Shaped, await this.companyRows(before.company_id, tenantId), id);
-    await this.db.update(table).set({ is_active: active, status: active ? 'ACTIVE' : 'INACTIVE', updated_by: user?.userId, updated_at: nowTs() }).where(eq(table.period_id, id));
-    return this.log(active ? 'RESTORE' : 'DEACTIVATE', await this.findOne(id, tenantId), user, before);
+    await this.db.update(table).set({ is_active: false, status: 'INACTIVE', updated_by: user?.userId, updated_at: nowTs() }).where(eq(table.period_id, id));
+    return this.log('DEACTIVATE', await this.findOne(id, tenantId), user, before);
+  }
+
+  /** Activation is a separate reviewed action: derive and validate again from the stored row, then refuse any active overlap. */
+  async activate(id: string, tenantId: string, user?: any) {
+    // Resolve the scope-visible target first only to identify the exact company
+    // lock. The target and every overlap candidate are re-read under that lock.
+    const visible = await this.findOne(id, tenantId);
+    return withTenantTransaction(this.cls, async () => {
+      const rows = await this.lockCompanyRows(visible.company_id, tenantId);
+      const before = rows.find((row) => row.period_id === id);
+      if (!before) throw new NotFoundException('Reporting period is not available in this workspace.');
+      const shaped = this.shape(before);
+      this.assertFree(shaped, rows, id);
+      await this.db.update(table).set({
+        ...shaped, is_active: true, status: 'ACTIVE', updated_by: user?.userId, updated_at: nowTs(),
+      }).where(eq(table.period_id, id));
+      return this.log('ACTIVATE', await this.findOne(id, tenantId), user, before);
+    });
   }
 
   /** Open question Q9: an admin's first draft of a July–June year; codes that exist, or dates an active period already covers, are skipped. */
@@ -134,6 +164,13 @@ export class ReportingPeriodService {
         skipped.push({ period_code: draft.period_code, reason: 'already exists' });
         continue;
       }
+      const equivalentDraft = existing.find((r) => !r.is_active && r.status === 'DRAFT'
+        && r.start_date === draft.start_date && r.end_date === draft.end_date
+        && r.stock_take_date === draft.stock_take_date && r.production_start_date === draft.production_start_date);
+      if (equivalentDraft) {
+        skipped.push({ period_code: draft.period_code, reason: `equivalent draft exists as ${equivalentDraft.period_code}` });
+        continue;
+      }
       const clash = existing.find((r) => r.is_active && periodsOverlap(draft, r));
       if (clash) {
         skipped.push({ period_code: draft.period_code, reason: `overlaps ${clash.period_code}` });
@@ -143,7 +180,8 @@ export class ReportingPeriodService {
     }
     if (created.length) {
       await this.db.insert(table).values(created.map((p) => ({
-        period_id: randomUUID(), tenant_id: tenantId, company_id: companyId, ...p, created_by: user?.userId, updated_by: user?.userId,
+        period_id: randomUUID(), tenant_id: tenantId, company_id: companyId, ...p,
+        status: 'DRAFT', is_active: false, created_by: user?.userId, updated_by: user?.userId,
       })));
       await this.audit.log({
         tenantId, companyId: companyId || undefined, userId: user?.userId, action: 'GENERATE', entityName: 'reporting_period',
@@ -151,5 +189,51 @@ export class ReportingPeriodService {
       });
     }
     return { created: created.map((p) => p.period_code), skipped };
+  }
+
+  /**
+   * Period Close (workbook Checkpoints r31): allowed only when every active farm
+   * and feed mill of the company has a POSTED monthly stock take for the period.
+   * Once CLOSED, assertPostingPeriodOpen (common/period-close.ts) refuses every
+   * posting dated inside it (r32).
+   */
+  async close(id: string, tenantId: string, user: any) {
+    return withTenantTransaction(this.cls, async () => {
+      const row = await this.findOne(id, tenantId);
+      const L = schema.locationMaster;
+      const locations = await this.db.select({ location_id: L.location_id, code: L.location_code, type: L.location_type })
+        .from(L).where(and(
+          eq(L.tenant_id, tenantId),
+          ...(row.company_id ? [eq(L.company_id, row.company_id)] : []),
+          inArray(L.location_type, ['FARM', 'MILL']),
+          isNull(L.parent_location_id),
+          eq(L.is_active, true),
+          isNull(L.deleted_at),
+        ));
+      // Controller reading of r31: only a location with something a count can use (an active SILO of a farm,
+      // an active BIN of a mill — the same rows loadActiveSilos accepts) owes a take; the rest are listed.
+      const childOf = new Map<string, string>(locations.map((l) => [l.location_id, l.type === 'MILL' ? 'BIN' : 'SILO']));
+      const children = locations.length ? await this.db.select({ parent_location_id: L.parent_location_id, farm_id: L.farm_id, location_type: L.location_type })
+        .from(L).where(and(
+          eq(L.tenant_id, tenantId),
+          inArray(L.parent_location_id, locations.map((l) => l.location_id)),
+          inArray(L.location_type, ['SILO', 'BIN']),
+          eq(L.is_active, true),
+          isNull(L.deleted_at),
+        )) : [];
+      const countable = new Set<string>();
+      for (const c of (children as Array<{ parent_location_id?: string | null; farm_id?: string | null; location_type?: string }>)) {
+        if (c.parent_location_id && c.farm_id === c.parent_location_id && (c.location_type === undefined || c.location_type === childOf.get(c.parent_location_id))) countable.add(c.parent_location_id);
+      }
+      const closeLocations = locations.map((l) => ({ location_id: l.location_id, code: l.code ?? l.location_id, countable: countable.has(l.location_id) }));
+      const C = schema.feedStockCount;
+      const takes = await this.db.select({ farm_id: C.farm_id, count_type: C.count_type, reporting_period_id: C.reporting_period_id, status: C.status })
+        .from(C).where(and(eq(C.tenant_id, tenantId), eq(C.reporting_period_id, row.period_id)));
+      assertPeriodCanClose({ ...row, period_status: row.period_status }, closeLocations, takes);
+      await this.db.update(table).set({ period_status: 'CLOSED', closed_by: user?.userId ?? null, closed_at: nowTs(), updated_by: user?.userId, updated_at: nowTs() })
+        .where(and(eq(table.period_id, row.period_id), eq(table.period_status, 'OPEN')));
+      const closed = await this.log('PERIOD_CLOSE', await this.findOne(id, tenantId), user, row);
+      return { ...closed, nothing_to_count: nothingToCount(closeLocations).map((l) => l.code) };
+    });
   }
 }

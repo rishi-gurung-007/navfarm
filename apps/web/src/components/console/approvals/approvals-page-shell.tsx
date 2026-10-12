@@ -15,7 +15,7 @@ import {
   Layers,
   Stethoscope,
   Building2,
-  Plus,
+  ClipboardList,
 } from "lucide-react";
 import { getStoredUser, NavUser, getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
 import { api } from "@/services/api-client";
@@ -27,6 +27,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency, formatMoney, type CompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { FeedRequisitionApprovalDetail } from "./feed-requisition-approval-detail";
+import { RequisitionApprovalDetail } from "./requisition-approval-detail";
 
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -71,38 +72,49 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
 }
 
-const fmtMoney = (v: unknown, currency?: CompanyCurrency | null) =>
+type EmptyApprovalLabels = {
+  unknownRequester: string;
+  roleNotSpecified: string;
+  locationNotSpecified: string;
+  itemNotSpecified: string;
+  quantityNotProvided: string;
+  costNotProvided: string;
+  justificationNotProvided: string;
+  dateNotAvailable: string;
+};
+
+const fmtMoney = (v: unknown, currency: CompanyCurrency | null | undefined, emptyText: string) =>
   v === null || v === undefined || v === ""
-    ? "—"
+    ? emptyText
     : formatMoney(v as number, currency);
 
 // The API returns MySQL timestamps ("2026-08-24 22:26:27"); Safari rejects
 // that format in `new Date()`, so normalise before formatting.
-const formatStamp = (v?: string | null) => {
-  if (!v) return "—";
+const formatStamp = (v: string | null | undefined, emptyText = "Date not available") => {
+  if (!v) return emptyText;
   const parsed = new Date(v.replace(" ", "T"));
   return Number.isNaN(parsed.getTime()) ? v : parsed.toLocaleString();
 };
 
-function fromApi(r: ApiRow, currency?: CompanyCurrency | null): ApprovalItem {
+function fromApi(r: ApiRow, currency: CompanyCurrency | null | undefined, empty: EmptyApprovalLabels): ApprovalItem {
   return {
     id: r.request_id,
     doc_type: r.doc_type,
     doc_no: r.doc_no,
     title: r.title,
-    requestor: r.requestor_label || "—",
-    requestor_role: r.requestor_role || "—",
-    location: r.location_label || "—",
+    requestor: r.requestor_label || empty.unknownRequester,
+    requestor_role: r.requestor_role || empty.roleNotSpecified,
+    location: r.location_label || empty.locationNotSpecified,
     batch_no: r.batch_no || undefined,
     document_id: r.document_id || undefined,
-    date_submitted: formatStamp(r.submitted_at),
+    date_submitted: formatStamp(r.submitted_at, empty.dateNotAvailable),
     urgency: (r.urgency || "MEDIUM") as ApprovalItem["urgency"],
     details: {
-      item_or_stage: r.item_or_stage || "—",
-      requested_qty: r.requested_qty || "—",
+      item_or_stage: r.item_or_stage || empty.itemNotSpecified,
+      requested_qty: r.requested_qty || empty.quantityNotProvided,
       uom: r.uom || "",
-      cost_impact: fmtMoney(r.cost_impact, currency),
-      justification: r.justification || "—",
+      cost_impact: fmtMoney(r.cost_impact, currency, empty.costNotProvided),
+      justification: r.justification || empty.justificationNotProvided,
     },
     status: r.status as ApprovalStatus,
     approval_date: r.decided_at ? formatStamp(r.decided_at) : undefined,
@@ -127,7 +139,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [batches, setBatches] = useState<ApiRow[]>([]);
   const [busy, setBusy] = useState(false);
 
   // Detail Modal
@@ -157,17 +168,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
   const [rejectItem, setRejectItem] = useState<ApprovalItem | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  // Create Modal
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [newType, setNewType] = useState<ApprovalItem["doc_type"]>("FEED_RATION");
-  const [newTitle, setNewTitle] = useState("");
-  const [newLocation, setNewLocation] = useState("");
-  const [newBatchId, setNewBatchId] = useState("");
-  const [newItemName, setNewItemName] = useState("");
-  const [newQty, setNewQty] = useState("");
-  const [newCost, setNewCost] = useState("");
-  const [newJustification, setNewJustification] = useState("");
-
   // Action feedback
   const [actionMsg, setActionMsg] = useState("");
 
@@ -180,7 +180,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
   const [counts, setCounts] = useState<Record<ApprovalStatus, number>>({
     PENDING: 0, APPROVED: 0, REJECTED: 0,
   });
-
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -192,7 +191,17 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         api.get(`/approval?${params.toString()}`),
         api.get(`/approval/counts?${params.toString()}`).catch(() => null),
       ]);
-      setApprovals((unwrap<ApiRow[]>(res) || []).map((r) => fromApi(r, currency)));
+      const empty: EmptyApprovalLabels = {
+        unknownRequester: t("apUnknownRequester"),
+        roleNotSpecified: t("apRoleNotSpecified"),
+        locationNotSpecified: t("apLocationNotSpecified"),
+        itemNotSpecified: t("apItemNotSpecified"),
+        quantityNotProvided: t("apQuantityNotProvided"),
+        costNotProvided: t("apCostNotProvided"),
+        justificationNotProvided: t("apJustificationNotProvided"),
+        dateNotAvailable: t("apDateNotAvailable"),
+      };
+      setApprovals((unwrap<ApiRow[]>(res) || []).map((r) => fromApi(r, currency, empty)));
       const fetched = countRes ? unwrap<Partial<Record<ApprovalStatus, number>>>(countRes) : null;
       if (fetched) {
         setCounts({
@@ -222,19 +231,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
     if (!ready) return;
     load();
   }, [ready, load]);
-
-  // Real batches for the request form — this dropdown used to offer three
-  // hardcoded batch numbers that existed in no tenant.
-  useEffect(() => {
-    if (!ready || !companyId) return;
-    api
-      .get(`/batch?companyId=${companyId}&limit=200`)
-      .then((r) => {
-        const rows = unwrap<ApiRow[]>(r) || [];
-        setBatches(areaId ? rows.filter((b) => b.operational_area_id === areaId) : rows);
-      })
-      .catch(() => setBatches([]));
-  }, [ready, companyId, areaId]);
 
   const flash = (msg: string) => {
     setActionMsg(msg);
@@ -266,41 +262,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
       setRejectReason("");
       await load();
       flash(t("apRejectedMsg", { docNo }));
-    } catch (err: any) {
-      flash(err?.message || t("apActionFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleCreateApproval = async () => {
-    if (!newTitle || !newItemName || !companyId) return;
-    setBusy(true);
-    try {
-      // The cost field is free text on the form ("₹ 12,000"); strip anything
-      // that isn't part of a number before sending it to a decimal column.
-      const costNumber = Number(newCost.replace(/[^0-9.-]/g, ""));
-      const res = await api.post(`/approval`, {
-        company_id: companyId,
-        ...(areaId ? { operational_area_id: areaId } : {}),
-        doc_type: newType,
-        title: newTitle,
-        ...(newLocation.trim() ? { location_label: newLocation.trim() } : {}),
-        ...(newBatchId ? { batch_id: newBatchId } : {}),
-        item_or_stage: newItemName,
-        ...(newQty.trim() ? { requested_qty: newQty.trim() } : {}),
-        ...(Number.isFinite(costNumber) && newCost.trim() ? { cost_impact: costNumber } : {}),
-        ...(newJustification.trim() ? { justification: newJustification.trim() } : {}),
-      });
-      const created = unwrap<ApiRow>(res);
-      setCreateModalOpen(false);
-      setNewTitle("");
-      setNewItemName("");
-      setNewQty("");
-      setNewCost("");
-      setNewJustification("");
-      await load();
-      flash(t("apCreatedMsg", { docNo: created?.doc_no || "" }));
     } catch (err: any) {
       flash(err?.message || t("apActionFailed"));
     } finally {
@@ -340,6 +301,8 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"><Layers className="h-3 w-3" /> {t("apDocType_STAGE_CLOSE")}</span>;
       case "FEED_REQUISITION":
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"><Wheat className="h-3 w-3" /> {t("apDocType_FEED_REQUISITION")}</span>;
+      case "REQUISITION":
+        return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-500/20"><ClipboardList className="h-3 w-3" /> {t("apDocType_REQUISITION")}</span>;
       default:
         return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20"><Stethoscope className="h-3 w-3" /> {t("apDocType_VET_DISPOSAL")}</span>;
     }
@@ -367,13 +330,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
             />
           </div>
 
-          <Button
-            size="sm"
-            onClick={() => router.push("/approvals/requisitions")}
-            className="nf-btn-primary text-xs h-8 gap-1.5 shrink-0"
-          >
-            <Plus className="h-3.5 w-3.5" /> {t("apNewRequest")}
-          </Button>
         </div>
       </div>
 
@@ -589,6 +545,9 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
                 onRemarksChange={setApproverRemarks}
               />
             )}
+            {viewingItem.doc_type === "REQUISITION" && viewingItem.document_id && (
+              <RequisitionApprovalDetail documentId={viewingItem.document_id} />
+            )}
             {viewingItem.status === "APPROVED" && viewingItem.approver && (
               <div className="p-2.5 rounded-[var(--radius-xs)] bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
                 <p className="font-semibold">✓ {t("apAuthorizedBy", { approver: viewingItem.approver })}</p>
@@ -659,125 +618,6 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
         </Dialog>
       )}
 
-      {/* ── MODAL: CREATE APPROVAL REQUEST ── */}
-      {createModalOpen && (
-        <Dialog
-          open={createModalOpen}
-          onClose={() => setCreateModalOpen(false)}
-          title={t("apModalCreateTitle")}
-          maxWidth="md"
-        >
-          <div className="space-y-3.5 text-xs pt-2">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="font-semibold block mb-1">{t("apDocCategory")}</label>
-                <select
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value as any)}
-                  className="nf-input w-full"
-                >
-                  <option value="FEED_RATION">{t("apDocFeedRation")}</option>
-                  <option value="GRN_RECEIPT">{t("apDocGrnReceipt")}</option>
-                  <option value="STOCK_TRANSFER">{t("apDocStockTransfer")}</option>
-                  <option value="STAGE_CLOSE">{t("apDocStageClose")}</option>
-                  <option value="VET_DISPOSAL">{t("apDocVetDisposal")}</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1">{t("apTargetBatch")}</label>
-                <select
-                  value={newBatchId}
-                  onChange={(e) => setNewBatchId(e.target.value)}
-                  className="nf-input w-full font-mono"
-                >
-                  <option value="">{t("apNoBatch")}</option>
-                  {batches.map((b) => (
-                    <option key={b.batch_id} value={b.batch_id}>
-                      {b.batch_no}
-                      {b.current_stage_code ? ` (${b.current_stage_code})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="font-semibold block mb-1">{t("apRequestTitle")}</label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder={t("apRequestTitlePlaceholder")}
-                className="nf-input w-full font-medium"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="font-semibold block mb-1">{t("apItemStageInvolved")}</label>
-                <input
-                  type="text"
-                  value={newItemName}
-                  onChange={(e) => setNewItemName(e.target.value)}
-                  placeholder={t("apItemPlaceholder")}
-                  className="nf-input w-full"
-                />
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1">{t("apQuantityVolume")}</label>
-                <input
-                  type="text"
-                  value={newQty}
-                  onChange={(e) => setNewQty(e.target.value)}
-                  placeholder={t("apQtyPlaceholder")}
-                  className="nf-input w-full font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1">{t("apEstCost")}</label>
-                <input
-                  type="text"
-                  value={newCost}
-                  onChange={(e) => setNewCost(e.target.value)}
-                  placeholder={t("apCostPlaceholder")}
-                  className="nf-input w-full font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="font-semibold block mb-1">{t("apFarmLocation")}</label>
-              <input
-                type="text"
-                value={newLocation}
-                onChange={(e) => setNewLocation(e.target.value)}
-                placeholder={t("apLocationPlaceholder")}
-                className="nf-input w-full"
-              />
-            </div>
-
-            <div>
-              <label className="font-semibold block mb-1">{t("apOperationalJustification")}</label>
-              <textarea
-                rows={3}
-                value={newJustification}
-                onChange={(e) => setNewJustification(e.target.value)}
-                placeholder={t("apJustificationPlaceholder")}
-                className="nf-input w-full"
-              />
-            </div>
-
-            <div className="flex justify-end pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-              <Button onClick={handleCreateApproval} disabled={busy} className="nf-btn-primary">
-                {t("apSubmitForAuth")}
-              </Button>
-            </div>
-          </div>
-        </Dialog>
-      )}
     </ConsolePage>
   );
 }

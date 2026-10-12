@@ -18,6 +18,35 @@ export const REQ_STATUS_LABEL: LabelMap = {
   APPROVED: { key: "reqStatusApproved", variant: "success" },
   REJECTED: { key: "reqStatusRejected", variant: "danger" },
   CANCELLED: { key: "reqStatusCancelled", variant: "neutral" },
+  POSTED: { key: "reqStatusPosted", variant: "success" },
+  IN_CONSOLIDATION: { key: "reqStatusInConsolidation", variant: "info" },
+  RELEASED: { key: "reqDocumentReleased", variant: "info" },
+  TRANSFER_OPEN: { key: "reqFulfilmentOpen", variant: "info" },
+  PARTIALLY_SHIPPED: { key: "reqFulfilmentPartShipped", variant: "warning" },
+  SHIPPED: { key: "reqFulfilmentShipped", variant: "success" },
+  PARTIALLY_RECEIVED: { key: "reqFulfilmentPartReceived", variant: "warning" },
+  RECEIVED: { key: "reqFulfilmentReceived", variant: "success" },
+};
+
+/** Feed consolidation sheet status (feed_consolidation.status). */
+export const CONSOLIDATION_STATUS_LABEL: LabelMap = {
+  DRAFT: { key: "fcsStatusDraft", variant: "neutral" },
+  REVIEWED: { key: "consolStatusReviewed", variant: "info" },
+  CONSOLIDATED: { key: "fcsStatusConsolidated", variant: "success" },
+  CANCELLED: { key: "consolStatusCancelled", variant: "neutral" },
+};
+
+/** W1 (d): the consolidation next action readView sends (feed-requisition.service.ts readView). */
+export const CONSOLIDATION_NEXT_ACTION_LABEL: LabelMap = {
+  FINALIZE_CONSOLIDATION: "rqdNextActionFinalize", RELEASE: "rqdNextActionRelease", TRANSFER_SHIPMENT: "rqdNextActionShipment",
+};
+
+/** Feed loading sheet status (feed_loading_sheet.status). */
+export const LOADING_STATUS_LABEL: LabelMap = {
+  DRAFT: { key: "loadStatusDraft", variant: "neutral" },
+  LOADED: { key: "loadStatusLoaded", variant: "info" },
+  DISPATCHED: { key: "loadStatusDispatched", variant: "warning" },
+  RECEIVED: { key: "loadStatusReceived", variant: "success" },
 };
 
 export const PRIORITY_LABEL: LabelMap = {
@@ -34,6 +63,23 @@ export const SOURCE_LABEL: LabelMap = {
 };
 export const PURPOSE_LABEL: LabelMap = { INTERNAL_TRANSFER: "reqPurposeTransfer" };
 export const SUPPLY_LABEL: LabelMap = { MILL: "reqSupplyMill" };
+
+// Common requisition (Item / Fixed Asset / Service) — Task 9.
+export const DOC_TYPE_LABEL: LabelMap = { FEED: "reqDocFeed", ITEM: "reqDocItem", FA: "reqDocFa", SERVICE: "reqDocService" };
+export const COMMON_PURPOSE_LABEL: LabelMap = { STORE: "reqPurposeStore", PURCHASE: "reqPurposePurchase", INTERNAL_TRANSFER: "reqPurposeTransfer" };
+export const APPROVAL_STATE_LABEL: LabelMap = {
+  OPEN: { key: "reqApprovalOpen", variant: "neutral" }, PENDING_APPROVAL: { key: "reqStatusPending", variant: "warning" },
+  APPROVED: { key: "reqStatusApproved", variant: "success" }, REJECTED: { key: "reqStatusRejected", variant: "danger" },
+};
+export const DOCUMENT_STATE_LABEL: LabelMap = {
+  OPEN: { key: "reqDocumentOpen", variant: "neutral" }, APPROVED: { key: "reqStatusApproved", variant: "success" },
+  RELEASED: { key: "reqDocumentReleased", variant: "info" }, CANCELLED: { key: "reqStatusCancelled", variant: "neutral" },
+};
+export const FULFILMENT_STATE_LABEL: LabelMap = {
+  NOT_APPLICABLE: "reqFulfilmentNone", TRANSFER_OPEN: "reqFulfilmentOpen", PARTIALLY_SHIPPED: "reqFulfilmentPartShipped",
+  SHIPPED: "reqFulfilmentShipped", PARTIALLY_RECEIVED: "reqFulfilmentPartReceived", RECEIVED: "reqFulfilmentReceived",
+};
+export const INTEGRATION_STATE_LABEL: LabelMap = { NOT_APPLICABLE: "reqIntegrationNone", BC_PENDING: "reqIntegrationBcPending" };
 
 /**
  * Where a requisition came from, said once (F5). The type and the source say
@@ -59,7 +105,7 @@ export function humanizeCode(code: string): string {
 }
 
 export function labelOf(map: LabelMap, code: string | null | undefined, t: Translate): string {
-  if (!code) return "—";
+  if (!code) return t("labelNotSet");
   const entry = map[code];
   if (!entry) return humanizeCode(code);
   return t(typeof entry === "string" ? entry : entry.key);

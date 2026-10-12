@@ -15,7 +15,7 @@ import * as schema from '../../../core/database/schema';
  */
 describe('InventoryLedgerService reverseEntry — created_at', () => {
   const original = {
-    ledger_id: 'ledger-1', tenant_id: 'tenant-1', entry_type: 'NEGATIVE',
+    ledger_id: 'ledger-1', tenant_id: 'tenant-1', company_id: 'co-1', posting_date: '2026-09-10', entry_type: 'NEGATIVE',
     quantity: '0', amount: '0', created_at: '2026-09-14 08:00:00',
   };
 
@@ -24,6 +24,7 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
     const db: any = {
       select: jest.fn()
         .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) }) // original, locked
+        .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // the period guard: no closed period covers it
         .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) // not already reversed
         .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no FIFO applications to unwind
         .mockReturnValueOnce({ from: () => ({ where: async () => [] }) }) // no ledger lines to give back
@@ -86,6 +87,27 @@ describe('InventoryLedgerService reversePositiveEntry', () => {
     await expect((await run(receipt({ entry_type: 'NEGATIVE' }))).call()).rejects.toThrow('Only an existing inbound entry');
     await expect((await run(receipt(), [{ ledger_id: 'rev' }])).call()).rejects.toThrow('already been reversed');
     await expect((await run(undefined)).call()).rejects.toThrow('Only an existing inbound entry');
+  });
+});
+
+describe('InventoryLedgerService reverseEntry — closed period guard (r32)', () => {
+  it('refuses to reverse an issue dated inside a CLOSED reporting period, before any write', async () => {
+    const original = {
+      ledger_id: 'ledger-1', tenant_id: 'tenant-1', company_id: 'co-1', entry_type: 'NEGATIVE',
+      quantity: '-5', amount: '-10', posting_date: '2026-09-10',
+    };
+    const closed = { period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26', period_status: 'CLOSED' };
+    const db: any = {
+      select: jest.fn()
+        .mockReturnValueOnce({ from: () => ({ where: () => ({ for: async () => [original] }) }) })
+        .mockReturnValueOnce({ from: () => ({ where: async () => [closed] }) }), // the shared period guard
+      insert: jest.fn(),
+      update: jest.fn(),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+    await expect(service.reverseEntry('ledger-1', 'tenant-1', 'user-1')).rejects.toThrow(/closed/);
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
   });
 });
 
@@ -469,5 +491,183 @@ describe('InventoryLedgerService farm scope', () => {
     expect(readBackQueries).toHaveLength(1);
     expect(readBackQueries[0]).not.toContain('location_master lf');
     expect(readBackQueries[0]).not.toContain('`inventory_ledger`.`company_id` = ?');
+  });
+});
+
+/**
+ * Part E Task 4: a receipt values its stock at the rate its shipment carried
+ * out of the source — |Σamount| ÷ |Σquantity| of that shipment line's
+ * TRANSFER_SHIPMENT rows — and refuses a shipment line with no posted leg.
+ */
+describe('InventoryLedgerService transferShipmentRate', () => {
+  const dialect = new MySqlDialect();
+  function serviceReturning(rows: unknown[]) {
+    const seen: { where?: unknown } = {};
+    const db: any = { select: jest.fn(() => ({ from: () => ({ where: async (cond: unknown) => { seen.where = cond; return rows; } }) })) };
+    return { service: new InventoryLedgerService(transactionCls(db)), seen };
+  }
+
+  it('divides the shipment line\'s total cost by its total quantity', async () => {
+    const { service, seen } = serviceReturning([{ amount: '-15', qty: '-6' }]);
+    await expect(service.transferShipmentRate({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' })).resolves.toBe(2.5);
+    const q = dialect.sqlToQuery(seen.where as any);
+    expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'STOCK_TRANSFER', 'SH-2026-0001', 'line-1', 'TRANSFER_SHIPMENT']));
+  });
+
+  it('refuses a shipment line with no posted ledger entry', async () => {
+    const { service } = serviceReturning([{ amount: '0', qty: '0' }]);
+    await expect(service.transferShipmentRate({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1' }))
+      .rejects.toThrow('Shipment SH-2026-0001 has no posted ledger entry for this line.');
+  });
+});
+
+/**
+ * Part E Task 4, fix round 1: each transfer event writes exactly one leg, and
+ * the receipt that closes a shipment line takes its remaining value so
+ * Inventory in Transit (1040) nets to zero.
+ */
+describe('InventoryLedgerService transfer legs', () => {
+  const dialect = new MySqlDialect();
+  const ITEM = { item_id: 'item-1', item_code: 'ITM-1', item_name: 'Item', is_lot_tracked: 0, is_serial_tracked: 0 };
+
+  /** A db that records ledger inserts and answers SUM(amount) from them, stored at decimal(18,4) like MySQL. */
+  function ledgerDb(shippedAmount: string) {
+    const inserted: any[] = [];
+    const db: any = {
+      select: jest.fn(() => ({ from: () => ({ where: (cond: any) => {
+        const params = dialect.sqlToQuery(cond).params as unknown[];
+        const sum = () => {
+          if (params.includes('TRANSFER_SHIPMENT')) return [{ amount: shippedAmount }];
+          const nos = params.filter((p) => typeof p === 'string' && p.startsWith('RC-'));
+          const total = inserted.filter((r) => r.transaction_type === 'TRANSFER_RECEIPT' && nos.includes(r.document_no))
+            .reduce((s, r) => s + Number(r.amount), 0);
+          return [{ amount: total.toFixed(4) }];
+        };
+        return {
+          limit: async () => [ITEM],
+          then: (ok: any, err: any) => Promise.resolve(sum()).then(ok, err),
+        };
+      } }) })),
+      transaction: async (work: any) => work(db),
+      insert: jest.fn(() => ({ values: async (v: any) => { inserted.push({ ...v, amount: v.amount === undefined ? undefined : Number(v.amount).toFixed(4) }); } })),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    return { db, inserted, service: new InventoryLedgerService(transactionCls(db)) };
+  }
+  const base = { tenantId: 'tenant-1', companyId: 'co-1', itemId: 'item-1', documentLineId: 'line-1', postingDate: '2026-10-04', uom: 'PCS' };
+
+  it('a shipment inserts exactly one NEGATIVE TRANSFER_SHIPMENT row, at the source', async () => {
+    const { service, inserted } = ledgerDb('0');
+    jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 10, averageRate: 10 / 3 });
+    await service.writeTransferShipment({ ...base, documentNo: 'SH-2026-0001', quantity: 3, fromWarehouseId: 'wh-src' });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ entry_type: 'NEGATIVE', transaction_type: 'TRANSFER_SHIPMENT', warehouse_id: 'wh-src', quantity: '-3' });
+  });
+
+  it('a receipt inserts exactly one POSITIVE TRANSFER_RECEIPT row, at the destination, amount = qty × rate', async () => {
+    const { service, inserted } = ledgerDb('0');
+    await service.writeTransferReceipt({ ...base, documentNo: 'RC-2026-0001', quantity: 4, toWarehouseId: 'wh-dst', rate: 2.5 });
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ entry_type: 'POSITIVE', transaction_type: 'TRANSFER_RECEIPT', warehouse_id: 'wh-dst', quantity: '4', amount: '10.0000' });
+  });
+
+  it('10.0000 shipped as 3 units and received 1+1+1 lands exactly 10.0000 — no residue in In Transit', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    const rate = 10 / 3;
+    const receiptNos: string[] = [];
+    for (const [i, closing] of [[1, false], [2, false], [3, true]] as const) {
+      const documentNo = `RC-2026-000${i}`;
+      const amount = closing
+        ? await service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos })
+        : undefined;
+      await service.writeTransferReceipt({ ...base, documentNo, quantity: 1, toWarehouseId: 'wh-dst', rate, amount });
+      receiptNos.push(documentNo);
+    }
+    expect(inserted.map((r) => r.amount)).toEqual(['3.3333', '3.3333', '3.3334']);
+    expect(inserted.reduce((s, r) => s + Number(r.amount), 0).toFixed(4)).toBe('10.0000');
+  });
+
+  /**
+   * Part E Task 4b, requirement 4: the closing receipt takes the remainder,
+   * and a POSITIVE row must never carry a negative amount. A remainder just
+   * below zero is rounding and is clamped to 0; anything further below means
+   * the receipts already took more than the shipment carried — a data
+   * inconsistency that must stop the receipt, not be written.
+   */
+  it('clamps a remainder within ±0.0005 of zero to 0 (rounding), never negative', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '10.0004' });
+    const remaining = await service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] });
+    expect(remaining).toBe(0);
+    expect(Object.is(remaining, -0)).toBe(false);
+  });
+
+  it('throws on a remainder below −0.0005: the receipts already exceed what the shipment carried', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '10.0100' });
+    await expect(service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] }))
+      .rejects.toThrow('Shipment SH-2026-0001 has already been received for 0.0100 more than it carried on this line');
+  });
+
+  it('a remainder of exactly 0 or above is returned as it is', async () => {
+    const { service, inserted } = ledgerDb('-10.0000');
+    inserted.push({ transaction_type: 'TRANSFER_RECEIPT', document_no: 'RC-2026-0001', amount: '6.0000' });
+    await expect(service.transferShipmentRemainingValue({ tenantId: 'tenant-1', shipmentNo: 'SH-2026-0001', lineId: 'line-1', receiptNos: ['RC-2026-0001'] })).resolves.toBe(4);
+  });
+});
+
+/**
+ * WP4a fix round 1, Important 4 (coordinator's ruling on the review's ⚠️):
+ * origin/main's applyFifo (f776836f) falls back COMPANY-WIDE for serials not
+ * found in the requested warehouse, and writeNegativeEntry then re-stamps the
+ * outbound row's warehouse with wherever it found them. For a stock-transfer
+ * shipment that consumed stock outside the From sub-location and slipped past
+ * the From-department check. Rishi, 11 Oct: that fallback is wanted, so the
+ * strict From-only draw was removed again.
+ */
+describe('applyFifo — a transfer shipment may take stock from other stores of the company', () => {
+  function serialDb() {
+    const queries: any[] = [];
+    const db: any = {
+      select: () => ({ from: () => ({ where: (condition: any) => {
+        queries.push(new MySqlDialect().sqlToQuery(condition));
+        // The serial sits elsewhere: nothing at the requested warehouse; the company-wide read would find it.
+        const rows = (queries.length === 2 || queries.length >= 4)
+          ? [{ serial_no: 'SN1', quantity: '1', remaining_quantity: '1', ledger_id: 'l-elsewhere', warehouse_id: 'wh-other', posting_date: '2026-10-01', rate: '5', amount: '5', entry_no: 1 }]
+          : [];
+        const result: any = Promise.resolve(rows);
+        result.limit = async () => [{ valuation_method: 'FIFO', standard_cost: null }];
+        result.orderBy = () => ({ for: async () => rows });
+        return result;
+      } }) }),
+      insert: jest.fn(() => ({ values: async () => undefined })),
+      update: jest.fn(() => ({ set: () => ({ where: async () => undefined }) })),
+    };
+    return { db, queries };
+  }
+  const args = { tenantId: 'tenant', companyId: 'company', itemId: 'item', outboundLedgerId: 'out', quantity: 1, applicationDate: '2026-10-05', serialNo: 'SN1', warehouseId: 'wh-store' };
+
+  it('falls back company-wide when the From location lacks the serial, transfers included (Rishi, 11 Oct)', async () => {
+    const { db, queries } = serialDb();
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    const out = await service.applyFifo(args, db);
+    expect(queries).toHaveLength(6);
+    expect(out.appliedWarehouseId).toBe('wh-other');
+  });
+
+  it('writeTransferShipment no longer restricts FIFO to the From location', async () => {
+    const insert = jest.fn(async () => undefined);
+    const db: any = {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ item_id: 'item', item_code: 'item', item_name: 'Item', is_serial_tracked: 1 }] }) }) }),
+      transaction: async (work: any) => work(db),
+      insert: () => ({ values: insert }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    const service = new InventoryLedgerService(transactionCls(db));
+    const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 5, averageRate: 5, appliedWarehouseId: 'wh-store' });
+    await service.writeTransferShipment({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentNo: 'SH-1', documentLineId: 'line-1',
+      postingDate: '2026-10-05', quantity: 1, uom: 'PCS', fromWarehouseId: 'wh-store', serialNo: 'SN1' });
+    expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'wh-store', serialNo: 'SN1' }), db);
+    expect((fifo.mock.calls[0][0] as any).strictWarehouse).toBeUndefined();
   });
 });

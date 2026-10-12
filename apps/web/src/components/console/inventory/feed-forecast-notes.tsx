@@ -8,6 +8,8 @@
  * batch). Its box scrolls on its own so the page stays fixed-height.
  */
 import { formatDateShort } from "./feed-format";
+import { useState, type ReactNode } from "react";
+import { Dialog } from "@/components/ui/dialog";
 
 export type ForecastFlag =
   | { kind: "NO_FEED_ROW"; batchNo: string; stageCode: string; day: number; date: string }
@@ -16,7 +18,8 @@ export type ForecastFlag =
   | { kind: "STAGE_CHANGE_PROJECTED"; batchNo: string; stageCode: string; date: string }
   | { kind: "HEADS_ASSUMED_FLAT"; batchNo: string }
   | { kind: "BATCH_SHED_UNKNOWN"; batchNo: string }
-  | { kind: "AS_OF_PAST"; planningDate: string; today: string };
+  | { kind: "AS_OF_PAST"; planningDate: string; today: string }
+  | { kind: "NEGATIVE_SYSTEM_BALANCE"; sourceCode: string; itemName: string; balanceKg: number; date: string };
 
 export interface NoteGroup {
   kind: string;
@@ -76,14 +79,26 @@ export function buildNoteGroups(flags: ForecastFlag[], t: Translate): NoteGroup[
   if (changes.length) groups.push({ kind: "STAGE_CHANGE_PROJECTED", title: t("ffNoteStageChange"), items: changes });
   const noShed = unique(of("BATCH_SHED_UNKNOWN").map((f) => f.batchNo)).sort();
   if (noShed.length) groups.push({ kind: "BATCH_SHED_UNKNOWN", title: t("ffNoteNoShed"), items: noShed });
+  // Rishi, 12 Oct: a ledger balance below zero is shown as 0; this is where the anomaly stays visible.
+  const negative = unique(of("NEGATIVE_SYSTEM_BALANCE").map((f) => t("ffNoteNegativeBalanceItem", {
+    sourceCode: f.sourceCode,
+    itemName: f.itemName,
+    kg: f.balanceKg.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    date: formatDateShort(f.date),
+  })));
+  if (negative.length) groups.push({ kind: "NEGATIVE_SYSTEM_BALANCE", title: t("ffNoteNegativeBalance"), items: negative });
   // HEADS_ASSUMED_FLAT is raised for every batch (D11): one line covers them all.
   if (of("HEADS_ASSUMED_FLAT").length) groups.push({ kind: "HEADS_ASSUMED_FLAT", title: t("ffNoteHeads"), items: [t("ffFlagHeadsAssumedFlat")] });
   return groups;
 }
 
-export function FeedForecastNotes({ flags, t }: { flags: ForecastFlag[]; t: Translate }) {
+export function FeedForecastNotes({ flags, t, compact = false }: { flags: ForecastFlag[]; t: Translate; compact?: boolean }) {
   const groups = buildNoteGroups(flags, t);
   if (!groups.length) return null;
+  const content = <dl className="max-h-80 space-y-3 overflow-auto border-t border-[var(--border)] px-3 py-3 text-xs">
+    {groups.map((g) => <div key={g.kind}><dt className="font-semibold text-[var(--text-primary)]">{g.title} <span className="font-normal text-[var(--text-muted)]">({g.items.length})</span></dt><dd className="text-[var(--text-secondary)]">{g.items.join(g.kind === "BATCH_SHED_UNKNOWN" ? ", " : "; ")}</dd></div>)}
+  </dl>;
+  if (compact) return <CompactNotesDialog title={t("ffNotesTitle", { count: groups.length })} content={content} />;
   return (
     <details className="shrink-0 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
       <summary className="cursor-pointer select-none px-3 py-2 text-xs">
@@ -100,4 +115,9 @@ export function FeedForecastNotes({ flags, t }: { flags: ForecastFlag[]; t: Tran
       </dl>
     </details>
   );
+}
+
+function CompactNotesDialog({ title, content }: { title: string; content: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <><button type="button" className="nf-button nf-button-secondary text-xs" onClick={() => setOpen(true)}>{title}</button><Dialog open={open} onClose={() => setOpen(false)} title={title} maxWidth="lg">{content}</Dialog></>;
 }

@@ -2302,6 +2302,10 @@ work may prepare additive tenant-agnostic migrations and verify them on local
 
 ## 2026-10-01 — Common requisition approval precedes release
 
+> **Superseded in part (5 Oct):** who may press Release changed. Any user who may approve the requisition releases it,
+> under the same not-own-requisition rule as approval (our reading of "may approve"). Transfer Shipment keeps the
+> sender-department rule. See "2026-10-05 — Common requisition: requester, Service lines, receipt and release".
+
 Rishi confirmed that approval and release are separate actions. A common
 requisition begins Open, is submitted for approval, becomes Approved only
 after the approval decision, and is then explicitly Released. Store shipment
@@ -2417,6 +2421,895 @@ actual consumption against lifecycle-expected consumption, and uses the ISO
 week containing the production date for `YYYYWW` when that deferred plan enters
 scope.
 
+## 2026-10-01 — runDownDate is the first day animals cannot be fed (supersedes Task 4 threshold ruling)
+
+Rishi's ruling, confirmed verbally 2026-10-01: **runDownDate is the first day
+demand exceeds the silo's available stock** (demand > opening balance, i.e. the
+day the animals cannot be fully fed from what is on hand). This supersedes the
+Task 4 implementation that set runDownDate to the first day the closing balance
+fell at or below the silo's low-level threshold.
+
+The threshold (lowLevelKg) remains meaningful for:
+- `shortfallKg` (the reorder deficit calculation);
+- `refillDate` and `requiredOn` (derived from runDownDate minus the silo's
+  reorder buffer and the farm's lead time);
+- operator alerts.
+
+`shortageDate` (first unmet demand day) is now identical to `runDownDate`
+because they use the same trigger condition. The old distinction
+("run-down reaches low level" vs. "stock is truly exhausted") is retired.
+
+Consequence: if a silo's balance stays above zero throughout the visible range
+but the threshold is breached, runDownDate is null (animals are not hungry)
+even though a shortfall still exists. That shortfall still drives a requisition;
+the visual run-down date just does not appear.
+
+All engine tests, service tests and web grid tests were re-pinned to the new
+semantics in commit `22b9bede` on `feat/feed-forecast-requisition-integration`.
+
+## 2026-10-02 — Feed Forecast grid date columns, run-down date formula, clean data (no dashes), and internal BC fulfilment
+
+Rishi's rulings, confirmed 2026-10-02:
+
+1. **Feed Forecast Grid Layout:** Dates must not appear in different rows. Dates must be in the same row as horizontal columns (dynamic date pivot columns across the top). Each (batch, item, shed) is a single unified row.
+2. **Run Down Date Formula:** Run-down date is calculated from `Total Stock / Total Daily Consumption` (Days of Feed = Total Stock / Total Daily Consumption; Run Down Date = Planning Date + Days of Feed).
+3. **Clean Data (No dashes):** Eliminate all placeholder dashes (`-`, `—`) from the Feed Forecast grid and related UI. Always display real, proper data (e.g. `0.00`, `0`, valid dates, or clean text).
+4. **Internal Fulfilment for Business Central Requirements:** Build everything internally for the Business Central (BC) scope within NAVFarm. Do not leave out Mill Consolidation, Transfer Orders (TO), Vehicle Loading/Dispatch, and TO Receipts merely because external BC is not yet connected. Build the full internal pipeline in NAVFarm, structured with an integration toggle (`INTERNAL` vs `BC`) so that when BC is connected in the future, the user has the choice to use either Internal or BC fulfilment.
+
+
+## 2026-10-03 — Feed TDD workbook governs feed; in-house mill pipeline
+
+Rishi's rulings, given section by section on 2026-10-03 while reviewing
+`NAVFarm_Feed forecast TDD with examples (1).xlsx`. Design:
+`docs/superpowers/specs/2026-10-03-feed-tdd-alignment-and-inhouse-mill-design.md`.
+
+1. **The feed TDD workbook governs feed.** Where it conflicts with an earlier feed ruling, the
+   workbook wins; behaviour it does not describe is dropped.
+2. **Safety stock is separate, default 0.** Shortfall = demand + safety stock − opening −
+   confirmed incoming. Supersedes Q3 (low level inside the shortfall). Reason: the Worked Example
+   has Below Feed Level 1,000 KG and still orders R2 9,000 KG ("Buffer zero").
+3. **Run-down date = first shortage date** (Engine Step 7, Dashboard row 55). Supersedes
+   2026-10-02 ruling 2 (stock ÷ daily use), which the workbook calls indicative only.
+4. **In-house only, no In-house/BC selector.** Amends 2026-10-02 ruling 4: the mill pipeline is
+   built in NAVFarm; documents keep stable IDs and `integration_status = NOT_APPLICABLE` for a
+   later connector. No outbox, no simulated BC state.
+5. **Mill stock in-house comes from a Production Output Entry** (diet, KG, bin, date), without
+   raw-material consumption.
+6. **Removal stops at pre-feed fields.** Feed-era fields absent from the workbook are removed;
+   fields that existed before 25 Sep (`silo_reorder_days`, `feed_wastage_pct`) stay but the
+   forecast no longer uses them.
+7. 2026-10-02 rulings 1 (date columns) and 3 (no dashes) stand.
+
+## 2026-10-03 — Feed requisition lines per batch, house, silo and item; common requisition kept
+
+Rishi, 3 Oct, after reviewing what the client documents say about requisitions:
+
+1. **Feed requisition lines are per batch, house, destination silo and feed item** (and required
+   date), not one line per silo and item. Sources: TDD workbook Engine Step 9 "Create or update
+   linked draft lines per farm, batch, house, destination silo, item and required date"; MOM Feed
+   and Logistic 21 Aug 2026 "Feed requisition will be raised on the basis of Per Batch, Per House,
+   and Per Silo". The silo/item totals (recommended quantity rounded to the bulk multiple) are
+   shown on the requisition as a summary; ordering and rounding stay per silo and item (Engine
+   Step 8), so batch/house lines carry their share of demand.
+2. **The common requisition and approval flow stays as first developed** from Rishi's 1 Oct
+   specification (Item / Fixed Asset / Service; Store or Purchase; approval precedes release;
+   separate approval, document and fulfilment states). The feed TDD work does not replace it;
+   Part E adds its screens and the feed entry point beside it.
+
+## 2026-10-04 — Where each requisition kind is created
+
+Rishi, 4 Oct: **from the Feed Forecast (its Feed Requisition tab) only feed requisitions are
+created; from the common Requisition / Approvals area (Approvals → Requisitions) requisitions of
+every kind are created** — Feed, Item, Fixed Asset and Service. Both feed entry points use the same
+feed document and API; the Feed Forecast tab never offers the common kinds. This confirms the Part E
+plan (`docs/superpowers/plans/2026-10-04-feed-part-e-requisition.md`, Tasks 10 and 13).
+
+## 2026-10-04 — Requisitions are created and edited in a dialog
+
+Rishi, 4 Oct: a requisition — common (Item / Fixed Asset / Service) and feed alike — is created and
+edited in a **dialog** that carries its header fields and its lines, the same way for both kinds.
+Until now the common requisition opened its header form and lines on the page in place of the list
+(built to "match the feed document"; no one had decided a dialog). A requisition that can no longer
+be edited (submitted, approved, released) still opens read-only.
+
+## 2026-10-04 — Feed screens follow the workbook field for field; a real dashboard
+
+Rishi, 4 Oct:
+1. **New from the Feed Forecast is Feed, automatically.** The Feed Requisition tab's New skips the
+   "what is this requisition for?" choice and opens the feed requisition straight away.
+2. **Every page shows the fields the TDD workbook lists for it** — field names, order and content —
+   checked page by page against `NAVFarm_Feed forecast TDD with examples (1).xlsx`.
+3. **The Feed Forecast Dashboard is a dashboard:** the user first selects what to look at (farm,
+   date/range or reporting period, house, silo, feed item, bulk/bagged), then sees the figures as
+   charts and graphs (with the detail table beneath), not only a table.
+4. **The Feed Forecast shows the silo number (code) and the silo name** on its rows.
+
+## 2026-10-04 — The forecast grid shows the stock every day until it runs out
+
+Rishi, 4 Oct (from two screenshots of VIL100's forecast): a row went blank while its silo still held
+stock, and the red 0 appeared only from the shortage date with nothing on the days before.
+Ruling: every date cell of a forecast row shows that row's silo/feed-item projected balance for that
+date — whether or not that batch eats on that day — until the balance reaches 0; the date it reaches
+0 shows a red 0. **Daily** view: one column per day from the start until the stock is 0 (default end
+= the latest first-shortage date of the shown rows, never beyond the 45-day maximum; a user-typed
+To still wins). **Weekly** view: 7-day columns over the same span, each showing the balance at the
+end of that week, until 0. Workbook basis: Engine Step 6 "Compute each day separately" and Step 7
+"Projected closing KG and shortage date"; Engine §5 row 70 "projected closing … shortage date".
+
+## 2026-10-04 — Tenant and Company admins may approve their own requisitions
+
+Rishi, 4 Oct: when a **Tenant Admin** or a **Company Admin** creates a requisition, they may also
+approve it themselves. This applies to common requisitions (Item / Fixed Asset / Service) and feed
+requisitions alike. It **supersedes** the 2026-10-01 rule "manual self-approval is forbidden" for
+those two user types only. Every other user type (Farm Manager, Head of Farms / OPERATIONAL_ADMIN,
+Standard User) still cannot approve a requisition they created. The approval is still recorded with
+the approver's name and time, so a self-approval is visible on the document. (System Admin is not
+named by Rishi; treat it like Tenant Admin only if Rishi confirms — until then it follows the old rule.)
+
+## 2026-10-04 — Tenant and Company admins approve every requisition; one Requisitions page
+
+Rishi, 4 Oct (with screenshots of `/approvals/pending` and `/approvals/requisitions` listing the same requisitions):
+
+1. "the tenant and company admin should be able to approve all requisitions, theirs and others". A Tenant Admin or
+   Company Admin may approve or reject **any** requisition in their scope, of every kind (Feed, Item, Fixed Asset,
+   Service): their own (the self-approval exemption above) and anyone else's, whatever the approval tier or step
+   would otherwise require. Other user types keep the existing rules.
+2. "why 2 pages for showing the current requisition requests? there should be 1 only". **Approvals → Requisitions
+   is the one requisition list.** It shows every kind and status, has a "Waiting for my approval" filter, and
+   offers Approve / Reject (with the document's checks and reasons) on pending rows. The Approvals inbox
+   (`/approvals/pending`, Approved History, Rejected/Returned) **no longer lists requisitions**. It keeps the other
+   sign-offs (physical counts, stage moves, GRNs, …) and shows a link to Requisitions with the pending count.
+3. The Feed Forecast → Feed Requisition tab stays as a feed-only view for the farm, where feed requisitions are
+   drafted from the forecast. It uses the same rows, documents and actions as the Requisitions page; it is not a
+   second implementation.
+
+## 2026-10-04 — Common requisition field and button list
+
+Rishi gave the common requisition's header, line, buttons, item tracking and validations in chat on 4 Oct. The
+list is kept verbatim in `docs/superpowers/plans/feed-completion/common-requisition-spec.md` and governs that
+document. Read with the 1 Oct rulings: approval still precedes Release. "PR synced to BC" stays in-house, recorded
+as `BC_PENDING` with Link PO (3 Oct in-house rule). "Item Ledger + Value Entry" is the existing inventory ledger
+plus cost/journal posting; no duplicate ledger is created (1 Oct). The 4 Oct admin approval rule covers approval
+only; it does not exempt admins from the department checks on Transfer Shipment and Receipt unless Rishi says so.
+
+## 2026-10-04 — Page and tab names follow the workbook
+
+Rishi, 4 Oct: "the proper naming of the tabs and the pages according to the shared file". Page titles, tabs, section
+headings and dialog titles use the workbook's sheet and SECTION names (mapping table in the master plan, WP1d).
+Routes and URL tab keys are unchanged. Screens the workbook does not have keep our names.
+
+## 2026-10-04 — Feed Forecast tab names; Stages removed; admins keep department checks
+
+Rishi, 4 Oct:
+1. The Feed Forecast tabs are **Dashboard · Calculation · Requisition · Physical Stock Count**.
+2. "if not in the file then remove it properly". The forecast's "Stages (n)" sub-tab is removed with its component,
+   strings, response field and specs. The engine's stage-chain projection, which picks the next diet, stays because the
+   file has it. Other feed-page features that are not in the file and did not exist before 25 Sep go the same way.
+3. "the checks should still work and they can only approve the requisition created by anyone". Tenant and Company
+   admins get no bypass of the department checks on Transfer Shipment and Receipt. Their only extra power is
+   approving any requisition, whoever created it, their own included.
+
+## 2026-10-04 — Requisition LOB scope uses the farm's LOB; merge GitHub main locally for lot/serial
+
+Rishi, 4 Oct:
+1. The requisition services filtered on `company_master.lob_id`, a column that exists in no database, so restricted
+   users (Farm Manager, Head of Farms, Standard User) got a 500. A requisition's line of business is **its farm's**
+   (`location_master.lob_id`). Requisitions with no farm, and farms with no LOB, are visible to every LOB. No schema
+   change.
+2. Merge GitHub `origin/main` (Arun's PR #13 lot/serial work, after a fresh fetch) into the feed branch **locally**,
+   as its own step, before building Item Tracking (WP1c). Nothing is pushed. Conflicts are resolved keeping the feed
+   work on the files this branch owns, followed by the full gates and a live check.
+
+## 2026-10-05 — Demo roles get requisition permissions
+
+Rishi, 5 Oct. The seeded MANAGER and OPERATOR roles had no PROCUREMENT permission rows, so a realistic restricted
+user was refused on every requisition route. A data script (AGENTS.md §4 shape: plan / `--verify` / `--apply`, local
+only) grants requisition permissions (PROCUREMENT / REQUISITION):
+- Farm Manager and Head of Farms (OPERATIONAL_ADMIN) roles: view, create, edit, submit, approve.
+- Standard User / Operator roles: view, create, edit, submit, but **not** approve.
+Release, shipment, receipt and Direct Transfer stay as configured; they are not part of this grant.
+
+## 2026-10-05 — Requisition is its own menu item, common kinds only; FA/Service lines are Description + Qty
+
+Rishi, 5 Oct:
+1. Requisitions leave the Approvals menu. A top-level sidebar item **Requisition** lists and creates **common**
+   requisitions only (Item, Fixed Asset, Service), with Approve / Reject on pending rows. **Feed requisitions live only
+   under Feed Forecast → Requisition.** The Approvals page keeps the other sign-offs. This supersedes the 4 Oct ruling
+   that the hub lists every kind. Old URLs (`/approvals/requisitions`, `/inventory/requisitions`) redirect to the new page.
+2. Asked about the NOT NULL unit on FA/Service lines, Rishi said "follow the file shared". His list says "FA and
+   Service: Description + Qty only", so those lines carry no unit. `requisition_line.uom` becomes nullable: a
+   relaxing MODIFY, nothing dropped, like 0142. Item lines keep the item's unit.
+
+## 2026-10-05 — Build order: common requisition, then feed requisition, then feed forecast
+
+Rishi, 5 Oct: "first finish the common requisition then the feed requisition and then the feed forecast completely".
+The work packages are regrouped into three phases (master plan, "Build order (5 Oct)"). A phase is finished before the
+next begins, except work already in flight when this was decided.
+
+## 2026-10-05 — One requisition document; approval is its decision workflow
+
+Rishi clarified that Common Requisition and Approval are not competing document types. A requisition is the business
+document (header, lines, release and fulfilment); approval is a separate decision workflow applied to that document.
+There is one top-level Requisition list and document experience. It includes Item, Fixed Asset and Service requests,
+including feed items. It owns the "Waiting for my approval" filter and Approve / Reject actions. The general Approvals
+inbox does not duplicate requisition rows; it remains the inbox for other operational sign-offs.
+
+A feed request may start in either place:
+
+- Feed Forecast creates the same requisition document, prefilled from the selected farm, shed, silo, feed item,
+  required date and calculated quantity.
+- Requisition permits the same feed item to be requested manually as an Item requisition.
+
+`FEED_FORECAST` and `MANUAL` are origins of an Item requisition, not separate user-facing requisition types or separate
+document implementations. The existing stored `FEED` subtype and `/feed-requisition` route require a compatibility
+transition so existing rows and bookmarks keep working while all new mutations converge on the canonical requisition
+service. Approval state, document state and fulfilment state remain independent. Approval precedes Release.
+
+This supersedes the earlier 5 Oct ruling that feed requisitions live only under Feed Forecast and are excluded from the
+common Requisition list. Feed Forecast retains its Requisition entry point, but it opens or creates the same canonical
+document shown by Requisition.
+
+## 2026-10-05 — Feed Forecast display and interaction correction
+
+Rishi confirmed the following UI and range rules:
+
+- Dashboard selection is hierarchical: Farm, then Shed, then Silo. Results load only when all three selections are
+  valid. On initial load the first available Farm, then that farm's first Shed, then that shed's first linked Silo are
+  selected automatically. Changing Farm or Shed automatically selects the first valid child; data from an invalid or
+  stale child is never displayed.
+- Farm, Planning Date and View/Range are the shared Dashboard/Calculation context and remain selected when switching
+  tabs. Shed and Silo are not mandatory Calculation inputs.
+- The shared default view is Custom. Date From is the farm's current date and Date To is six calendar days later,
+  giving exactly seven displayed dates including the current date. Custom remains bounded by those explicit dates;
+  Daily and Weekly keep their separate run-down display rules below.
+- Calculation runs for the whole selected Farm and forecast period. Shed, Silo, Batch, Feed Item and Bulk/Bagged are
+  optional result filters: they narrow the displayed rows without changing or rerunning the underlying farm calculation.
+- With a Silo selected, Dashboard KPIs, charts and details are scoped to that Silo unless explicitly labelled
+  otherwise. Farm-wide figures required by the workbook, especially **Farm Total Order This Cycle**, remain visible
+  as clearly labelled farm totals alongside the selected-Silo information.
+- The Dashboard filter bar contains Farm, Shed, Silo, Planning Date and View/Range. Feed Item and Bulk/Bagged are
+  displayed as facts for the selected Silo, not repeated as Dashboard filters.
+- For the selected Farm → Shed → Silo, the Dashboard must show all of these fields explicitly; a chart may visualise
+  a value but must not replace or hide the field: Current Diet Feed Item; Mill Loading Bin No.; Silo Capacity KG;
+  System Balance KG; Daily Requirement KG; Days of Feed Remaining; Projected Need for Selected Range KG; Current Diet
+  Days Remaining; Next Diet Feed Item; Silo Available for Next Diet Feed Type; Projected Shortfall KG; Recommended
+  Order Qty KG; Farm Total Order This Cycle KG; Requisition Status; Submission Deadline. Farm Total Order This Cycle KG
+  is clearly labelled as farm-wide; the remaining values are scoped to the selected Silo unless their field definition
+  inherently says otherwise.
+- Dashboard facts should use KPI cards and useful charts where they clarify balances, demand, run-down and diet change;
+  the detailed workbook table remains available below them.
+- Approved Dashboard layout: primary KPI cards show Current Diet, Silo Capacity, System Balance, Daily Requirement,
+  Days Remaining and Recommended Order; forecast details show Projected Need, Current Diet Days Remaining, Next Diet,
+  next-diet Silo availability and Projected Shortfall; fulfilment details show the real Mill BIN assignment,
+  Requisition Status and Submission Deadline; Farm Total Order is a separate farm-wide card. Supplementary charts are
+  projected closing balance with thresholds/run-down and selected-range current-versus-next-diet demand. Charts never
+  replace the explicit values.
+- Daily starts on the selected date and shows every daily closing balance through the date stock becomes empty, capped
+  by the configured 45-day maximum.
+- Weekly starts on the selected date and shows consecutive seven-day groups through the group containing the empty-stock
+  date. A weekly value is the closing balance at that group's end (or zero on the run-down date/group), derived from the
+  same daily projection.
+- New Physical Stock Count opens in a dialog over the count list instead of replacing the page body.
+- The workbook's Feed Plan (Tentative versus Actual, with retained run versions) is brought into the Feed Forecast work.
+  The existing Feed Planning screen is configuration and does not satisfy this requirement. Tentative uses five completed
+  weeks of posted consumption adjusted for known population/diet changes; Actual uses approved requisition quantities.
+
+The running API on 5 Oct proved the range defect: VIL100 on planning date 5 Oct calculated `horizonTo=19 Nov` and a
+run-down date of 21 Oct, but DAILY returned only 5 Oct and WEEKLY only 5–11 Oct. The data exists in the projection; the
+view contract truncates it before the web can render it.
+
+## 2026-10-05 — Item Tracking after release, and four readings of Rishi's list (ours, to confirm with Rishi)
+
+These are interpretations of the 4 Oct list (`common-requisition-spec.md`) made in WP4a. They are **ours, not Rishi's
+rulings**. The coordinator asked for them to be recorded.
+1. **Who assigns Item Tracking after release.** The list says tracking is "MANDATORY before Transfer Shipment post",
+   and that the shipment is "Done by sender department user". So on a released Store requisition, the Lot/Serial
+   assignment for the unshipped balance belongs to the **From sub-location's department**: the store that ships picks
+   the lot. While the document is Open, the requester assigns it on the line, as before. Admins get no bypass
+   (4 Oct bound).
+2. **Direct Transfer checks the From department only.** The list puts Direct Transfer under the Transfer Shipment
+   button: "If Direct Transfer = True: Shipment + Receipt posted together". One press by the sender department posts
+   both legs. Checking the To department as well would make Direct Transfer impossible between two departments,
+   because a user has exactly one department.
+3. **Serial-tracked lines ship their whole balance in one shipment, one serial per unit** (WP4a fix round 1). A partial
+   shipment would leave FIFO, not the document, to choose which serials leave, and the receipt could not know which
+   to copy. Partial serial shipments stay refused until each event records the serials it consumed. Lot lines may
+   still ship partially, and the unshipped balance can be given another lot. This applies to every shipment of a
+   serial line: the requisition's Transfer Shipment, a standalone Stock Transfer, and Direct Transfer.
+4. **A transfer shipment draws only from its From location** (coordinator's ruling, 5 Oct). origin/main's company-wide
+   serial fallback in `applyFifo` stays for other callers. A stock transfer refuses instead of consuming stock held
+   elsewhere, which would bypass the From-department check.
+
+## 2026-10-05 — Feed requisitions in the one document: feed fields shown, mill flow fulfils
+
+Rishi, 5 Oct (to the desktop controller, after confirming the unified-requisition rulings above):
+1. A requisition for feed shows Rishi's common header and lines **plus** the workbook's feed fields, but only when the
+   requisition is for feed (Requisition and Loading Sheet §1–§2: Production Date, Submission Deadline, Priority, Farm
+   Total vs truck target, per-line destination Silo, Recommended Qty, Days Remaining, delivery date, batch breakdown).
+2. An approved feed requisition is fulfilled by the workbook's **mill flow**: Feed Mill Manager Consolidation Sheet →
+   Transfer Order from the mill → Loading Instruction Sheet → Dispatch → TO Receipt at the silo (master plan Part B).
+   It is not released as a common Store/Purchase transfer.
+
+## 2026-10-05 — Feed Forecast first: Rishi's work order (reverses the correction plan's)
+
+Rishi, 5 Oct (evening): finish the Feed Forecast surface first — **Dashboard, then
+Calculation, then the Feed Plan, all under Feed Forecast — then the Feed Requisition
+tab under it too — and only then the one common Requisition page** and the rest
+(unified requisition Tasks 1–5, mill flow, planning/period end). The correction plan's
+order (Tasks 1–5 before Tasks 6–9) is reversed on his instruction: the forecast's
+Daily/Weekly horizons, shared Farm → Shed → Silo selection, Dashboard KPIs/charts,
+Physical Stock Count dialog and Tentative-vs-Actual Feed Plan come before the
+canonical requisition service and the `/feed-requisition` facade.
+
+The API being down (nothing listening on :2877) was the cause of the 500 Rishi saw
+in the frontend on 5 Oct evening; the running `dist/main.js` was restarted.
+
+## 2026-10-05 — MILL location and real loading-bin source enter the Feed Forecast scope
+
+Rishi added a `MILL` Location Type and the fields required by
+`NAVFarm_Feed forecast TDD with examples (1).xlsx`; where the workbook is silent, add only the minimum fields needed
+to fulfil its workflow and label those fields as NAVFarm design rather than client-specified fields.
+
+`MILL` and `BIN` are both Location Types. A company can have multiple root MILL locations and each MILL can have
+multiple child BIN locations, analogous to multiple root Farms with multiple child Sheds. A BIN's parent must be a
+MILL; a MILL has no Farm parent. This supersedes the proposed separate Loading Bin child table.
+
+The workbook is sufficient for the mill-specific capacity contract (Feed Forecast row 11; Checkpoints and Validations
+rows 9 and 38): the MILL holds capacity per day, capacity per hour, bulk daily allocation, bagged daily allocation and
+diet priority. Its child BIN locations provide the loading-bin assignment for a feed item/diet and production slot.
+One BIN cannot be assigned to two diets for the same slot. Dashboard `Mill Loading Bin No.` is read from this real
+location assignment via the current diet's Item Master Diet No.; no placeholder or invented bin is shown. Standard
+Location Master fields remain owned by Location Master rather than duplicated in a second Mill Capacity Master row.
+
+Each BIN is also the physical inventory location for produced feed. Production Output posts positive Item Ledger and
+Value Entry movements to the BIN; loading/dispatch and transfers consume stock from that BIN; farm receipt posts the
+other leg to the destination Silo. Mill feed stock is therefore auditable by BIN and is not held as an undifferentiated
+balance on the parent MILL or in a separate balance column.
+
+A BIN is assigned to a Feed Item/Diet by production date and production slot, not permanently. The same BIN may serve
+another diet in a later non-overlapping slot. The system blocks two diet assignments for the same BIN and slot and
+blocks a change while the BIN still carries positive stock of the previous item, so item balances cannot be mixed.
+
+Production slots are controlled master data, not free text. Production Slot Master contains Slot Code, Slot Name,
+Start Time, End Time and Active status. BIN diet assignments reference the slot record. Triple C's actual slot names
+and times remain configuration input; NAVFarm must not seed invented shifts as customer truth.
+
+Production Slots may cross midnight. Production Date is the calendar date on which the slot starts; an End Time earlier
+than or equal to Start Time means the slot ends on the following calendar date.
+
+Mill and BIN capacities are entered and displayed in TON, with decimal values allowed. The system converts capacity to
+canonical KG using exactly 1 TON = 1,000 KG for forecast, capacity comparison, ledger, requisition and transfer logic,
+while retaining the entered TON value for master-data display and editing.
+
+Approved minimum field set:
+
+- MILL Location: generated Mill Code, Mill Name, Daily Capacity TON, Hourly Capacity TON, Bulk Daily Allocation TON,
+  Bagged Daily Allocation TON and Status. Bulk plus Bagged daily allocation cannot exceed Daily Capacity.
+- BIN Location: generated Bin Code, Bin Name, required parent Mill, Bin Capacity TON, Feed Type (Bulk or Bagged) and
+  Status.
+- BIN Diet Assignment: Bin, Feed Item/Diet, Production Date, Production Slot and Diet Priority, with the overlap and
+  positive-stock change protections above.
+
+Company scope and audit fields remain the existing automatic Location/Master fields. Do not create a duplicate Mill
+Capacity Master or add fields beyond the approved set unless a later workflow proves one is necessary.
+
+For Dashboard `Mill Loading Bin No.`, resolve the next scheduled BIN assignment for the selected Silo's current diet
+on or after the shared Planning Date. Display the BIN together with its Production Date and Production Slot. If no such
+assignment exists, display `Not scheduled`; do not fall back to an arbitrary BIN.
+
+Dashboard and Calculation are the top implementation priority. Build and verify their farm calculation, selection,
+fields, filters and charts first. Until the later MILL/BIN foundation is connected, Mill Loading Bin remains the honest
+`Not scheduled` unavailable state. The Dashboard is not declared fully complete until that foundation supplies and the
+live check proves a real effective BIN assignment.
+
+## 2026-10-05 — Common requisition: requester, Service lines, receipt and release
+
+Rishi, 5 Oct, answering the Phase 1 end-to-end findings:
+1. Requester User ID shows the user's **login (email)**, not the internal id.
+2. Service lines follow his list: **Description + Qty only**. The optional Resource picker is removed from Service lines.
+3. "The one requesting is the one who would be receiving." Transfer Receipt is posted by the **requester**. The list's
+   department check still applies (the requester's department must match the To Sub-Location). The requester needs no
+   separate receive permission. Direct Transfer remains the sender's single action that posts both.
+4. **Release** may be pressed by **any user who may approve** the requisition. This replaces the 1 Oct
+   sender-department rule for Release only; Transfer Shipment stays with the sender department.
+
+## 2026-10-06 — Feed Forecast display horizon, shortage date and delivery lead time
+
+Rishi confirmed that the Calculation grid displays no more than 45 calendar
+days, but the engine must continue its background projection beyond the
+displayed range when necessary to determine **First Shortage Date**. Run-down
+Date and First Shortage Date are the same business date, so the Calculation
+grid shows only **First Shortage Date** rather than introducing a separate
+Run-down Date column.
+
+The background calculation continues with the applicable future lifecycle feed
+plan, headcount, feed rate, confirmed receipts and diet changes until shortage
+is found. If no future consumption exists, First Shortage Date remains empty.
+Delivery Date is exactly two calendar days before First Shortage Date. Within
+the displayed 45-day grid, a source that has reached shortage carries `0.00`
+through every later visible date instead of showing blank cells.
+
+This refines the 5 Oct 45-day rule: 45 days limits displayed date columns and
+user-selected ranges; it does not limit the background search for First
+Shortage Date.
+
+## 2026-10-06 — Feed Forecast dates and balances are scoped to each calculation line
+
+Rishi confirmed that each Calculation row may have its own First Shortage Date
+and Delivery Date. The physical Silo + Feed Item balance remains one canonical,
+shared stock projection, but a Batch + Stage + Feed Item row displays that
+balance only during the dates for which that row has applicable feed demand.
+It must not inherit a flat balance tail, First Shortage Date or Delivery Date
+from another lifecycle row merely because both rows draw from the same Silo and
+Feed Item.
+
+First Shortage Date is shown on a calculation line only when the shared source
+shortage occurs inside that line's applicable demand period. Delivery Date is
+then exactly two calendar days earlier. If the lifecycle plan has no applicable
+feed row for the next stage, the system reports that configuration gap instead
+of inventing a feed rate, continuing the previous stage's consumption, or
+showing a speculative shortage/delivery date.
+
+Rishi also authorised applying the already-reviewed additive MILL/BIN tenant
+migration directly to the local development databases without taking a backup.
+This local-only instruction does not change the backup requirement for shared,
+RDP, test or production data. The migration adds schema support only; it must
+not create invented MILL, BIN, production-slot or diet-assignment rows.
+
+## 2026-10-06 — Master Data Edit Field Parity
+
+Rishi ruled that only the fields shown during creation of a record (such as
+a Location based on its Location Type) should be shown or asked when editing.
+Edit cards must not display irrelevant conditional fields (e.g. MILL, BIN or
+SILO fields when editing a FARM). `MasterDataTable` evaluates `isFieldVisible`
+on edit against the record's current values so that edit forms match the exact
+type-specific field set of create forms.
+
+## 2026-10-07 — Feed requisition Type, Source and document boundary
+
+Rishi clarified the Feed Requisition fields after reviewing the workbook and
+the running Inventory Setup screen:
+
+1. **Feed is an Item requisition.** The user-facing Requisition Type remains
+   `ITEM`; `FEED_FORECAST` and `MANUAL` are not requisition types.
+2. **Source records how the requisition was created.** It is read-only and is
+   one of `MANUAL_ENTRY`, `AUTO_FORECAST`, `STOCK_TAKE_TRIGGERED` or
+   `DIET_CHANGE_UPCOMING`. Event-created rows retain their source evidence.
+3. **Every feed source carries the same four required line values:** Destination
+   Silo, Feed Item, Requested Qty and Proposed Delivery Date. A manual user
+   enters them; a forecast, stock-take or diet-change event supplies them.
+4. **One header represents one farm/submission cycle and contains multiple
+   silo/item/date lines.** A scheduled rerun updates the matching open draft
+   rather than creating duplicates.
+5. **Configuration is consumed, not re-entered, on the requisition.** Effective
+   bag size, bulk multiple, truck target, production schedule, silo feed type,
+   capacity and thresholds come from Inventory Setup. Farm total is the sum of
+   requested BULK line quantities; target trips are its ceiling division by the
+   effective truck target. The target is not a cap.
+6. `Current Silo Feed Item No.` stays removed. `Destination Silo` is the one
+   editable silo column. Recommended Qty remains the read-only system evidence;
+   Requested Qty is the editable farm value. Header Required Delivery Date is
+   the earliest line Proposed Delivery Date.
+
+This ruling supersedes the workbook row that labels `FEED_FORECAST`/`MANUAL`
+as Requisition Type and resolves the workbook's contradictory one-silo header
+against its multi-line sub-form. The present implementation scope ends at the
+requisition document and approval. Feed Forecast Dashboard/Calculation are
+review-only afterward; loading, consolidation, dispatch, receipt and BC work
+remain separate unless Rishi brings them into scope.
+
+## 2026-10-07 — Requisition form contract and feed-line Reason Master
+
+Rishi approved the following correction to the common and feed requisition forms:
+
+1. The common requisition header follows his supplied field list: Requisition No., Date, Main/Farm Location,
+   requester login/name/department, Sender Department, Type, Open/Released Status, Purpose, conditional From/To
+   Sub-Locations, Direct Transfer and Remarks. The requester values come from the authenticated user and User Setup;
+   they are never typed by the requester.
+2. The common line table follows his supplied line list. Item lines select Item No. and derive Item Description;
+   Fixed Asset and Service lines enter Description and Qty only. Header locations flow to the read-only line locations;
+   shipped/received quantities and balances are posting results. Item Tracking remains a line action.
+3. Feed alone carries a line Reason. It is selected through the shared searchable control from active, company-scoped
+   Reason Master rows. It is required when the chosen feed item is an exception to the lifecycle requirement and is
+   otherwise optional. New rows store the Reason Master identity; legacy free-text exception reasons remain readable.
+4. Master-backed line and header selectors use the shared searchable custom dropdown. Add Line sits in the Lines title
+   row, and empty dependent values use explanatory text rather than a dash.
+5. Before an unsaved common requisition is saved, the user can return to the requisition type/purpose picker. Entered
+   draft data is not silently discarded.
+6. Requisition actions use the authenticated user's identity and User Setup department. Purchase release may record
+   the real pending integration state, but must not claim a Business Central PO exists while BC remains disconnected.
+7. New common requisitions use **Create** in the dialog footer. Before creation, **Back** is shown in the dialog header
+   and returns to the type/purpose picker. Once saved, the document workflow actions (Save, Submit, Reopen, Release,
+   Transfer Shipment and Transfer Receipt when applicable) are shown in the dialog header; shipment and receipt entry
+   panels remain in the document body. Common and feed line-table cells are vertically centred.
+8. A Feed form opened from the common requisition picker also keeps **Back** in the dialog header; the Feed Forecast
+   page's Feed-only form does not show a redundant Back control. Common requisition workflow buttons remain visible in
+   the header while unavailable and are disabled until document state and permissions allow them. Store documents show
+   Release, Transfer Shipment and Transfer Receipt; Purchase documents show Release. An item that needs no lot/serial
+   tracking leaves the line action area empty instead of displaying “Not tracked”; tracked items retain their assignment
+   action and shipment validation.
+
+## 2026-10-07 — Common requisitions in Approvals and scoped admin self-approval
+
+Rishi decided that a common requisition awaiting approval must be actionable
+from both the Requisition page and the Approvals inbox. The Approvals Pending,
+Approved and Rejected tables therefore include `REQUISITION` requests and show
+the same shared, read-only common requisition document for Item, Fixed Asset
+and Service. Feed requisitions remain on the Feed Forecast requisition surface.
+
+Because the real common requisition rows are now present in the Approvals
+table, the separate “Requisitions waiting for approval / Open Requisitions”
+card and the Approvals page “New Request” button are removed. Requisitions are
+created from Requisition, not from a generic approval-request form.
+
+Tenant Admin, Company Admin and Operational Admin may approve a common or feed
+requisition they created themselves, provided they have the requisition approve
+permission. This does not widen scope: only Tenant Admin and Company Admin keep
+the existing cross-farm requisition visibility; Operational Admin remains
+restricted by their normal operational/farm scope. System Admin self-approval
+is still not authorised by this decision.
+
+## 2026-10-07 — Purchase-only FA/Service and Tenant Admin approval authority
+
+Rishi confirmed that Fixed Asset and Service requisitions remain Purchase-only.
+Their lines therefore remain Description + Qty; Store-only From/To locations,
+shipment/receipt quantities, Direct Transfer and Item Tracking are not shown on
+those documents.
+
+Rishi also clarified that a Tenant Admin may approve any supported approval
+document within their tenant, including a physical count they submitted. The
+Tenant Admin exemption therefore applies to the physical-count maker/checker
+guard as well as requisitions. Permission, tenant/company scope and approval
+audit recording remain enforced.
+
+## 2026-10-07 — Exact common requisition form contract
+
+Rishi confirmed that every non-feed requisition uses one exact shared form
+contract. The header contains only Requisition No., Requisition Date, Main /
+Farm Location, Requester User ID, Requester Name, Requester Department, Sender
+Department, Requisition Type, Status, Purpose, the Store-only From and To
+Sub-Locations and Direct Transfer, and Remarks. Approval, fulfilment,
+integration, approver/releaser audit values and linked document references are
+workflow information, not additional common-requisition form fields.
+
+Item Purchase lines contain Line No., Item No., Item Description and Qty. Item
+Store lines add From Location, To Location, Qty to Ship, Qty Shipped, Qty to
+Receive, Qty Received, Remaining to Receive and Balance to Ship. Fixed Asset
+and Service remain Purchase-only and their lines contain Line No., Fixed Asset
+or Service Description and Qty. Approval, rejection, release, transfer and item
+tracking remain actions around this exact field contract and continue using the
+existing shared server workflows.
+
+## 2026-10-07 — Requisition approval actions use the dialog footer
+
+Rishi confirmed that requisition approval controls must not scroll inside the
+document body. In both common and feed requisition dialogs, approval remarks or
+the rejection reason remain immediately above the action area, while Reject /
+Approve and Cancel / Confirm Reject render in the dialog's fixed footer. The
+same shared decision component supplies both requisition surfaces.
+
+## 2026-10-07 — Feed draft actions use the dialog footer
+
+Rishi confirmed that Save and Submit for approval on an editable feed
+requisition belong in the dialog's fixed footer, not at the bottom of the
+scrollable document body. Their existing validation, disabled states and API
+behaviour remain unchanged.
+
+## 2026-10-07 — Stable visible schema for every common requisition
+
+Rishi clarified that every non-feed requisition must visibly retain the full
+common header and line schema, even when a field does not apply to that
+requisition's type or purpose. This supersedes only the display/visibility
+parts of the earlier “Purchase-only FA/Service” and “Exact common requisition
+form contract” decisions; their Store/Purchase semantics and payload rules do
+not change.
+
+The header always shows Requisition No., Requisition Date, Main / Farm
+Location, Requester User ID, Requester Name, Requester Department, Sender
+Department, Requisition Type, Status, Purpose, From Sub-Location, To
+Sub-Location, Direct Transfer and Remarks. Purchase documents show the three
+Store-only fields as read-only “Not applicable”.
+
+Every line table always shows Line No., Item No., Item Description, Fixed Asset
+or Service Description, Qty, From Location, To Location, Qty to Ship, Qty
+Shipped, Qty to Receive, Qty Received, Remaining to Receive and Balance to
+Ship. Item lines show “Not applicable” for the Fixed Asset or Service
+Description; Fixed Asset and Service lines show “Not applicable” for Item No.
+and Item Description. All transfer columns on Purchase lines show “Not
+applicable”. Store values retain their existing derived/posting behaviour.
+Feed requisitions remain separate and unchanged.
+
+## 2026-10-07 — Selected dropdown values follow the field meaning
+
+Rishi confirmed that searchable selectors may show multiple columns while
+open, but the closed field must show only the value promised by its label or
+table column. A Code or No. field shows only the code/number; a Description
+field shows only the description; and a generic entity field such as Item
+shows the entity name. Search continues to match the complete code-and-name
+option, and the selected record ID and API payload remain unchanged.
+
+## 2026-10-07 — Feed requisitions are decided in their document dialog
+
+Rishi confirmed that a pending feed requisition must not show an “Open in
+Approvals” link inside its document dialog. Authorized users can already
+approve or reject the requisition there using the fixed-footer actions, while
+the Approvals page remains an independent approval inbox. The document keeps
+the “Waiting for approval” state message; users without approval authority see
+that state without a redundant navigation prompt.
+
+## 2026-10-07 — Feed Forecast Calculation columns show one semantic value
+
+Rishi confirmed that the Feed Forecast Calculation grid follows the same
+field-meaning rule as selected dropdown values. A column labelled Code or No.
+shows only the code/number. A Name column shows only the name, and a generic
+entity column such as Required Feed Item or Current Silo Item shows only that
+entity's name. The grid does not join code and name into one displayed value.
+Where the available Calculation value is an identifier, its header must say so
+(Batch No. and House Code).
+
+## 2026-10-08 — Common and feed draft actions use the dialog footer
+
+Rishi clarified that **Save** and **Submit for approval** belong in the fixed
+dialog footer for both common and feed requisitions. This supersedes the
+2026-10-04 placement of common Save and Submit in the dialog header. Later
+common-requisition workflow controls such as Reopen, Release, Link PO,
+Transfer Shipment and Transfer Receipt remain in the dialog header, while
+Approve / Reject retain their existing fixed-footer placement. Button
+permissions, validation, disabled states and API behaviour do not change.
+
+## 2026-10-08 — Feed Forecast unavailable values use explanatory text
+
+Rishi confirmed that the Feed Forecast must not expose technical or ambiguous
+empty values such as `NaN`, `-` or an em dash. On the affected Calculation and
+Dashboard fields, data that cannot be calculated is displayed as **Not
+available**. A missing shortage date is displayed as **No shortage projected**,
+and a delivery date that does not apply is displayed as **No delivery
+required**. Stored values and calculation rules are unchanged; this is the
+user-facing representation of unavailable results.
+
+## 2026-10-08 — Final common requisition field and workflow contract
+
+Rishi confirmed the final boundary after reviewing the common and feed dialogs:
+
+1. Feed requisitions remain a separate document with the workbook-specific
+   header and line fields. This decision does not change the feed form or bring
+   mill consolidation, dispatch or feed Transfer Order receipt into scope.
+2. Every non-feed requisition visibly retains the complete common header and
+   13-column line schema recorded on 7 Oct. Applicability changes the displayed
+   value, not the column set: fields outside the selected type or purpose show
+   read-only **Not applicable**.
+3. Draft **Save** and **Submit for approval** remain in the fixed dialog footer.
+   Approval **Reject / Approve** also remains in the fixed footer. Later workflow
+   controls remain in the dialog header and stay visible but disabled until the
+   document state and caller authority allow them.
+4. Purchase and Store keep different fulfilment paths. Purchase uses **Release**
+   followed by **Link PO**; release records the truthful pending Business Central
+   integration state and does not create an internal transfer. Store uses
+   **Release → Transfer Shipment → Transfer Receipt** and never syncs to BC.
+5. Transfer Shipment is posted by a user whose User Setup department matches
+   the From Sub-Location dimension. Transfer Receipt is posted by the original
+   requester and their User Setup department must match the To Sub-Location
+   dimension. There is no administrator bypass for either posting check.
+6. Direct Transfer remains a User Setup right and posts shipment plus receipt
+   together. Item Tracking remains an Item-line action; tracked lots or serials
+   are mandatory before shipment and receipt inherits the shipment tracking.
+7. Store shipment and receipt continue through the shared stock-transfer posting
+   path so Item Ledger and Value Entry are written once. In NAVFarm's current
+   schema these are one `inventory_ledger` record per posting leg: quantity is
+   the item entry and `rate` / `amount` are its value-entry data; there is no
+   separate `value_entry` table. The linked requisition's line quantities and
+   Fulfilment state update after every posting and finish at **Received** only
+   when all quantities due for receipt have been received.
+
+This supersedes any reading that all common purposes share the same posting
+path: they share the same visible field contract, while Purpose decides whether
+the operational path is Purchase/BC or Store/internal transfer.
+
+## 2026-10-08 — Feed requisitions continue through in-house transfer fulfilment
+
+Rishi decided that an approved feed requisition no longer stops at Approved.
+Its dialog always shows **Release**, **Transfer Shipment** and **Transfer
+Receipt** in the header, disabled when state or authority does not permit the
+action. Draft Save / Submit and approval Reject / Approve remain in the fixed
+footer.
+
+Release resolves each feed line to its active mill BIN assignment for the
+requisition production date. Because one feed requisition may use different
+source BINs or destination SILOs, it creates and explicitly links separate
+stock transfers per source-assignment/destination pair. Shipment and receipt
+use the shared stock-transfer posting path, and Fulfilment aggregates posted
+quantities across every linked transfer until the requisition is Received.
+Mill Consolidation remains out of scope and no Business Central integration is
+claimed. This supersedes earlier feed decisions that stopped workflow at farm
+approval or left feed transfer receipt for a later phase.
+
+Rishi also reconfirmed the semantic display rule for the feed document. Silo
+Code and Feed Item No. show only their code/number, Feed Item Description shows
+only its description, and the forecast Reason is a separate field/column rather
+than a combined second line beneath the description. Search results may expose
+code and name/description in separate columns without joining them in the
+selected value.
+
+## 2026-10-08 — Feed Forecast pages, saved calculations and planned incoming stock
+
+Rishi approved the following final page and calculation boundaries:
+
+1. **Feed Plan is an operational tab inside Feed Forecast**, not a Company
+   Settings page. **Feed Planning** remains configuration under Company
+   Settings → Feed. The Feed Forecast tabs are Dashboard, Calculation, Feed
+   Plan, Feed Requisitions and Stock Take & Reconciliation.
+2. Bulk Truck Target KG and Bulk Order Multiple use the existing company Feed
+   Planning values with nullable overrides for each Farm. Clearing a Farm
+   override restores inheritance. Existing master fields and persisted master
+   columns must not be removed, hidden, renamed or repurposed; implementation
+   may add only fields proven necessary.
+3. Reporting Period is primary master data under Farm Operations, not a
+   Settings page. Its complete existing field and draft/activation contract is
+   preserved when its navigation moves.
+4. Calculation starts empty. Filters do not calculate automatically; the user
+   explicitly selects the required Farm/date filters and presses Calculate.
+   Saving preserves the exact displayed calculation and its effective settings.
+   At most one current saved calculation exists per Farm.
+5. **Delete calculation** archives the saved run and preserves its evidence,
+   lines and any linked requisition. Archiving permits a replacement current
+   calculation; it does not physically delete either record.
+6. A feed requisition can be previewed and created from the exact current saved
+   calculation from both Calculation and Feed Requisitions. The user may edit
+   the permitted request fields before creation. One saved run creates at most
+   one requisition, and once linked the UI offers View Requisition instead of a
+   second creation.
+7. An approved, unlinked feed requisition is planned incoming stock on its
+   delivery date. If overdue at the forecast stock date it is added on that
+   stock date and labelled overdue. Once any explicit feed-transfer link exists,
+   the requisition quantity is no longer counted as planned incoming; the open
+   transfer balance replaces it. Posted receipt ledger movement remains a
+   separate confirmed source. These sources must never be double counted.
+8. Forecast roll-forward applies the separately labelled incoming quantities
+   on their effective date before consumption, so the following day opens with
+   the prior closing balance. Unavailable user-facing values use explanatory
+   text rather than `NaN`, a hyphen or an em dash.
+
+This supersedes earlier statements that Calculation is review-only, that feed
+workflow stops at approval, or that Feed Planning belongs in Inventory Setup.
+Mill Consolidation, Loading Instruction and a dedicated Feed Transfer Order
+Receipt page remain deferred.
+
+## 2026-10-08 — Mill BIN release setup stays in the shared master framework
+
+The approved feed Release workflow requires an active MILL → BIN topology, a
+Production Slot and an exact-date BIN Diet Assignment. These are setup records,
+not Feed Forecast results and not workbook example transactions. Production
+Slots and BIN Diet Assignments therefore appear as tabs beside Location through
+the existing `/master-data/[key]` framework; no standalone page is introduced.
+
+The assignment records BIN, Feed Item, Production Date, Production Slot and
+Diet Priority. It validates the existing BIN feed form and Feed Item diet/type,
+and prevents silently changing a BIN to another item while positive stock
+remains. No MILL, BIN, slot, assignment, capacity, truck target or order
+multiple is seeded as client truth. Release remains disabled with a specific
+reason until users configure the real values for the requisition's exact
+production date.
+
+## 2026-10-08 — Feed Forecast Calculation uses one control row and no result filters
+
+Rishi clarified the Calculation tab after reviewing the running screen:
+
+1. Farm, Planning Date, View and its applicable Date/Range/Reporting Period
+   controls form one row. The current state action is aligned at the right of
+   that same row: Calculate before a result, Save Run after calculation, and
+   the saved-calculation actions after saving.
+2. Shed, Silo, Batch, Feed Item and Bulk/Bagged result filters are removed.
+   The calculation grid always displays the complete authoritative Farm result.
+   This supersedes the optional display-filter statement in the 8 Oct Feed
+   Forecast page design; it does not change the calculation API or saved data.
+3. A saved calculation with a material shortage and no linked requisition
+   shows Create Feed Requisition. Once that exact saved calculation has a
+   linked requisition, the same action position shows View Requisition instead.
+   With neither a shortage nor a linked requisition, no requisition action is
+   shown. An unrelated requisition for the Farm does not satisfy this link.
+
+## 2026-10-08 — Retained weekly Feed Plan calculation (implementation interpretation)
+
+This records how the already-approved workbook rule is implemented; it is not
+presented as a new client field or default. A Feed Plan is a retained,
+versioned operational document for the ISO production week. Its evidence is
+the five fully completed Wednesday–Tuesday weeks immediately before the
+production cycle. For each Feed Item, posted consumption is divided by the
+corresponding lifecycle/scheduler-expected consumption to produce an observed
+adjustment factor, and that factor is applied to the saved forecast's target
+week lifecycle demand. When the comparable historical expected total is zero,
+the factor is 1 so the saved lifecycle projection remains visible rather than
+being replaced with zero or `NaN`.
+
+A version generated before an approved linked requisition is **Tentative**. A
+later version generated after approval is **Actual** and retains both requested
+and tentative quantities for variance. Mill Approved and mill-capacity values
+remain unavailable until the deferred mill execution configuration/workflow is
+actually implemented. Plan codes use `PLAN-<FarmCode>-<ISO YYYYWW>-Rnn`, and
+old versions remain queryable rather than being overwritten.
+## 2026-10-09 — Approved feed requisitions create an Actual Feed Plan revision
+
+When a run-linked feed requisition is approved, the approval transaction remains
+authoritative for the requisition. After that transaction commits, NAVFarm
+regenerates and stores the farm/week Actual Feed Plan revision using the
+approved requisition quantities. A failed refresh is logged and does not undo
+the approval; the revision can be regenerated from Feed Plan. Rejected
+requisitions do not create an Actual revision. Mill Consolidation, Loading and
+the dedicated TO Receipt remain deferred.
+
+## 2026-10-09 — Feed Mill Consolidation is the next feed-requisition gate
+
+Approved feed requisitions without a consolidation sheet are eligible for a
+mill consolidation. The Feed Forecast → Requisition list exposes an all-farms
+view for users with company scope and shows Consolidate only when eligible
+rows exist. The dialog supports requisition-number selection (including
+multiple farms/silos) or a required date range. Creating the sheet assigns one
+weekly consolidation number, records the requisition lines and moves the
+selected requisitions to `IN_CONSOLIDATION`; adjustment reasons are mandatory
+when the mill approved quantity differs from the farm request.
+
+The workbook's Diet No. is read from Item Master. Mill loading bin and
+available mill output remain explicitly `Not configured` until the mill
+capacity/bin setup is supplied; no illustrative workbook value is seeded.
+Business Central transfer-order push and a dedicated TO Receipt remain out of
+scope for this increment. A feed silo/item may be requisitioned again only
+after its prior requisition is fully received (`RECEIVED`); partial or open
+fulfilment continues to block creation with the existing cycle-conflict
+message.
+
+## 2026-10-09 — Consolidation is required before feed Release
+
+The feed workflow now requires an approved requisition to be linked to a Mill
+Consolidation Sheet before Release. The sheet preserves the destination silo,
+requested delivery date and production date as line snapshots, so later draft
+or master-data changes cannot rewrite consolidation history. Consolidation
+sheets can be listed, opened and finalized; only valid draft/review states may
+be finalized. Migration 0155 and the additive line-snapshot migration 0156
+were applied through the tenant runner to the registered local tenant
+databases and verified directly in `nf_devco`.
+
+## 2026-10-09 — Transfer Order and Receipt are shared; Mill Consolidation is feed-only
+
+The shared Stock Transfer service remains the single authority for Transfer
+Shipment, Transfer Receipt, partial quantities, inventory-ledger posting and
+requisition fulfilment updates. Common Store requisitions use it directly;
+feed requisitions call the same service through their feed-scoped endpoints.
+Purchase requisitions continue through their purchase/GRN path. Only Feed
+Requisitions require a finalized Mill Consolidation before the feed release
+step; no generic requisition or shared transfer service may require a feed
+consolidation reference. Business Central remains an unimplemented external
+integration, so local in-house transfer records are not represented as BC
+successes.
+
+## 2026-10-09 — Feed loading instructions are generated from consolidation
+
+For the current implementation, a feed Loading Instruction Sheet is created
+once a Mill Consolidation Sheet exists, one row per consolidated requisition
+line. It preserves the farm, destination silo, item/diet, original request,
+mill-approved allocation, delivery/production dates and loading BIN snapshot.
+Mill users may record compartment and KG loaded; both are mandatory before the
+sheet can be marked dispatched. A posted shared Stock Transfer shipment must be
+linked before dispatch, so a loading draft cannot imply that stock has moved.
+Loading remains feed-only and does not create or simulate a Business Central
+document.
+
+## 2026-10-09 — Base Currency is sufficient for stock-count valuation
+
+Base Currency is NAVFarm's authoritative valuation currency. Local Currency is
+optional future configuration. When it is absent, physical stock-count
+snapshots use an auditable identity rate of 1 in Base Currency instead of
+returning `MISSING_LOCAL_CURRENCY` or blocking a valid monetary snapshot.
+
+## 2026-10-09 — Consolidation-approved quantity is authoritative at release
+
+A finalized feed consolidation is the mill's allocation decision. Loading
+instructions and the shared Stock Transfer created by Release therefore use
+the consolidation line's `mill_approved_qty_kg`, not the original farm request.
+Every feed requisition line must be represented by a finalized consolidation
+line before Release; a partial consolidation is rejected rather than silently
+transferring an unapproved quantity. Shipment, dispatch and split receipts
+continue through the shared transfer service so the inventory ledger and
+fulfilment balances cannot double-count the original request.
 ## 8 Oct 2026 — Lot and serial consumption under FIFO costing (defaults, awaiting Rishi)
 
 Costing stays FIFO; the user's lot or serial selection decides which layers a consumption uses
@@ -3003,3 +3896,168 @@ twice added nothing). Every flow below was run through the API and read in MySQL
 - **Open — where semen is kept.** A lot goes to the farm's first active STORE by code (MUL100/STORE-001, *Demo Medicine
   Store*). A store has only `STORE` or `SILO` as its type, so a dedicated semen/cold store would need that distinction
   added; not done.
+
+## 2026-10-10 — Feed fulfilment measures against the mill-approved quantity
+
+Asked (final UAT, P1 in `docs/uat/PROGRESS-2026-10-10-final-uat.md`): the mill
+approved 6,000 of a 6,050 KG request, release moved 6,000, and after all 6,000
+were received the requisition stayed `PARTIALLY_RECEIVED` / `IN_CONSOLIDATION`
+forever. Because only a `RECEIVED` requisition frees its silo+item for the
+cycle, that silo+item could never be requisitioned again.
+
+Rishi's ruling: when a feed line has a mill-approved quantity (its Mill
+Consolidation Sheet line), "fully shipped" and "fully received" are measured
+against `mill_approved_qty_kg`, not the requested quantity. Receiving the
+mill-approved quantity makes the line, and then the requisition, `RECEIVED`,
+which frees the silo+item for a new requisition. The difference between
+request and approval is the mill adjustment and stays on the consolidation line
+with its mandatory reason. Lines with no mill-approved quantity (every common
+requisition) keep measuring against their own quantities.
+
+The rule lives in one place: `syncRequisitionFulfilment`
+(`apps/api/src/modules/procurement/requisition/requisition-fulfilment.ts`).
+
+## 2026-10-10 — Action messages use the common toast notification
+
+Success and error messages for actions (Save, Submit, Approve, Reject, Release,
+Shipment, Receipt, Item Tracking, Direct Transfer, Link PO, consolidation,
+loading, stock count, save run, create requisition from run) are not shown
+inline in the page or in a dialog. They use the app's common toast
+(`showToast` from `apps/web/src/components/ui/toast`): the top-right toast with
+a green check, the same one a master-data save shows ("Created successfully").
+Success uses the success variant; API errors use the error variant with the
+API's own message.
+
+Not covered by this rule, and kept inline: field validation hints beside
+inputs, explanatory gate text (for example "Release is unavailable: ... BIN
+assignment") and empty states.
+
+## 2026-10-10 — TO receipt: over-receipt stays blocked
+
+Rishi, 10 Oct, asked against the workbook's Checkpoints row 29 (over-receipt allowed with a reason and flagged):
+**keep the block**. A receipt may never exceed the quantity shipped. Only an under-receipt (shipped minus received
+greater than zero) needs a variance reason (Checkpoints row 26). This deliberately departs from row 29.
+
+## 2026-10-11 — Receipt variance reason only on the final receipt (controller reading of Rishi's 10 Oct ruling)
+
+Rishi, 10 Oct: "only a shortfall needs a reason". **Interpretation, awaiting Rishi's confirmation:** an interim partial
+receipt, with more still to come on the shipment, is not a shortfall. So the farm marks the last receipt for a shipment
+line ("Final receipt for this shipment", `final_receipt` on the feed receipt line). The variance reason is required only
+when that flag is set and previously received plus this posting is below what shipped. Interim partials need no reason
+and store `variance_qty` as NULL; a final receipt stores it. Nothing else changes: outstanding is unchanged, a line is
+never closed short, and over-receipt stays refused (10 Oct).
+
+## 2026-10-11 — The workbook's House is the Shed; screens say Shed (Rishi). The email channel is deferred until later (Rishi).
+
+## 2026-10-11 — Period close needs counts only where something can be counted (controller reading of Checkpoints r31; awaiting Rishi)
+
+Checkpoints r31 says the period cannot close without a posted stock take for all farms and the mill. In the dev data four
+farms (FARM-002 to FARM-005) have silos that no count can use (the silo's farm link is empty and there is no stock), so
+no take can ever be created for them and the period could never close. **Interpretation, awaiting Rishi:** Period Close
+requires a posted monthly take only from a farm or mill with at least one active countable location (an active SILO of
+the farm, an active BIN of the mill, belonging to it as the count screen requires). A farm with none is reported as
+"nothing to count", not as missing: the close response lists it in `nothing_to_count`, and a refusal names it. Farms and
+mills that do have something to count are unchanged.
+
+Also noted, no change: the stock-adjustment journal does not carry a cost centre. The journal lines support one, but
+the posting path (`postInventoryLedgerEntry`) never passes it, and a farm has no cost centre of its own (only a shared
+DEPARTMENT cost centre in `location_master.department_id`). Needs a ruling on which cost centre is the "Farm Cost Centre".
+
+## 2026-10-11 — Each farm has its own cost centre
+
+Rishi, 11 Oct, on Silo Balance row 47 ("Farm Cost Centre"): **give each farm a cost centre.** The farm record in
+Location Master gets a Cost Centre field, chosen from the Cost Centre Master. Every inventory journal line for that
+farm carries it, including stock-take adjustments. Mill journals carry the mill's cost centre, if one is set.
+
+## 2026-10-11 — Alert recipients accept Role Master codes and the user types the defaults use (controller reading)
+
+Master Setup rows 50 and 54 say recipient and escalation roles come from the Role Master. NAVFarm's default alert rules
+send to FARM_MANAGER, HEAD_OF_FARM and MILL_MANAGER, which are user types (decisions 1 Oct), not Role Master rows.
+So that the defaults keep working, a recipient or escalation code is valid if it is a Role Master code for the company
+or one of these user types. This is our reading; it awaits Rishi's confirmation.
+
+## 2026-10-11 — Lifecycle feed rows support a farm-level override (workbook Master Setup rows 30 and 39)
+
+Rows 30 and 39 say the lifecycle feed item and rate support a farm-level override. `breed_lifecycle_stages` gets a
+nullable `farm_id` (migration 0171, FK to `location_master`); NULL is the company or breed default row. In the forecast,
+`feedRowFor` prefers a row for the batch's farm that is effective on the date, and otherwise uses the default row, so
+rows with no farm behave exactly as before. The overlap check (breed, stage, day range, effective dates) applies within
+the same farm scope: an override may overlap the default, two rows of one farm may not. `farm_id` must be a FARM location
+of the breed's company. The Breed Lifecycle Stage master has an optional "Farm (override)" picker and list column.
+
+## 2026-10-11 — Rishi's answers on the open interpretations
+
+Confirmed as built: Total All Farms counts the farms on the sheet; Loaded By is a typed name; Period Close needs
+counts only where something can be counted; alert recipients accept Role Master roles or the user types Farm Manager,
+Head of Farms and Mill Manager; with no bag tolerance set, any empty-bag difference is flagged (flag only); the
+truck-target alert fires on a part load (order > 0 and < target); after release, the sending department assigns
+lot/serial; serial-tracked lines ship whole (partial serial shipments stay refused).
+
+Changed by Rishi:
+1. The delivery note no. on feed TO receipts is **optional**.
+2. A shortfall reason is required on **every short receipt**: any receipt where the quantity received now is less than
+   the quantity still outstanding on the shipment line, even if more is still coming. This replaces the
+   "final receipt only" reading. Over-receipt stays blocked.
+3. Direct Transfer has **no department check**. Anyone with the Direct Transfer right may use it.
+4. A transfer may **take stock from other stores** of the company when its From location lacks the lot/serial (the
+   original fallback). This replaces the "From location only" reading.
+5. A feed requisition's **Status becomes Received** when it is fully received.
+
+## 2026-10-11 — Dispatch notice carries a typed estimated arrival
+
+Rishi, 11 Oct, on Requisition and Loading Sheet row 76: NAVFarm has no vehicle or route tracking, so the loading sheet
+gets an optional **Estimated arrival** (date and time) that the mill enters at dispatch. The MILL_DISPATCH notice
+includes it when set.
+
+## 2026-10-11 — Feed Mill Manager role added
+
+11 Oct: Feed Mill Manager role added (Rishi) — role code MILL_MANAGER, a Role Master role, not a new user type. Grants:
+requisition view+approve (consolidation and loading sheets), transfer view/create/edit (dispatch, shipment), stock count
+view/create/edit/approve (mill stock take), ledger view (forecast, alerts), BIN diet assignment view/create/edit
+(production output, mill capacity), read-only lookups. No delete, finance or user admin. In-app alerts addressed to
+MILL_MANAGER reach any user holding the role. Seeded for new companies; existing companies via `api:db-seed-mill-manager-role`.
+
+2026-10-11 — Production Slots removed (Rishi: not in the workbook). One diet per loading BIN per production date.
+
+## 2026-10-12 — Common requisition: Sender Department and Main / Farm Location (Rishi)
+
+1. **Sender Department is the shipping user's department.** It is no longer chosen on the form. The first
+   Transfer Shipment (or Direct Transfer) records the posting user's User Setup department; until then the field
+   reads "Set at Transfer Shipment". This replaces "Sender Department (user selects)" in the 4 Oct list.
+2. **Main / Farm Location lists every Farm-type location the user may open**, not only the requisition's own farm.
+3. Line items come from the Item Master (all active items of the company) — unchanged, confirmed.
+
+## 2026-10-12 — Departments (Rishi)
+
+Managed in Company Settings > Departments; server script creates Stores / Farm Operations / Feed Mill per company and assigns existing users without a department by user type (Mill Manager role → Feed Mill; Farm Manager/Standard User → Farm Operations; admins → Stores).
+
+## 2026-10-12 — Purchase requisition release stays in NAVFarm (Rishi)
+
+A Purchase requisition's Release is recorded in NAVFarm only: Document Released, no "BC pending" handoff is
+recorded. The PO number is linked afterwards with Link PO (the Business Central purchase order number, typed in).
+The PO number is not the GRN number; a GRN (Inventory > GRN) records goods received and is not linked to the
+requisition today.
+
+## 2026-10-12 — Feed Form on feed items drives requisition rounding (Rishi)
+
+A FEED item carries a Feed Form (Bulk / Bagged) on Item Master. Bulk/Bagged for an item is read from Feed Form first,
+then from a FEED_BULK / FEED_BAG item type. Feed requisition rounding, the line's Feed Type and bag count follow the
+item's Feed Form when it has one (a Bagged item to a silo rounds to bags, e.g. 1,210 KG → 1,250 KG = 25 bags); an item
+without a Feed Form keeps following the destination (silo → bulk, store → bags). Confirmed by Rishi.
+
+## 2026-10-12 — Merging the piggery and feed branches: one migration journal, Rishi's first (controller reading; awaiting Rishi)
+
+Both branches forked at migration 0141 and each added migrations numbered 0142–0153 with the same journal `idx` and
+`when` values. Drizzle applies migrations by `when`, so the two lineages could not both stay as they were. The merged
+`_journal.json` keeps Rishi's entries (idx 142–176, 0142–0177) exactly as he has them — his specs and his
+`assertCanonicalLineage` check pin them — and appends the twelve piggery migrations (0142_system_scheduler …
+0153_daily_data_reason) after them as idx 177–188 with `when` 1792000000046–57. File names and tags are unchanged; only
+the journal order and timestamps are new. A fresh database applies all 189 migrations.
+
+A database that was migrated from the piggery branch alone (journal ending at 0153) is not on this lineage: it has
+already applied twelve migrations the journal now lists last, and would skip Rishi's first twelve. It needs the reviewed
+conversion path (or a rebuild), not a plain re-run; back it up first.
+
+Two further cross-branch settlements: a pooled-semen link (`semen_batch_boar`, composite key) is left out of the
+`--with-operational` company clone, which can only re-key single-id tables; and a master-data row command that asks for
+a reason now asks in a dialog, because the app allows no browser prompts.

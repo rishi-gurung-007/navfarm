@@ -1,0 +1,285 @@
+import { transactionCls } from '../../../test-utils/transaction-cls';
+import { farmScope } from '../../../common/farm-scope';
+import { FeedForecastService } from './feed-forecast.service';
+import { buildFeedForecast } from './feed-forecast.engine';
+import { drizzle } from 'drizzle-orm/mysql2';
+import * as schema from '../../../core/database/schema';
+
+const SETTINGS = { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 6 };
+const FEED_SETTINGS_STUB = { resolveForFeedPlanning: jest.fn(async () => SETTINGS) } as any;
+
+/** Task 7: the service runs the engine once for a seven-day window from the planning date and hands it to buildSiloStatus. */
+describe('FeedForecastService.siloStatus', () => {
+  const farm = { id: 'farm-b', code: 'GRS', name: 'Grasmere', companyId: 'co-1' };
+  const input = {
+    planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-30',
+    sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1'] }],
+    silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500 }],
+    store: null, items: { r1: 'Weaner Diet R1' },
+    batches: [{ batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 1000, segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-08-30', end: null, projected: false }] }],
+    feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 40, kgPerHeadPerDay: 2.0, wastagePct: 0 }],
+  };
+  const siloFact = {
+    siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo', houseCodes: ['GRS/SHED-003'], capacityKg: 12000, belowFeedLevelKg: 1000, aboveThresholdKg: 10800,
+    feedInSiloItemId: 'r1', feedInSiloItemName: 'Weaner Diet R1', feedType: 'BULK', systemBalanceKg: 1500,
+    lastApprovedCountKg: null, lastApprovedCountAt: null, lastFeedReceiptDate: '2026-09-20', nonKgBalance: false,
+  };
+
+  function build() {
+    const cls = transactionCls({});
+    const service = new FeedForecastService(cls, {} as any, { log: jest.fn() } as any, { currentItems: jest.fn(async () => new Map()) } as any, FEED_SETTINGS_STUB);
+    jest.spyOn(service, 'farmToday').mockResolvedValue({ today: '2026-09-23', timeZone: null });
+    jest.spyOn(service, 'resolveFarm').mockResolvedValue({ farmId: 'farm-b', companyId: 'co-1' });
+    jest.spyOn(service as any, 'loadFarm').mockResolvedValue(farm);
+    jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input, flags: [], stageBlocks: [] });
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', hierarchy]]));
+    jest.spyOn(service as any, 'loadItemFeedTypes').mockResolvedValue({});
+    return { cls, service };
+  }
+
+  const hierarchy = [
+    { locationId: 's2', code: 'GRS/SILO-002', name: 'Second silo', linkedSheds: [{ locationId: 'h4', code: 'GRS/SHED-004', name: 'Fourth shed' }], feedType: 'BULK', feedItemCode: null, feedItemName: null, capacityKg: 9000, lowLevelKg: 500, highLevelKg: 8000, status: 'ACTIVE' },
+    { locationId: 's1', code: 'GRS/SILO-001', name: 'Weaner silo', linkedSheds: [{ locationId: 'h3', code: 'GRS/SHED-003', name: 'Third shed' }], feedType: 'BULK', feedItemCode: 'R1', feedItemName: 'Weaner Diet R1', capacityKg: 12000, lowLevelKg: 1000, highLevelKg: 10800, status: 'ACTIVE' },
+  ];
+
+  it('bootstraps code-ordered Shed options from Farm only without running the engine', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b', view: 'CUSTOM' } as any, 'tenant-1', 'TENANT_ADMIN'));
+
+    expect(compute).not.toHaveBeenCalled();
+    expect(out.selection).toEqual({
+      shedId: null,
+      siloId: null,
+      sheds: [
+        { id: 'h3', code: 'GRS/SHED-003', name: 'Third shed' },
+        { id: 'h4', code: 'GRS/SHED-004', name: 'Fourth shed' },
+      ],
+      silos: [],
+    });
+    expect(out.silo).toBeNull();
+  });
+
+  it('returns only the selected Shed linked Silos and still does not run the engine', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b', shedId: 'h3' } as any, 'tenant-1', 'TENANT_ADMIN'));
+
+    expect(compute).not.toHaveBeenCalled();
+    expect(out.selection.siloId).toBeNull();
+    expect(out.selection.silos).toEqual([{ id: 's1', code: 'GRS/SILO-001', name: 'Weaner silo' }]);
+    expect(out.silo).toBeNull();
+  });
+
+  it('rejects a Silo that is not linked to the selected Shed before running the engine', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    await expect(cls.run(() => service.siloStatus({ farmId: 'farm-b', shedId: 'h3', siloId: 's2' } as any, 'tenant-1', 'TENANT_ADMIN')))
+      .rejects.toThrow(/linked/i);
+    expect(compute).not.toHaveBeenCalled();
+  });
+
+  it('forecasts seven days inclusive once for a complete selection and returns the selected Silo', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    const facts: Array<string | null> = [];
+    jest.spyOn(service as any, 'loadSiloFacts').mockImplementation(async () => { facts.push(farmScope(cls).farmId); return [siloFact]; });
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map([['s1', 'AUTO_DRAFT']]));
+
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b', shedId: 'h3', siloId: 's1' } as any, 'tenant-1', 'TENANT_ADMIN'));
+
+    // 9d F1: the shown window is still seven days; only the run-down/shortage search reaches the standard horizon.
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
+    expect(facts).toEqual(['farm-b']);
+    expect(out.planningDate).toBe('2026-09-23');
+    // Production day 6 (Saturday) after Wed 23 Sep is 26 Sep; the deadline is the day before.
+    expect(out.submissionDeadline).toBe('2026-09-25');
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(out.silo).toMatchObject({ siloId: 's1', siloCode: 'GRS/SILO-001', siloName: 'Weaner silo', currentDietItemId: 'r1', dailyRequirementKg: 2000, requisitionStatus: 'AUTO_DRAFT', submissionDeadline: '2026-09-25', millLoadingBin: null });
+    expect(buildFeedForecast(input).sources[0].shortfallKg).toBeGreaterThan(0);
+    expect(out.silo!.recommendedOrderKg).toBeGreaterThan(0);
+    expect(out.farmTotalOrderKg).toBe(out.silo!.recommendedOrderKg);
+  });
+
+  it('keeps Farm Total Order pre-filtered when the selected Silo is only one part of Farm demand', async () => {
+    const { cls, service } = build();
+    const computed = buildFeedForecast(input as any);
+    const secondSource = {
+      ...computed.sources[0],
+      locationId: 's2',
+      sourceCode: 'GRS/SILO-002',
+      balanceKg: 0,
+      shortfallKg: 4500,
+      walkDemandKg: 4500,
+    };
+    const compute = jest.spyOn(service, 'computeForFarm').mockResolvedValue({
+      ...computed,
+      planningDate: '2026-09-23', today: '2026-09-23', timeZone: null, from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07',
+      farm: { id: 'farm-b', code: 'GRS', name: 'Grasmere' }, settings: { safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50 },
+      sources: [...computed.sources, secondSource], stages: [], sourceNames: {}, sourceSnapshot: { version: '1', hash: 'h', values: { engineInput: input } },
+    } as any);
+    jest.spyOn(service as any, 'loadSiloFacts').mockResolvedValue([
+      siloFact,
+      { ...siloFact, siloId: 's2', siloCode: 'GRS/SILO-002', siloName: 'Second silo', houseCodes: ['GRS/SHED-004'], feedInSiloItemId: 'r1', systemBalanceKg: 0 },
+    ]);
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map());
+
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b', shedId: 'h3', siloId: 's1' } as any, 'tenant-1', 'TENANT_ADMIN'));
+
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(out.farmTotalOrderKg).toBeGreaterThan(out.silo!.recommendedOrderKg);
+  });
+
+  /**
+   * 9d F1 (Part A verification pass 2): the dashboard left First Shortage Date
+   * blank for a shortage 8-45 days out while the forecast grid showed the date
+   * (RIC100/SILO-002 19/10/26, LEX100/SILO-001 22/10/26), because siloStatus
+   * computed with no horizonTo and so searched only its own seven-day window.
+   * Dashboard row 55 / Master Setup row 15: "Determine first shortage date
+   * from dated item level projection" — no window limit. Projected Need (and
+   * so the shortfall and the recommended order) stays the seven-day window.
+   */
+  it('reports a shortage on day 10 while Projected Need stays the seven-day window (9d F1)', async () => {
+    const { cls, service } = build();
+    const compute = jest.spyOn(service, 'computeForFarm');
+    // 100 heads at 1 kg/head/day on 950 kg: opening falls under a day's demand on day 10 (2026-10-02).
+    const slowShortage = {
+      ...input,
+      silos: [{ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 950 }],
+      batches: [{ batchId: 'b', realBatchId: 'b' as any, batchNo: 'WG-2026-38', breedId: 'l', shedId: 'h3', heads: 100,
+        segments: [{ stageId: 'wean', stageCode: 'WEANER', start: '2026-09-23', end: null, projected: false }] }],
+      feedRows: [{ lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1',
+        fromDay: 1, toDay: 90, kgPerHeadPerDay: 1, wastagePct: 0 }],
+    };
+    // As the real loadInput: the range and the horizon it is handed are what the engine walks.
+    jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: unknown[]) => {
+      const [, planningDate, from, to, , opts] = args as [unknown, string, string, string, string, { stockDate: string; horizonTo: string }];
+      return { input: { ...slowShortage, planningDate, from, to, horizonTo: opts.horizonTo }, flags: [], stageBlocks: [] };
+    });
+    jest.spyOn(service as any, 'loadSiloFacts').mockResolvedValue([{ ...siloFact, systemBalanceKg: 950 }]);
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map());
+
+    const out = await cls.run(() => service.siloStatus({ farmId: 'farm-b', shedId: 'h3', siloId: 's1' } as any, 'tenant-1', 'TENANT_ADMIN'));
+
+    expect(out.silo).toMatchObject({
+      firstShortageDate: '2026-10-02', // day 10, outside the dashboard's own window
+      daysRemaining: 9.5,
+      projectedNeedKg: 700, // 7 days x 100 kg, unchanged by the longer horizon
+      projectedShortfallKg: 0,
+      recommendedOrderKg: 0,
+    });
+    // The grid's own horizon: the planning date plus MAX_SPAN_DAYS (Q12).
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
+  });
+
+  it('W2D A5/A7: currentSiloStatuses runs the seven-day window from the farm today and returns item codes and the next-diet silo by feed type', async () => {
+    const { cls, service } = build();
+    const twoDiets = {
+      ...input,
+      silos: [...input.silos, { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: null, balanceKg: 0 }],
+      sheds: [{ shedId: 'h3', shedCode: 'GRS/SHED-003', siloIds: ['s1', 's2'] }],
+      items: { r1: 'Weaner Diet R1', r2: 'Weaner Diet R2' },
+      itemCodes: { r1: 'FEED-R1', r2: 'FEED-R2' },
+      feedRows: [
+        { lifecycleId: 'row-r1', breedId: 'l', stageId: 'wean', itemId: 'r1', itemName: 'Weaner Diet R1', fromDay: 25, toDay: 27, kgPerHeadPerDay: 2.0, wastagePct: 0 },
+        { lifecycleId: 'row-r2', breedId: 'l', stageId: 'wean', itemId: 'r2', itemName: 'Weaner Diet R2', fromDay: 28, toDay: 60, kgPerHeadPerDay: 2.5, wastagePct: 0 },
+      ],
+    };
+    jest.spyOn(service as any, 'loadInput').mockImplementation(async (...args: unknown[]) => {
+      const [, planningDate, from, to, , opts] = args as [unknown, string, string, string, string, { horizonTo: string }];
+      return { input: { ...twoDiets, planningDate, from, to, horizonTo: opts.horizonTo }, flags: [], stageBlocks: [] };
+    });
+    jest.spyOn(service as any, 'loadSiloFacts').mockResolvedValue([
+      siloFact,
+      { ...siloFact, siloId: 's2', siloCode: 'GRS/SILO-002', siloName: 'Bag store', feedType: 'BAGGED', feedInSiloItemId: null, systemBalanceKg: 0 },
+    ]);
+    jest.spyOn(service as any, 'loadLatestRequisitionStatuses').mockResolvedValue(new Map());
+    const feedTypes = jest.spyOn(service as any, 'loadItemFeedTypes').mockResolvedValue({ r2: 'BAGGED' });
+    const compute = jest.spyOn(service, 'computeForFarm');
+
+    const out = await cls.run(() => service.currentSiloStatuses('farm-b', 'co-1', 'tenant-1'));
+
+    expect(out.planningDate).toBe('2026-09-23');
+    expect(compute).toHaveBeenCalledWith('farm-b', 'co-1', 'tenant-1',
+      { planningDate: '2026-09-23', from: '2026-09-23', to: '2026-09-29', horizonTo: '2026-11-07' }, expect.anything());
+    expect(feedTypes).toHaveBeenCalledWith(['r1', 'r2'], 'tenant-1');
+    expect(out.statuses[0]).toMatchObject({
+      siloId: 's1', currentDietItemCode: 'FEED-R1', nextDietItemId: 'r2', nextDietItemCode: 'FEED-R2', nextDietItemName: 'Weaner Diet R2',
+      nextDietFeedType: 'BAGGED', siloAvailableForNextDiet: true, nextDietSiloId: 's2', nextDietSiloCode: 'GRS/SILO-002',
+    });
+  });
+
+  it('refuses a malformed planning date', async () => {
+    const { cls, service } = build();
+    await expect(cls.run(() => service.siloStatus({ planningDate: '2026-02-31' }, 'tenant-1', 'TENANT_ADMIN'))).rejects.toThrow(/calendar date/);
+  });
+});
+
+/** Fix round 1: what loadSiloFacts and loadOpenRequisitionStatuses read, with a query double that answers in order and keeps each where(). */
+describe('FeedForecastService silo facts and requisition status (fix round 1)', () => {
+  // Real drizzle builders (no connection) so the FULL statement is compiled; only execution is answered from a queue.
+  const proto: any = Object.getPrototypeOf(drizzle.mock({ schema, mode: 'default' } as any).select().from(schema.locationMaster));
+  const originalThen = proto.then;
+  afterEach(() => { proto.then = originalThen; });
+  function fakeDb(answers: unknown[][]) {
+    const real = drizzle.mock({ schema, mode: 'default' } as any);
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const queue = [...answers];
+    proto.then = function (this: any, resolve: any, reject: any) {
+      statements.push(this.toSQL());
+      return Promise.resolve(queue.shift() ?? []).then(resolve, reject);
+    };
+    return { db: real, statements };
+  }
+  const planningSilo = (over: object) => ({
+    locationId: 's1', code: 'SILO-1', name: 'Silo 1', linkedSheds: [{ locationId: 'h', code: 'SHED-1', name: 'H' }], feedType: 'BULK',
+    feedItemCode: null, feedItemName: null, capacityKg: 12000, lowLevelKg: 1000, highLevelKg: 10800, status: 'ACTIVE', ...over,
+  });
+  const make = (db: any, balances: any[] = []) => {
+    const cls = transactionCls(db);
+    const service = new FeedForecastService(cls, { getStockBalance: jest.fn(async () => balances) } as any, { log: jest.fn() } as any, {} as any, FEED_SETTINGS_STUB);
+    return { cls, service };
+  };
+
+  it('lists ACTIVE silos only; an INACTIVE silo is not returned (finding 1)', async () => {
+    const { db } = fakeDb([[], [{ warehouse_id: 's1', item_id: 'r1', item_description: 'R1', posting_date: '2026-09-20' }]]);
+    const { cls, service } = make(db, [{ item_id: 'r1', uom: 'KG', on_hand_qty: '1500' }]);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({}), planningSilo({ locationId: 's2', code: 'SILO-2', status: 'INACTIVE' })]]]));
+    const facts = await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    expect(facts.map((f: any) => f.siloId)).toEqual(['s1']);
+    expect(facts[0]).not.toHaveProperty('blocked');
+  });
+
+  it('reads only genuine receipts for Feed in Silo / Last Feed Receipt, never variances or reversals (finding 3)', async () => {
+    const { db, statements } = fakeDb([[], []]);
+    const { cls, service } = make(db);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({})]]]));
+    await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    const receipt = statements.find((st) => /inventory_ledger/.test(st.sql) && /limit/i.test(st.sql))!;
+    expect(receipt.params).toEqual(expect.arrayContaining(['PURCHASE', 'TRANSFER_RECEIPT']));
+    expect(receipt.params).not.toContain('VARIANCE_POSITIVE');
+    // The reversal sub-select must have a real source: FROM <table> AS <alias>, or MySQL answers ER_NO_SUCH_TABLE.
+    expect(receipt.sql).toMatch(/not exists \(select 1 from `inventory_ledger` as `?feed_receipt_reversal`?/i);
+  });
+
+  it('sums KG rows only and flags a silo that also holds bags (finding 4)', async () => {
+    const { db } = fakeDb([[], [{ warehouse_id: 's1', item_id: 'r1', item_description: 'R1', posting_date: '2026-09-20' }]]);
+    const { cls, service } = make(db, [{ item_id: 'r1', uom: 'KG', on_hand_qty: '1500' }, { item_id: 'r1', uom: 'BAG', on_hand_qty: '40' }]);
+    jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', [planningSilo({})]]]));
+    const [fact] = await cls.run(() => (service as any).loadSiloFacts('farm-b', 'co-1', 'tenant-1'));
+    expect(fact.systemBalanceKg).toBe(1500);
+    expect(fact.nonKgBalance).toBe(true);
+  });
+
+  it('picks the latest created requisition per silo, whatever order rows come back in (finding 5)', async () => {
+    const { db } = fakeDb([[
+      { destination: 's1', requisition_id: 'req-new', status: 'APPROVED', created_at: '2026-09-24 10:00:00' },
+      { destination: 's1', requisition_id: 'req-old', status: 'DRAFT', created_at: '2026-09-23 10:00:00' },
+    ]]);
+    const { cls, service } = make(db);
+    const map = await cls.run(() => (service as any).loadLatestRequisitionStatuses('farm-b', 'tenant-1', '2026-09-25'));
+    expect(map.get('s1')).toEqual({ requisitionId: 'req-new', status: 'APPROVED' });
+  });
+});

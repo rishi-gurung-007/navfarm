@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
-import { Dialog } from "@/components/ui/dialog";
+import { Dialog, DialogHeaderActions } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { Popover } from "@/components/ui/popover";
 import { Menu, MenuItem } from "@/components/ui/menu";
@@ -120,8 +121,9 @@ function currentLabel(f: MasterDataField, values: Row): string {
  * and a read-only table offers no edit at all. Exported for the spec that pins the
  * DEACTIVATED-opens-read-only rule (Resource, UOM). MySQL tinyint reaches here as
  * 0 as readily as false, and both mean deactivated. */
-export function rowOpenAction(row: Row, readOnly: boolean): "edit" | "view" | "none" {
+export function rowOpenAction(row: Row, readOnly: boolean, editableDraft = false): "edit" | "view" | "none" {
   if (readOnly) return "none";
+  if (editableDraft && row.status === "DRAFT") return "edit";
   if (row.is_active === false || row.is_active === 0) return "view";
   return "edit";
 }
@@ -129,6 +131,7 @@ export function rowOpenAction(row: Row, readOnly: boolean): "edit" | "view" | "n
 function matchesCondition(cond: RequiredCondition, form: Row): boolean {
   const raw = form[cond.key];
   const depValue = raw === undefined || raw === null ? "" : raw;
+  if (cond.startsWith !== undefined) return String(depValue).toUpperCase().startsWith(cond.startsWith.toUpperCase());
   if (cond.equals !== undefined) {
     const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
     return list.some((item: any) => {
@@ -160,7 +163,7 @@ function isFieldRequired(f: MasterDataField, form: Row): boolean {
 }
 
 /** Whether `f` is visible right now via `visibleWhen` against the live form values. */
-function isFieldVisible(f: MasterDataField, form: Row): boolean {
+export function isFieldVisible(f: MasterDataField, form: Row): boolean {
   if (!f.visibleWhen) return true;
   if (f.visibleWhen.anyOf && !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
     return false;
@@ -526,6 +529,8 @@ export function MasterDataTable({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
+  // A row command that asks for a reason is answered in a dialog (never a browser prompt).
+  const [reasonCommand, setReasonCommand] = useState<{ row: Row; command: NonNullable<MasterDataConfig["rowCommands"]>[number]; reason: string } | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [actionMenuRowId, setActionMenuRowId] = useState<string | null>(null);
   const [form, setForm] = useState<Row>({});
@@ -546,6 +551,7 @@ export function MasterDataTable({
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
   const createOnlyOpenedRef = useRef(false);
   const codeFieldTouchedRef = useRef(false);
+  const deepLinkOpenedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [duplicateCodeMessage, setDuplicateCodeMessage] = useState<string | null>(null);
@@ -633,6 +639,12 @@ export function MasterDataTable({
   const bcOwned = config.owner === "BC";
   const administrationRestricted = !!config.businessAdminOnly && !["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
   const readOnly = administrationRestricted;
+  const canApproveDraft = !config.draftLifecycle || hasPermission(
+    currentUser,
+    config.draftLifecycle.approvePermission.moduleCode,
+    config.draftLifecycle.approvePermission.resource,
+    "can_approve",
+  );
   const numbering = useCodeSeries(config.key, form, modalOpen && !editing);
   // A failed code preview used to disable Create outright. For a master whose
   // code is optional — UOM Conversion says "leave blank until the numbering
@@ -691,6 +703,7 @@ export function MasterDataTable({
     return Array.isArray(loaded) && loaded.length === 0;
   })();
 
+  const [subDialogOpen, setSubDialogOpen] = useState(false);
   const visibleFields = (
     editing
       ? formFields
@@ -710,6 +723,12 @@ export function MasterDataTable({
     // Only the "no parent chosen yet" half hides the field; an empty filtered
     // list keeps it, disabled, so the form can say why it has nothing to offer.
     .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
+  const subDialogFields = visibleFields.filter((f) => f.subDialog);
+  const subDialogCount = (() => {
+    const kpiField = subDialogFields.find((f) => f.type === "json");
+    if (!kpiField) return 0;
+    try { const parsed = JSON.parse(String(form[kpiField.key] || "[]")); return Array.isArray(parsed) ? parsed.length : 0; } catch { return 0; }
+  })();
   const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
@@ -722,7 +741,11 @@ export function MasterDataTable({
   // on medicine withdrawal periods and posts the gain or loss. So the column
   // could only ever be a dead badge there. Rishi's call: drop it.
   const ownsStatusColumn = columns.some((c) => c.key === "status");
-  const isDraftFromTemplate = Boolean(editing && (editing.status === "DRAFT" || (config.key === "item" && templateLockedFields.size > 0)));
+  // A DRAFT row is still an existing record when it comes from a lifecycle
+  // master (for example Reporting Period). Only the item-template flow uses
+  // an editing-shaped modal to create a new draft; treating every DRAFT as a
+  // template made Edit reopen as Add and could create duplicates.
+  const isDraftFromTemplate = Boolean(editing && config.key === "item" && templateLockedFields.size > 0);
   // Master-detail: clicking a row narrows the list and opens a panel beside it,
   // for masters where one record has enough behind it to be worth reading on
   // its own. Only Animal Register qualifies today.
@@ -759,6 +782,7 @@ export function MasterDataTable({
       const params = new URLSearchParams();
       if (companyId) params.set("companyId", companyId);
       if (search) params.set("search", search);
+      if (config.fixedFilter) params.set(config.fixedFilter.queryParam, config.fixedFilter.value);
       if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
       if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
       // Send the active filter-tab value as its configured query param.
@@ -1163,21 +1187,19 @@ export function MasterDataTable({
     );
     endpoints.forEach(async (ep) => {
       try {
-        const params = new URLSearchParams();
-        if (companyId) params.set("companyId", companyId);
-        params.set("limit", "500");
+        const [basePath, search] = ep.split("?");
+        const params = new URLSearchParams(search || "");
+        if (companyId && !params.has("companyId")) params.set("companyId", companyId);
+        if (!params.has("limit")) params.set("limit", "500");
         // A picker must only offer rows the API will actually accept — unlike
         // the list page, which deliberately shows Active/Inactive rows so a
         // blocked one can be found and restored. isActive=true is a no-op on
         // endpoints that already always filter to active (e.g. NOB/LOB,
         // costing-method) and is honored by every findAll that carries the
         // isActive query param.
-        params.set("isActive", "true");
-        // ep may already carry a query string (e.g. "/item?itemType=LIVING_ASSET"),
-        // so append rather than assume — the same rule the dependent-field effect
-        // below uses. Hardcoding "?" produced "/item?itemType=X?companyId=..." and
-        // the filter value silently swallowed the rest of the query.
-        const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}${params.toString()}`);
+        if (!params.has("isActive")) params.set("isActive", "true");
+        const activeOnlyEp = `${basePath}?${params.toString()}`;
+        const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));
       } catch {
@@ -1317,11 +1339,13 @@ export function MasterDataTable({
       try {
         // Same active-only rule as the non-dependent effect above — a picker
         // must not offer a row the API will reject. ep may already carry a
-        // query string (dependsOnMode "query"), so append rather than assume.
-        // limit=500 as the effect above sends. Without it the list API's default
-        // page of 50 was the whole option list, so a dependent picker silently
-        // offered whichever 50 rows sorted first.
-        const activeOnlyEp = `${ep}${ep.includes("?") ? "&" : "?"}isActive=true&limit=500`;
+        // query string (dependsOnMode "query"), so preserve any existing params
+        // and do not duplicate isActive or limit.
+        const [basePath, search] = ep.split("?");
+        const params = new URLSearchParams(search || "");
+        if (!params.has("isActive")) params.set("isActive", "true");
+        if (!params.has("limit")) params.set("limit", "500");
+        const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));
@@ -1464,7 +1488,7 @@ export function MasterDataTable({
   }, [createOnly]);
 
   const openEdit = (row: Row) => {
-    const action = rowOpenAction(row, readOnly);
+    const action = rowOpenAction(row, readOnly, !!config.draftLifecycle);
     // A deactivated record opens read-only — view, no edit. Editing (or
     // reactivating) is a deliberate action through the row's own toggle, not a
     // side effect of opening it.
@@ -1479,6 +1503,12 @@ export function MasterDataTable({
     const initial: Row = {};
     // MySQL tinyint reaches here as 1 as readily as true, and both mean set.
     const columnIsOn = (key: string) => row[key] === true || row[key] === 1;
+    if (config.key === "location" && Array.isArray(row.attached_shed_details)) {
+      initial.attached_shed_dates = Object.fromEntries((row.attached_shed_details as Row[]).map((d) => [
+        String(d.location_id),
+        { effective_from: d.effective_from ? String(d.effective_from).slice(0, 10) : null, effective_to: d.effective_to ? String(d.effective_to).slice(0, 10) : null },
+      ]));
+    }
     formFields.forEach((f) => {
       // A form-only control has no column of its own, so its state has to be
       // read back out of the columns it stands for — otherwise an item that is
@@ -1531,6 +1561,29 @@ export function MasterDataTable({
     setChipDrafts({});
     setModalOpen(true);
   };
+
+  useEffect(() => {
+    if (deepLinkOpenedRef.current || typeof window === "undefined") return;
+    const recordId = new URLSearchParams(window.location.search).get("recordId");
+    if (!recordId) return;
+    deepLinkOpenedRef.current = true;
+    const listed = rows.find((row) => String(row[config.idKey]) === recordId);
+    if (listed) {
+      openEdit(listed);
+      return;
+    }
+    api.get(`${config.apiBase}/${encodeURIComponent(recordId)}`)
+      .then((response) => {
+        const row = unwrap<Row>(response);
+        if (row && String(row[config.idKey]) === recordId) openEdit(row);
+      })
+      .catch(() => {
+        deepLinkOpenedRef.current = false;
+      });
+    // The URL identifies one initial open. Later list/filter refreshes must not
+    // reopen a dialog the user has deliberately closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.apiBase, config.idKey, rows]);
 
   const setField = (key: string, value: any) => {
     if (key === numbering.codeKey) {
@@ -1776,12 +1829,13 @@ export function MasterDataTable({
       if (form.cogs_gl_account) {
         payload.cogs_gl_account = form.cogs_gl_account;
       }
-      if (editing?.status === "DRAFT") {
+      if (editing?.status === "DRAFT" && !config.draftLifecycle) {
         payload.status = "ACTIVE";
       }
 
       const hasCompanyField = config.fields.some((f) => f.key === "company_id");
       if (!editing && companyId && hasCompanyField) payload.company_id = companyId;
+      if (config.fixedFilter) payload[config.fixedFilter.payloadKey] = config.fixedFilter.value;
 
       if (!editing && workspaceScope === "OPERATIONAL") {
         const activeArea = getActiveOperationalArea();
@@ -1804,6 +1858,12 @@ export function MasterDataTable({
       // "" here for every other location type would overwrite a correct null
       // with a stored empty string on the next unrelated edit.
       if (config.key === "location" && form.storage_type) payload.storage_type = form.storage_type;
+      // Master r8: the dates travel with the attached sheds they belong to, for a SILO only.
+      if (config.key === "location" && form.location_type === "SILO" && Array.isArray(payload.attached_sheds) && form.attached_shed_dates) {
+        payload.attached_shed_dates = Object.fromEntries(
+          (payload.attached_sheds as string[]).filter((id) => form.attached_shed_dates[id]).map((id) => [id, form.attached_shed_dates[id]]),
+        );
+      }
 
       if (editing) {
         if (config.key === "animal") {
@@ -1904,11 +1964,13 @@ export function MasterDataTable({
    * flow), since it's trivially reversible by clicking again. */
   const handleToggleActive = async (row: Row) => {
     if (readOnly) return;
+    if (row.is_active === false && config.draftLifecycle && !canApproveDraft) return;
     const id = row[config.idKey];
     setTogglingId(id);
     try {
       if (row.is_active === false) {
-        await api.patch(`${config.apiBase}/${id}/restore`);
+        const activationPath = config.draftLifecycle?.activatePath ?? "restore";
+        await api.patch(`${config.apiBase}/${id}/${activationPath}`);
         showToast.success("Activated successfully");
       } else {
         await api.delete(`${config.apiBase}/${id}`);
@@ -1922,6 +1984,24 @@ export function MasterDataTable({
     } finally {
       setTogglingId(null);
     }
+  };
+
+  const runRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number], body?: Record<string, string>) => {
+    try {
+      await api.post(`${config.apiBase}/${row[config.idKey]}/${command.path}`, body ?? {});
+      showToast.success(command.successMessage);
+      load();
+    } catch (err: any) {
+      showToast.error(err?.message || t("mdFailedToSave"));
+    }
+  };
+
+  const handleRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number]) => {
+    if (command.reasonPrompt) {
+      setReasonCommand({ row, command, reason: "" });
+      return;
+    }
+    await runRowCommand(row, command);
   };
 
   /** Why a locked field is locked, when its config says (`lockReason`). */
@@ -2266,7 +2346,11 @@ export function MasterDataTable({
                       <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
                         value={String(row[col.key] ?? "")}
                         onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
-                        <option value="">{col.placeholder || t("selectPlaceholder")}</option>
+                        <option value="">{(() => {
+                          const inherited = col.defaultFromField ? String(form[col.defaultFromField] ?? "") : "";
+                          const inheritedLabel = (col.options || []).find((o) => o.value === inherited)?.label;
+                          return inheritedLabel ? tLabel(inheritedLabel) : (col.placeholder || t("selectPlaceholder"));
+                        })()}</option>
                         {(col.options || []).map((o) => <option key={o.value} value={o.value}>{tLabel(o.label)}</option>)}
                       </select>
                     ) : (
@@ -2634,7 +2718,7 @@ export function MasterDataTable({
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
         const selected = parseStringList(form[f.key]);
-        return (
+        const picker = (
           <EntityLookupField
             id={accessibility.id}
             label={accessibility["aria-label"]}
@@ -2649,6 +2733,30 @@ export function MasterDataTable({
             placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
             onCreate={relatedConfig ? openRelatedCreator : undefined}
           />
+        );
+        if (!(config.key === "location" && f.key === "attached_sheds" && selected.length)) return picker;
+        // Master r8: each attached shed carries the dates this silo serves it; no dates means always.
+        const dates = (form.attached_shed_dates ?? {}) as Record<string, { effective_from?: string | null; effective_to?: string | null }>;
+        const setDate = (shedId: string, key: "effective_from" | "effective_to", value: string) =>
+          setField("attached_shed_dates", { ...dates, [shedId]: { ...dates[shedId], [key]: value || null } });
+        return (
+          <div className="flex flex-col gap-2">
+            {picker}
+            {selected.map((shedId) => {
+              const shed = options.find((o) => String(o[f.entityValueKey || "id"]) === shedId);
+              return (
+                <div key={shedId} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
+                  <span className="min-w-[8rem] flex-1 text-sm">{shed ? entityLabel(shed, f) : shedId}</span>
+                  <Field label={t("mdShedEffectiveFrom")} htmlFor={`attached-shed-from-${shedId}`}>
+                    <input id={`attached-shed-from-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_from ?? ""} onChange={(e) => setDate(shedId, "effective_from", e.target.value)} />
+                  </Field>
+                  <Field label={t("mdShedEffectiveTo")} htmlFor={`attached-shed-to-${shedId}`}>
+                    <input id={`attached-shed-to-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_to ?? ""} onChange={(e) => setDate(shedId, "effective_to", e.target.value)} />
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
         );
       }
       const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
@@ -2710,7 +2818,7 @@ export function MasterDataTable({
     return (
       <input
         {...accessibility}
-        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : "text"}
+        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : f.type === "time" ? "time" : "text"}
         inputMode={f.type === "number" && !useNativeNumber ? (isInteger ? "numeric" : "decimal") : undefined}
         step={f.step}
         min={f.min}
@@ -3224,6 +3332,7 @@ export function MasterDataTable({
                     sale/slaughter/death". An active flag beside that says
                     nothing the Status column has not already said. */}
                 {!ownsStatusColumn && <TableHead className="text-right">{t("activeColumn")}</TableHead>}
+                <TableHead className="w-10 text-right"><span className="sr-only">Actions</span></TableHead>
               </tr>
             </TableHeader>
             <TableBody>
@@ -3289,82 +3398,14 @@ export function MasterDataTable({
                             </span>
                           </TableCell>
                         ) : (
-                        <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
-                          {c.key === columns[0]?.key ? (
-                            <div className="flex items-center justify-between gap-1.5 group">
-                              <span>{displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}</span>
-                              <Popover
-                                open={actionMenuRowId === String(row[config.idKey])}
-                                onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
-                                align="start"
-                                floating
-                                haspopup="menu"
-                                trigger={(props) => (
-                                  <button
-                                    {...props}
-                                    type="button"
-                                    aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
-                                    title="Actions"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      props.onClick();
-                                    }}
-                                    className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </button>
-                                )}
-                              >
-                                <Menu label="Row Actions">
-                                  <MenuItem
-                                    onSelect={() => setViewingId(String(row[config.idKey]))}
-                                    leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
-                                  >
-                                    {t("roleColView") ?? "View Details"}
-                                  </MenuItem>
-                                  {!readOnly && row.is_active !== false && (
-                                    <MenuItem
-                                      onSelect={() => openEdit(row)}
-                                      leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
-                                    >
-                                      {t("edit")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && (config.supportsRestore ?? true) && (
-                                    <MenuItem
-                                      onSelect={() => handleToggleActive(row)}
-                                      disabled={togglingId === row[config.idKey]}
-                                      leading={
-                                        inactive ? (
-                                          <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                                        ) : (
-                                          <Power className="h-4 w-4 text-[var(--warning)]" />
-                                        )
-                                      }
-                                    >
-                                      {inactive ? t("restore") : t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
-                                    <MenuItem
-                                      onSelect={() => setConfirmDelete(row)}
-                                      tone="danger"
-                                      leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
-                                    >
-                                      {t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                </Menu>
-                              </Popover>
-                            </div>
-                          ) : (
-                            displayValue(row, c.key, t("mdYes"), t("mdNo"), c)
-                          )}
-                        </TableCell>
+                          <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
+                            {displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}
+                          </TableCell>
                         )
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">
-                        {!readOnly && (config.supportsRestore ?? true) ? (
+                        {!readOnly && (config.supportsRestore ?? true)
+                          && (!inactive || !config.draftLifecycle || canApproveDraft) ? (
                           <div className="flex items-center justify-end">
                             {/* The switch alone. It carried a text label beside
                                 it saying Active/Inactive — the same fact the
@@ -3399,6 +3440,77 @@ export function MasterDataTable({
                           </span>
                         )}
                       </TableCell>}
+                      <TableCell className="w-10 text-right whitespace-nowrap">
+                        <Popover
+                          open={actionMenuRowId === String(row[config.idKey])}
+                          onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
+                          align="end"
+                          floating
+                          haspopup="menu"
+                          trigger={(props) => (
+                            <button
+                              {...props}
+                              type="button"
+                              aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
+                              title="Actions"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                props.onClick();
+                              }}
+                              className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          )}
+                        >
+                          <Menu label="Row Actions">
+                            <MenuItem
+                              onSelect={() => setViewingId(String(row[config.idKey]))}
+                              leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
+                            >
+                              {t("roleColView") ?? "View Details"}
+                            </MenuItem>
+                            {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
+                              <MenuItem
+                                onSelect={() => openEdit(row)}
+                                leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
+                              >
+                                {t("edit")}
+                              </MenuItem>
+                            )}
+                            {!readOnly && (config.supportsRestore ?? true)
+                              && (!inactive || !config.draftLifecycle || canApproveDraft) && (
+                              <MenuItem
+                                onSelect={() => handleToggleActive(row)}
+                                disabled={togglingId === row[config.idKey]}
+                                leading={
+                                  inactive ? (
+                                    <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                                  ) : (
+                                    <Power className="h-4 w-4 text-[var(--warning)]" />
+                                  )
+                                }
+                              >
+                                {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
+                              </MenuItem>
+                            )}
+                            {!readOnly && (config.rowCommands ?? []).filter((c) => !c.visibleWhen || c.visibleWhen(row)).map((c) => (
+                              <MenuItem key={c.key} onSelect={() => handleRowCommand(row, c)}>
+                                {c.label}
+                              </MenuItem>
+                            ))}
+                            {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
+                              <MenuItem
+                                onSelect={() => setConfirmDelete(row)}
+                                tone="danger"
+                                leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
+                              >
+                                {t("deactivate")}
+                              </MenuItem>
+                            )}
+                          </Menu>
+                        </Popover>
+                      </TableCell>
                     </TableRow>
                   );
                 })
@@ -3459,11 +3571,20 @@ export function MasterDataTable({
         }
       >
         <div className="flex flex-col gap-4">
+          {subDialogFields.length > 0 && (
+            <DialogHeaderActions>
+              <button type="button" onClick={() => setSubDialogOpen(true)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer" style={S.surface}>
+                {tLabel("KPIs & Alerts")}{subDialogCount > 0 ? ` (${subDialogCount})` : ""}
+              </button>
+            </DialogHeaderActions>
+          )}
           {(() => {
             const DEFAULT = "Identification";
             const order: string[] = [];
             const bySection = new Map<string, typeof visibleFields>();
             for (const f of visibleFields) {
+              if (f.subDialog) continue;
               const s = f.section || DEFAULT;
               if (!bySection.has(s)) { bySection.set(s, []); order.push(s); }
               bySection.get(s)!.push(f);
@@ -3475,7 +3596,7 @@ export function MasterDataTable({
             if (order.length <= 1) {
               return (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {visibleFields.map((f) => (
+                  {visibleFields.filter((f) => !f.subDialog).map((f) => (
                     <Field
                       key={f.key}
                       label={tLabel(currentLabel(f, form))}
@@ -3573,6 +3694,66 @@ export function MasterDataTable({
               </div>
             );
           })()}
+        </div>
+      </Dialog>
+
+      {subDialogFields.length > 0 && (
+        <Dialog open={modalOpen && subDialogOpen} onClose={() => setSubDialogOpen(false)}
+          title={tLabel("KPIs & Alerts")} presentation="compact" maxWidth="xl"
+          footer={
+            <div className="flex items-center justify-end w-full">
+              <button type="button" onClick={() => setSubDialogOpen(false)}
+                className="rounded-lg px-5 py-2 text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "var(--accent)" }}>
+                Done
+              </button>
+            </div>
+          }>
+          <div className="flex flex-col gap-4">
+            {[...subDialogFields].sort((a, b) => Number(a.type === "json") - Number(b.type === "json")).map((f) => (
+              <Field key={f.key} label={tLabel(currentLabel(f, form))} htmlFor={`master-${config.key}-${f.key}`} tooltip={f.helpText}>
+                {renderField(f)}
+              </Field>
+            ))}
+          </div>
+        </Dialog>
+      )}
+
+      <Dialog
+        open={!!reasonCommand}
+        onClose={() => setReasonCommand(null)}
+        title={reasonCommand?.command.label || ""}
+        presentation="compact"
+        maxWidth="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setReasonCommand(null)} className="min-w-[6rem]">
+              {t("cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                const pending = reasonCommand;
+                if (!pending) return;
+                setReasonCommand(null);
+                void runRowCommand(pending.row, pending.command, { reason: pending.reason });
+              }}
+              className="min-w-[6rem]"
+            >
+              {reasonCommand?.command.label}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2 text-sm">
+          <label className="block" style={S.primary} htmlFor="row-command-reason">{reasonCommand?.command.reasonPrompt}</label>
+          <textarea
+            id="row-command-reason"
+            autoFocus
+            rows={3}
+            value={reasonCommand?.reason ?? ""}
+            onChange={(e) => setReasonCommand((c) => (c ? { ...c, reason: e.target.value } : c))}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={S.input}
+          />
         </div>
       </Dialog>
 

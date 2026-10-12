@@ -2,6 +2,8 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FeedFarmSelect, feedFarmLabel } from '../src/components/console/inventory/feed-farm-select';
 
+jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: string) => key }) }));
+
 const farm = (code: string, company: string) => ({ farmId: `f-${code}`, code, name: `${code} Farm`, companyId: company, companyName: company });
 
 describe('FeedFarmSelect (A5, S3)', () => {
@@ -28,5 +30,11 @@ describe('FeedFarmSelect (A5, S3)', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.getByText('VIL100 — Villa Franca')).toBeTruthy();
     expect(feedFarmLabel({ code: 'VIL100', name: 'Villa Franca' })).toBe('VIL100 — Villa Franca');
+  });
+
+  it('uses a human unavailable label instead of an em dash', () => {
+    render(<FeedFarmSelect id="x" label="Farm" farms={[]} farmId={null} onChange={jest.fn()} fixedLabel={null} />);
+    expect(screen.getByText('fsdNotAvailable')).toBeTruthy();
+    expect(screen.queryByText('—')).toBeNull();
   });
 });

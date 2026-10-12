@@ -20,8 +20,8 @@
  * 2. The balance is a **stock-date snapshot**. Plan A walked from
  *    `planningDate`; Plan R (D16, D19) walks from `stockDate` — the planning
  *    date itself, or today when the planning date is in the future, so the
- *    days in between consume stock without producing rows. Run-down, refill
- *    and required-on are only ever reported on or after the planning date. If
+ *    days in between consume stock without producing rows. Run-down and
+ *    the shortage date are only ever reported on or after the planning date. If
  *    `to` is before planningDate there is nothing to walk and runDownDate is
  *    null. `rangeDemandKg` and `perDayIntakeKg` still describe the requested
  *    `from…to` window.
@@ -39,15 +39,15 @@
  * 6. D19 (Plan R): each day opens with what the day before left plus what
  *    arrives that day (confirmed incoming), and closes after that day's
  *    demand. A silo cannot go below empty, so demand it cannot meet is not
- *    carried. Run-Down is the first day, on or after the planning date, whose
- *    closing balance is at or below the silo's low level — at or below zero
- *    when none is set (open question Q1). The day must have demand or a
- *    transfer out: a transfer out on a day nobody eats can take the silo to
- *    its low level, and the shortfall it causes must have a run-down and a
- *    Required On — but an empty next-diet silo sitting idle is not run down
- *    until its diet starts, or its requisition would be due today. The run-down may be looked for past
- *    `to` (`horizonTo`) so a one-day view still shows it; everything else
- *    keeps its window.
+ *    carried. Run-down = shortage date = the first day, on or after the
+ *    planning date, whose demand exceeds that day's opening (3 Oct ruling 3).
+ *    Refill buffer, lead time, required-on and overdue (D3, D19, D38) and the
+ *    low-level shortfall (Q3) are superseded by the 3 Oct rulings: the
+ *    shortfall is demand + safety stock − opening − confirmed incoming
+ *    (TDD Dashboard row 60, Engine Step 7–8); the silo's Below Feed Level is an
+ *    alert threshold only. The visible balance series ends at `horizonTo`,
+ *    while the shortage search may continue through the known lifecycle feed
+ *    plan so a one-day view can still show the eventual shortage.
  * 7. Plan R (D16–D18): `daily` is one row per batch, item and date, read off
  *    the same walk. Its Current Inventory is the container's opening that day
  *    (Ruling M7): what the day before left, plus that day's `incoming` —
@@ -55,6 +55,7 @@
  *    saved transfers — but not that day's feeding, which is the forecast's
  *    own demand, so a posted daily entry is never subtracted twice.
  */
+import { linksEffectiveOn } from '../../../common/silo-shed-links';
 import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
 /**
@@ -68,45 +69,75 @@ export interface IncomingFeed {
   itemId: string;
   date: string;
   kg: number;
+  kind?: 'CONFIRMED_LEDGER' | 'OPEN_TRANSFER' | 'PLANNED_REQUISITION';
+  referenceId?: string;
+  referenceNo?: string;
+  relatedReferenceNo?: string;
+  expectedDate?: string;
+  overdue?: boolean;
 }
 
 /**
- * D38: the standard refill buffer — the field specification's "− 2 days" — used
- * for a store source and for a silo whose Silo Reorder Days was never set.
+ * A genuine batch_header PK — the only batch id a writer may persist
+ * (requisition_line_batch.batch_id, feed_forecast_run_line.batch_id,
+ * feed_alert.subject_id for a BATCH alert, all varchar(36) FKs/keys).
+ * Branded so the engine's composite aggregation key `batchId`
+ * (`<batch_id>:<stage_id>` for an ANIMAL_WISE/REGISTERED stage group) cannot
+ * be passed where one is required: doing so fails tsc, not MySQL (D1, 3 Oct;
+ * Task 9b fix round 1 made this compile-checked rather than commented).
  */
-export const DEFAULT_REFILL_BUFFER_DAYS = 2;
+export type BatchPk = string & { readonly __brand: 'BatchPk' };
+
+/** The single way to mint a BatchPk: from a batch_header.batch_id read from the database. Refuses a composite key outright. */
+export function asBatchPk(batchHeaderId: string): BatchPk {
+  if (batchHeaderId.includes(':') || batchHeaderId.length > 36) {
+    throw new Error(`Not a batch_header id: ${batchHeaderId}`);
+  }
+  return batchHeaderId as BatchPk;
+}
 
 export interface ForecastInput {
+  /** The farm being forecast: its lifecycle farm-override rows (Master Setup r30/r39) win over the default rows. */
+  farmId?: string | null;
   planningDate: string;
   from: string;
   to: string;
   /** Balances below are opening balances of this day (D19). Defaults to planningDate; a later date is ignored. */
   stockDate?: string;
-  /** Run-down, refill and required-on are searched up to here (Q12). Defaults to `to`; an earlier date is ignored. */
+  /** Last date emitted to the report grid. The shortage search may continue through the known lifecycle plan. */
   horizonTo?: string;
+  /** TDD Engine Step 8 / Dashboard row 60: configured safety stock per silo and item. Worked Example: 0. */
+  safetyStockKg?: number;
   /**
-   * D38 (28 Sep, refines D3): the refill buffer is per SILO now — the silo's
-   * own reorderDays below. A store, or a silo without the value, uses
-   * DEFAULT_REFILL_BUFFER_DAYS. The farm's feed_refill_buffer_days column is
-   * kept but no longer read.
+   * siloLinks (Master r8) carries the silo_shed_link effective dates: a silo serves the shed from
+   * effectiveFrom to effectiveTo inclusive; a null end is open. Without it every siloId is always linked.
    */
-  leadTimeDays: number;
-  sheds: { shedId: string; shedCode: string; siloIds: string[] }[];
+  sheds: { shedId: string; shedCode: string; siloIds: string[]; siloLinks?: { siloId: string; effectiveFrom?: string | null; effectiveTo?: string | null }[] }[];
   silos: {
     siloId: string;
     siloCode: string;
     itemId: string | null;
     balanceKg: number;
     lowLevelKg?: number | null;
-    /** D38: location_master.silo_reorder_days — days before run-down this silo must be refilled. */
-    reorderDays?: number | null;
   }[];
   store: { storeId: string; storeCode: string; balances: Record<string, number> } | null;
   incoming?: IncomingFeed[];
   items: Record<string, string>; // itemId -> item name
   itemCodes?: Record<string, string>; // itemId -> item code (Item No, D16)
   batches: {
+    /**
+     * This engine's own aggregation/display key: the genuine batch_header PK
+     * for a BATCH_WISE batch, or `<batch_id>:<stageId>` for an ANIMAL_WISE or
+     * REGISTERED batch split by stage (buildInputBatches) — distinct stage
+     * groups of the same physical batch must count as separate "batches" for
+     * sharedBatchCount, rowAggs and the web's row keys. Never write this
+     * field to a database column: it is not a batch_header PK and a
+     * varchar(36) FK will reject it (the 2 Oct D1 defect). Use `realBatchId`
+     * for that.
+     */
     batchId: string;
+    /** The genuine batch_header PK, always — even when `batchId` is composite. Safe to persist (FK-valid). */
+    realBatchId: BatchPk;
     batchNo: string;
     breedId: string;
     shedId: string;
@@ -141,7 +172,10 @@ export type ForecastFlag =
   | { kind: 'BATCH_SHED_UNKNOWN'; batchNo: string }
   // Raised by the service (Plan R, Q8): the planning date is in the past — balances are as of it, heads are today's.
   // `note` says so in words, including the ruling's consequence that days before a batch's current stage began carry no demand.
-  | { kind: 'AS_OF_PAST'; planningDate: string; today: string; note: string };
+  | { kind: 'AS_OF_PAST'; planningDate: string; today: string; note: string }
+  // Raised by this engine (Rishi, 12 Oct): the ledger balance of a silo/store item was below zero on the stock date —
+  // feed was posted as used before it was posted as received. The forecast shows 0 and says so here.
+  | { kind: 'NEGATIVE_SYSTEM_BALANCE'; sourceCode: string; itemName: string; balanceKg: number; date: string };
 
 export interface ForecastRow {
   batchNo: string;
@@ -155,11 +189,8 @@ export interface ForecastRow {
   heads: number;
   perDayIntakeKg: number | null; // this row, first day it has demand in range
   sourceDailyDemandKg: number | null; // all rows on the same source+item, planning day
-  daysLeft: number | null; // D1
-  runDownDate: string | null; // D19; null = lasts to the horizon
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean; // D3/D19
+  daysLeft: number | null; // D1: one decimal (Silo Balance row 9)
+  runDownDate: string | null; // D19; null = no shortage in the known demand plan
   rangeDemandKg: number;
 }
 
@@ -174,29 +205,108 @@ export interface ForecastRow {
  */
 export interface DailyForecastRow {
   date: string;
+  /** The engine's own aggregation key — composite for an ANIMAL_WISE/REGISTERED stage group. Never persist; see `realBatchId`. */
   batchId: string;
+  /** The genuine batch_header PK for this row, always real — persist this, never `batchId` (D1, 3 Oct). */
+  realBatchId: BatchPk;
   batchNo: string;
+  shedId?: string;
   shedCode: string;
   stageCode: string;
+  /** The real stage_master/breed_lifecycle stage id this row's segment is in on `date` — travels separately from `realBatchId` (D1). */
+  stageId: string;
+  /**
+   * The stage GROUP's identity: the batch's starting segment stage — for an
+   * ANIMAL_WISE/REGISTERED group, the stage in its composite `batchId`. Fixed
+   * for every day of the group, unlike `stageId`, which follows a projected
+   * stage change. This is the stage writers persist beside `realBatchId`, so
+   * (realBatchId, groupStageId) is one-to-one with the grouping key `batchId`
+   * (Task 9b fix round 1: persisting the day's stage let a group projected
+   * into another group's stage collide with it on uq_requisition_line_batch).
+   */
+  groupStageId: string;
   itemId: string;
   itemNo: string; // item code, '' when unknown
   itemName: string;
   lifecycleId: string;
   sourceType: 'SILO' | 'STORE' | 'NONE';
   sourceCode: string | null;
+  destinationLocationId?: string | null;
+  currentItemId?: string | null;
+  currentItemNo?: string | null;
+  currentItemName?: string | null;
+  openingStockKg?: number;
+  confirmedReceiptKg?: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  /**
+   * Rishi, 12 Oct: stock that left by a posted or open movement other than the feeding the engine models as Daily Use
+   * (negative adjustment, transfer out, count write-down) — always 0 or more, taken off the day's balance. Explained in
+   * the balance dialog; not a grid column.
+   */
+  otherOutflowKg?: number;
+  /** Part of `otherOutflowKg`: a negative ledger opening (feed used before it was received) recovered from this day's stock. */
+  usedBeforeReceivedKg?: number;
+  incomingReferences?: Array<{
+    kind: NonNullable<IncomingFeed['kind']>;
+    referenceId?: string;
+    referenceNo?: string;
+    overdue?: boolean;
+  }>;
   currentInventoryKg: number; // projected System Balance at the start of `date` (Q6)
   heads: number;
   feedRateKg: number; // kg per head per day
   perDayIntakeKg: number; // D17: heads × rate, no wastage
   wastagePct: number;
   demandKg: number; // D34: heads × rate — the forecast carries no wastage
-  daysOfStock: number | null; // D35: floor(currentInventory ÷ this row's perDayIntakeKg)
+  projectedClosingKg?: number;
+  recommendedQtyKg?: number;
+  daysOfStock: number | null; // D35: currentInventory ÷ this row's perDayIntakeKg, one decimal
   sharedBatchCount: number; // batches drawing on the same container and item that day
   indicative: boolean; // Q13
   runDownDate: string | null;
-  refillDate: string | null;
-  requiredOn: string | null;
-  overdue: boolean;
+  /** First date total demand exceeds available opening stock; distinct from low-level run-down. */
+  shortageDate?: string | null;
+}
+
+/**
+ * A container/item balance is emitted once per date, independently of batch
+ * rows. This is the calculation grid's canonical stock series: it includes
+ * zero-use dates before a future diet starts and cannot be duplicated when
+ * several batches draw from the same silo.
+ */
+export interface SourceBalancePoint {
+  date: string;
+  sourceType: 'SILO' | 'STORE';
+  sourceCode: string;
+  locationId: string;
+  itemId: string;
+  itemNo: string;
+  itemName: string;
+  currentItemId: string | null;
+  currentItemNo: string | null;
+  currentItemName: string | null;
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg: number;
+  openTransferMovementKg: number;
+  plannedIncomingKg: number;
+  otherOutflowKg: number;
+  /** Part of `otherOutflowKg`: a negative ledger opening recovered from this day's stock (feed used before it was received). */
+  usedBeforeReceivedKg: number;
+  incomingReferences: Array<{
+    kind: NonNullable<IncomingFeed['kind']>;
+    referenceId?: string;
+    referenceNo?: string;
+    relatedReferenceNo?: string;
+    expectedDate?: string;
+    overdue?: boolean;
+  }>;
+  dailyUseKg: number;
+  projectedClosingBalanceKg: number;
+  recommendedQtyKg: number;
+  firstShortageDate: string | null;
+  deliveryDate: string | null;
+  runDownDate: string | null;
 }
 
 export interface ForecastSource {
@@ -210,21 +320,26 @@ export interface ForecastSource {
   firstDemandDate: string | null; // first day (planningDate..to) with demand
   firstDayDemandKg: number; // combined demand on firstDemandDate
   walkDemandKg: number; // combined demand planningDate..to
-  daysLeft: number | null; // D1
+  daysLeft: number | null; // D1: one decimal
+  currentDietDaysRemaining: number | null;
   runDownDate: string | null; // D19
+  /** First forecast date on which this source cannot meet all demand. */
+  shortageDate?: string | null;
   isNextDiet: boolean; // a batch changes onto this item in the window and nothing eats it today
   noSiloHoldsItem: boolean; // a shed with silos draws it from the store because no silo holds it
   lifecycleIds: string[]; // lifecycle rows that produce its demand in the window, sorted
-  thresholdKg: number; // D19: the silo's low level, 0 for none and for a store
-  incomingKg: number; // confirmed incoming after the planning date, up to `to`
-  shortfallKg: number; // Q3: largest deficit below thresholdKg through `to` after incoming — what an order must bring
-  refillDate: string | null; // D19: runDownDate − refill buffer
-  requiredOn: string | null; // D19: refillDate − lead time
-  overdue: boolean; // requiredOn before the planning date
+  thresholdKg: number; // the silo's Below Feed Level, 0 for none and for a store — an alert threshold, never part of the shortfall
+  safetyStockKg: number; // configured safety stock added to the shortfall (default 0)
+  deliveryDayOpeningKg: number; // projected opening on the shortage date (no later than `to`) — what a delivery arrives onto
+  incomingKg: number; // confirmed inflows (positive only) after the planning date, up to `to`
+  shortfallKg: number; // Dashboard row 60: demand + safety stock − opening − incoming, largest through `to` — what an order must bring
 }
 
 export interface DietChange {
+  /** The engine's aggregation key — composite for an ANIMAL_WISE/REGISTERED stage group. Never persist; see `realBatchId`. */
   batchId: string;
+  /** The genuine batch_header PK — what a DIET_CHANGE alert names as its subject (Task 9b fix round 1). */
+  realBatchId: BatchPk;
   batchNo: string;
   shedCode: string;
   fromItemId: string;
@@ -242,6 +357,7 @@ export interface ForecastResult {
   sources: ForecastSource[];
   dietChanges: DietChange[];
   daily: DailyForecastRow[]; // sorted by shedCode, batchNo, date, itemName
+  sourceBalances: SourceBalancePoint[]; // sorted by sourceCode, itemId, date
 }
 
 /** Date arithmetic on UTC midnights — see context.md: farm-local calendar days in, UTC midnight math internally. */
@@ -266,6 +382,24 @@ export function addDays(iso: string, n: number): string {
 
 export function diffDays(a: string, b: string): number {
   return Math.round((parseIsoUtc(b) - parseIsoUtc(a)) / 86_400_000);
+}
+
+/** Last date on which the supplied lifecycle can create feed demand. */
+export function forecastDemandHorizon(
+  input: Pick<ForecastInput, 'batches' | 'feedRows'>,
+  minimum: string,
+): string {
+  let latest = minimum;
+  for (const batch of input.batches) {
+    for (const segment of batch.segments) {
+      const rows = input.feedRows.filter((row) => row.breedId === batch.breedId && row.stageId === segment.stageId);
+      if (!rows.length) continue;
+      const feedEnd = addDays(segment.start, Math.max(...rows.map((row) => row.toDay)) - 1);
+      const segmentFeedEnd = segment.end && segment.end < feedEnd ? segment.end : feedEnd;
+      if (segmentFeedEnd > latest) latest = segmentFeedEnd;
+    }
+  }
+  return latest;
 }
 
 /**
@@ -300,10 +434,35 @@ export function isTimeZone(zone: string): boolean {
  * company with no zone on record behaves exactly as before.
  */
 export function todayInZone(zone: string | null | undefined, ms: number = Date.now()): string {
-  if (!zone || !isTimeZone(zone)) return todayLocal(ms);
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ms));
+  return localClock(zone, ms).date;
+}
+
+/** The wall clock in `zone`: calendar day, weekday (0 = Sunday, as Feed Planning Settings store it) and HH:mm. */
+export interface LocalClock {
+  date: string;
+  weekday: number;
+  time: string;
+}
+
+/**
+ * todayInZone's day plus the weekday and time there — what the feed scheduler
+ * compares with the configured weekday/time (decisions 1 Oct: the company's
+ * time zone, Africa/Harare for Triple C). Same fallback: no usable zone means
+ * the server's own clock.
+ */
+export function localClock(zone: string | null | undefined, ms: number = Date.now()): LocalClock {
+  const date = new Date(ms);
+  if (!zone || !isTimeZone(zone)) {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return { date: todayLocal(ms), weekday: date.getDay(), time: `${hh}:${mm}` };
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  const day = `${part('year')}-${part('month')}-${part('day')}`;
+  return { date: day, weekday: new Date(`${day}T00:00:00Z`).getUTCDay(), time: `${part('hour')}:${part('minute')}` };
 }
 
 /**
@@ -386,6 +545,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // demand or diet changes cover (see #2 and #6 above).
   const stockDate = input.stockDate && input.stockDate < input.planningDate ? input.stockDate : input.planningDate;
   const horizonTo = input.horizonTo && input.horizonTo > input.to ? input.horizonTo : input.to;
+  const calculationTo = forecastDemandHorizon(input, horizonTo);
 
   // The visible/reporting window (rangeDemandKg, perDayIntakeKg, NO_FEED_ROW/OVERLAP flags).
   const rangeDates = dateRange(input.from, input.to);
@@ -394,8 +554,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // Planning window: planningDate..to — Plan B's requisition window (walk demand, lifecycle ids, diet changes).
   const planDates = input.planningDate <= input.to ? dateRange(input.planningDate, input.to) : [];
 
-  // Balance walk: stockDate..horizonTo, and nothing at all when `to` precedes the planning date.
-  const walkDates = planDates.length ? dateRange(stockDate, horizonTo) : [];
+  // Balance calculation continues through the known lifecycle plan, while
+  // report rows remain capped at horizonTo below.
+  const walkDates = planDates.length ? dateRange(stockDate, calculationTo) : [];
+  const displayedWalkDates = walkDates.filter((date) => date <= horizonTo);
 
   const demandDates = Array.from(new Set([...rangeDates, ...walkDates, input.planningDate])).sort();
 
@@ -404,25 +566,46 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
   // D19 incoming, per container and item, per day, in micrograms (several transfers on one day add up).
   const incomingByLocation = new Map<string, Map<string, number>>();
+  const incomingDetailsByLocation = new Map<string, Map<string, IncomingFeed[]>>();
+  // The same, inflows only: what is reported as incoming is never negative; the net above still drives the balance.
+  const inflowInByLocation = new Map<string, Map<string, number>>();
   for (const inc of input.incoming ?? []) {
     const k = `${inc.locationId}|${inc.itemId}`;
+    if (inc.kg > 0) {
+      let inByDate = inflowInByLocation.get(k);
+      if (!inByDate) {
+        inByDate = new Map();
+        inflowInByLocation.set(k, inByDate);
+      }
+      inByDate.set(inc.date, (inByDate.get(inc.date) ?? 0) + toMicrograms(inc.kg));
+    }
     let byDate = incomingByLocation.get(k);
     if (!byDate) {
       byDate = new Map();
       incomingByLocation.set(k, byDate);
     }
     byDate.set(inc.date, (byDate.get(inc.date) ?? 0) + toMicrograms(inc.kg));
+    let detailsByDate = incomingDetailsByLocation.get(k);
+    if (!detailsByDate) {
+      detailsByDate = new Map();
+      incomingDetailsByLocation.set(k, detailsByDate);
+    }
+    detailsByDate.set(inc.date, [...(detailsByDate.get(inc.date) ?? []), inc]);
   }
 
   // D9: no shed has two silos holding the same item, so this lookup is safe — at most one match per (shed, item).
   const sourceCache = new Map<string, SourceResolution>();
-  function resolveSource(shedId: string, itemId: string): SourceResolution {
-    const cacheKey = `${shedId}:${itemId}`;
+  function resolveSource(shedId: string, itemId: string, date: string): SourceResolution {
+    const shed = shedById.get(shedId);
+    // The link effective on this date (Master r8); no dates on a link means always.
+    const effectiveSiloIds = shed?.siloLinks
+      ? linksEffectiveOn(shed.siloLinks, date).map((l) => l.siloId)
+      : (shed?.siloIds ?? []);
+    const cacheKey = `${shedId}:${itemId}:${effectiveSiloIds.join(',')}`;
     const cached = sourceCache.get(cacheKey);
     if (cached) return cached;
 
-    const shed = shedById.get(shedId);
-    const shedSilos = (shed?.siloIds ?? []).map((id) => siloById.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+    const shedSilos = effectiveSiloIds.map((id) => siloById.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
     const matching = shedSilos.find((s) => s.itemId === itemId);
 
     let resolution: SourceResolution;
@@ -464,6 +647,24 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     };
   }
 
+  /**
+   * One day's movements into a container, split the way the grid shows them (Rishi, 12 Oct): the three inflow
+   * kinds are positive only; every negative movement, of any kind, is `outflow` — a positive number that reduces the balance.
+   */
+  function splitIncoming(details: IncomingFeed[]): { confirmed: number; openTransfer: number; planned: number; outflow: number } {
+    const kg = { CONFIRMED_LEDGER: 0, OPEN_TRANSFER: 0, PLANNED_REQUISITION: 0, outflow: 0 };
+    for (const entry of details) {
+      if (entry.kg > 0) kg[entry.kind ?? 'CONFIRMED_LEDGER'] += entry.kg;
+      else if (entry.kg < 0) kg.outflow -= entry.kg;
+    }
+    return {
+      confirmed: toMicrograms(kg.CONFIRMED_LEDGER),
+      openTransfer: toMicrograms(kg.OPEN_TRANSFER),
+      planned: toMicrograms(kg.PLANNED_REQUISITION),
+      outflow: toMicrograms(kg.outflow),
+    };
+  }
+
   /** Opening balance at stockDate in micrograms — silos are looked up by siloId (the stable key), not siloCode. */
   function balanceMicrogramsFor(sk: SourceKey): number {
     if (sk.sourceType === 'SILO') {
@@ -476,18 +677,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return 0;
   }
 
-  /**
-   * D38: how many days before run-down this source must be refilled. A silo
-   * answers with its own reorder days; a store — and a silo whose value was
-   * never set — uses the field specification's standard 2.
-   */
-  function refillBufferDaysFor(sk: SourceKey): number {
-    if (sk.sourceType !== 'SILO' || !sk.siloId) return DEFAULT_REFILL_BUFFER_DAYS;
-    const days = siloById.get(sk.siloId)?.reorderDays;
-    return days != null && days >= 0 ? days : DEFAULT_REFILL_BUFFER_DAYS;
-  }
-
-  /** D19: the silo's Below Feed Level; a store and a silo without one run down to zero. */
+  /** The silo's Below Feed Level — alerts only; a store and a silo without one have none. */
   function thresholdMicrogramsFor(sk: SourceKey): number {
     if (sk.sourceType !== 'SILO' || !sk.siloId) return 0;
     const low = siloById.get(sk.siloId)?.lowLevelKg;
@@ -518,18 +708,32 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   const lifecycleIdsByKey = new Map<string, Set<string>>();
   const itemByBatchDate = new Map<string, string>();
   const noSiloKeys = new Set<string>();
+  const currentDietDaysRemainingByKey = new Map<string, number>();
 
   // Plan R: per-date rows run from the planning date (or `from`, if later) to `to` (Q7). The batches eating from a
   // container on a day give its shared count (D18); an ANIMAL_WISE batch's stage groups count as separate batches,
   // because each is fed its own stage's diet.
+  //
+  // FF1 (Rishi, 5–6 Oct): display rows run past `to` up to the 45-day
+  // `horizonTo`, even when the source has already reached shortage; the grid
+  // must carry 0.00 through the remaining visible dates. The balance walk may
+  // continue beyond that display horizon solely to find First Shortage Date.
+  // Every planning-window aggregate (planDates, rowAggs, sources,
+  // lifecycleIds, flags) stays on planningDate..to, so requisition quantities
+  // never change with the display range. CUSTOM and PERIOD are trimmed back
+  // to `to` in getForecast — explicit ranges do not silently expand.
   const rowFrom = input.from > input.planningDate ? input.from : input.planningDate;
+  const rowTo = horizonTo;
   interface DailyEntry {
     date: string;
     batchId: string;
+    realBatchId: BatchPk;
     batchNo: string;
     shedId: string;
     heads: number;
     stageCode: string;
+    stageId: string;
+    groupStageId: string;
     feedRow: FeedRow;
     key: string;
     sourceType: 'SILO' | 'STORE' | 'NONE';
@@ -558,10 +762,12 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
       const dayOfStage = diffDays(segment.start, date) + 1;
       const candidates = feedRowsForBreed.filter((r) => r.stageId === segment.stageId);
-      const result = feedRowFor(candidates, dayOfStage);
+      const result = feedRowFor(candidates, dayOfStage, date, input.farmId);
 
       if ('error' in result) {
-        // Flags are reserved for the visible window; a gap outside it still correctly contributes no demand.
+        // Flags are emitted for the visible window (from..to) and, for NO_FEED_ROW only, for the first
+        // day of a future segment that falls inside the displayed horizon (to..rowTo). OVERLAPPING_FEED_ROWS
+        // inside the horizon past `to` is a configuration error in the visible range — not surfaced there.
         if (isInRange(date)) {
           flags.push({
             kind: result.error === 'NONE' ? 'NO_FEED_ROW' : 'OVERLAPPING_FEED_ROWS',
@@ -570,6 +776,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
             day: dayOfStage,
             date,
           });
+        } else if (result.error === 'NONE' && date > input.to && date >= rowFrom && date <= rowTo) {
+          // Only flag the first displayed day of the missing-feed segment in the horizon.
+          // That is the segment's own start date (if it starts in the horizon) or rowFrom
+          // (if the segment started before the horizon but has no feed rows covering it).
+          const firstDisplayedDay = segment.start >= rowFrom ? segment.start : rowFrom;
+          if (date === firstDisplayedDay) {
+            flags.push({
+              kind: 'NO_FEED_ROW',
+              batchNo: batch.batchNo,
+              stageCode: segment.stageCode,
+              day: dayOfStage,
+              date,
+            });
+          }
         }
         continue;
       }
@@ -584,10 +804,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const inChangeWindow =
         !!segment.changeWindowStart && date >= segment.changeWindowStart && segment.end !== null && date <= segment.end;
 
-      const resolution = resolveSource(batch.shedId, feedRow.itemId);
+      const resolution = resolveSource(batch.shedId, feedRow.itemId, date);
       if (resolution.noSiloHoldsItem && date <= input.to) flagNoSilo(batch.shedId, feedRow.itemId);
       const sk = sourceKeyFor(resolution, feedRow.itemId);
       keyMeta.set(sk.key, sk);
+
+      // The first current-diet change among batches sharing this source is the
+      // date the farm must prepare for.
+      if (date === input.planningDate) {
+        const remainingDays = Math.max(0, feedRow.toDay - dayOfStage);
+        const existing = currentDietDaysRemainingByKey.get(sk.key);
+        if (existing === undefined || remainingDays < existing) {
+          currentDietDaysRemainingByKey.set(sk.key, remainingDays);
+        }
+      }
 
       let byDate = demandMicrogramsByKeyByDate.get(sk.key);
       if (!byDate) {
@@ -607,10 +837,10 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
       }
 
-      if (date >= rowFrom && date <= input.to) {
+      if (date >= rowFrom && date <= rowTo) {
         dailyEntries.push({
-          date, batchId: batch.batchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
-          stageCode: segment.stageCode, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+          date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
+          stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
           inChangeWindow,
         });
         const shareKey = `${sk.key}|${date}`;
@@ -652,61 +882,86 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     sourceDailyDemandKg: number | null;
     daysLeft: number | null;
     runDownDate: string | null;
-    refillDate: string | null;
-    requiredOn: string | null;
-    overdue: boolean;
+    shortageDate: string | null;
     walkDemandKg: number;
     firstDemandDate: string | null;
     firstDayDemandKg: number;
     thresholdKg: number;
+    safetyStockKg: number;
+    deliveryDayOpeningKg: number;
     incomingKg: number;
     shortfallKg: number;
   }
   const projectionByKey = new Map<string, KeyProjection>();
   // Opening balance of every walked day, per key — the per-date rows read Current Inventory off it (Ruling M7).
   const openingByKey = new Map<string, Map<string, number>>();
+  // What each walked day started from — the day before's closing — before that day's own movements (never negative).
+  const carriedByKey = new Map<string, Map<string, number>>();
+  // Per day, the part of a negative ledger opening recovered from that day's stock (see the walk).
+  const deficitUsedByKey = new Map<string, Map<string, number>>();
 
   for (const [key, sk] of keyMeta) {
     const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
     const locationId = sk.siloId ?? sk.storeId;
     const inflow = (locationId ? incomingByLocation.get(`${locationId}|${sk.itemId}`) : undefined) ?? new Map<string, number>();
+    const inflowIn = (locationId ? inflowInByLocation.get(`${locationId}|${sk.itemId}`) : undefined) ?? new Map<string, number>();
     const threshold = thresholdMicrogramsFor(sk);
 
     const opening = new Map<string, number>();
-    let carried = balanceMicrogramsFor(sk);
+    const carriedBefore = new Map<string, number>();
+    // Rishi, 12 Oct: negative stock is impossible. A ledger balance below zero (feed posted as used before it was
+    // posted as received) is shown as 0, and the notes say so. The feed WAS eaten, though, so the deficit is a debt
+    // taken off the first stock that arrives (as an outflow, day by day until recovered) — never forgotten, never negative.
+    const ledgerBalance = balanceMicrogramsFor(sk);
+    if (ledgerBalance < 0 && sk.sourceType !== 'NONE' && (sk.sourceType === 'STORE' || siloById.get(sk.siloId ?? '')?.itemId === sk.itemId)) {
+      flags.push({
+        kind: 'NEGATIVE_SYSTEM_BALANCE', sourceCode: sk.sourceCode ?? '', itemName: input.items[sk.itemId] ?? sk.itemId,
+        balanceKg: toKg(ledgerBalance), date: stockDate,
+      });
+    }
+    let carried = Math.max(0, ledgerBalance);
+    let debt = Math.max(0, -ledgerBalance);
+    let debtAfterPlanning = 0;
+    const deficitUsed = new Map<string, number>();
     let runDownDate: string | null = null;
+    let shortageDate: string | null = null;
     for (const date of walkDates) {
       // A transfer out can exceed what is there on paper; a silo is never below empty.
-      const open = Math.max(0, carried + (inflow.get(date) ?? 0));
+      carriedBefore.set(date, carried);
+      const available = carried + (inflow.get(date) ?? 0);
+      const recovered = Math.min(debt, Math.max(0, available));
+      debt -= recovered;
+      if (recovered > 0) deficitUsed.set(date, recovered);
+      if (date === input.planningDate) debtAfterPlanning = debt;
+      const open = Math.max(0, available - recovered);
       opening.set(date, open);
       const demand = byDate.get(date) ?? 0;
       const closing = open - demand;
-      // Only a day that takes feed out counts — eaten from, or a transfer out. Either can bring the silo to its low
-      // level (so no shortfall is left without a date); a day with neither leaves an idle, empty silo alone.
-      const outgoing = demand > 0 || (inflow.get(date) ?? 0) < 0;
-      if (runDownDate === null && date >= input.planningDate && outgoing && closing <= threshold) runDownDate = date;
+      if (shortageDate === null && date >= input.planningDate && demand > open) shortageDate = date;
+      // Rishi ruling: runDownDate is the date the silo does not have enough feed to feed the animals
+      if (runDownDate === null && date >= input.planningDate && demand > open) runDownDate = date;
       carried = Math.max(0, closing); // demand the silo cannot meet is not carried into the next day
     }
     openingByKey.set(key, opening);
+    carriedByKey.set(key, carriedBefore);
+    deficitUsedByKey.set(key, deficitUsed);
     // The fallback (a purely retrospective range, nothing walked) reads the raw
     // opening, which can be negative since stockAsOf carries the signed ledger;
     // stock on hand is never shown below zero, the same clamp the walk applies.
     const planningOpening = opening.get(input.planningDate) ?? Math.max(0, balanceMicrogramsFor(sk));
 
     const sourceDailyDemandMicrograms = byDate.get(input.planningDate) ?? 0;
-    const daysLeft = sourceDailyDemandMicrograms > 0 ? Math.floor(planningOpening / sourceDailyDemandMicrograms) : null;
+    const safety = toMicrograms(input.safetyStockKg ?? 0);
+    const daysLeft = sourceDailyDemandMicrograms > 0 ? Math.round((planningOpening / sourceDailyDemandMicrograms) * 10) / 10 : null;
 
-    const refillDate = runDownDate !== null ? addDays(runDownDate, -refillBufferDaysFor(sk)) : null;
-    const requiredOn = refillDate !== null ? addDays(refillDate, -input.leadTimeDays) : null;
-    const overdue = requiredOn !== null && requiredOn < input.planningDate;
-
-    // Plan B's window (planningDate..to): walk demand, first demand day, and — Plan R, Q3 — the shortfall: the largest
-    // amount by which the balance would sit below the threshold at the end of any day if nothing more were ordered.
-    // Without a low level or incoming it is simply requirement − opening, the Worked Example's column G.
+    // Plan B's window (planningDate..to): walk demand, first demand day, and the shortfall: the largest amount by which
+    // demand plus safety stock exceeds opening and confirmed incoming through any day (Dashboard row 60).
+    // Without safety stock or incoming it is simply requirement − opening, the Worked Example's column G.
     let walkDemandMicrograms = 0;
     let firstDemandDate: string | null = null;
     let firstDayDemandMicrograms = 0;
-    let incomingMicrograms = 0;
+    let incomingMicrograms = 0; // net of outflows — the shortfall below needs the true movement
+    let incomingInMicrograms = 0; // inflows only — what is reported as incoming
     let shortfallMicrograms = 0;
     for (const date of planDates) {
       const m = byDate.get(date) ?? 0;
@@ -715,23 +970,29 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         firstDayDemandMicrograms = m;
       }
       walkDemandMicrograms += m;
-      if (date !== input.planningDate) incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
-      shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + threshold - planningOpening - incomingMicrograms);
+      if (date !== input.planningDate) {
+        incomingMicrograms += inflow.get(date) ?? 0; // the planning day's is in its opening
+        incomingInMicrograms += inflowIn.get(date) ?? 0;
+      }
+      shortfallMicrograms = Math.max(shortfallMicrograms, walkDemandMicrograms + safety + debtAfterPlanning - planningOpening - incomingMicrograms);
     }
+    // 9d D1: a shortage found past `to` (in the run-down horizon) is delivered for by `to`, as Req. row 29 dates it.
+    const deliveryDay = shortageDate !== null && shortageDate <= input.to ? shortageDate : input.to;
+    const deliveryDayOpeningMicrograms = opening.get(deliveryDay) ?? planningOpening;
 
     projectionByKey.set(key, {
       currentInventoryKg: toKg(planningOpening),
       sourceDailyDemandKg: toKg(sourceDailyDemandMicrograms),
       daysLeft,
       runDownDate,
-      refillDate,
-      requiredOn,
-      overdue,
+      shortageDate,
       walkDemandKg: toKg(walkDemandMicrograms),
       firstDemandDate,
       firstDayDemandKg: toKg(firstDayDemandMicrograms),
       thresholdKg: toKg(threshold),
-      incomingKg: toKg(incomingMicrograms),
+      safetyStockKg: toKg(safety),
+      deliveryDayOpeningKg: toKg(deliveryDayOpeningMicrograms),
+      incomingKg: toKg(incomingInMicrograms),
       shortfallKg: toKg(shortfallMicrograms),
     });
   }
@@ -746,10 +1007,11 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       const item = itemByBatchDate.get(`${batch.batchId}|${date}`);
       if (!item) continue;
       if (lastItem !== null && item !== lastItem) {
-        const next = resolveSource(batch.shedId, item); // cached: already resolved by the demand loop
+        const next = resolveSource(batch.shedId, item, date); // cached: already resolved by the demand loop
         nextDietKeys.add(sourceKeyFor(next, item).key);
         dietChanges.push({
           batchId: batch.batchId,
+          realBatchId: batch.realBatchId,
           batchNo: batch.batchNo,
           shedCode: shedById.get(batch.shedId)?.shedCode ?? '',
           fromItemId: lastItem,
@@ -790,22 +1052,88 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       firstDayDemandKg: p.firstDayDemandKg,
       walkDemandKg: p.walkDemandKg,
       daysLeft: p.daysLeft,
+      currentDietDaysRemaining:
+        planningDayDemandKg > 0 ? (currentDietDaysRemainingByKey.get(key) ?? null) : null,
       runDownDate: p.runDownDate,
+      shortageDate: p.shortageDate,
       isNextDiet: nextDietKeys.has(key) && planningDayDemandKg === 0,
       noSiloHoldsItem: noSiloKeys.has(key),
       lifecycleIds: [...(lifecycleIdsByKey.get(key) ?? [])].sort(),
       thresholdKg: p.thresholdKg,
       incomingKg: p.incomingKg,
       shortfallKg: p.shortfallKg,
-      refillDate: p.refillDate,
-      requiredOn: p.requiredOn,
-      overdue: p.overdue,
+      safetyStockKg: p.safetyStockKg,
+      deliveryDayOpeningKg: p.deliveryDayOpeningKg,
     });
   }
   sources.sort((a, b) => (a.sourceCode !== b.sourceCode ? (a.sourceCode < b.sourceCode ? -1 : 1) : a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 
-  const daily: DailyForecastRow[] = dailyEntries.map((e) => {
+  const sourceBalances: SourceBalancePoint[] = [];
+  for (const [key, sk] of keyMeta) {
+    if (sk.sourceType === 'NONE') continue;
+    const p = projectionByKey.get(key)!;
+    const byDate = demandMicrogramsByKeyByDate.get(key) ?? new Map<string, number>();
+    const locationId = (sk.siloId ?? sk.storeId)!;
+    const inflow = incomingByLocation.get(`${locationId}|${sk.itemId}`) ?? new Map<string, number>();
+    const currentSiloItemId = sk.sourceType === 'SILO' && sk.siloId ? (siloById.get(sk.siloId)?.itemId ?? null) : null;
+    for (const date of displayedWalkDates) {
+      if (date < rowFrom) continue;
+      const incomingDetails = incomingDetailsByLocation.get(`${locationId}|${sk.itemId}`)?.get(date) ?? [];
+      const { confirmed: confirmedLedger, openTransfer, planned: plannedRequisition, outflow: otherOutflow } = splitIncoming(incomingDetails);
+      const usedBefore = deficitUsedByKey.get(key)?.get(date) ?? 0;
+      const demand = byDate.get(date) ?? 0;
+      sourceBalances.push({
+        date,
+        sourceType: sk.sourceType,
+        sourceCode: sk.sourceCode!,
+        locationId,
+        itemId: sk.itemId,
+        itemNo: input.itemCodes?.[sk.itemId] ?? '',
+        itemName: input.items[sk.itemId] ?? sk.itemId,
+        currentItemId: currentSiloItemId,
+        currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
+        currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
+        openingSystemBalanceKg: toKg(carriedByKey.get(key)?.get(date) ?? 0),
+        confirmedReceiptKg: toKg(confirmedLedger),
+        openTransferMovementKg: toKg(openTransfer),
+        plannedIncomingKg: toKg(plannedRequisition),
+        otherOutflowKg: toKg(otherOutflow + usedBefore),
+        usedBeforeReceivedKg: toKg(usedBefore),
+        incomingReferences: incomingDetails.map((entry) => ({
+          kind: entry.kind ?? 'CONFIRMED_LEDGER',
+          referenceId: entry.referenceId,
+          referenceNo: entry.referenceNo,
+          relatedReferenceNo: entry.relatedReferenceNo,
+          expectedDate: entry.expectedDate,
+          overdue: entry.overdue,
+        })),
+        dailyUseKg: toKg(demand),
+        projectedClosingBalanceKg: toKg(Math.max(0, (openingByKey.get(key)?.get(date) ?? 0) - demand)),
+        recommendedQtyKg: p.shortfallKg,
+        firstShortageDate: p.shortageDate,
+        deliveryDate: p.shortageDate ? addDays(p.shortageDate, -2) : null,
+        runDownDate: p.runDownDate,
+      });
+    }
+  }
+  sourceBalances.sort((a, b) =>
+    a.sourceCode !== b.sourceCode
+      ? a.sourceCode.localeCompare(b.sourceCode)
+      : a.itemId !== b.itemId
+        ? a.itemId.localeCompare(b.itemId)
+        : a.date.localeCompare(b.date),
+  );
+
+  const daily: DailyForecastRow[] = dailyEntries.flatMap((e) => {
     const p = projectionByKey.get(e.key)!;
+    const rowShortageDate = p.shortageDate;
+    // FF1: a row stops at zero past the window — no date past both `to` and its
+    // own run-down day. The walk clamps carried stock at zero, so without this
+    // the grid would show 0/0 rows through the horizon; with it the run-down
+    // day itself is the last row shown. Inside the window every demand date
+    // stays, even one past run-down (the worked example's 3-day R1 against a
+    // day-one run-down), because the window is the requisition's own evidence.
+    if (e.date > input.to && p.runDownDate !== null && e.date > p.runDownDate) return [];
     const opening = openingByKey.get(e.key)?.get(e.date) ?? 0;
     const rowIntakeMicrograms = toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay);
     // Q13: indicative when what this container feeds per day changes later in the window — a diet, rate or stage
@@ -821,36 +1149,68 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
       }
     }
     const itemId = e.feedRow.itemId;
+    const source = keyMeta.get(e.key)!;
+    const currentSiloItemId = source.sourceType === 'SILO' && source.siloId ? (siloById.get(source.siloId)?.itemId ?? null) : null;
+    const sourceLocationId = source.siloId ?? source.storeId;
+    const dayIncoming = incomingDetailsByLocation.get(`${sourceLocationId}|${itemId}`)?.get(e.date) ?? [];
+    const {
+      confirmed: confirmedReceiptMicrograms, openTransfer: openTransferMicrograms,
+      planned: plannedIncomingMicrograms, outflow: otherOutflowMicrograms,
+    } = splitIncoming(dayIncoming);
+    const usedBeforeMicrograms = deficitUsedByKey.get(e.key)?.get(e.date) ?? 0;
+    const totalDemandMicrograms = byDate.get(e.date) ?? 0;
     return {
       date: e.date,
       batchId: e.batchId,
+      realBatchId: e.realBatchId,
       batchNo: e.batchNo,
+      shedId: e.shedId,
       shedCode: shedById.get(e.shedId)?.shedCode ?? '',
       stageCode: e.stageCode,
+      stageId: e.stageId,
+      groupStageId: e.groupStageId,
       itemId,
       itemNo: input.itemCodes?.[itemId] ?? '',
       itemName: input.items[itemId] ?? itemId,
       lifecycleId: e.feedRow.lifecycleId,
       sourceType: e.sourceType,
       sourceCode: e.sourceCode,
+      destinationLocationId: source.siloId ?? source.storeId,
+      currentItemId: currentSiloItemId,
+      currentItemNo: currentSiloItemId ? input.itemCodes?.[currentSiloItemId] ?? '' : null,
+      currentItemName: currentSiloItemId ? input.items[currentSiloItemId] ?? currentSiloItemId : null,
+      openingStockKg: toKg(carriedByKey.get(e.key)?.get(e.date) ?? 0),
+      confirmedReceiptKg: toKg(confirmedReceiptMicrograms),
+      openTransferMovementKg: toKg(openTransferMicrograms),
+      plannedIncomingKg: toKg(plannedIncomingMicrograms),
+      otherOutflowKg: toKg(otherOutflowMicrograms + usedBeforeMicrograms),
+      usedBeforeReceivedKg: toKg(usedBeforeMicrograms),
+      incomingReferences: dayIncoming.map((entry) => ({
+        kind: entry.kind ?? 'CONFIRMED_LEDGER',
+        referenceId: entry.referenceId,
+        referenceNo: entry.referenceNo,
+        relatedReferenceNo: entry.relatedReferenceNo,
+        expectedDate: entry.expectedDate,
+        overdue: entry.overdue,
+      })),
       currentInventoryKg: toKg(opening),
       heads: e.heads,
       feedRateKg: e.feedRow.kgPerHeadPerDay,
       perDayIntakeKg: toKg(toMicrograms(e.heads * e.feedRow.kgPerHeadPerDay)),
       wastagePct: e.feedRow.wastagePct, // kept for the breed feed master's display; unused by the forecast (D34)
       demandKg: toKg(e.demandMicrograms),
+      projectedClosingKg: toKg(Math.max(0, opening - totalDemandMicrograms)),
+      recommendedQtyKg: p.shortfallKg,
       // D35 (supersedes D18): the specification defines Days of Stock as
       // Current Inventory ÷ Per Day Intake of that row's batch — not the
       // silo's combined use, so two batches sharing one silo each see their
-      // own division of the same balance. Whole days (floor); empty when the
+      // own division of the same balance. One decimal (3 Oct ruling); empty when the
       // intake is 0; NONE has no container at all and no stock to divide.
-      daysOfStock: e.sourceType !== 'NONE' && e.heads > 0 && rowIntakeMicrograms > 0 ? Math.floor(opening / rowIntakeMicrograms) : null,
+      daysOfStock: e.sourceType !== 'NONE' && e.heads > 0 && rowIntakeMicrograms > 0 ? Math.round((opening / rowIntakeMicrograms) * 10) / 10 : null,
       sharedBatchCount: e.sourceType === 'NONE' ? 1 : (batchesByKeyDate.get(`${e.key}|${e.date}`)?.size ?? 1),
       indicative: indicative || e.inChangeWindow,
       runDownDate: p.runDownDate,
-      refillDate: p.refillDate,
-      requiredOn: p.requiredOn,
-      overdue: p.overdue,
+      shortageDate: rowShortageDate,
     };
   });
   daily.sort((a, b) => {
@@ -882,9 +1242,6 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         sourceDailyDemandKg: projection.sourceDailyDemandKg,
         daysLeft: projection.daysLeft,
         runDownDate: projection.runDownDate,
-        refillDate: projection.refillDate,
-        requiredOn: projection.requiredOn,
-        overdue: projection.overdue,
         rangeDemandKg: toKg(agg.rangeDemandMicrograms),
       },
     });
@@ -896,5 +1253,5 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     return a.firstDemandDate < b.firstDemandDate ? -1 : a.firstDemandDate > b.firstDemandDate ? 1 : 0;
   });
 
-  return { rows: entries.map((e) => e.row), flags, sources, dietChanges, daily };
+  return { rows: entries.map((e) => e.row), flags, sources, dietChanges, daily, sourceBalances };
 }

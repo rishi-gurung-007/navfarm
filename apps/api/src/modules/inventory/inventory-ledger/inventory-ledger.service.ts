@@ -1,5 +1,5 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, gte, lte, lt, inArray, notInArray, asc, desc, sql, isNotNull, ne, like, getTableColumns, SQL } from 'drizzle-orm';
@@ -13,6 +13,8 @@ import { parseSerials } from './serial-utils';
 import { lotBalances, serialsInStock } from './lot-balance';
 import { costingMethodOf, explainCosting, type ExplainBookReceipt } from './costing-explanation';
 import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
+import { mysqlTimestampFromEpoch } from '../../../common/mysql-utc-instant';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -28,6 +30,8 @@ interface WritePositiveEntryParams {
   quantity: number;
   uom: string;
   rate?: number;
+  /** Overrides quantity × rate (a transfer receipt closing its shipment line). */
+  amount?: number;
   lotNo?: string;
   serialNo?: string;
   expiryDate?: string;
@@ -35,6 +39,11 @@ interface WritePositiveEntryParams {
   warehouseId?: string;
   locationId?: string;
   userId?: string;
+}
+
+/** inventory_ledger.amount is decimal(18,4): round where the arithmetic must match what is stored. */
+function roundAmount(value: number): number {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
 interface WriteNegativeEntryParams {
@@ -81,6 +90,21 @@ export interface FeedStockRow {
 /** The same, for one posting date. */
 export interface FeedStockMovement extends FeedStockRow {
   posting_date: string;
+  /** Optional document evidence used by the forecast's expected-incoming view. */
+  reference_id?: string;
+  reference_no?: string;
+  expected_date?: string;
+  related_reference_no?: string;
+}
+
+/** Immutable item/quantity/cost evidence captured for a physical silo count. */
+export interface SiloStockEvidence {
+  warehouse_id: string;
+  item_id: string;
+  item_code: string;
+  uom: string;
+  system_qty_kg: number;
+  unit_cost_base: number | null;
 }
 
 /** Money is kept to 4 decimal places, the scale of the amount columns. */
@@ -157,6 +181,8 @@ export class InventoryLedgerService {
         .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
         .for('update');
       if (!original || original.entry_type !== 'NEGATIVE') throw new BadRequestException('Only an existing issue can be reversed here.');
+      // r32: the reversal posts a new entry dated like the issue, so a closed Reporting Period refuses it too.
+      await assertPostingPeriodOpen(this.db, { tenantId, companyId: original.company_id, postingDate: original.posting_date });
       const [reversed] = await this.db.select().from(schema.inventoryLedger)
         .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
       if (reversed) throw new BadRequestException('This issue has already been reversed.');
@@ -282,6 +308,8 @@ export class InventoryLedgerService {
 
   /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
+    // r32: a closed Reporting Period blocks every posting dated in it (one shared guard).
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
     const [item] = await this.db
       .select()
       .from(schema.itemMaster)
@@ -315,7 +343,7 @@ export class InventoryLedgerService {
       uom: params.uom,
       uom_conversion_factor: item.uom_conversion_factor,
       rate: rate.toString(),
-      amount: (params.quantity * rate).toString(),
+      amount: (params.amount ?? params.quantity * rate).toString(),
       lot_no: params.lotNo || null,
       serial_no: params.serialNo || null,
       expiry_date: params.expiryDate || null,
@@ -402,7 +430,9 @@ export class InventoryLedgerService {
     // Serials are issued from where they are: the requested location when it holds them all, otherwise the
     // one location that does. The cost layers below are then that location's.
     let warehouseId = params.warehouseId;
-    if (serials.length > 0) warehouseId = await this.locateSerials(params, serials, executor);
+    if (serials.length > 0) {
+      warehouseId = await this.locateSerials(params, serials, executor);
+    }
 
     const layerConditions = [
       eq(schema.inventoryLedger.tenant_id, params.tenantId),
@@ -621,6 +651,7 @@ export class InventoryLedgerService {
     if (params.quantity <= 0) {
       throw new BadRequestException(`Outbound quantity must be positive (got ${params.quantity}).`);
     }
+    await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
 
     const [item] = await this.db
       .select()
@@ -718,69 +749,96 @@ export class InventoryLedgerService {
   }
 
   /**
-   * Writes both legs of a Stock Transfer line: a NEGATIVE TRANSFER_SHIPMENT
-   * at the source warehouse (cost via FIFO) and a POSITIVE TRANSFER_RECEIPT
-   * at the destination warehouse, carrying forward the shipment's
-   * weighted-average cost as the new layer's rate.
+   * Part E Task 4: the shipment event's one ledger leg. Stock leaves the source
+   * now and reaches the destination only when it is received (1 Oct spec
+   * "Transfer execution"; 3 Oct spec Part B, cp. 46 "posts received KG once").
    */
-  async writeTransferEntries(params: {
-    tenantId: string;
-    companyId: string;
-    itemId: string;
-    documentNo: string;
-    documentLineId?: string;
-    postingDate: string;
-    quantity: number;
-    uom: string;
-    fromWarehouseId: string;
-    toWarehouseId: string;
-    lotNo?: string;
-    serialNo?: string;
-    userId?: string;
+  async writeTransferShipment(params: {
+    tenantId: string; companyId: string; itemId: string; documentNo: string; documentLineId: string;
+    postingDate: string; quantity: number; uom: string; fromWarehouseId: string;
+    lotNo?: string; serialNo?: string; userId?: string;
   }) {
-    const shipment = await this.writeNegativeEntry({
-      tenantId: params.tenantId,
-      companyId: params.companyId,
-      itemId: params.itemId,
-      documentType: 'STOCK_TRANSFER',
-      documentNo: params.documentNo,
-      documentLineId: params.documentLineId,
-      postingDate: params.postingDate,
-      transactionType: 'TRANSFER_SHIPMENT',
-      entryType: 'TRANSFER',
-      quantity: params.quantity,
-      uom: params.uom,
-      lotNo: params.lotNo,
-      serialNo: params.serialNo,
-      warehouseId: params.fromWarehouseId,
-      userId: params.userId,
+    return this.writeNegativeEntry({
+      tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId,
+      documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
+      postingDate: params.postingDate, transactionType: 'TRANSFER_SHIPMENT', quantity: params.quantity, uom: params.uom,
+      lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.fromWarehouseId, userId: params.userId,
     });
+  }
 
-    // Carries the shipment's own lot/serial forward rather than params.lotNo/
-    // serialNo directly — same value today, but shipment.lot_no is what FIFO
-    // actually drew (relevant once a caller ever transfers without pinning a
-    // lot), so the receipt layer's identity is always true to what left the
-    // source warehouse.
-    const receipt = await this.writePositiveEntry({
-      tenantId: params.tenantId,
-      companyId: params.companyId,
-      itemId: params.itemId,
-      documentType: 'STOCK_TRANSFER',
-      documentNo: params.documentNo,
-      documentLineId: params.documentLineId,
-      postingDate: params.postingDate,
-      transactionType: 'TRANSFER_RECEIPT',
-      entryType: 'TRANSFER',
-      quantity: params.quantity,
-      uom: params.uom,
-      rate: Number(shipment.rate),
-      lotNo: shipment.lot_no || undefined,
-      serialNo: shipment.serial_no || undefined,
-      warehouseId: params.toWarehouseId,
-      userId: params.userId,
+  /** The unit cost the shipment carried out of the source, so the receipt values the stock the same. */
+  async transferShipmentRate(params: { tenantId: string; shipmentNo: string; lineId: string }): Promise<number> {
+    const [row] = await this.db
+      .select({
+        amount: sql<string>`COALESCE(SUM(${schema.inventoryLedger.amount}), 0)`,
+        qty: sql<string>`COALESCE(SUM(${schema.inventoryLedger.quantity}), 0)`,
+      })
+      .from(schema.inventoryLedger)
+      .where(and(
+        eq(schema.inventoryLedger.tenant_id, params.tenantId),
+        eq(schema.inventoryLedger.document_type, 'STOCK_TRANSFER'),
+        eq(schema.inventoryLedger.document_no, params.shipmentNo),
+        eq(schema.inventoryLedger.document_line_id, params.lineId),
+        eq(schema.inventoryLedger.transaction_type, 'TRANSFER_SHIPMENT'),
+      ));
+    const qty = Math.abs(Number(row?.qty ?? 0));
+    if (!(qty > 0)) throw new BadRequestException(`Shipment ${params.shipmentNo} has no posted ledger entry for this line.`);
+    return Math.abs(Number(row?.amount ?? 0)) / qty;
+  }
+
+  /**
+   * What a shipment line still holds in In Transit: |Σ its TRANSFER_SHIPMENT
+   * amount| less the TRANSFER_RECEIPT amounts of the receipts already posted
+   * against it. The receipt that closes the line takes exactly this, so
+   * 10.0000 shipped as 3 units and received 1+1+1 lands 3.3333 + 3.3333 +
+   * 3.3334 and 1040 nets to zero (Part E Task 4, fix round 1).
+   */
+  async transferShipmentRemainingValue(params: { tenantId: string; shipmentNo: string; lineId: string; receiptNos: string[] }): Promise<number> {
+    const sumAmount = (documentNos: string[], transactionType: string) => this.db
+      .select({ amount: sql<string>`COALESCE(SUM(${schema.inventoryLedger.amount}), 0)` })
+      .from(schema.inventoryLedger)
+      .where(and(
+        eq(schema.inventoryLedger.tenant_id, params.tenantId),
+        eq(schema.inventoryLedger.document_type, 'STOCK_TRANSFER'),
+        inArray(schema.inventoryLedger.document_no, documentNos),
+        eq(schema.inventoryLedger.document_line_id, params.lineId),
+        eq(schema.inventoryLedger.transaction_type, transactionType),
+      ));
+    const [shipped] = await sumAmount([params.shipmentNo], 'TRANSFER_SHIPMENT');
+    const received = params.receiptNos.length > 0 ? (await sumAmount(params.receiptNos, 'TRANSFER_RECEIPT'))[0] : undefined;
+    const remaining = roundAmount(Math.abs(Number(shipped?.amount ?? 0)) - Math.abs(Number(received?.amount ?? 0)));
+    // The closing receipt writes this into a POSITIVE row, which must never
+    // carry a negative amount (Part E Task 4b). Within ±0.0005 of zero is
+    // four-place rounding and closes at 0; further below, the receipts have
+    // already taken more value than the shipment carried — a data
+    // inconsistency to stop on, not to write.
+    if (remaining < 0) {
+      if (remaining >= -0.0005) return 0;
+      throw new ConflictException(
+        `Shipment ${params.shipmentNo} has already been received for ${(-remaining).toFixed(4)} more than it carried on this line ` +
+        '(data inconsistency); the closing receipt was not posted.',
+      );
+    }
+    return remaining === 0 ? 0 : remaining; // never -0 into the amount column
+  }
+
+  /**
+   * The receipt event's one ledger leg: into the destination, at the
+   * shipment's rate. The amount is quantity × rate rounded to the column's
+   * four places, unless the caller passes the closing amount.
+   */
+  async writeTransferReceipt(params: {
+    tenantId: string; companyId: string; itemId: string; documentNo: string; documentLineId: string;
+    postingDate: string; quantity: number; uom: string; toWarehouseId: string; rate: number; amount?: number;
+    lotNo?: string; serialNo?: string; userId?: string;
+  }) {
+    return this.writePositiveEntry({
+      tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId,
+      documentType: 'STOCK_TRANSFER', documentNo: params.documentNo, documentLineId: params.documentLineId,
+      postingDate: params.postingDate, transactionType: 'TRANSFER_RECEIPT', quantity: params.quantity, uom: params.uom,
+      rate: params.rate, amount: params.amount ?? roundAmount(params.quantity * params.rate),
+      lotNo: params.lotNo, serialNo: params.serialNo, warehouseId: params.toWarehouseId, userId: params.userId,
     });
-
-    return { shipment, receipt };
   }
 
   /** Ledger rows on the active farm. Batch issues carry no warehouse, so they reach their farm through the batch. */
@@ -1483,6 +1541,66 @@ export class InventoryLedgerService {
         .filter((r) => r.warehouse_id && r.item_id)
         .map((r) => ({ warehouse_id: r.warehouse_id!, item_id: r.item_id!, item_code: r.item_code, uom: r.uom, posting_date: r.posting_date, qty: Number(r.qty) })),
     };
+  }
+
+  /**
+   * Exact ledger evidence visible when a physical count was taken. Unlike the
+   * daily forecast read, this also applies created_at so a later back-dated
+   * posting cannot rewrite what the counter could have known at countedAt.
+   * Cost is available only when every contributing movement has an amount.
+   */
+  async getSiloStockEvidenceAsOf(
+    params: { companyId: string; siloIds: string[]; postingDate: string; countedAtEpochSeconds: number },
+    tenantId: string,
+  ): Promise<SiloStockEvidence[]> {
+    if (!params.siloIds.length) return [];
+    const L = schema.inventoryLedger;
+    const rows = await this.db
+      .select({
+        warehouse_id: L.warehouse_id,
+        item_id: L.item_id,
+        item_code: sql<string>`MAX(${L.item_code})`,
+        uom: L.uom,
+        system_qty_kg: sql<string>`COALESCE(SUM(${L.quantity}), 0)`,
+        base_value: sql<string | null>`SUM(${L.amount})`,
+        valued_entries: sql<number>`COUNT(${L.amount})`,
+        costed_entries: sql<number>`SUM(CASE WHEN ${L.rate} IS NOT NULL AND ${L.rate} > 0 THEN 1 ELSE 0 END)`,
+        total_entries: sql<number>`COUNT(*)`,
+      })
+      .from(L)
+      .where(and(
+        eq(L.tenant_id, tenantId),
+        eq(L.company_id, params.companyId),
+        inArray(L.warehouse_id, params.siloIds),
+        inArray(L.entry_type, ['POSITIVE', 'NEGATIVE']),
+        lte(L.posting_date, params.postingDate),
+        lte(L.created_at, mysqlTimestampFromEpoch(params.countedAtEpochSeconds)),
+        ...this.farmConditions(),
+      ))
+      .groupBy(L.warehouse_id, L.item_id, L.uom);
+
+    return rows
+      .filter((row): row is typeof row & { warehouse_id: string; item_id: string } => Boolean(row.warehouse_id && row.item_id))
+      .map((row) => {
+        if (row.uom.trim().toUpperCase() !== 'KG') {
+          throw new BadRequestException(
+            `Physical feed counts require ledger evidence in KG; item '${row.item_code}' has '${row.uom}'. Record an approved UOM conversion in the posting path before counting it.`,
+          );
+        }
+        const quantity = Number(row.system_qty_kg);
+        const completeCost = Number(row.valued_entries) === Number(row.total_entries)
+          && Number(row.costed_entries) === Number(row.total_entries)
+          && row.base_value !== null
+          && Math.abs(quantity) > 0.000001;
+        return {
+          warehouse_id: row.warehouse_id!,
+          item_id: row.item_id,
+          item_code: row.item_code,
+          uom: 'KG',
+          system_qty_kg: quantity,
+          unit_cost_base: completeCost ? Number(row.base_value) / quantity : null,
+        };
+      });
   }
 
   async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {

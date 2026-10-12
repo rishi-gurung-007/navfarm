@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/mysql2/migrator';
 import * as mysql from 'mysql2/promise';
 import * as master from '../core/database/master-schema';
 import * as tenant from '../core/database/schema';
+import { assertDatabaseAllowed } from '../core/database/database-allowlist';
 import { forSeededLobs, SYSTEM_UOM_SEED, SYSTEM_SPECIES_SEED, SYSTEM_ITEM_TYPE_SEED, SYSTEM_LOCATION_TYPE_SEED, SYSTEM_BREED_SEED, SYSTEM_ITEM_SEED, SYSTEM_PARAMETER_SEED, SYSTEM_STAGE_SEED, SYSTEM_NO_SERIES_SEED, SYSTEM_BREED_LIFECYCLE_SEED, SYSTEM_KPI_METRIC_SEED } from '../core/database/system-master-data-seed';
 import { seedLocation } from './lib/seed-location';
 import { seedCode } from './lib/seed-series-code';
@@ -74,6 +75,7 @@ export async function seedDevTenant() {
   }
   if (DEV_PASSWORD.length < 8) throw new Error('DEV_PASSWORD must be at least 8 characters.');
 
+  assertDatabaseAllowed(masterDatabase, 'seed-dev-tenant master');
   const masterPool = mysql.createPool({ host, port, user, password, database: masterDatabase, ssl });
   const masterDb = drizzle(masterPool, { schema: master, mode: 'default' });
 
@@ -99,6 +101,7 @@ export async function seedDevTenant() {
       : tenantDatabaseName(tenantCode)));
     const tenantId = existingTenant?.tenant_id || randomUUID();
 
+    assertDatabaseAllowed(dbName, `seed-dev-tenant tenant ${tenantCode}`);
     const server = await mysql.createConnection({ host, port, user, password, ssl });
     await server.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
     await server.end();

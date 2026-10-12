@@ -1,0 +1,324 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import { and, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
+import { MySql2Database } from 'drizzle-orm/mysql2';
+import { randomUUID } from 'node:crypto';
+import { ClsService } from 'nestjs-cls';
+import { farmScope } from '../../../common/farm-scope';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
+import * as schema from '../../../core/database/schema';
+import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { FeedSettingsService } from '../feed-settings/feed-settings.service';
+import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
+import type { FeedForecastResponse } from './feed-forecast.service';
+import type { ForecastView } from './feed-forecast.view';
+import { buildConfigSnapshot, buildOutputSnapshot, buildRunLineSnapshots, runCodeFor, runCodePrefix } from './feed-forecast-run.rules';
+
+export interface CreateFeedForecastRunInput {
+  tenantId: string;
+  companyId: string;
+  farmId: string;
+  planningDate: string;
+  view: ForecastView;
+  from: string;
+  to: string;
+  periodId: string | null;
+  sourceCutoffAt: string;
+}
+
+type Actor = { userId?: string; userType?: string } | undefined;
+type PersistableRunOutput = Pick<FeedForecastResponse, 'farm' | 'planningDate' | 'from' | 'to' | 'daily' | 'sourceSnapshot'> & {
+  settings: unknown;
+  rows: unknown[];
+  sourceBalances: unknown[];
+  today?: string;
+  timeZone?: string | null;
+  forecastFrom?: string | null;
+  horizonTo?: string;
+  period?: unknown;
+  flags?: unknown[];
+};
+
+@Injectable()
+export class FeedForecastRunService {
+  constructor(private readonly cls: ClsService, private readonly feedSettings: FeedSettingsService, @Optional() private readonly audit?: AuditLogService) {}
+
+  private get db(): MySql2Database<typeof schema> {
+    const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
+    if (!db) throw new Error('Tenant database connection context not established.');
+    return db;
+  }
+
+  private assertRequestedScope(companyId: string, farmId: string): void {
+    const scope = farmScope(this.cls);
+    if (scope.companyId && scope.companyId !== companyId) throw new ForbiddenException('Not authorized for this company.');
+    if (scope.farmId && scope.farmId !== farmId) throw new ForbiddenException('Not authorized for this farm.');
+  }
+
+  private async loadFarm(farmId: string, companyId: string, tenantId: string, lock = false) {
+    const scope = farmScope(this.cls);
+    this.assertRequestedScope(companyId, farmId);
+    const query = this.db.select({
+      location_id: schema.locationMaster.location_id,
+      company_id: schema.locationMaster.company_id,
+      lob_id: schema.locationMaster.lob_id,
+    }).from(schema.locationMaster).where(and(
+      eq(schema.locationMaster.location_id, farmId),
+      eq(schema.locationMaster.company_id, companyId),
+      eq(schema.locationMaster.tenant_id, tenantId),
+      eq(schema.locationMaster.location_type, 'FARM'),
+      isNull(schema.locationMaster.parent_location_id),
+      eq(schema.locationMaster.is_active, true),
+      isNull(schema.locationMaster.deleted_at),
+      // A farm with no lob_id belongs to every LOB (location_master.lob_id is
+      // nullable) — the same carve-out as assertLocationOnActiveFarm
+      // (farm-scope.ts), so a restricted caller is not 404'd off such a farm.
+      // assertLobInScope does NOT carve this out: it throws for a NULL lob_id
+      // under a LOB-restricted scope, which is why settings go through
+      // FeedSettingsService.resolveForFeedPlanning (see its comment).
+      ...(scope.restricted && scope.lobId ? [or(eq(schema.locationMaster.lob_id, scope.lobId), isNull(schema.locationMaster.lob_id))!] : []),
+    )).limit(1);
+    const rows = lock ? await query.for('update') : await query;
+    const [farm] = rows;
+    if (!farm) throw new NotFoundException('Farm not found.');
+    return farm;
+  }
+
+  async createRun(
+    input: CreateFeedForecastRunInput,
+    output: PersistableRunOutput,
+    actor?: Actor,
+  ) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required to save a forecast run.');
+    const creatorId = actor.userId;
+    this.assertRequestedScope(input.companyId, input.farmId);
+    if (output.farm.id !== input.farmId || output.planningDate !== input.planningDate || output.from !== input.from || output.to !== input.to) {
+      throw new BadRequestException('The forecast output does not match the run filters.');
+    }
+
+    return withTenantTransaction(this.cls, async () => {
+      // The stable farm row owns its version stream. This lock must precede
+      // the version read, including when there is no earlier run row to lock.
+      await this.loadFarm(input.farmId, input.companyId, input.tenantId, true);
+      if (!output.sourceSnapshot) throw new BadRequestException('The forecast source snapshot is required.');
+      // Task 8: the logistics values come from feed_planning_setting (farm
+      // override over company over defaults), not from location_master.
+      // I1 (final review): resolveForFeedPlanning, not resolve() directly —
+      // settings are not LOB-scoped data, and resolve() has no NULL-lob_id
+      // carve-out, so a restricted caller on a NULL-lob_id farm would 403
+      // here even though loadFarm (above) just let them see this farm.
+      const resolved = await this.feedSettings.resolveForFeedPlanning(input.companyId, input.farmId);
+      const logistics = toFarmFeedSettings(resolved);
+      const configSnapshot = buildConfigSnapshot({
+        ...resolved,
+        requisitionDraftSettings: {
+          bulkMultipleKg: logistics.bulkMultipleKg,
+          bagSizeKg: logistics.bagSizeKg,
+          truckTargetKg: logistics.truckTargetKg,
+          productionWeekday: logistics.productionWeekday,
+        },
+      });
+      const [latest] = await this.db.select({
+        version: schema.feedForecastRun.version,
+        archived_at: schema.feedForecastRun.archived_at,
+      })
+        .from(schema.feedForecastRun)
+        .where(and(
+          eq(schema.feedForecastRun.tenant_id, input.tenantId),
+          eq(schema.feedForecastRun.company_id, input.companyId),
+          eq(schema.feedForecastRun.farm_id, input.farmId),
+        ))
+        .orderBy(desc(schema.feedForecastRun.version))
+        .limit(1)
+        .for('update');
+      if (latest?.archived_at === null) {
+        throw new ConflictException('Archive the current feed forecast calculation before saving a new one.');
+      }
+      const version = (latest?.version ?? 0) + 1;
+      const runId = randomUUID();
+      // Engine §5 row 68: RUN-<FarmCode>-<YYYYMMDD>-<NNN per farm per day>. Read under the farm lock taken above,
+      // so two saves of one farm on one day cannot pick the same number; uq_feed_forecast_run_company_code backs it.
+      const sameDay = await this.db.select({ run_code: schema.feedForecastRun.run_code })
+        .from(schema.feedForecastRun)
+        .where(and(
+          eq(schema.feedForecastRun.tenant_id, input.tenantId),
+          eq(schema.feedForecastRun.company_id, input.companyId),
+          like(schema.feedForecastRun.run_code, `${runCodePrefix(output.farm.code, input.planningDate)}%`),
+        ))
+        // A current read, like the version read: under REPEATABLE READ a plain read would use the snapshot taken
+        // before the farm lock and miss a same-day save that committed meanwhile (duplicate NNN -> ER_DUP_ENTRY).
+        .for('update');
+      const runCode = runCodeFor(output.farm.code, input.planningDate, sameDay.map((row) => row.run_code));
+      const lines = buildRunLineSnapshots(output);
+      const outputSnapshot = buildOutputSnapshot(lines, {
+        filters: {
+          planningDate: input.planningDate,
+          from: input.from,
+          to: input.to,
+          view: input.view,
+          periodId: input.periodId,
+        },
+        farm: output.farm,
+        settings: output.settings,
+        rows: output.rows,
+        sourceBalances: output.sourceBalances,
+        daily: output.daily,
+        today: output.today,
+        timeZone: output.timeZone,
+        forecastFrom: output.forecastFrom,
+        horizonTo: output.horizonTo,
+        period: output.period,
+        flags: output.flags,
+      });
+
+      await this.db.insert(schema.feedForecastRun).values({
+        run_id: runId, run_code: runCode, tenant_id: input.tenantId, company_id: input.companyId, farm_id: input.farmId,
+        version, planning_date: input.planningDate, view: input.view, from_date: input.from, to_date: input.to,
+        period_id: input.periodId, source_cutoff_at: input.sourceCutoffAt, source_snapshot: output.sourceSnapshot,
+        output_snapshot: outputSnapshot,
+        config_snapshot: configSnapshot, created_by: creatorId,
+      });
+      if (lines.length) {
+        await this.db.insert(schema.feedForecastRunLine).values(lines.map((line) => ({
+          run_line_id: randomUUID(), run_id: runId, forecast_date: line.forecastDate, batch_id: line.batchId,
+          shed_id: line.shedId, destination_location_id: line.destinationLocationId,
+          required_item_id: line.requiredItemId, current_item_id: line.currentItemId,
+          head_count: line.headCount, feed_rate_kg: String(line.feedRateKg), opening_stock_kg: String(line.openingStockKg),
+          confirmed_receipt_kg: String(line.confirmedReceiptKg), daily_demand_kg: String(line.dailyDemandKg),
+          projected_closing_kg: String(line.projectedClosingKg), shortage_date: line.shortageDate,
+          recommended_qty_kg: String(line.recommendedQtyKg),
+          // Task 4 (3 Oct ruling): required-on is superseded (engine.ts); the
+          // column stays until the branch merge drops it and is never written.
+          provenance_snapshot: line.provenanceSnapshot as Record<string, unknown>,
+        })));
+      }
+      return { runId, runCode, version };
+    });
+  }
+
+  async findAll(farmId: string, companyId: string, tenantId: string) {
+    await this.loadFarm(farmId, companyId, tenantId);
+    const runs = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      eq(schema.feedForecastRun.company_id, companyId),
+      eq(schema.feedForecastRun.farm_id, farmId),
+    )).orderBy(desc(schema.feedForecastRun.version));
+    return this.withAuthorNames(runs, tenantId);
+  }
+
+  /** Additive display field: stored created_by and the snapshot hash are untouched. */
+  private async withAuthorNames<T extends { created_by?: string | null }>(runs: T[], tenantId: string): Promise<Array<T & { created_by_name: string | null }>> {
+    const ids = [...new Set(runs.map((run) => run.created_by).filter((id): id is string => !!id))];
+    const names = new Map<string, string>();
+    if (ids.length) {
+      const users = await this.db.select({ user_id: schema.userMaster.user_id, full_name: schema.userMaster.full_name })
+        .from(schema.userMaster)
+        .where(and(eq(schema.userMaster.tenant_id, tenantId), inArray(schema.userMaster.user_id, ids)));
+      for (const user of users) names.set(user.user_id, user.full_name);
+    }
+    return runs.map((run) => ({ ...run, created_by_name: (run.created_by && names.get(run.created_by)) || null }));
+  }
+
+  async findCurrent(farmId: string, companyId: string, tenantId: string) {
+    await this.loadFarm(farmId, companyId, tenantId);
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      eq(schema.feedForecastRun.company_id, companyId),
+      eq(schema.feedForecastRun.farm_id, farmId),
+      isNull(schema.feedForecastRun.archived_at),
+    )).limit(1);
+    return run ?? null;
+  }
+
+  async archiveRun(runId: string, tenantId: string, actor?: Actor) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated user is required to archive a forecast run.');
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+    )).limit(1);
+    if (!run) throw new NotFoundException('Feed forecast run not found.');
+    try {
+      await this.loadFarm(run.farm_id, run.company_id, tenantId);
+    } catch (error) {
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) throw new NotFoundException('Feed forecast run not found.');
+      throw error;
+    }
+    if (run.archived_at) return run;
+    await this.db.update(schema.feedForecastRun).set({
+      archived_at: sql`CURRENT_TIMESTAMP`,
+      archived_by: actor.userId,
+    }).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+      isNull(schema.feedForecastRun.archived_at),
+    ));
+    return { ...run, archived_at: true, archived_by: actor.userId };
+  }
+
+  /**
+   * Permanent delete (not archive): removes the saved run and its lines in one
+   * transaction. Refused while anything that must outlive the run points at it
+   * (a requisition's forecast-run link, a feed plan version's source run) —
+   * those FKs are RESTRICT, and breaking such a record is worse than keeping
+   * the run. archiveRun above is unchanged for its existing caller.
+   */
+  async deleteRunPermanently(runId: string, tenantId: string, actor?: Actor) {
+    if (!actor?.userId) throw new UnauthorizedException('An authenticated user is required to delete a forecast run.');
+    return withTenantTransaction(this.cls, async () => {
+      const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+        eq(schema.feedForecastRun.run_id, runId),
+        eq(schema.feedForecastRun.tenant_id, tenantId),
+      )).limit(1).for('update');
+      if (!run) throw new NotFoundException('Feed forecast run not found.');
+      try {
+        await this.loadFarm(run.farm_id, run.company_id, tenantId);
+      } catch (error) {
+        if (error instanceof ForbiddenException || error instanceof NotFoundException) throw new NotFoundException('Feed forecast run not found.');
+        throw error;
+      }
+      const uses: string[] = [];
+      const requisitions = await this.db.select({ req_no: schema.requisition.req_no }).from(schema.requisition)
+        .where(eq(schema.requisition.feed_forecast_run_id, runId));
+      for (const row of requisitions) uses.push(`requisition ${row.req_no}`);
+      const plans = await this.db.select({ plan_code: schema.feedPlan.plan_code }).from(schema.feedPlan)
+        .where(eq(schema.feedPlan.source_run_id, runId));
+      for (const row of plans) uses.push(`feed plan ${row.plan_code}`);
+      if (uses.length > 0) {
+        throw new ConflictException(`Used by ${uses.join(', ')} — cannot delete ${run.run_code}.`);
+      }
+      await this.db.delete(schema.feedForecastRunLine).where(eq(schema.feedForecastRunLine.run_id, runId));
+      await this.db.delete(schema.feedForecastRun).where(and(
+        eq(schema.feedForecastRun.run_id, runId),
+        eq(schema.feedForecastRun.tenant_id, tenantId),
+      ));
+      await this.audit?.log({
+        tenantId,
+        companyId: run.company_id,
+        userId: actor.userId,
+        action: 'DELETE',
+        entityName: 'feed_forecast_run',
+        entityId: runId,
+        oldValues: { run_id: run.run_id, run_code: run.run_code, farm_id: run.farm_id, version: run.version, view: run.view, from_date: run.from_date, to_date: run.to_date, archived_at: run.archived_at },
+      }, this.db);
+      return { run_id: runId, run_code: run.run_code, deleted: true };
+    });
+  }
+
+  async findOne(runId: string, tenantId: string) {
+    const [run] = await this.db.select().from(schema.feedForecastRun).where(and(
+      eq(schema.feedForecastRun.run_id, runId),
+      eq(schema.feedForecastRun.tenant_id, tenantId),
+    )).limit(1);
+    if (!run) throw new NotFoundException('Feed forecast run not found.');
+    try {
+      await this.loadFarm(run.farm_id, run.company_id, tenantId);
+    } catch (error) {
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) throw new NotFoundException('Feed forecast run not found.');
+      throw error;
+    }
+    const lines = await this.db.select().from(schema.feedForecastRunLine)
+      .where(eq(schema.feedForecastRunLine.run_id, runId))
+      .orderBy(schema.feedForecastRunLine.forecast_date, schema.feedForecastRunLine.run_line_id);
+    const [withName] = await this.withAuthorNames([run], tenantId);
+    return { ...withName, lines };
+  }
+}

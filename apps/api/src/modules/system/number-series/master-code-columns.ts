@@ -16,5 +16,9 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   UOM_CONVERSION: 'conversion_code',
   GL_MAPPING: 'mapping_code', BREED_LIFECYCLE_STAGE: 'lifecycle_code',
   KPI_METRIC: 'metric_code',
+  // A document, not a master: listed so the Number Series screen offers it and the
+  // common requisition draws its number from it (decision 2026-10-01). It has no
+  // MASTER_TABLES entry on purpose — that map also drives master-scope guards.
   ITEM_APPLICATION: 'application_id', APPLICATION: 'application_id',
+  REQUISITION: 'req_no',
 };

@@ -1,8 +1,8 @@
 import { ConflictException } from '@nestjs/common';
-import { stockAsOf } from './feed-forecast.stock';
+import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 
 const silos = [
-  { siloId: 's1', siloCode: 'GRS/SILO-001', lowLevelKg: 1000, reorderDays: 3 },
+  { siloId: 's1', siloCode: 'GRS/SILO-001', lowLevelKg: 1000 },
   { siloId: 's2', siloCode: 'GRS/SILO-002', lowLevelKg: null },
 ];
 const base = { silos, store: { storeId: 'st', storeCode: 'GRS/STORE-001' }, feedItemIds: new Set(['r1', 'r2']), opening: [], movements: [], drafts: [] };
@@ -18,11 +18,8 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
         { warehouse_id: 'st', item_id: 'med', item_code: 'MED-1', uom: 'PCS', qty: 40 }, // not feed: ignored
       ],
     });
-    // D38: the silo's own reorder days must survive the stock layer — a build
-    // of this module once dropped the field here, so the live forecast kept
-    // warning every silo with the standard 2 no matter what its row said.
     expect(out.silos).toEqual([
-      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500, lowLevelKg: 1000, reorderDays: 3 },
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: 1500, lowLevelKg: 1000 },
       { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: null, balanceKg: 0, lowLevelKg: null },
     ]);
     expect(out.store).toEqual({ storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r2: 800 } });
@@ -35,7 +32,25 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       drafts: [{ warehouse_id: 's2', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG', posting_date: '2026-09-28', qty: 6000 }],
     });
     expect(out.silos[1]).toMatchObject({ itemId: 'r2', balanceKg: 0 });
-    expect(out.incoming).toEqual([{ locationId: 's2', itemId: 'r2', date: '2026-09-28', kg: 6000 }]);
+    expect(out.incoming).toEqual([{ locationId: 's2', itemId: 'r2', date: '2026-09-28', kg: 6000, kind: 'OPEN_TRANSFER' }]);
+  });
+
+  it('uses a linked requisition delivery date and preserves transfer provenance', () => {
+    const out = stockAsOf({
+      ...base,
+      drafts: [{
+        warehouse_id: 's2', item_id: 'r2', item_code: 'FEED-R2', uom: 'KG',
+        posting_date: '2026-10-11', qty: 3000,
+        reference_id: 'transfer-1', reference_no: 'TR-000044',
+        related_reference_no: 'REQ-VIL100-2026-00005',
+        expected_date: '2026-10-24',
+      }],
+    });
+    expect(out.incoming).toEqual([{
+      locationId: 's2', itemId: 'r2', date: '2026-10-24', kg: 3000,
+      kind: 'OPEN_TRANSFER', referenceId: 'transfer-1', referenceNo: 'TR-000044',
+      relatedReferenceNo: 'REQ-VIL100-2026-00005', expectedDate: '2026-10-24',
+    }]);
   });
 
   it('keeps posted movements and drafts, signed, and drops a silo movement of another item', () => {
@@ -50,9 +65,9 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       drafts: [{ warehouse_id: 'st', item_id: 'r1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-29', qty: -1000 }],
     });
     expect(out.incoming).toEqual([
-      { locationId: 's1', itemId: 'r1', date: '2026-09-26', kg: 3000 },
-      { locationId: 'st', itemId: 'r2', date: '2026-09-27', kg: -200 },
-      { locationId: 'st', itemId: 'r1', date: '2026-09-29', kg: -1000 },
+      { locationId: 's1', itemId: 'r1', date: '2026-09-26', kg: 3000, kind: 'CONFIRMED_LEDGER' },
+      { locationId: 'st', itemId: 'r2', date: '2026-09-27', kg: -200, kind: 'CONFIRMED_LEDGER' },
+      { locationId: 'st', itemId: 'r1', date: '2026-09-29', kg: -1000, kind: 'OPEN_TRANSFER' },
     ]);
   });
 
@@ -70,7 +85,7 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       ],
     });
     expect(out.store).toEqual({ storeId: 'st', storeCode: 'GRS/STORE-001', balances: { r2: -4200 } });
-    expect(out.silos[0]).toEqual({ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: -300, lowLevelKg: 1000, reorderDays: 3 });
+    expect(out.silos[0]).toEqual({ siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'r1', balanceKg: -300, lowLevelKg: 1000 });
   });
 
   it('refuses feed held in anything but KG, naming the silo or the store item', () => {
@@ -78,5 +93,23 @@ describe('stockAsOf — silo and store stock for the forecast (Q2, Q6)', () => {
       .toThrow(new ConflictException("Silo 'GRS/SILO-001' holds its feed in BAG, not KG — the forecast cannot add bags to kilograms."));
     expect(() => stockAsOf({ ...base, opening: [{ warehouse_id: 'st', item_id: 'r2', item_code: 'FEED-R2', uom: 'BAG', qty: 10 }] }))
       .toThrow(new ConflictException("Store 'GRS/STORE-001' holds 'FEED-R2' in BAG, not KG — the forecast cannot add bags to kilograms."));
+  });
+});
+
+describe('outstandingTransferQty — what a transfer line still owes the ledger (Part E Task 4b)', () => {
+  it('ordered 10, shipped 6, received 4: 4 still to leave the source, 6 still to reach the destination', () => {
+    expect(outstandingTransferQty(10, 6, 4)).toEqual({ pendingOut: 4, pendingIn: 6 });
+  });
+
+  it('with the ledger legs, each end totals the ordered quantity exactly once', () => {
+    const [ordered, shipped, received] = [10, 6, 4];
+    const { pendingOut, pendingIn } = outstandingTransferQty(ordered, shipped, received);
+    expect(shipped + pendingOut).toBe(ordered);   // source: −6 posted, −4 pending
+    expect(received + pendingIn).toBe(ordered);   // destination: +4 posted, +6 pending
+  });
+
+  it('an unshipped DRAFT is pending in full; a complete line owes nothing', () => {
+    expect(outstandingTransferQty(10, 0, 0)).toEqual({ pendingOut: 10, pendingIn: 10 });
+    expect(outstandingTransferQty(10, 10, 10)).toEqual({ pendingOut: 0, pendingIn: 0 });
   });
 });

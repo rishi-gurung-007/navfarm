@@ -34,6 +34,14 @@ function enforcedByApi(): Set<string> {
         for (const m of source.matchAll(/RequirePermission\(\s*'([A-Z_]+)'\s*,\s*'([A-Z_]+)'/g)) {
           pairs.add(`${m[1]}/${m[2]}`);
         }
+        // Task 11: permissions can also be enforced inside a service — the
+        // stock-count approval engine checks FINANCE/STOCK_VARIANCE through
+        // userHasPermission/RequiredPermission, not a decorator. A permission
+        // enforced only there was invisible to this spec and ungrantable to
+        // every custom role.
+        for (const m of source.matchAll(/moduleCode:\s*'([A-Z_]+)',\s*resource:\s*'([A-Z_]+)'/g)) {
+          pairs.add(`${m[1]}/${m[2]}`);
+        }
       }
     }
   };

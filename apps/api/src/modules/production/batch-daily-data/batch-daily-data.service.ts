@@ -1,3 +1,4 @@
+import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import {
   Injectable,
   NotFoundException,
@@ -26,6 +27,8 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { farmStoreOf } from '../../../common/farm-store';
 import { classifyPostedRow } from '../batch/batch-day-reversal';
 import { animalOutputEvent, outputEventForItem, parsePoolIds, type AnimalOutputEvent } from './animal-output-event';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
+import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
@@ -132,6 +135,8 @@ export class BatchDailyDataService {
         `Line '${dto.line_id}' does not belong to batch '${batchId}'.`,
       );
     }
+    // r32: POST Day is refused for a date inside a CLOSED Reporting Period.
+    await assertPostingPeriodOpen(this.db, { tenantId, companyId: header.company_id, postingDate: dto.entry_date });
     // Decision 8: an output is any item the farm takes out of the batch, chosen when it is entered; the line's own item
     // is only the default. Every other kind of line posts the item it was set up with.
     if (dto.item_id && line.line_type !== 'OUTPUT') {
@@ -409,6 +414,7 @@ export class BatchDailyDataService {
               batchRow?.farm_id ?? null,
               header.company_id,
               tenantId,
+              dto.entry_date,
             );
           }
         }
@@ -1017,6 +1023,7 @@ export class BatchDailyDataService {
         alert_triggered: alertTriggered,
         alert_note: alertNote,
         remarks: remarks || null,
+        empty_bags: dto.empty_bags ?? null,
         created_by: userPayload?.userId || null,
         updated_by: userPayload?.userId || null,
       })
@@ -1035,6 +1042,7 @@ export class BatchDailyDataService {
           alert_triggered: alertTriggered,
           alert_note: alertNote,
           remarks: remarks || null,
+          empty_bags: dto.empty_bags ?? null,
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         },
@@ -1127,6 +1135,9 @@ export class BatchDailyDataService {
     if (lots) notes.push(`Lots: ${lots.map((l) => `${l.lotNo} ×${l.quantity}`).join(', ')}`);
     if (split) notes.push(split.note);
 
+    // Checkpoint 28: bags counted vs the quantity posted. A mismatch is flagged on the entries and logged, never refused.
+    const bagWarning = await this.reconcileEmptyBags(group, total);
+
     const reference = (animalId: string | undefined) =>
       posted.flatMap((p) => p.transactions).find((t) => (t.animal_id ?? undefined) === animalId)?.transaction_id ?? null;
     for (const p of group) {
@@ -1140,12 +1151,61 @@ export class BatchDailyDataService {
         batchId,
         posted: true,
         postingReference: reference(p.dto.animal_id),
-        alertTriggered: false,
-        alertNote: null,
+        alertTriggered: bagWarning !== null,
+        alertNote: bagWarning,
         remarks: notes.length ? `${p.dto.remarks ? `${p.dto.remarks} — ` : ''}${notes.join('; ')}`.slice(0, 500) : p.dto.remarks,
       });
     }
     if (group.some((p) => !p.deferFeedAlerts)) await this.reevaluateFeedLevels(first.farmId, tenantId);
+  }
+
+  /**
+   * Checkpoint 28: reconciles the empty bags counted across a consumption group
+   * with the quantity just posted. Returns the warning (and logs it as a
+   * BAG_RECONCILIATION alert) or null. No count entered means nothing to check.
+   */
+  private async reconcileEmptyBags(group: PendingConsumption[], consumedKg: number): Promise<string | null> {
+    const counted = group.filter((p) => p.dto.empty_bags != null);
+    if (counted.length === 0) return null;
+    // Flag only, never block: a failure reading the settings or logging the alert must not fail the posting.
+    try {
+      const emptyBags = counted.reduce((n, p) => n + Number(p.dto.empty_bags), 0);
+      const first = group[0];
+      const { header, tenantId, batchId, line } = first;
+      const rows = await this.db
+        .select({ farm_id: schema.feedPlanningSetting.farm_id, bag_size_kg: schema.feedPlanningSetting.bag_size_kg, bag_tolerance_pct: schema.feedPlanningSetting.bag_tolerance_pct })
+        .from(schema.feedPlanningSetting)
+        .where(and(
+          eq(schema.feedPlanningSetting.tenant_id, tenantId),
+          eq(schema.feedPlanningSetting.company_id, header.company_id),
+          eq(schema.feedPlanningSetting.is_active, true),
+        ));
+      const company = rows.find((r) => r.farm_id === null);
+      const farm = first.farmId ? rows.find((r) => r.farm_id === first.farmId) : undefined;
+      const bagSizeKg = Number(farm?.bag_size_kg ?? company?.bag_size_kg ?? 50);
+      const tolerance = company?.bag_tolerance_pct;
+      const warning = bagReconciliationWarning({ emptyBags, bagSizeKg, consumedKg, tolerancePct: tolerance == null ? null : Number(tolerance) });
+      if (!warning) return null;
+      await this.db.insert(schema.notificationAlertLog).values({
+        alert_id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: header.company_id,
+        lob_id: header.lob_id,
+        batch_id: batchId,
+        line_id: line.line_id,
+        alert_type: 'BAG_RECONCILIATION',
+        severity: 'WARNING',
+        title: 'Empty Bags vs Feed Consumed',
+        message: warning,
+        activity_name: line.activity_name,
+        kpi_mode: 'VALUE',
+        expected_value: String(emptyBags * bagSizeKg),
+        actual_value: String(consumedKg),
+      });
+      return warning;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1191,6 +1251,8 @@ export class BatchDailyDataService {
     batchFarmId: string | null,
     companyId: string,
     tenantId: string,
+    /** The entry's date: only the silo links effective that day are drawn from. Defaults to today. */
+    onDate: string = todayIso(),
   ): Promise<string> {
     const columns = {
       location_id: schema.locationMaster.location_id,
@@ -1245,6 +1307,7 @@ export class BatchDailyDataService {
         and(
           eq(schema.siloShedLink.tenant_id, tenantId),
           eq(schema.siloShedLink.shed_id, shed.location_id),
+          siloShedLinkEffectiveOn(onDate),
           eq(schema.locationMaster.is_active, true),
           isNull(schema.locationMaster.deleted_at),
         ),

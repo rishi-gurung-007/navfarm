@@ -48,17 +48,23 @@ function focusableWithin(panel: HTMLElement): HTMLElement[] {
  * from the document by then — a row action whose row was just deleted — focus
  * is left alone rather than thrown to the top of the page.
  */
+/** Open overlays, outermost first: only the innermost one traps Tab (a dialog stacked on a dialog). */
+const trapStack: object[] = [];
+
 export function useOverlayFocus(
   panelRef: RefObject<HTMLElement | null>,
   active = true,
 ): void {
   useEffect(() => {
     if (!active) return;
+    const id = {};
+    trapStack.push(id);
     const previous = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Tab" || !panelRef.current) return;
+      if (trapStack[trapStack.length - 1] !== id) return;
       const focusable = focusableWithin(panelRef.current);
       event.preventDefault();
       if (!focusable.length) return;
@@ -76,6 +82,8 @@ export function useOverlayFocus(
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      const index = trapStack.lastIndexOf(id);
+      if (index !== -1) trapStack.splice(index, 1);
       if (previous?.isConnected) previous.focus();
     };
   }, [panelRef, active]);

@@ -1,18 +1,36 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { ReportingPeriodService } from './reporting-period.service';
 
 describe('ReportingPeriodService', () => {
   const selectQueue: unknown[][] = [];
+  const events: string[] = [];
+  const lockedConditions: unknown[] = [];
   const chain = (rows: unknown[]) => {
+    let condition: unknown;
     const self: any = {
-      from: () => self, where: () => self, orderBy: () => self, offset: () => self, limit: async () => rows,
+      from: () => self,
+      where: (next: unknown) => { condition = next; return self; },
+      orderBy: () => self,
+      offset: () => self,
+      limit: async () => rows,
+      for: (mode: string) => { events.push(`lock:${mode}`); lockedConditions.push(condition); return self; },
       then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej),
     };
     return self;
   };
   const values = jest.fn(async () => undefined);
-  const db = { select: jest.fn(() => chain(selectQueue.shift() ?? [])), insert: jest.fn(() => ({ values })) };
+  const set = jest.fn(() => ({ where: jest.fn(async () => { events.push('update'); }) }));
+  const db: any = {
+    select: jest.fn(() => chain(selectQueue.shift() ?? [])),
+    insert: jest.fn(() => ({ values })),
+    update: jest.fn(() => ({ set })),
+    transaction: jest.fn(async (work: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
+      events.push('transaction');
+      return work(db);
+    }),
+  };
   const service = new ReportingPeriodService(transactionCls(db), { log: jest.fn() } as any);
   const september = { company_id: 'co-1', period_code: '2026-09', start_date: '2026-08-30', end_date: '2026-09-26' };
 
@@ -21,6 +39,11 @@ describe('ReportingPeriodService', () => {
     values.mockClear();
     db.select.mockClear();
     db.insert.mockClear();
+    db.update.mockClear();
+    db.transaction.mockClear();
+    set.mockClear();
+    events.length = 0;
+    lockedConditions.length = 0;
   });
 
   it('refuses an End Date that is not a Saturday before reading anything', async () => {
@@ -58,7 +81,111 @@ describe('ReportingPeriodService', () => {
     expect(out.created).toHaveLength(11);
     expect(out.skipped).toEqual([{ period_code: '2026-09', reason: 'already exists' }]);
     const rows = (values.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
-    expect(rows[0]).toMatchObject({ company_id: 'co-1', period_code: '2026-07', start_date: '2026-06-28', end_date: '2026-07-25' });
+    expect(rows[0]).toMatchObject({
+      company_id: 'co-1', period_code: '2026-07', start_date: '2026-06-28', end_date: '2026-07-25',
+      status: 'DRAFT', is_active: false,
+    });
+  });
+
+  it('revalidates an edited draft before explicit activation', async () => {
+    const invalid = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-25', stock_take_date: '2026-09-25',
+      production_start_date: '2026-09-26', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([invalid], [invalid]);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' })).rejects.toThrow(BadRequestException);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses explicit activation when the reviewed draft overlaps an active period', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft, {
+      period_id: 'p8', tenant_id: 'tenant-1', company_id: 'co-1', period_code: 'AUG-26',
+      start_date: '2026-08-01', end_date: '2026-09-05', stock_take_date: '2026-09-05',
+      production_start_date: '2026-09-06', business_year: '2026-27', status: 'ACTIVE', is_active: true,
+    }]);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' })).rejects.toThrow(ConflictException);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('activates a valid reviewed draft only through the explicit action', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft], [{ ...draft, status: 'ACTIVE', is_active: true }]);
+
+    await service.activate('p9', 'tenant-1', { userId: 'u' });
+
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'ACTIVE', is_active: true, updated_by: 'u' }));
+  });
+
+  it('locks the exact tenant/company calendar inside a transaction before validating and updating', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], [draft], [{ ...draft, status: 'ACTIVE', is_active: true }]);
+
+    await service.activate('p9', 'tenant-1', { userId: 'u' });
+
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(expect.arrayContaining(['transaction', 'lock:update', 'update']));
+    expect(events.indexOf('transaction')).toBeLessThan(events.indexOf('lock:update'));
+    expect(events.indexOf('lock:update')).toBeLessThan(events.indexOf('update'));
+    expect(lockedConditions).toHaveLength(1);
+    const locked = new MySqlDialect().sqlToQuery(lockedConditions[0] as any);
+    expect(locked.sql).toMatch(/`tenant_id` = .*`company_id` = .*`deleted_at` is null/);
+    expect(locked.params).toEqual(['tenant-1', 'co-1']);
+  });
+
+  it('re-reads the target under the company lock and does not update when it disappeared', async () => {
+    const draft = {
+      period_id: 'p9', tenant_id: 'tenant-1', company_id: 'co-1', period_code: '2026-09',
+      start_date: '2026-08-30', end_date: '2026-09-26', stock_take_date: '2026-09-26',
+      production_start_date: '2026-09-27', business_year: '2026-27', status: 'DRAFT', is_active: false,
+    };
+    selectQueue.push([draft], []);
+
+    await expect(service.activate('p9', 'tenant-1', { userId: 'u' }))
+      .rejects.toThrow('Reporting period is not available in this workspace.');
+
+    expect(events).toContain('lock:update');
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite an edited draft when generation is repeated', async () => {
+    selectQueue.push([{
+      period_id: 'p9', period_code: '2026-09', start_date: '2026-08-23', end_date: '2026-09-26',
+      stock_take_date: '2026-09-20', is_active: false, status: 'DRAFT',
+    }]);
+
+    const out = await service.generate({ company_id: 'co-1', business_year_start: 2026 }, 'tenant-1', { userId: 'u' });
+
+    expect(out.created).not.toContain('2026-09');
+    expect(out.skipped).toContainEqual({ period_code: '2026-09', reason: 'already exists' });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate an equivalent draft whose reviewer changed only its code', async () => {
+    selectQueue.push([{
+      period_id: 'p9', period_code: 'SEP-26', start_date: '2026-08-30', end_date: '2026-09-26',
+      stock_take_date: '2026-09-26', production_start_date: '2026-09-27', is_active: false, status: 'DRAFT',
+    }]);
+
+    const out = await service.generate({ company_id: 'co-1', business_year_start: 2026 }, 'tenant-1', { userId: 'u' });
+
+    expect(out.created).not.toContain('2026-09');
+    expect(out.skipped).toContainEqual({ period_code: '2026-09', reason: 'equivalent draft exists as SEP-26' });
   });
 
   it('generate skips a period that would overlap one the admin edited by hand', async () => {
@@ -68,5 +195,43 @@ describe('ReportingPeriodService', () => {
       { period_code: '2026-08', reason: 'overlaps SEP-26' },
       { period_code: '2026-09', reason: 'overlaps SEP-26' },
     ]));
+  });
+
+  describe('close (r31) for a tenant with a feed mill', () => {
+    const sep = { period_id: 'p-sep', company_id: 'co-1', period_code: '2026-09', period_status: 'OPEN', stock_take_date: '2026-09-26', start_date: '2026-08-30', end_date: '2026-09-26' };
+    const farmAndMill = [{ location_id: 'farm-1', code: 'FARM-1' }, { location_id: 'mill-1', code: 'MILL-1' }];
+    // Rows of the active SILO/BIN query: parent = the farm or mill, farm_id = the same (what a count can use).
+    const countable = (...ids: string[]) => ids.map((id) => ({ parent_location_id: id, farm_id: id }));
+    const take = (farm_id: string, status = 'POSTED') => ({ farm_id, count_type: 'MONTHLY', reporting_period_id: 'p-sep', status });
+
+    it('is satisfiable once the farm AND the mill each have a POSTED monthly stock take', async () => {
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).resolves.toBeDefined();
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ period_status: 'CLOSED' }));
+    });
+
+    it('is refused, naming the mill, while the mill take is missing or not yet posted', async () => {
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
+      selectQueue.length = 0;
+      selectQueue.push([sep], farmAndMill, countable('farm-1', 'mill-1'), [take('farm-1'), take('mill-1', 'APPROVED')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/MILL-1/);
+    });
+
+    it('does not demand a take from a farm with no active silo, and reports it as nothing to count', async () => {
+      const three = [...farmAndMill, { location_id: 'farm-2', code: 'FARM-2' }];
+      // farm-2 has a silo row whose farm_id is NULL: a count cannot use it, so it is not countable.
+      selectQueue.push([sep], three, [...countable('farm-1', 'mill-1'), { parent_location_id: 'farm-2', farm_id: null }],
+        [take('farm-1'), take('mill-1')], [{ ...sep, period_status: 'CLOSED' }]);
+      const closed: any = await service.close('p-sep', 'tenant-1', { userId: 'u' });
+      expect(closed.nothing_to_count).toEqual(['FARM-2']);
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ period_status: 'CLOSED' }));
+    });
+
+    it('still refuses while a farm that has a silo lacks its take', async () => {
+      const three = [...farmAndMill, { location_id: 'farm-2', code: 'FARM-2' }];
+      selectQueue.push([sep], three, countable('farm-1', 'mill-1', 'farm-2'), [take('farm-1'), take('mill-1')]);
+      await expect(service.close('p-sep', 'tenant-1', { userId: 'u' })).rejects.toThrow(/FARM-2/);
+    });
   });
 });

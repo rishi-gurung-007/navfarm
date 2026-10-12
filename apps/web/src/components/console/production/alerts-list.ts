@@ -7,6 +7,17 @@
 export type AlertKind = "BATCH" | "FEED";
 export type AlertState = "OPEN" | "READ" | "ACKNOWLEDGED" | "RESOLVED";
 
+/** W2D W11: what the alert is about — a silo, a requisition or a batch — so the list can link it. */
+export type AlertSubjectType = "SILO" | "REQUISITION" | "BATCH";
+export interface AlertSubject {
+  type: AlertSubjectType;
+  id: string;
+  /** A readable number when the API sends one (a batch alert's batch_no); null otherwise. */
+  code: string | null;
+}
+
+const SUBJECT_TYPES: AlertSubjectType[] = ["SILO", "REQUISITION", "BATCH"];
+
 export interface AlertRow {
   key: string;
   kind: AlertKind;
@@ -20,6 +31,7 @@ export interface AlertRow {
   raisedAt: string;
   raisedUtc: boolean;
   state: AlertState;
+  subject: AlertSubject | null;
 }
 
 export function fromBatchAlert(a: Record<string, any>, farmCodeOf: (farmId: string | null) => string | null): AlertRow {
@@ -37,6 +49,7 @@ export function fromBatchAlert(a: Record<string, any>, farmCodeOf: (farmId: stri
     raisedAt: a.created_at ?? "",
     raisedUtc: false,
     state: a.is_read ? "READ" : "OPEN",
+    subject: a.batch_id ? { type: "BATCH", id: String(a.batch_id), code: a.batch_no ?? null } : null,
   };
 }
 
@@ -54,6 +67,9 @@ export function fromFeedAlert(a: Record<string, any>): AlertRow {
     raisedAt: a.last_notified_at ?? a.raised_at ?? "",
     raisedUtc: true,
     state: a.status === "RESOLVED" ? "RESOLVED" : a.acknowledged_at ? "ACKNOWLEDGED" : "OPEN",
+    subject: a.subject_id && SUBJECT_TYPES.includes(a.subject_type)
+      ? { type: a.subject_type as AlertSubjectType, id: String(a.subject_id), code: null }
+      : null,
   };
 }
 

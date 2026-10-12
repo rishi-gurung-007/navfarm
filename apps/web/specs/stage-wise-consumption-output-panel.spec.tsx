@@ -152,9 +152,10 @@ describe('StageWiseConsumptionOutputPanel', () => {
   it('removes Log Consumption and Recalculate buttons while retaining Export button', async () => {
     render(<StageWiseConsumptionOutputPanel />);
 
-    // Wait for batch data to load
+    // A generic Batch selector shows the batch name after selection; its code
+    // remains available in the open dropdown.
     await waitFor(() => {
-      expect(screen.getByText(/BATCH-000001/)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'swBatch' }).textContent).toBe('Sow Breeding Batch (Large White)');
     });
 
     // Ensure removed buttons are NOT in the document
@@ -171,7 +172,7 @@ describe('StageWiseConsumptionOutputPanel', () => {
     render(<StageWiseConsumptionOutputPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText(/BATCH-000001/)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'swBatch' }).textContent).toBe('Sow Breeding Batch (Large White)');
     });
 
     // Activity line tabs
@@ -203,7 +204,7 @@ describe('StageWiseConsumptionOutputPanel', () => {
     render(<StageWiseConsumptionOutputPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText(/BATCH-000001/)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'swBatch' }).textContent).toBe('Sow Breeding Batch (Large White)');
     });
 
     const photoTab = screen.getByRole('button', { name: /Photo Uploader/i });

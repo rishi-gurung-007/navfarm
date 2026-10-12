@@ -323,6 +323,35 @@ describe('BreedService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('refuses a farm override whose farm belongs to another company', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1', company_id: 'co-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ location_id: 'farm-X', company_id: 'co-2', location_type: 'FARM' }]) }) }) });
+
+      await expect(
+        service.createLifecycleStage(
+          { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, farm_id: 'farm-X' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/farm/i);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a farm override that is not a FARM location', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ breed_id: 'breed-1', company_id: 'co-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_id: 'stage-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ location_id: 'shed-1', company_id: 'co-1', location_type: 'SHED' }]) }) }) });
+
+      await expect(
+        service.createLifecycleStage(
+          { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, farm_id: 'shed-1' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/farm/i);
+    });
+
     it('should create a valid lifecycle stage', async () => {
       mockDbSelect
         .mockReturnValueOnce({
@@ -361,6 +390,43 @@ describe('BreedService', () => {
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result.lifecycle_id).toBe('lc-1');
+    });
+
+    it('stores kpi_alert_period and the average_value/uom keys of each KPI line', async () => {
+      // Every lookup (breed, stage, KPI metric, re-read) resolves to this one row.
+      const row = { metric_code: 'ADG', breed_id: 'breed-1', stage_id: 'stage-1', lifecycle_id: 'lc-1' };
+      const chain: any = { then: (res: any, rej: any) => Promise.resolve([row]).then(res, rej) };
+      for (const k of ['from', 'where', 'limit', 'leftJoin', 'orderBy']) chain[k] = jest.fn().mockReturnValue(chain);
+      mockDbSelect.mockReturnValue(chain);
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+      const lines = [{ metric: 'ADG', uom: 'G', lower_limit: 400, upper_limit: 600, average_value: 500, severity: 'WARNING' }];
+      await service.createLifecycleStage(
+        { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, kpi_alert_period: 'MONTHLY', kpi_thresholds: lines } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+      const inserted = values.mock.calls[0]?.[0];
+      expect(inserted.kpi_alert_period).toBe('MONTHLY');
+      expect(JSON.parse(inserted.kpi_thresholds)[0]).toMatchObject({ uom: 'G', average_value: 500 });
+    });
+
+    it.each([
+      [{ tolerance_pct: 5 }, 'go together'],
+      [{ tolerance_type: 'UPPER' }, 'go together'],
+      [{ tolerance_pct: 5, tolerance_type: 'UPPER', average_value: null }, 'Average Value'],
+    ])('refuses an incomplete KPI tolerance %j', async (extra, message) => {
+      const row = { metric_code: 'ADG', breed_id: 'breed-1', stage_id: 'stage-1', lifecycle_id: 'lc-1' };
+      const chain: any = { then: (res: any, rej: any) => Promise.resolve([row]).then(res, rej) };
+      for (const k of ['from', 'where', 'limit', 'leftJoin', 'orderBy']) chain[k] = jest.fn().mockReturnValue(chain);
+      mockDbSelect.mockReturnValue(chain);
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      const line = { metric: 'ADG', lower_limit: 400, upper_limit: 600, average_value: 500, severity: 'WARNING', ...extra };
+      await expect(service.createLifecycleStage(
+        { breed_id: 'breed-1', stage_id: 'stage-1', calc_unit: 'WEEK', period_from: 1, period_to: 4, kpi_thresholds: [line] } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      )).rejects.toThrow(message);
     });
 
     // Found on the test server (Porta Farm): a lifecycle row listed fine but

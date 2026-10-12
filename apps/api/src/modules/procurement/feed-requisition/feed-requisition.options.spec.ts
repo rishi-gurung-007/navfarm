@@ -26,7 +26,8 @@ describe('FeedRequisitionService.options (F3)', () => {
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
+  const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
 
   beforeEach(() => {
     selectQueue.length = 0;
@@ -37,7 +38,7 @@ describe('FeedRequisitionService.options (F3)', () => {
     selectQueue.push(
       [
         { location_id: 'store-1', location_code: 'GRS/STORE-001', location_type: 'STORE' },
-        { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO' },
+        { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_name: 'Weaner silo', location_type: 'SILO' },
       ],
       [{ item_id: 'feed-1', item_code: 'ICAT-004-ITM-0001', item_name: 'Weaner Mash', uom_primary: 'KG' }],
     );
@@ -45,7 +46,39 @@ describe('FeedRequisitionService.options (F3)', () => {
     expect(forecast.resolveFarm).toHaveBeenCalledWith('farm-grs', 'tenant-1', 'TENANT_ADMIN');
     expect(out.farmId).toBe('farm-grs');
     expect(out.destinations.map((d: any) => d.location_code)).toEqual(['GRS/SILO-001', 'GRS/STORE-001']);
+    expect(db.select.mock.calls[0][0]).toHaveProperty('location_name');
+    expect(out.destinations[0]).toMatchObject({ location_code: 'GRS/SILO-001', location_name: 'Weaner silo' });
     expect(out.items).toEqual([{ item_id: 'feed-1', item_code: 'ICAT-004-ITM-0001', item_name: 'Weaner Mash', uom_primary: 'KG' }]);
+  });
+});
+
+describe('FeedRequisitionService.options — feed_in_bags (Task 18b fix round 1)', () => {
+  const chain = (rows: unknown[]) => {
+    const self: any = { from: () => self, where: () => self, leftJoin: () => self, orderBy: () => self, limit: async () => rows,
+      then: (res: (v: unknown[]) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(rows).then(res, rej) };
+    return self;
+  };
+  const selectQueue: unknown[][] = [];
+  const db: any = { select: jest.fn(() => chain(selectQueue.shift() ?? [])), insert: jest.fn() };
+  const forecast: any = {
+    resolveFarm: jest.fn(async () => ({ farmId: 'farm-grs', companyId: 'co-1' })),
+    withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
+  };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, {} as any);
+
+  it('reads and returns each destination\'s feed_in_bags (true, false or null) so the New dialog applies the same Feed Type rule as feedTypeOf', async () => {
+    selectQueue.push(
+      [
+        { location_id: 'a', location_code: 'GRS/SILO-001', location_type: 'SILO', feed_in_bags: true },
+        { location_id: 'b', location_code: 'GRS/SILO-002', location_type: 'SILO', feed_in_bags: false },
+        { location_id: 'c', location_code: 'GRS/STORE-001', location_type: 'STORE', feed_in_bags: null },
+        { location_id: 'd', location_code: 'GRS/STORE-002', location_type: 'STORE' },
+      ],
+      [],
+    );
+    const out = await service.options('farm-grs', 'tenant-1', { userId: 'u', userType: 'TENANT_ADMIN' } as any);
+    expect(db.select.mock.calls[0][0]).toHaveProperty('feed_in_bags');
+    expect(out.destinations.map((d: any) => d.feed_in_bags)).toEqual([true, false, null, null]);
   });
 });
 
@@ -62,7 +95,8 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
     withFarmScope: jest.fn(async (_f: string, _c: string, work: () => Promise<unknown>) => work()),
     farmToday: jest.fn(async () => ({ today: serverToday(), timeZone: null })),
   };
-  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any);
+  const feedSettingsStub: any = { resolveForFeedPlanning: jest.fn(async () => ({ safetyStockKg: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0 })) };
+  const service = new FeedRequisitionService(transactionCls(db), forecast, {} as any, { evaluateFarmSafely: jest.fn() } as any, {} as any, {} as any, feedSettingsStub);
   const silo = { location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', farm_id: 'farm-grs', is_active: true, feed_in_bags: null, low_level_kg: null };
   const line = { destination_location_id: 'silo-1', item_id: 'item-x', quantity_kg: 3000, proposed_delivery_date: '2026-09-26' };
 
@@ -74,7 +108,7 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
   /** The item read answers with nothing whenever the row fails any of the three rules. */
   const refuses = async () => {
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }],
+      [{ location_code: 'GRS' }], // settings now come from FeedSettingsService, not location_master
       [silo],
       [],
     );
@@ -89,7 +123,7 @@ describe('FeedRequisitionService.createManual — the item must be the farm comp
 
   it('bounds the item read by company, type and state, not by tenant alone', async () => {
     selectQueue.push(
-      [{ location_code: 'GRS', feed_bulk_multiple_kg: 3000, feed_bag_size_kg: 50, feed_truck_target_kg: 30000, feed_production_weekday: 0 }],
+      [{ location_code: 'GRS' }], // settings now come from FeedSettingsService, not location_master
       [silo],
       [{ item_id: 'item-x', item_name: 'Weaner Mash' }],
     );
