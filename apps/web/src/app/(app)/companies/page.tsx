@@ -39,6 +39,16 @@ function StatusBadge({ status, t }: { status: string; t: (key: any) => string })
 }
 
 export default function CompaniesIndexPage() {
+  const [countries, setCountries] = useState<Array<{ iso3: string; country_name: string }>>([]);
+  useEffect(() => {
+    api.get("/country?limit=300&isActive=true")
+      .then((r: any) => {
+        const rows = (r?.data ?? r) as Array<{ iso3: string; country_name: string }>;
+        setCountries(Array.isArray(rows) ? [...rows].sort((a, b) => a.country_name.localeCompare(b.country_name)) : []);
+      })
+      .catch(() => setCountries([]));
+  }, []);
+
   const router = useRouter();
   const { t } = useLanguage();
   const { user, tenantId, companies, loading, error, reload } = useCompaniesPageData();
@@ -171,11 +181,10 @@ export default function CompaniesIndexPage() {
                 <label className="nf-text-label mb-1 block" style={S.sub}>{t("coFieldCountry")}</label>
                 <Select required value={createForm.country_id}
                   onChange={e => setCreateForm(f => ({ ...f, country_id: e.target.value }))}>
-                  <option value="IND">{t("coCountryIndia")}</option>
-                  <option value="USA">{t("coCountryUSA")}</option>
-                  <option value="GBR">{t("coCountryUK")}</option>
-                  <option value="ARE">{t("coCountryUAE")}</option>
-                  <option value="SGP">{t("coCountrySingapore")}</option>
+                  {/* Every country in the Country master (all ISO 3166-1, migration 0176; Rishi, 12 Oct). */}
+                  {(countries.length ? countries : [{ iso3: "IND", country_name: t("coCountryIndia") }]).map((c) => (
+                    <option key={c.iso3} value={c.iso3}>{c.country_name}</option>
+                  ))}
                 </Select>
               </div>
             </div>

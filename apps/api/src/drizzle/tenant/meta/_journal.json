@@ -1226,6 +1226,13 @@
       "when": 1792000000043,
       "tag": "0175_lifecycle_kpi_alert_period",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "5",
+      "when": 1792000000044,
+      "tag": "0176_all_iso_countries",
+      "breakpoints": true
     }
   ]
 }
