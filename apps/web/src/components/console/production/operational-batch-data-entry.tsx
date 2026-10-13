@@ -251,7 +251,13 @@ export default function OperationalBatchDataEntry() {
       const key = entryKey(line.line_id, animalId);
       const raw = dataEntryValues[key];
       const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), 0);
-      if (animalId === '__ALL__') return { kind: 'ALL' as const, key, required, picks: [] as MortalityPick[], animals: [], label: '' };
+      if (animalId === '__ALL__') {
+        // "All animals": several can die together (Rishi, 13 Oct) - pick which of the stage's pending animals died.
+        const animals = (selectedStage?.animals || [])
+          .filter((a: Row) => !a.is_posted)
+          .map((a: Row) => ({ animal_id: a.animal_id as string, animal_code: (a.animal_code ?? a.animal_id) as string, rfid_tag: (a.rfid_tag ?? null) as string | null }));
+        return { kind: 'ALL' as const, key, required, picks: dataEntryMortality[key] ?? [], animals, label: '' };
+      }
       const label = (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.animal_code ?? '';
       return { kind: 'ANIMAL' as const, key, required, picks: countOnlyPicks(dataEntryMortality[key] ?? [], Math.min(required, 1)), animals: [], label };
     }
@@ -266,7 +272,7 @@ export default function OperationalBatchDataEntry() {
   /** True when the line needs nothing more for its deaths (or is not a mortality line). */
   const mortalityOk = (need: ReturnType<typeof mortalityNeed>) => {
     if (!need || need.required <= 0) return true;
-    if (need.kind === 'ALL' || (need.kind === 'ANIMAL' && need.required > 1)) return false;
+    if (need.kind === 'ANIMAL' && need.required > 1) return false;
     return mortalityPicksComplete(need.picks, need.required);
   };
   const mortalityIncomplete = dataEntryLines.some((line) => !mortalityOk(mortalityNeed(line)));
@@ -1120,9 +1126,17 @@ export default function OperationalBatchDataEntry() {
           const key = entryKey(line.line_id, '__ALL__');
           // A per-batch line holds the stage total here: each animal gets its share of it.
           const shares = isTotalBatch(line) && !isTextCapture(line) ? splitTotal(Number(dataEntryValues[key]), animalIds.length) : null;
+          // Mortality for all animals: each chosen animal records its own death with its weight and reason, the rest 0.
+          const mortAll = mortalityNeed(line, '__ALL__');
           animalIds.forEach((animalId: string, i: number) => {
             const payload = buildPayload(line, key, animalId);
             if (shares) payload.entered_value = shares[i];
+            if (mortAll?.kind === 'ALL') {
+              const pick = mortAll.picks.find((p) => p.animal_id === animalId);
+              payload.entered_value = pick ? 1 : 0;
+              if (pick) payload.mortality_animals = mortalityPayload([{ ...pick, animal_id: '' }]);
+              else delete payload.mortality_animals;
+            }
             tasks.push(api.post(`/batch/${currentBatch.id}/daily-data`, payload));
           });
         }
@@ -1804,10 +1818,10 @@ export default function OperationalBatchDataEntry() {
           {(() => {
             const need = mortalityNeed(line, animalId);
             if (!need || need.required <= 0) return null;
-            if (need.kind === 'ALL' || (need.kind === 'ANIMAL' && need.required > 1)) {
+            if (need.kind === 'ANIMAL' && need.required > 1) {
               return (
                 <p className="mt-1 text-xs font-medium text-red-600" data-testid="mortality-animal-wise-blocked">
-                  {t(need.kind === 'ALL' ? 'deMortAllAnimals' : 'deMortOneAnimal')}
+                  {t('deMortOneAnimal')}
                 </p>
               );
             }

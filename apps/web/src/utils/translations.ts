@@ -4640,7 +4640,6 @@ export const translations = {
     deLockStageDay: "Lock Stage Day",
     deMortAnimalHelp: "Enter the dead weight and the reason for {{animal}}.",
     deMortThisAnimal: "This animal",
-    deMortAllAnimals: "Enter mortality on the animal that died: choose it in Animal Selection, not “All animals”.",
     deMortOneAnimal: "One animal can die only once — enter 1.",
     // LFO (11 Oct)
     lcFarmOverride: "Farm (override)",
