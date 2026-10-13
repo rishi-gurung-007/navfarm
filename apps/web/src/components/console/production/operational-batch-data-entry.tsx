@@ -171,6 +171,8 @@ interface BatchMeta {
   stageDates: string;
   assignedCount: number;
   currentCount: number;
+  /** True when currentCount is the batch's own closing quantity, which every death already lowers (13 Oct). */
+  closingKept?: boolean;
   mortalityCount: number;
   transferredCount: number;
   lobId: string | null;
@@ -736,6 +738,7 @@ export default function OperationalBatchDataEntry() {
             assignedCount: Number(b.opening_quantity) || 0,
             currentCount:
               Number(b.closing_quantity ?? b.opening_quantity ?? 0) || 0,
+            closingKept: b.closing_quantity != null,
             mortalityCount: 0,
             transferredCount: 0,
             lobId: b.lob_id ?? null,
@@ -1019,6 +1022,7 @@ export default function OperationalBatchDataEntry() {
                           batchData.opening_quantity ??
                           b.currentCount,
                       ) || b.currentCount,
+                    closingKept: batchData.closing_quantity != null,
                   }
                 : b,
             ),
@@ -1139,8 +1143,12 @@ export default function OperationalBatchDataEntry() {
 
   // Calculated Dynamic Metrics
   const batchMortality = currentBatch?.mortalityCount ?? 0;
+  // The closing quantity already falls with every death (a mortality posting lowers it), so subtracting the deaths
+  // again counted them twice. Only a batch without one is opening less deaths.
   const currentHeadCount = currentBatch
-    ? Math.max(0, currentBatch.currentCount - batchMortality)
+    ? currentBatch.closingKept
+      ? currentBatch.currentCount
+      : Math.max(0, currentBatch.currentCount - batchMortality)
     : 0;
 
   const dataEntryCanSave = (line: Row, animalId?: string) => {

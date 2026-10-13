@@ -338,6 +338,10 @@ async function run() {
         await tdb.insert(schema.feedPlanningSetting).values({ ...rest, setting_id: crypto.randomUUID(), company_id: targetCompany, tenant_id: tenantId, created_by: null, updated_by: null });
       }
       console.log(`  ${masters.copies.length} master row(s) written.`);
+      // A company whose setup wizard is unfinished opens on the wizard, not the console (Rishi, 13 Oct): the seeded
+      // test company is marked set up so it can be used straight away. Only the target company row changes.
+      await tdb.update(schema.companyMaster).set({ onboarding_status: 'COMPLETED' }).where(eq(schema.companyMaster.company_id, targetCompany));
+      console.log('  company setup marked COMPLETED (opens in the console, not the setup wizard).');
     } catch (err) { await tgt.rollback(); throw err; }
     if (verify) {
       await tgt.rollback();
