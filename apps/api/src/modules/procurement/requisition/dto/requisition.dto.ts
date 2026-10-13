@@ -146,12 +146,12 @@ export class CreateRequisitionDto {
   @IsUUID()
   main_location_id?: string;
 
-  @ApiPropertyOptional({ description: 'Requester department — a Cost Center Master row of type DEPARTMENT; defaults to the signed-in user’s department identity' })
+  @ApiPropertyOptional({ description: 'Requester department — a Cost Centre Master row of type DEPARTMENT; defaults to the signed-in user’s department identity' })
   @IsOptional()
   @IsUUID()
   requester_department_id?: string;
 
-  @ApiPropertyOptional({ description: 'Sender department — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)' })
+  @ApiPropertyOptional({ description: 'Sender department — a Cost Centre Master row of type DEPARTMENT (decisions, 1 Oct)' })
   @IsOptional()
   @IsUUID()
   sender_department_id?: string;

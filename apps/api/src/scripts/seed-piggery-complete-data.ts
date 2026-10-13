@@ -192,7 +192,7 @@ export async function seedPiggeryData() {
     console.log('\n📦 Seeding Company 1 (Apex Swine Genetics & Breeding)...');
     const comp1Id = company1.company_id;
 
-    // 1.1 Cost Centers
+    // 1.1 Cost Centres
     const ccData1 = [
       { code: 'CC-APEX-01', name: 'Apex Nucleus Breeding Complex', type: 'FARM', parentCode: null },
       { code: 'CC-BREEDING', name: 'Breeding & Gestation Unit', type: 'DEPARTMENT', parentCode: 'CC-APEX-01' },
@@ -520,7 +520,7 @@ export async function seedPiggeryData() {
     console.log('\n📦 Seeding Company 2 (Highland Commercial Porkers & Processing)...');
     const comp2Id = company2.company_id;
 
-    // 2.1 Cost Centers for Company 2
+    // 2.1 Cost Centres for Company 2
     const ccData2 = [
       { code: 'CC-HIGH-01', name: 'Highland Commercial Swine Facility', type: 'FARM', parentCode: null },
       { code: 'CC-NURSERY', name: 'Commercial Nursery Unit', type: 'DEPARTMENT', parentCode: 'CC-HIGH-01' },

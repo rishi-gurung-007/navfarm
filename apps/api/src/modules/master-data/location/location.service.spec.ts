@@ -1228,16 +1228,16 @@ describe('LocationService canonical hierarchy', () => {
     expect(res[0].current_occupancy).toBe(58);
   });
 
-  // Department on a location is the Cost Center Master identity of type
+  // Department on a location is the Cost Centre Master identity of type
   // DEPARTMENT (decisions.md, 1 Oct) — the sender department of a Store
   // requisition is read from here, never compared as free text.
-  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+  describe('department identity (Cost Centre Master, type DEPARTMENT)', () => {
     const departmentRow = (over: Record<string, unknown> = {}) => ({
       cost_center_id: 'cc-dept', tenant_id: 'tenant-1', company_id: 'comp-1',
       cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
     });
 
-    it('refuses a department that is not an active DEPARTMENT cost center', async () => {
+    it('refuses a department that is not an active DEPARTMENT cost centre', async () => {
       selectResults.push(
         [company],
         [departmentRow({ cost_center_type: 'WAREHOUSE' })],
@@ -1246,7 +1246,7 @@ describe('LocationService canonical hierarchy', () => {
         company_id: 'comp-1', location_name: 'Main Farm', location_address: 'Farm Road',
         location_type: 'FARM', max_capacity: 100, capacity_uom: 'HEAD',
         department_id: 'cc-dept',
-      }, 'tenant-1')).rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+      }, 'tenant-1')).rejects.toThrow('Department must be an active DEPARTMENT cost centre of this company.');
       expect(txInsert).not.toHaveBeenCalled();
     });
 
@@ -1264,20 +1264,20 @@ describe('LocationService canonical hierarchy', () => {
       expect(insertedRow.department_id).toBe('cc-dept');
     });
 
-    it('refuses an update whose department is not a DEPARTMENT cost center', async () => {
+    it('refuses an update whose department is not a DEPARTMENT cost centre', async () => {
       selectResults.push(
         [{ ...farmParent(), parent_location_id: null, storage_type: null, department_id: null }],
         [farmType],
         [departmentRow({ cost_center_type: 'PROJECT' })],
       );
       await expect(service.update('farm-1', { department_id: 'cc-dept' }, 'tenant-1'))
-        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+        .rejects.toThrow('Department must be an active DEPARTMENT cost centre of this company.');
       expect(txUpdate).not.toHaveBeenCalled();
     });
   });
 
   // Each farm has its own cost centre (decisions, 11 Oct).
-  describe('farm cost centre (Cost Center Master)', () => {
+  describe('farm cost centre (Cost Centre Master)', () => {
     const ccRow = (over: Record<string, unknown> = {}) => ({
       cost_center_id: 'cc-farm', tenant_id: 'tenant-1', company_id: 'comp-1',
       is_active: true, deleted_at: null, ...over,
@@ -1290,13 +1290,13 @@ describe('LocationService canonical hierarchy', () => {
 
     it('refuses a cost centre of another company', async () => {
       selectResults.push([company], [ccRow({ company_id: 'comp-2' })]);
-      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost centre of this company.');
       expect(txInsert).not.toHaveBeenCalled();
     });
 
     it('refuses an inactive cost centre', async () => {
       selectResults.push([company], [ccRow({ is_active: false })]);
-      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost center of this company.');
+      await expect(createFarm()).rejects.toThrow('Cost Centre must be an active cost centre of this company.');
     });
 
     it('refuses a cost centre on a location that is not a FARM or MILL', async () => {
@@ -1324,7 +1324,7 @@ describe('LocationService canonical hierarchy', () => {
         [ccRow({ company_id: 'comp-2' })],
       );
       await expect(service.update('farm-1', { cost_center_id: '11111111-1111-4111-8111-111111111111' }, 'tenant-1'))
-        .rejects.toThrow('Cost Centre must be an active cost center of this company.');
+        .rejects.toThrow('Cost Centre must be an active cost centre of this company.');
       expect(txUpdate).not.toHaveBeenCalled();
     });
   });

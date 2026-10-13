@@ -527,7 +527,7 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   // in D365BC anyway, so nothing here should be minting account numbers.
   // Cost centres follow for the same reason: CC-FEEDMILL-A says which mill,
   // CC-001 says nothing, and the pairing to a GL account is done by hand.
-  { series_code: 'COST_CENTER', series_name: 'Cost Center Code (typed, not generated)', document_type: 'COST_CENTER', prefix: 'CC', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, is_active: false },
+  { series_code: 'COST_CENTER', series_name: 'Cost Centre Code (typed, not generated)', document_type: 'COST_CENTER', prefix: 'CC', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, is_active: false },
   { series_code: 'GL_ACCOUNT', series_name: 'GL Account Code (typed; BC-owned catalog)', document_type: 'GL_ACCOUNT', prefix: 'GL', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true, is_active: false },
   { series_code: 'GL_MAPPING', series_name: 'GL Mapping Code', document_type: 'GL_MAPPING', prefix: 'GLMAP', separator: '-', seq_length: 3, reset_frequency: 'NEVER', allow_manual: true },
   // Lot and Serial tracking series (docs/decisions.md & TDD row 11-12).

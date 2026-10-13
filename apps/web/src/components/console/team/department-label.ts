@@ -1,5 +1,5 @@
 /**
- * The department a team row shows: the Cost Center (type DEPARTMENT) name
+ * The department a team row shows: the Cost Centre (type DEPARTMENT) name
  * resolved from `department_id`, falling back to the legacy free-text
  * `department` only when no id is set.
  */

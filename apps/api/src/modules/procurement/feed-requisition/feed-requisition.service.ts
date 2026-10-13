@@ -2084,7 +2084,7 @@ export class FeedRequisitionService implements OnModuleInit {
   /**
    * A1 (10 Oct), Req. §1 r37/r39: who raised the requisition and every
    * transfer it is linked to. The login is user_master.email and the
-   * department the Cost Center Master name, as the common requisition
+   * department the Cost Centre Master name, as the common requisition
    * resolves requester_login (requisition.service.ts findOne). A forecast or
    * run-made requisition records no requester, so its creator stands in, with
    * the creator's own department.

@@ -502,7 +502,7 @@ export interface MasterDataConfig {
    * A view of a shared table fixed to one value of a column: the list is
    * requested with `queryParam=value` and every saved row carries
    * `payloadKey=value`, without the column appearing in the form. Departments
-   * are the Cost Center table fixed to type DEPARTMENT.
+   * are the Cost Centre table fixed to type DEPARTMENT.
    */
   fixedFilter?: { queryParam: string; payloadKey: string; value: string };
 }

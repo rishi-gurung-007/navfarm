@@ -4,7 +4,7 @@
  * The field rules here follow Rishi's requisition specification as recorded in
  * docs/decisions.md (1 Oct): type is Item/Fixed Asset/Service, Store applies
  * only to Item while Fixed Asset and Service use Purchase, Department is a
- * Cost Center Master row of type DEPARTMENT (never free text), Direct Transfer
+ * Cost Centre Master row of type DEPARTMENT (never free text), Direct Transfer
  * needs the explicit permission, and approval/document/fulfilment states are
  * separate. Where a rule has no client document behind it (line-level field
  * shape, quantity defaults) it is ours and says so in requisition.rules.ts.
@@ -310,7 +310,7 @@ describe('state projection and legacy status compatibility', () => {
   });
 });
 
-describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+describe('department identity (Cost Centre Master, type DEPARTMENT)', () => {
   const row = (over: Record<string, unknown> = {}) => ({
     tenant_id: 'tenant-1', company_id: 'co-1', cost_center_type: 'DEPARTMENT',
     is_active: true, deleted_at: null, ...over,
@@ -318,7 +318,7 @@ describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
 
   it('accepts an active DEPARTMENT row of the tenant and company', () => {
     expect(usableDepartment(row(), 'tenant-1', 'co-1')).toBe(true);
-    // A null-company cost center is tenant-shared and usable in any company.
+    // A null-company cost centre is tenant-shared and usable in any company.
     expect(usableDepartment(row({ company_id: null }), 'tenant-1', 'co-2')).toBe(true);
   });
 

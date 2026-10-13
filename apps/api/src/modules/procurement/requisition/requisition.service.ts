@@ -232,7 +232,7 @@ export class RequisitionService {
       assertDirectTransfer({ docType, purpose, fromLocationId: dto.from_location_id, toLocationId: dto.to_location_id, hasPermission: callerDirectTransferAllowed });
     }
 
-    // A department is a Cost Center Master row of type DEPARTMENT, never free
+    // A department is a Cost Centre Master row of type DEPARTMENT, never free
     // text (decisions, 1 Oct) — both identities are checked before any write.
     if (requesterDepartmentId) {
       await assertDepartmentIdentity(this.db, {
@@ -1095,7 +1095,7 @@ export class RequisitionService {
    * WP1c: the Transfer Shipment/Receipt buttons are department gates (Rishi's
    * 4 Oct list): the posting user's user_master.department_id must equal the
    * From (shipment) / To (receipt) sub-location's location_master.department_id
-   * — a Cost Center identity, never text, and with no admin bypass (Rishi's
+   * — a Cost Centre identity, never text, and with no admin bypass (Rishi's
    * bound, decisions.md 2026-10-04). A row without that location (legacy,
    * farm-less) has nothing to check; the rule itself decides.
    */

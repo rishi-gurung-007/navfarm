@@ -219,7 +219,7 @@ describe('RequisitionService.create — supplied header and line fields are stor
   });
 });
 
-describe('RequisitionService.create — department identities are Cost Center rows of type DEPARTMENT', () => {
+describe('RequisitionService.create — department identities are Cost Centre rows of type DEPARTMENT', () => {
   it('does not check or keep a Sender Department sent on create (Rishi, 12 Oct: set at shipment)', async () => {
     const { db, selectResults, insertValues } = makeDb();
     selectResults.push(
@@ -229,7 +229,7 @@ describe('RequisitionService.create — department identities are Cost Center ro
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     // The only identity checked is the requester's (from User Setup) — the sender value is ignored.
     await expect(service.create(storeDto({ sender_department_id: 'cc-snd' }) as any, TENANT, { userId: 'u1' }))
-      .rejects.toThrow('Requester department must be an active DEPARTMENT cost center of this company.');
+      .rejects.toThrow('Requester department must be an active DEPARTMENT cost centre of this company.');
     expect(insertValues).toHaveLength(0);
   });
 
@@ -241,7 +241,7 @@ describe('RequisitionService.create — department identities are Cost Center ro
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
     await expect(service.create(storeDto() as any, TENANT, { userId: 'u1' }))
-      .rejects.toThrow('Requester department must be an active DEPARTMENT cost center of this company.');
+      .rejects.toThrow('Requester department must be an active DEPARTMENT cost centre of this company.');
     expect(insertValues).toHaveLength(0);
   });
 

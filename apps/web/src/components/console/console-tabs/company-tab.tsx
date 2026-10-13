@@ -1571,7 +1571,7 @@ export default function CompanyTab({
                   )}
 
 
-                  {/* departments TAB — the Cost Center master fixed to type DEPARTMENT */}
+                  {/* departments TAB — the Cost Centre master fixed to type DEPARTMENT */}
                   {settingsTab === "departments" && (
                     <MasterDataTable config={departmentMaster} showHeader={false} />
                   )}

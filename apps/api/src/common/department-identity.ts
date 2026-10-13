@@ -2,7 +2,7 @@
  * Department as a shared master identity (decisions.md, 1 Oct 2026):
  *
  *   "Department matching uses shared master identities rather than text
- *    comparison: Department is represented by a company Cost Center Master
+ *    comparison: Department is represented by a company Cost Centre Master
  *    row of type `DEPARTMENT`, and both users and locations reference that
  *    identity."
  *
@@ -29,7 +29,7 @@ export interface DepartmentIdentityRow {
 }
 
 /**
- * May this Cost Center row serve as the department identity of
+ * May this Cost Centre row serve as the department identity of
  * (tenantId, companyId)?
  *
  * - the row must be a DEPARTMENT, active and not soft-deleted;
@@ -70,6 +70,6 @@ export async function assertDepartmentIdentity(
     .where(eq(schema.costCenterMaster.cost_center_id, opts.departmentId))
     .limit(1);
   if (!usableDepartment(row, opts.tenantId, opts.companyId ?? null)) {
-    throw new BadRequestException(`${opts.label ?? 'Department'} must be an active DEPARTMENT cost center of this company.`);
+    throw new BadRequestException(`${opts.label ?? 'Department'} must be an active DEPARTMENT cost centre of this company.`);
   }
 }

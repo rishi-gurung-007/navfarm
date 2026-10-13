@@ -100,7 +100,7 @@ export function MemberDialog({
     employee_id: member?.employee_id || "",
     department: member?.department || "",
     // WP1c (Rishi's 4 Oct list, "User Setup defines department"): the identity
-    // the Transfer Shipment/Receipt rules compare — a Cost Center of type
+    // the Transfer Shipment/Receipt rules compare — a Cost Centre of type
     // DEPARTMENT, never free text (decisions, 1 Oct). The legacy `department`
     // text column stays for the records that already carry one.
     department_id: member?.department_id || "",
@@ -288,7 +288,7 @@ export function MemberDialog({
             </Field>
             <Field label={t("tmFieldDepartment")} htmlFor="tm-department-id"
               hint={departments.length ? undefined : t("tmNoDepartmentsHint")}>
-              {/* The rule reads this id, so it is a Cost Center picker. A
+              {/* The rule reads this id, so it is a Cost Centre picker. A
                   company with no DEPARTMENT cost centres yet shows the hint
                   rather than an empty box with no explanation. */}
               <SearchableEntitySelect

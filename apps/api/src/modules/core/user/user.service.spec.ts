@@ -244,18 +244,18 @@ describe('UserService user-type hierarchy', () => {
     });
   });
 
-  describe('department identity (Cost Center Master, type DEPARTMENT)', () => {
+  describe('department identity (Cost Centre Master, type DEPARTMENT)', () => {
     const departmentRow = (over: Record<string, unknown> = {}) => ({
       cost_center_id: 'cc-1', tenant_id: TENANT, company_id: COMPANY,
       cost_center_type: 'DEPARTMENT', is_active: true, deleted_at: null, ...over,
     });
 
-    it('refuses a department_id that is not an active DEPARTMENT cost center of the company', async () => {
+    it('refuses a department_id that is not an active DEPARTMENT cost centre of the company', async () => {
       selectResults.push([{ tenant_id: TENANT }]); // the named company is in the requester's tenant
       selectResults.push([{ location_id: FARM }]); // standard user needs its farm
       selectResults.push([departmentRow({ cost_center_type: 'FARM' })]);
       await expect(service.create({ ...createDto(), department_id: 'cc-1' }, requester('COMPANY_ADMIN')))
-        .rejects.toThrow('Department must be an active DEPARTMENT cost center of this company.');
+        .rejects.toThrow('Department must be an active DEPARTMENT cost centre of this company.');
       expect(values).not.toHaveBeenCalled();
     });
 
@@ -278,7 +278,7 @@ describe('UserService user-type hierarchy', () => {
       expect(values).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'cc-1' }));
     });
 
-    it('refuses an update that names a non-DEPARTMENT cost center', async () => {
+    it('refuses an update that names a non-DEPARTMENT cost centre', async () => {
       queueUser(target('COMPANY_ADMIN', 'requester-1'));
       selectResults.push([departmentRow({ cost_center_type: 'PROJECT' })]);
       await expect(service.update('requester-1', { department_id: 'cc-1' }, requester('COMPANY_ADMIN')))

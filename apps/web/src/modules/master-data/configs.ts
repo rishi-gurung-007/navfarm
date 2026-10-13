@@ -95,7 +95,7 @@ const location: MasterDataConfig = {
       key: "department_id", label: "Department", type: "select-entity",
       entityEndpoint: "/cost-center?costCenterType=DEPARTMENT", entityValueKey: "cost_center_id",
       entityLabelKeys: ["cost_center_code", "cost_center_name"],
-      helpText: "Optional owning department (Cost Center of type DEPARTMENT). Transfer Shipment and Receipt check it on the From and To sub-locations.",
+      helpText: "Optional owning department (Cost Centre of type DEPARTMENT). Transfer Shipment and Receipt check it on the From and To sub-locations.",
       // Rishi, 12 Oct: hidden from the Location form and table. Existing values stay (a hidden field is
       // never sent, so an edit keeps it) and Transfer Shipment/Receipt still check them.
       hideInForm: true, hideInTable: true,
@@ -415,7 +415,7 @@ const numberSeries: MasterDataConfig = {
         { value: "ITEM_ATTRIBUTE", label: "Item Attribute" },
         { value: "GL_ACCOUNT", label: "GL Account" },
         { value: "GL_MAPPING", label: "GL Mapping" },
-        { value: "COST_CENTER", label: "Cost Center" },
+        { value: "COST_CENTER", label: "Cost Centre" },
         { value: "BATCH", label: "Batch" },
         { value: "LOT", label: "Lot" },
         { value: "SERIAL", label: "Serial" },
@@ -2040,7 +2040,7 @@ const costCenter: MasterDataConfig = {
   owner: "BC",
   bcNote: "BBP-1 §1.8: \u201CDimensions are configured in D365BC and mirrored in NAVFarm dimension master via API sync. The dimensions (cost centre) will be created in NAVFarm same as in BC365.\u201D The primary mandatory dimension is Cost Centre = Farm Code.",
   key: "cost-center",
-  label: "Cost Centers",
+  label: "Cost Centres",
   description: "Dimensions for cost allocation and reporting.",
   apiBase: "/cost-center",
   idKey: "cost_center_id",
@@ -2060,17 +2060,17 @@ const costCenter: MasterDataConfig = {
     { key: "cost_center_code", label: "Code", type: "text", createOnly: true, required: true, placeholder: "DEPT-ADMIN" },
     { key: "cost_center_name", label: "Name", type: "text", required: true, placeholder: "Administrative Department" },
     {
-      key: "cost_center_type", label: "Cost Center Type", type: "select", required: true,
+      key: "cost_center_type", label: "Cost Centre Type", type: "select", required: true,
       options: ["DEPARTMENT", "FARM", "WAREHOUSE", "PROJECT", "OTHER"].map((v) => ({ value: v, label: v })),
     },
-    { key: "parent_cost_center_id", label: "Parent Cost Center", type: "select-entity", entityEndpoint: "/cost-center", entityValueKey: "cost_center_id", entityLabelKeys: ["cost_center_code", "cost_center_name"] },
+    { key: "parent_cost_center_id", label: "Parent Cost Centre", type: "select-entity", entityEndpoint: "/cost-center", entityValueKey: "cost_center_id", entityLabelKeys: ["cost_center_code", "cost_center_name"] },
   ],
 };
 
 /**
- * Departments (Rishi, 12 Oct): the company's Cost Center rows of type
+ * Departments (Rishi, 12 Oct): the company's Cost Centre rows of type
  * DEPARTMENT, managed from Company Settings > Departments. Not a master-data
- * page of its own (it is not in MASTER_DATA_CONFIGS); it is the Cost Center
+ * page of its own (it is not in MASTER_DATA_CONFIGS); it is the Cost Centre
  * master with the type fixed, so the same API, permission and validation apply.
  */
 export const departmentMaster: MasterDataConfig = {

@@ -5,7 +5,7 @@
  * - Type is Item, Fixed Asset or Service; Store applies only to Item while
  *   Fixed Asset and Service use Purchase (decisions.md, 1 Oct 2026; spec
  *   "Requisitions").
- * - Department identity is a Cost Center Master row of type DEPARTMENT
+ * - Department identity is a Cost Centre Master row of type DEPARTMENT
  *   (decisions.md, 1 Oct 2026) — see common/department-identity.ts.
  * - Direct Transfer posts a selected shipment and its matching receipt only
  *   for a user with the explicit permission (decisions.md, 1 Oct 2026).
@@ -599,7 +599,7 @@ export function fulfilmentStatusOf(lines: Array<{ quantity: unknown; qty_to_ship
 // The department checks on the Transfer Shipment and Transfer Receipt buttons
 // (WP1c — Rishi's 4 Oct list, kept verbatim in common-requisition-spec.md:
 // "Validation: user dept (from User Setup) must match From Sub-Location
-// dimension" / "...To Sub-Location dimension"). A department is a Cost Center
+// dimension" / "...To Sub-Location dimension"). A department is a Cost Centre
 // identity, so the match is between two ids, never text. Rishi's bound
 // (decisions.md 2026-10-04, last entry): admins get NO bypass — their extra
 // power is approval only. A location with no department has no dimension to

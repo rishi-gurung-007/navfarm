@@ -21,7 +21,7 @@ export class JournalLineInput {
   @IsNotEmpty()
   gl_account_id: string;
 
-  @ApiProperty({ description: 'Cost Center UUID (optional)', required: false })
+  @ApiProperty({ description: 'Cost Centre UUID (optional)', required: false })
   @IsUUID()
   @IsOptional()
   cost_center_id?: string;

@@ -39,7 +39,7 @@ export const INVENTORY_MASTER_TYPES: MasterMeta[] = [
   { key: 'ITEM_ATTRIBUTE', label: 'Item Attribute', description: 'Dynamic properties and specifications', category: 'Inventory' },
   { key: 'GL_ACCOUNT', label: 'GL Account', description: 'General ledger chart of accounts', category: 'Finance' },
   { key: 'GL_MAPPING', label: 'GL Mapping', description: 'Transaction to account posting rules', category: 'Finance' },
-  { key: 'COST_CENTER', label: 'Cost Center', description: 'Department and profit center codes', category: 'Finance' },
+  { key: 'COST_CENTER', label: 'Cost Centre', description: 'Department and profit center codes', category: 'Finance' },
   { key: 'BATCH', label: 'Batch', description: 'Production and processing batch lots', category: 'Production' },
 ];
 

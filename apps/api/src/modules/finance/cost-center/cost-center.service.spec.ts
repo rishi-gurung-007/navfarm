@@ -81,7 +81,7 @@ describe('CostCenterService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw ConflictException if Cost Center code already exists in this company', async () => {
+    it('should throw ConflictException if Cost Centre code already exists in this company', async () => {
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
         .mockReturnValueOnce(makeSelectResult([{ cost_center_code: 'CC01' }])); // duplicate hit
@@ -94,7 +94,7 @@ describe('CostCenterService', () => {
       ).rejects.toThrow(ConflictException);
     });
 
-    it('should successfully create Cost Center with the user-supplied code', async () => {
+    it('should successfully create Cost Centre with the user-supplied code', async () => {
       mockDbSelect
         .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
         .mockReturnValueOnce(makeSelectResult([])) // no duplicate
@@ -134,7 +134,7 @@ describe('CostCenterService', () => {
       expect(result.cost_center_code).toBe('DEPT-001');
     });
 
-    it('generates a composite code under a parent cost center', async () => {
+    it('generates a composite code under a parent cost centre', async () => {
       numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER_DEPARTMENT');
       numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, seq_length: 3, prefix: 'SUB' });
       const parentRow = { cost_center_id: 'parent-1', cost_center_code: 'DEPT-001', cost_center_name: 'Production', deleted_at: null };

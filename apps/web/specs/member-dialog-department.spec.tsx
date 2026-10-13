@@ -3,7 +3,7 @@
  * enforced on both buttons" (Transfer Shipment and Transfer Receipt).
  *
  * The rule the API enforces compares `user_master.department_id` to the
- * sub-location's `department_id` by identity — a Cost Center of type
+ * sub-location's `department_id` by identity — a Cost Centre of type
  * DEPARTMENT, never free text (decisions, 1 Oct). Team Management edited only
  * the legacy free-text `department` column, so there was no way to set the
  * value the rule actually reads: the same shape of gap Direct Transfer had
@@ -61,7 +61,7 @@ async function departmentOptions() {
   return (await screen.findAllByRole("option")).map((o) => o.getAttribute("aria-label"));
 }
 
-describe("Team Management — the user's department is a Cost Center, not free text", () => {
+describe("Team Management — the user's department is a Cost Centre, not free text", () => {
   it("asks the API only for DEPARTMENT cost centres", async () => {
     open();
     await waitFor(() => {
@@ -99,7 +99,7 @@ describe("Team Management — the user's department is a Cost Center, not free t
  * Farm Operations and Stores, and the dialog offered "No department" alone.
  */
 describe("Team Management — department picker against the real response shape", () => {
-  const envelope = { success: true, message: "Cost Centers retrieved successfully.", data: DEPARTMENTS, total: 2, limit: 50, offset: 0 };
+  const envelope = { success: true, message: "Cost Centres retrieved successfully.", data: DEPARTMENTS, total: 2, limit: 50, offset: 0 };
 
   beforeEach(() => {
     api.get.mockImplementation((url: string) => {

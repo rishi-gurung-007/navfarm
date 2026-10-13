@@ -19,12 +19,12 @@ export class CreateLocationDto {
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @ApiProperty({ description: 'Department identity — a Cost Centre Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
   @IsUUID()
   @IsOptional()
   department_id?: string;
 
-  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Centre Master row of the same company' })
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   @IsOptional()
@@ -250,12 +250,12 @@ export class UpdateLocationDto {
   @IsOptional()
   lob_id?: string;
 
-  @ApiProperty({ required: false, description: 'Department identity — a Cost Center Master row of type DEPARTMENT' })
+  @ApiProperty({ required: false, description: 'Department identity — a Cost Centre Master row of type DEPARTMENT' })
   @IsUUID()
   @IsOptional()
   department_id?: string;
 
-  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Center Master row of the same company' })
+  @ApiProperty({ required: false, nullable: true, description: 'Cost Centre of this FARM or MILL — an active Cost Centre Master row of the same company' })
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   @IsOptional()

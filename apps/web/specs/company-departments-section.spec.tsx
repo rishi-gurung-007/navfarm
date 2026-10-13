@@ -55,7 +55,7 @@ it('creates a department as type DEPARTMENT for the active company, with no type
   open();
   await screen.findByText('STORES');
   fireEvent.click(screen.getByRole('button', { name: /^(add|new|create)\b/i }));
-  expect(screen.queryByText(/cost center type/i)).toBeNull();
+  expect(screen.queryByText(/cost centre type/i)).toBeNull();
   fireEvent.change(await screen.findByPlaceholderText('STORES'), { target: { value: 'FEED-MILL' } });
   fireEvent.change(screen.getByPlaceholderText('Stores'), { target: { value: 'Feed Mill' } });
   const dialogButtons = screen.getAllByRole('button').filter((b) => /^(save|create|add)/i.test(b.textContent || ''));

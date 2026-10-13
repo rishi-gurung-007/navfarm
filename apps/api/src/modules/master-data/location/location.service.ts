@@ -157,7 +157,7 @@ export class LocationService {
     }
   }
 
-  /** An active, non-deleted Cost Center Master row of exactly this company. */
+  /** An active, non-deleted Cost Centre Master row of exactly this company. */
   private async assertCostCentreOfCompany(costCenterId: string, tenantId: string, companyId: string | null | undefined) {
     const [row] = await this.db
       .select({
@@ -170,7 +170,7 @@ export class LocationService {
       .where(eq(schema.costCenterMaster.cost_center_id, costCenterId))
       .limit(1);
     if (!row || row.tenant_id !== tenantId || row.is_active === false || row.deleted_at || !companyId || row.company_id !== companyId) {
-      throw new BadRequestException('Cost Centre must be an active cost center of this company.');
+      throw new BadRequestException('Cost Centre must be an active cost centre of this company.');
     }
   }
 
@@ -1069,7 +1069,7 @@ export class LocationService {
       throw new NotFoundException(`Company with ID '${dto.company_id}' not found.`);
     }
 
-    // Department is a Cost Center Master identity of type DEPARTMENT (decisions,
+    // Department is a Cost Centre Master identity of type DEPARTMENT (decisions,
     // 1 Oct) — validated before any type/parent/series work, and only when one
     // is supplied, so every existing create is untouched.
     if (dto.department_id) {

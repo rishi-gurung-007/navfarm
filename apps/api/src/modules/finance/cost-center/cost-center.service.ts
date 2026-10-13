@@ -39,7 +39,7 @@ export class CostCenterService {
       .where(and(eq(schema.costCenterMaster.cost_center_id, parentCostCenterId), isNull(schema.costCenterMaster.deleted_at)))
       .limit(1);
     if (!parent) {
-      throw new NotFoundException(`Parent Cost Center with ID '${parentCostCenterId}' not found.`);
+      throw new NotFoundException(`Parent Cost Centre with ID '${parentCostCenterId}' not found.`);
     }
     return parent;
   }
@@ -58,7 +58,7 @@ export class CostCenterService {
       }
     }
 
-    // 2. Verify parent cost center if specified
+    // 2. Verify parent cost centre if specified
     const parent = dto.parent_cost_center_id ? await this.findParentCostCenter(dto.parent_cost_center_id) : undefined;
 
     // 3. Resolve a series for this cost_center_type, falling back to the master-alone series.
@@ -82,7 +82,7 @@ export class CostCenterService {
         newCC = await attempt();
       } catch (retryErr) {
         if ((retryErr as { code?: string })?.code === 'ER_DUP_ENTRY') {
-          throw new ConflictException('Cost Center code collided with a concurrently created cost center; please retry.');
+          throw new ConflictException('Cost Centre code collided with a concurrently created cost centre; please retry.');
         }
         throw retryErr;
       }
@@ -104,7 +104,7 @@ export class CostCenterService {
   /** No series configured for COST_CENTER[_<type>] — manual entry, exactly as before this feature existed. */
   private async createManual(dto: CreateCostCenterDto, tenantId: string, userPayload?: any) {
     if (!dto.cost_center_code) {
-      throw new BadRequestException('Enter a Code for this cost center — no number series is configured for cost centers.');
+      throw new BadRequestException('Enter a Code for this cost centre — no number series is configured for cost centres.');
     }
 
     const existing = await this.db
@@ -121,7 +121,7 @@ export class CostCenterService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Cost Center with code '${dto.cost_center_code}' already exists in this company.`);
+      throw new ConflictException(`Cost Centre with code '${dto.cost_center_code}' already exists in this company.`);
     }
 
     const costCenterId = randomUUID();
@@ -158,7 +158,7 @@ export class CostCenterService {
   }
 
   /**
-   * Builds and inserts the cost center row (generating its code inside `tx`),
+   * Builds and inserts the cost centre row (generating its code inside `tx`),
    * for the case a series IS configured. Split out so create()'s retry can
    * re-run the whole attempt, unmodified, if the insert collides on
    * uq_cost_center_master_tenant_company_code.
@@ -200,7 +200,7 @@ export class CostCenterService {
 
     if (costCenterCode.length > 255) {
       throw new BadRequestException(
-        `Cost Center code would exceed 255 characters ('${costCenterCode}', ${costCenterCode.length} characters).`,
+        `Cost Centre code would exceed 255 characters ('${costCenterCode}', ${costCenterCode.length} characters).`,
       );
     }
 
@@ -233,7 +233,7 @@ export class CostCenterService {
       .limit(1);
 
     if (!cc) {
-      throw new NotFoundException(`Cost Center with ID '${id}' not found.`);
+      throw new NotFoundException(`Cost Centre with ID '${id}' not found.`);
     }
 
     return cc;
@@ -274,7 +274,7 @@ export class CostCenterService {
   async update(id: string, dto: UpdateCostCenterDto, tenantId: string, userPayload?: any) {
     const cc = await this.findOne(id);
 
-    assertCodeUnchanged('Cost center', cc.cost_center_code, dto.cost_center_code);
+    assertCodeUnchanged('Cost centre', cc.cost_center_code, dto.cost_center_code);
     if (dto.cost_center_code && dto.cost_center_code.toUpperCase() !== cc.cost_center_code) {
       const existing = await this.db
         .select()
@@ -291,13 +291,13 @@ export class CostCenterService {
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`Cost Center with code '${dto.cost_center_code}' already exists in this company.`);
+        throw new ConflictException(`Cost Centre with code '${dto.cost_center_code}' already exists in this company.`);
       }
     }
 
     if (dto.parent_cost_center_id && dto.parent_cost_center_id !== cc.parent_cost_center_id) {
       if (dto.parent_cost_center_id === id) {
-        throw new ConflictException('A Cost Center cannot be its own parent.');
+        throw new ConflictException('A Cost Centre cannot be its own parent.');
       }
 
       const [parent] = await this.db
@@ -312,7 +312,7 @@ export class CostCenterService {
         .limit(1);
 
       if (!parent) {
-        throw new NotFoundException(`Parent Cost Center with ID '${dto.parent_cost_center_id}' not found.`);
+        throw new NotFoundException(`Parent Cost Centre with ID '${dto.parent_cost_center_id}' not found.`);
       }
     }
 
@@ -351,7 +351,7 @@ export class CostCenterService {
   async remove(id: string, tenantId: string, userPayload?: any) {
     const cc = await this.findOne(id);
 
-    // Verify no sub-cost centers exist linking to this one
+    // Verify no sub-cost centres exist linking to this one
     const subCCs = await this.db
       .select()
       .from(schema.costCenterMaster)
@@ -364,7 +364,7 @@ export class CostCenterService {
       .limit(1);
 
     if (subCCs.length > 0) {
-      throw new ConflictException('Cannot delete a Cost Center that has active sub-cost centers.');
+      throw new ConflictException('Cannot delete a Cost Centre that has active sub-cost centres.');
     }
 
     const deletedTime = toMysqlTimestamp();
@@ -390,7 +390,7 @@ export class CostCenterService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Cost Center '${cc.cost_center_name}' soft-deleted successfully.` };
+    return { success: true, message: `Cost Centre '${cc.cost_center_name}' soft-deleted successfully.` };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -401,7 +401,7 @@ export class CostCenterService {
       .limit(1);
 
     if (!cc) {
-      throw new NotFoundException(`Cost Center with ID '${id}' not found.`);
+      throw new NotFoundException(`Cost Centre with ID '${id}' not found.`);
     }
 
     if (!cc.deleted_at) {
@@ -422,7 +422,7 @@ export class CostCenterService {
         .limit(1);
 
       if (!parent) {
-        throw new ConflictException('Cannot restore a Cost Center whose parent is deleted or inactive. Restore parent first.');
+        throw new ConflictException('Cannot restore a Cost Centre whose parent is deleted or inactive. Restore parent first.');
       }
     }
 

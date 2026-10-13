@@ -53,7 +53,7 @@ export class CreateUserDto {
   @IsOptional()
   department?: string;
 
-  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @ApiProperty({ description: 'Department identity — a Cost Centre Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
   @IsUUID()
   @IsOptional()
   department_id?: string;
@@ -112,7 +112,7 @@ export class UpdateUserDto {
   @IsOptional()
   department?: string;
 
-  @ApiProperty({ description: 'Department identity — a Cost Center Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
+  @ApiProperty({ description: 'Department identity — a Cost Centre Master row of type DEPARTMENT (decisions, 1 Oct)', required: false })
   @IsUUID()
   @IsOptional()
   department_id?: string;

@@ -1,5 +1,5 @@
 /**
- * Team Management list: the department shown is the Cost Center NAME chosen in
+ * Team Management list: the department shown is the Cost Centre NAME chosen in
  * the member dialog (department_id), falling back to the legacy free text.
  */
 import React from "react";

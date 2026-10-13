@@ -19,7 +19,7 @@ export type DepartmentKey = 'STORES' | 'FARM_OPS';
 
 /**
  * Cost-centre codes are typed in this tenant: the COST_CENTER number series is
- * seeded blocked ("Cost Center Code (typed, not generated)",
+ * seeded blocked ("Cost Centre Code (typed, not generated)",
  * system-master-data-seed.ts — "CC-FEEDMILL-A says which mill, CC-001 says
  * nothing"), so CostCenterService.create() falls back to the caller's code.
  */
@@ -121,7 +121,7 @@ export function planDepartmentCostCenters(companies: string[], costCenters: Cost
       if (active) {
         plan.blocked.push({
           company_id: companyId, key: d.key,
-          why: `the ${active.code} number series is active, so codes are issued by it — create this department through the Cost Center master instead`,
+          why: `the ${active.code} number series is active, so codes are issued by it — create this department through the Cost Centre master instead`,
         });
         continue;
       }

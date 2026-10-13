@@ -8,7 +8,7 @@
  *   Transfer Receipt Button: Done by requester user at To Sub-Location.
  *     Validation: user dept must match To Sub-Location dimension.
  *
- * The department is a Cost Center identity (never free text) read from
+ * The department is a Cost Centre identity (never free text) read from
  * user_master.department_id and location_master.department_id. Rishi's bound
  * (decisions.md 2026-10-04, last entry) is that admins get NO bypass here:
  * their extra power is approval only. A location with no department has no

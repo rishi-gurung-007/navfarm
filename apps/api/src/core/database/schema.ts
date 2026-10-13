@@ -517,7 +517,7 @@ export const userMaster = mysqlTable('user_master', {
   user_type: varchar('user_type', { length: 20 }).default('STAFF').notNull(),
   employee_id: varchar('employee_id', { length: 50 }),
   department: varchar('department', { length: 100 }),
-  // Department as a Cost Center Master identity of type DEPARTMENT (decisions,
+  // Department as a Cost Centre Master identity of type DEPARTMENT (decisions,
   // 1 Oct: "both users and locations reference that identity"). The free-text
   // `department` above stays as the legacy label for existing callers.
   // Nullable and additive; validated in UserService, migration is Task 12.
@@ -1286,7 +1286,7 @@ export const locationMaster = mysqlTable('location_master', {
   downtime_days_required: int('downtime_days_required'),
   last_cleaned_date: date('last_cleaned_date', { mode: 'string' }),
   last_disinfected_date: date('last_disinfected_date', { mode: 'string' }),
-  // The location's department — a Cost Center Master row of type DEPARTMENT
+  // The location's department — a Cost Centre Master row of type DEPARTMENT
   // (decisions, 1 Oct: "both users and locations reference that identity").
   // A Store requisition's sender department is read from here, never compared
   // as free text. Nullable and additive; migration is Task 12.

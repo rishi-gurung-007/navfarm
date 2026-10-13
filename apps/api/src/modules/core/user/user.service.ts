@@ -86,7 +86,7 @@ export class UserService {
       throw new BadRequestException(`A ${userType === 'FARM_MANAGER' ? 'farm manager' : 'standard user'} must be assigned to a farm.`);
     }
     if (dto.farm_id) await this.assertActiveCompanyFarm(dto.farm_id, dto.company_id, dto.tenant_id);
-    // Department is a Cost Center Master identity of type DEPARTMENT, never
+    // Department is a Cost Centre Master identity of type DEPARTMENT, never
     // free text (decisions, 1 Oct). Checked only when one is supplied, so the
     // legacy free-text `department` path keeps working unchanged.
     if (dto.department_id) {
@@ -306,7 +306,7 @@ export class UserService {
         .from(schema.userRoleAssignment)
         .innerJoin(schema.roleMaster, eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id))
         .where(and(inArray(schema.userRoleAssignment.user_id, userIds), eq(schema.userRoleAssignment.is_active, true))),
-      // The department is a Cost Center of type DEPARTMENT (department_id); its name is what the directory shows.
+      // The department is a Cost Centre of type DEPARTMENT (department_id); its name is what the directory shows.
       departmentIds.length
         ? this.db.select({ cost_center_id: schema.costCenterMaster.cost_center_id, cost_center_name: schema.costCenterMaster.cost_center_name })
             .from(schema.costCenterMaster).where(inArray(schema.costCenterMaster.cost_center_id, departmentIds))
