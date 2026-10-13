@@ -1609,7 +1609,7 @@ export class BatchDailyDataService {
     header: typeof schema.schedulerHeader.$inferSelect;
     existingRow: typeof schema.batchDailyData.$inferSelect | undefined;
     tenantId: string;
-    entryAnimal?: { animal_code: string; notes: string | null };
+    entryAnimal?: { animal_code: string; notes: string | null; status?: string | null };
   }): Promise<{ supplied: boolean; entries: MortalityEntry[] } | null> {
     const { batchId, dto, line, header, existingRow, tenantId, entryAnimal } = args;
     const applies = line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT';
@@ -1718,10 +1718,14 @@ export class BatchDailyDataService {
     newDeaths: number;
     tenantId: string;
     companyId: string;
-    animal?: { animal_code: string; notes: string | null };
+    animal?: { animal_code: string; notes: string | null; status?: string | null };
   }): Promise<{ supplied: boolean; entries: MortalityEntry[] }> {
     const { dto, line, newDeaths, tenantId, companyId, animal } = args;
     const animalId = dto.animal_id!;
+    // An animal dies once (Rishi, 13 Oct): a second mortality entry for one already dead is refused.
+    if (newDeaths > 0 && animal?.status === 'DEAD') {
+      throw new BadRequestException(`Animal '${animal.animal_code}' is already recorded as dead.`);
+    }
     if (newDeaths > 1) {
       throw new BadRequestException(`An animal-wise mortality entry records one animal - enter 1, not ${newDeaths}.`);
     }
@@ -1891,6 +1895,20 @@ export class BatchDailyDataService {
       throw new BadRequestException(`Line '${lineId}' does not belong to batch '${batchId}'.`);
     }
     const alive = line.kpi_metric === 'MORTALITY_COUNT' ? await this.aliveAnimals(batchId, header.stage_id) : [];
+    // The stage's animals already dead: Data Entry shows them greyed, never as a choice (Rishi, 13 Oct).
+    const dead = line.kpi_metric === 'MORTALITY_COUNT' && header.stage_id
+      ? await this.db
+          .select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code, disposal_date: schema.animalRegister.disposal_date })
+          .from(schema.animalRegister)
+          .where(
+            and(
+              eq(schema.animalRegister.current_batch_id, batchId),
+              eq(schema.animalRegister.current_stage_id, header.stage_id),
+              eq(schema.animalRegister.status, 'DEAD'),
+            ),
+          )
+          .orderBy(schema.animalRegister.animal_code)
+      : [];
     // What the date already has posted for the line: a correction names only the deaths it adds beyond that.
     const [posted] = date
       ? await this.db
@@ -1930,6 +1948,7 @@ export class BatchDailyDataService {
       already_posted: posted?.entered_value != null ? Number(posted.entered_value) : 0,
       stage_id: header.stage_id ?? null,
       animals: alive.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, rfid_tag: a.rfid_tag })),
+      dead_animals: dead.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, died_on: a.disposal_date ? String(a.disposal_date).slice(0, 10) : null })),
     };
   }
 

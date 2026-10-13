@@ -299,10 +299,13 @@ export default function OperationalBatchDataEntry() {
   useEffect(() => {
     setDataEntryMortality({});
   }, [selectedBatchId, selectedDate]);
-  const mortalityLineIds = dataEntryLines
-    .filter((l) => l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT')
-    .map((l) => l.line_id as string);
-  const mortalityInfo = useMortalityCandidates(currentBatch?.id, selectedDate, mortalityLineIds, !isAnimalWise, dataEntryLines);
+  // Animal-wise: the selected stage's lines, so its dead animals can be shown greyed in the All-animals picker.
+  const mortalityLineIds = (isAnimalWise
+    ? (dataEntryStages.find((s) => s.stage_id === selectedStageId)?.animals?.[0]?.lines ?? [])
+    : dataEntryLines)
+    .filter((l: Row) => l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT')
+    .map((l: Row) => l.line_id as string);
+  const mortalityInfo = useMortalityCandidates(currentBatch?.id, selectedDate, mortalityLineIds, true, isAnimalWise ? dataEntryStages : dataEntryLines);
   /**
    * The deaths this line adds for the value typed and what is entered for them so far. A batch with registered
    * animals names each animal; a count-only batch gives one weight-and-reason row per death.
@@ -320,10 +323,10 @@ export default function OperationalBatchDataEntry() {
         const animals = (selectedStage?.animals || [])
           .filter((a: Row) => !a.is_posted)
           .map((a: Row) => ({ animal_id: a.animal_id as string, animal_code: (a.animal_code ?? a.animal_id) as string, rfid_tag: (a.rfid_tag ?? null) as string | null }));
-        return { kind: 'ALL' as const, key, required, picks: dataEntryMortality[key] ?? [], animals, label: '' };
+        return { kind: 'ALL' as const, key, required, picks: dataEntryMortality[key] ?? [], animals, label: '', dead: mortalityInfo[line.line_id]?.dead_animals ?? [] };
       }
       const label = (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.animal_code ?? '';
-      return { kind: 'ANIMAL' as const, key, required, picks: countOnlyPicks(dataEntryMortality[key] ?? [], Math.min(required, 1)), animals: [], label };
+      return { kind: 'ANIMAL' as const, key, required, picks: countOnlyPicks(dataEntryMortality[key] ?? [], Math.min(required, 1)), animals: [], label, dead: [] };
     }
     const info = mortalityInfo[line.line_id];
     if (!info) return null;
@@ -331,7 +334,7 @@ export default function OperationalBatchDataEntry() {
     const raw = dataEntryValues[key];
     const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), info.already_posted);
     const picks = dataEntryMortality[key] ?? draftPicks(info);
-    return { kind: 'BATCH' as const, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks, animals: info.animals, label: '' };
+    return { kind: 'BATCH' as const, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks, animals: info.animals, label: '', dead: info.dead_animals ?? [] };
   };
   /** True when the line needs nothing more for its deaths (or is not a mortality line). */
   const mortalityOk = (need: ReturnType<typeof mortalityNeed>) => {
@@ -2028,6 +2031,7 @@ export default function OperationalBatchDataEntry() {
             return (
               <MortalityAnimalsField
                 animals={need.animals}
+                deadAnimals={need.dead}
                 fixedLabel={need.kind === 'ANIMAL' ? need.label || t('deMortThisAnimal') : undefined}
                 required={need.required}
                 picks={need.picks}

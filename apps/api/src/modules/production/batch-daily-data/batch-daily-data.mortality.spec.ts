@@ -234,6 +234,14 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_text, d.posted])).toEqual([[A1, '9.25', 'Crushed', true]]);
   });
 
+  it('animal-wise: an animal already dead cannot die again (Rishi, 13 Oct)', async () => {
+    rows.batch_header = [{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', batch_no: 'B-1', farm_id: 'farm-1' }];
+    rows.animal_register = [{ ...animal(A1, 'PIG-1'), current_batch_id: 'batch-1', current_stage_id: 'stage-1', status: 'DEAD' }];
+    await expect(post({ animal_id: A1, entered_value: 1, mortality_animals: [{ dead_weight_kg: 9, reason_text: 'x' }] })).rejects.toThrow(/already recorded as dead/);
+    expect(addTx).not.toHaveBeenCalled();
+    expect(inserts).toHaveLength(0);
+  });
+
   it('animal-wise: a zero entry asks for nothing', async () => {
     rows.batch_header = [{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', batch_no: 'B-1', farm_id: 'farm-1' }];
     rows.animal_register = [{ ...animal(A1, 'PIG-1'), current_batch_id: 'batch-1', current_stage_id: 'stage-1' }];

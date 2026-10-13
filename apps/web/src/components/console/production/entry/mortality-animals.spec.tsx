@@ -167,4 +167,14 @@ describe('MortalityAnimalsField', () => {
     fireEvent.change(screen.getByLabelText('PIG-0007 - Dead weight (kg)'), { target: { value: '9' } });
     expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ animal_id: '', dead_weight_kg: '9' })]);
   });
+
+  it('shows animals already dead greyed and not selectable (Rishi, 13 Oct)', () => {
+    render(<MortalityAnimalsField animals={animals} required={1} picks={[]} onChange={jest.fn()} deadAnimals={[{ animal_id: 'd-1', animal_code: 'PIG-0099', died_on: '2026-10-06' }]} />);
+    fireEvent.click(screen.getByTestId('mortality-animals-button'));
+    const dead = screen.getByTestId('mortality-dead-d-1');
+    expect(dead.textContent).toContain('PIG-0099');
+    expect(dead.textContent).toContain('Died 2026-10-06');
+    expect((within(dead).getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+  });
 });
+

@@ -4712,6 +4712,8 @@ export const translations = {
     deMortCountButton: "Dead weight and reason ({{chosen}}/{{required}})",
     deMortCountHelp: "The mortality count adds {{required}} death(s). Enter the dead weight and the reason for each dead animal.",
     deMortDeadN: "Dead animal {{n}}",
+    deMortAlreadyDead: "Already dead",
+    deMortDiedOn: "Died {{date}}",
     deLockStageDay: "Lock Stage Day",
     deMortAnimalHelp: "Enter the dead weight and the reason for {{animal}}.",
     deMortThisAnimal: "This animal",

@@ -19,9 +19,17 @@ import {
 /** What GET /batch/:id/daily-data/mortality-candidates answers for one line. */
 export interface MortalityInfo {
   animals: MortalityCandidate[];
+  /** The stage's animals already dead: shown greyed, never chosen again (an animal dies once). */
+  dead_animals: DeadAnimal[];
   already_posted: number;
   /** The choice saved with a draft of this line and date. */
   draft_animals: Array<{ animal_id: string | null; dead_weight_kg: number; reason_id: string | null; reason_text: string | null }>;
+}
+
+export interface DeadAnimal {
+  animal_id: string;
+  animal_code: string;
+  died_on: string | null;
 }
 
 /** A saved draft's choice as picks, so it is shown again rather than asked for twice. */
@@ -53,9 +61,9 @@ export function useMortalityCandidates(batchId: string | undefined, date: string
           .get(`/batch/${batchId}/daily-data/mortality-candidates?lineId=${lineId}&date=${date}`)
           .then((res: unknown) => {
             const data = ((res as { data?: unknown })?.data ?? res) as Partial<MortalityInfo>;
-            return [lineId, { animals: data.animals ?? [], already_posted: Number(data.already_posted ?? 0), draft_animals: data.draft_animals ?? [] }] as const;
+            return [lineId, { animals: data.animals ?? [], dead_animals: data.dead_animals ?? [], already_posted: Number(data.already_posted ?? 0), draft_animals: data.draft_animals ?? [] }] as const;
           })
-          .catch(() => [lineId, { animals: [], already_posted: 0, draft_animals: [] }] as const),
+          .catch(() => [lineId, { animals: [], dead_animals: [], already_posted: 0, draft_animals: [] }] as const),
       ),
     ).then((entries) => {
       if (!cancelled) setInfo(Object.fromEntries(entries));
@@ -80,7 +88,10 @@ export function MortalityAnimalsField({
   onChange,
   disabled,
   fixedLabel,
+  deadAnimals = [],
 }: {
+  /** Animals of the stage already dead: listed greyed and disabled, so the same animal is never recorded twice. */
+  deadAnimals?: DeadAnimal[];
   /** Animal-wise: the entry's own animal, so there is nothing to choose - just its weight and reason. */
   fixedLabel?: string;
   animals: MortalityCandidate[];
@@ -180,6 +191,15 @@ export function MortalityAnimalsField({
               </li>
             );
           })}
+          {deadAnimals.map((a) => (
+            <li key={a.animal_id} data-testid={`mortality-dead-${a.animal_id}`}>
+              <label className="flex cursor-not-allowed items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-muted)] opacity-60">
+                <input type="checkbox" checked disabled aria-label={`${a.animal_code} - ${t("deMortAlreadyDead")}`} />
+                <span className="font-medium line-through">{a.animal_code}</span>
+                <span className="text-xs">{a.died_on ? t("deMortDiedOn", { date: a.died_on }) : t("deMortAlreadyDead")}</span>
+              </label>
+            </li>
+          ))}
         </ul>
         </>)}
         {picks.length > 0 && (
