@@ -61,7 +61,7 @@ export function validateFeedLines(lines: FeedLine[]): FeedLine[] {
 }
 
 /** The columns that make rows the same stage record (a line each); null-safe. */
-export const SIBLING_KEY_COLUMNS = ['breed_id', 'stage_id', 'farm_id', 'effective_from', 'effective_to', 'season_type', 'category'] as const;
+export const SIBLING_KEY_COLUMNS = ['breed_id', 'stage_id', 'farm_id', 'season_type', 'category'] as const;
 
 export function siblingKey(row: Record<string, unknown>): string {
   return SIBLING_KEY_COLUMNS.map((c) => (row[c] == null ? '' : String(row[c]).slice(0, 36))).join('|');

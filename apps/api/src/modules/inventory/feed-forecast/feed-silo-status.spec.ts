@@ -374,11 +374,6 @@ describe('buildSiloStatus: next diet from the Next Stage field', () => {
     expect(d.nextDietItemId).toBe('fin');
   });
 
-  it('a row not effective on the stage start is ignored', () => {
-    const [a] = run(diets('grower', [row({ effectiveTo: '2026-10-01' })]), {});
-    expect(a.nextDietItemId).toBeNull();
-  });
-
   it('prefers the silo already holding the item, and only counts links in effect', () => {
     const held = [
       fact({ siloId: 'sa', siloCode: 'SILO-A', houseCodes: ['SHED-A'], feedType: 'BULK', feedInSiloItemId: 'gro' }),

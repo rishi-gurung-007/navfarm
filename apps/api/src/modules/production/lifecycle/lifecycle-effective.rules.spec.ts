@@ -3,17 +3,15 @@ import { findEffectiveOverlap, lifecycleWindowsOverlap } from './lifecycle-effec
 const w = (o: object) => ({ calcUnit: 'DAY', periodFrom: 1, periodTo: 28, ...o });
 
 describe('lifecycleWindowsOverlap', () => {
-  it('clashes when days and dates both overlap', () => {
-    expect(lifecycleWindowsOverlap(w({ effectiveFrom: '2026-10-01' }), w({ effectiveTo: '2026-10-05' }))).toBe(true);
-  });
-  it('does not clash when the dates are disjoint', () => {
-    expect(lifecycleWindowsOverlap(w({ effectiveTo: '2026-10-19' }), w({ effectiveFrom: '2026-10-20' }))).toBe(false);
+  it('clashes when the stage days overlap', () => {
+    expect(lifecycleWindowsOverlap(w({}), w({ periodFrom: 28, periodTo: 40 }))).toBe(true);
   });
   it('does not clash when the day ranges are disjoint', () => {
     expect(lifecycleWindowsOverlap(w({}), w({ periodFrom: 29, periodTo: 40 }))).toBe(false);
   });
-  it('treats undated rows as always effective', () => {
-    expect(lifecycleWindowsOverlap(w({}), w({ effectiveFrom: '2027-01-01' }))).toBe(true);
+  it('compares stage days across units (week 4 = days 22-28)', () => {
+    expect(lifecycleWindowsOverlap(w({}), w({ calcUnit: 'WEEK', periodFrom: 4, periodTo: 5 }))).toBe(true);
+    expect(lifecycleWindowsOverlap(w({}), w({ calcUnit: 'WEEK', periodFrom: 5, periodTo: 6 }))).toBe(false);
   });
 });
 

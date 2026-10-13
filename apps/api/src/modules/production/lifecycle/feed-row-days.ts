@@ -43,19 +43,8 @@ export interface FeedRow {
   toDay: number;
   kgPerHeadPerDay: number;
   wastagePct: number;
-  /** Master Setup r30/r38: first calendar day this row applies. Absent/null = no start limit. */
-  effectiveFrom?: string | null;
-  /** Last calendar day (inclusive) this row applies. Absent/null = open-ended. */
-  effectiveTo?: string | null;
   /** Master Setup r30/r39: a row for one farm overrides the default (null/absent) on that farm. */
   farmId?: string | null;
-}
-
-/** True when `onDate` (YYYY-MM-DD) falls in the row's effective window; a row with no dates is always effective. */
-export function isEffectiveOn(row: Pick<FeedRow, 'effectiveFrom' | 'effectiveTo'>, onDate: string): boolean {
-  if (row.effectiveFrom && onDate < row.effectiveFrom) return false;
-  if (row.effectiveTo && onDate > row.effectiveTo) return false;
-  return true;
 }
 
 /**
@@ -64,9 +53,9 @@ export function isEffectiveOn(row: Pick<FeedRow, 'effectiveFrom' | 'effectiveTo'
  * than one breed/stage, that mixing is the caller's concern, not something
  * this function detects or guards against.
  */
-export function feedRowFor(rows: FeedRow[], dayOfStage: number, onDate?: string, farmId?: string | null): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
-  // onDate is the forecast date: with it, only rows effective that day compete (the one place effective dating is applied).
-  const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay && (onDate === undefined || isEffectiveOn(r, onDate)));
+export function feedRowFor(rows: FeedRow[], dayOfStage: number, farmId?: string | null): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
+  // Stage days only (Master Setup r35-r38, Rishi 13 Oct): the calendar comes from the batch's stage entry date, not the row.
+  const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay);
   // Farm override (r30/r39): a row for this farm wins; otherwise the default (no farm). Rows of other farms never compete.
   const own = farmId ? matches.filter((r) => r.farmId === farmId) : [];
   const pool = own.length ? own : matches.filter((r) => !r.farmId);

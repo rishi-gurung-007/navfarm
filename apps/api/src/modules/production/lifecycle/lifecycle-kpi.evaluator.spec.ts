@@ -139,7 +139,7 @@ describe('LifecycleKpiEvaluator', () => {
   const header = { scheduler_id: 'sc1', breed_id: 'br1', stage_id: 's1', effective_from: '2026-10-01' };
   const stageRow = (kpis: unknown[], extra: Record<string, unknown> = {}) => ({
     lifecycle_id: 'lc1', breed_id: 'br1', stage_id: 's1', calc_unit: 'DAY', period_from: 1, period_to: 60,
-    feed_item_id: null, effective_from: null, effective_to: null, farm_id: null, kpi_thresholds: kpis, kpi_alert_period: null, ...extra,
+    feed_item_id: null, farm_id: null, kpi_thresholds: kpis, kpi_alert_period: null, ...extra,
   });
   const make = (answers: unknown[][]) => {
     const { db, inserted } = fakeDb(answers);

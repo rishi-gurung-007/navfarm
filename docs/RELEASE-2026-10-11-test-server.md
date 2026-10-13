@@ -38,6 +38,22 @@ testers' data must survive.
 | 0193 | `inventory_application.application_no`: the readable APP code, unique per company (each company's own ITEM_APPLICATION series); the row key stays a UUID. Existing rows copy their id as their code. Fixes the second company's first FIFO movement failing on a duplicate APP-00001 (13 Oct) |
 | 0194 | Data: breed lifecycle KPI / vaccination / medication / resource lists stored as an encoded string are turned back into JSON; KPI lists whose lines had been emptied ([[]]) are cleared - re-enter those KPIs (13 Oct) |
 
+**Breed lifecycle stages use stage days only (13 Oct, no migration).** Effective From / Effective To (calendar dates,
+0170) are no longer on the form and nothing reads them: a stage's feed is chosen by Period From / To counted from the
+day the batch or animal entered the stage. The columns stay in the database. Rows that differed only by those dates
+could now cover the same stage days; before step 7, run this per tenant database. It must return no rows; any it
+returns, deactivate one of the pair or change its Period From / To:
+```
+WITH r AS (SELECT lifecycle_id, lifecycle_code, company_id, breed_id, stage_id, farm_id,
+  (period_from-1)*CASE calc_unit WHEN 'WEEK' THEN 7 WHEN 'MONTH' THEN 30 ELSE 1 END+1 AS fd,
+  period_to*CASE calc_unit WHEN 'WEEK' THEN 7 WHEN 'MONTH' THEN 30 ELSE 1 END AS td
+  FROM breed_lifecycle_stages WHERE is_active=1 AND feed_item_id IS NOT NULL)
+SELECT a.lifecycle_code, a.fd, a.td, b.lifecycle_code, b.fd, b.td, a.company_id
+FROM r a JOIN r b ON a.lifecycle_id < b.lifecycle_id AND a.breed_id=b.breed_id AND a.stage_id=b.stage_id
+  AND a.farm_id <=> b.farm_id AND a.company_id <=> b.company_id
+WHERE a.fd <= b.td AND b.fd <= a.td;
+```
+
 Run the migrations as **root**. If any line says FAILED: stop, restore that database from the backup, and report it.
 Do not re-run blindly, because MySQL table changes are not transactional.
 

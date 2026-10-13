@@ -1354,8 +1354,6 @@ const breedLifecycleStage: MasterDataConfig = {
       entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       helpText: "Optional. Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",
     },
-    { key: "effective_from", label: "Effective From", type: "date", helpText: "Optional. The first date this feed row applies, so a diet change can be planned ahead. Blank = always." },
-    { key: "effective_to", label: "Effective To", type: "date", helpText: "Optional. The last date this feed row applies. Rows for the same stage and days cannot overlap in dates." },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
     { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0, max: 99.999 },

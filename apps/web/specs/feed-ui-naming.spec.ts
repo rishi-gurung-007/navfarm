@@ -47,7 +47,8 @@ describe("feed forecasting terminology", () => {
     expect(label(lifecycle.fields, "feed_item_id")).toBeUndefined();
     expect(label(getConfig("item")!.fields, "diet_no")).toBe("Diet No.");
     expect(rowLabel("feed_wastage_pct")).toBe("Feed Wastage (%)");
-    expect(label(lifecycle.fields, "effective_from")).toBe("Effective From");
-    expect(label(lifecycle.fields, "effective_to")).toBe("Effective To");
+    // Stage days only (Master Setup r35-r38, Rishi 13 Oct): no calendar Effective From / To on a lifecycle stage.
+    expect(label(lifecycle.fields, "effective_from")).toBeUndefined();
+    expect(label(lifecycle.fields, "effective_to")).toBeUndefined();
   });
 });

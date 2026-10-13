@@ -53,10 +53,10 @@ describe('lifecycle Feed Consumption lines (Rishi, 13 Oct)', () => {
     ]);
   });
 
-  it('treats rows as one stage only when breed, stage, farm, dates, season and category all match', () => {
-    const base = { breed_id: 'b', stage_id: 's', farm_id: null, effective_from: null, effective_to: null, season_type: 'ALL', category: 'SOW' };
+  it('treats rows as one stage only when breed, stage, farm, season and category all match', () => {
+    const base = { breed_id: 'b', stage_id: 's', farm_id: null, season_type: 'ALL', category: 'SOW' };
     expect(siblingKey(base)).toBe(siblingKey({ ...base, period_from: 9 }));
     expect(siblingKey(base)).not.toBe(siblingKey({ ...base, farm_id: 'farm-1' }));
-    expect(siblingKey(base)).not.toBe(siblingKey({ ...base, effective_from: '2026-11-01' }));
+    expect(siblingKey(base)).not.toBe(siblingKey({ ...base, season_type: 'SUMMER' }));
   });
 });
