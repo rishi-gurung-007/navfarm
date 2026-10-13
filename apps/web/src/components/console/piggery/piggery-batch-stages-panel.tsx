@@ -18,6 +18,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
+import { useSystemSchedulerPrompt } from "@/components/console/production/system-scheduler-prompt";
 import { useLanguage } from "@/hooks/useLanguage";
 
 interface BatchLifecycleMeta {
@@ -29,6 +30,8 @@ interface BatchLifecycleMeta {
   startDate: string;
   currentStageId: number;
   currentStageCode?: string;
+  lobId?: string | null;
+  breedId?: string | null;
 }
 
 export default function PiggeryBatchStagesPanel() {
@@ -58,6 +61,14 @@ export default function PiggeryBatchStagesPanel() {
   const [newStageDays, setNewStageDays] = useState("14");
 
   const [toastMsg, setToastMsg] = useState("");
+  // The server refuses a move made before the stage's minimum days unless a reason is given. The
+  // panel used to send a canned remark every time, which defeated that check, and swallowed any
+  // refusal while still advancing the stepper.
+  const [advanceError, setAdvanceError] = useState("");
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [pendingSource, setPendingSource] = useState<unknown>(null);
+  const schedulerPrompt = useSystemSchedulerPrompt();
 
   // Fetch live batches from DB
   useEffect(() => {
@@ -84,6 +95,8 @@ export default function PiggeryBatchStagesPanel() {
             startDate: b.start_date || "",
             currentStageId: matchedStage.id,
             currentStageCode: b.current_stage_code,
+            lobId: b.lob_id ?? null,
+            breedId: b.breed_id ?? null,
           };
         });
         setBatches(mapped);
@@ -217,7 +230,7 @@ export default function PiggeryBatchStagesPanel() {
     return () => { cancelled = true; };
   }, [currentBatch, stageMaster]);
 
-  const handleAdvanceStage = async () => {
+  const handleAdvanceStage = async (override?: { reason: string; source: unknown }) => {
     if (!currentBatch) return;
     const nextId = currentStageId + 1;
     if (nextId > stages.length) {
@@ -229,10 +242,25 @@ export default function PiggeryBatchStagesPanel() {
     const nextStage = stages.find((s) => s.id === nextId);
     if (!nextStage) return;
 
+    let schedulerSource: unknown = override?.source;
+    if (!override) {
+      schedulerSource = await schedulerPrompt.ask({
+        companyId: getActiveCompanyId(),
+        lobId: currentBatch.lobId,
+        stageCodes: [nextStage.code],
+        breedId: currentBatch.breedId,
+      });
+      if (schedulerSource === null) return;
+    }
+
+    setAdvanceError("");
     try {
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: nextStage.code,
-        remarks: `Advanced from stage ${stages.find((s) => s.id === currentStageId)?.name || currentStageId} to ${nextStage.name}`,
+        // Sent only as the user's own override reason; any remarks at all satisfy the server's
+        // minimum-days check.
+        remarks: override?.reason || undefined,
+        scheduler_source: schedulerSource,
       });
       setBatches((prev) =>
         prev.map((b) =>
@@ -241,7 +269,16 @@ export default function PiggeryBatchStagesPanel() {
             : b,
         ),
       );
-    } catch {}
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The stage could not be advanced.";
+      setAdvanceError(message);
+      if (message.includes("Minimum duration")) {
+        setPendingSource(schedulerSource);
+        setOverrideReason("");
+        setOverrideOpen(true);
+      }
+      return;
+    }
 
     const updated = stages.map((s) => ({
       ...s,
@@ -356,7 +393,7 @@ export default function PiggeryBatchStagesPanel() {
           <Button
             size="sm"
             variant="outline"
-            onClick={handleAdvanceStage}
+            onClick={() => void handleAdvanceStage()}
             className="text-xs h-8 gap-1.5 font-medium"
           >
             <ArrowRight className="w-3.5 h-3.5" /> {t("pbsAdvanceStage")}
@@ -371,6 +408,12 @@ export default function PiggeryBatchStagesPanel() {
           </Button>
         </div>
       </div>
+
+      {advanceError && !overrideOpen && (
+        <div role="alert" className="p-3 text-xs font-semibold rounded-[var(--radius-sm)] border" style={{ borderColor: "#dc2626", color: "#dc2626" }}>
+          {advanceError}
+        </div>
+      )}
 
       {toastMsg && (
         <div className="p-3 text-xs font-semibold rounded-[var(--radius-sm)] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-2 animate-in fade-in">
@@ -472,6 +515,37 @@ export default function PiggeryBatchStagesPanel() {
       </div>
 
       {/* ── MODAL: EDIT STAGE DURATION ── */}
+      <Dialog
+        open={overrideOpen}
+        onClose={() => setOverrideOpen(false)}
+        title="Move before the minimum days?"
+        maxWidth="sm"
+        footer={
+          <Button
+            size="sm"
+            disabled={!overrideReason.trim()}
+            onClick={() => {
+              setOverrideOpen(false);
+              void handleAdvanceStage({ reason: overrideReason.trim(), source: pendingSource });
+            }}
+            className="nf-btn-primary"
+          >
+            Advance anyway
+          </Button>
+        }
+      >
+        <div className="space-y-3 text-xs pt-1">
+          <p>{advanceError}</p>
+          <textarea
+            className="nf-input w-full"
+            rows={3}
+            placeholder="Why is the batch moving early?"
+            value={overrideReason}
+            onChange={(e) => setOverrideReason(e.target.value)}
+          />
+        </div>
+      </Dialog>
+
       {editModalOpen && editingStage && (
         <Dialog
           open={editModalOpen}
@@ -546,6 +620,7 @@ export default function PiggeryBatchStagesPanel() {
           </div>
         </Dialog>
       )}
+      {schedulerPrompt.element}
     </div>
   );
 }

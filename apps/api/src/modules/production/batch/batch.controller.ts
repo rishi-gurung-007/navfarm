@@ -27,6 +27,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, resolve } from 'node:path';
 import { BatchService } from './batch.service';
+import { BatchMortalityReversalService } from './batch-mortality-reversal.service';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -41,6 +42,8 @@ import {
   BulkDailyEntryDto,
   ReopenStageDayDto,
   UpdateBatchShedDto,
+  RecordMortalityDto,
+  ReverseMortalityDto,
 } from './dto/batch.dto';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -54,7 +57,10 @@ import { FarmScoped } from '../../../common/farm-scope';
 @FarmScoped()
 @Controller('batch')
 export class BatchController {
-  constructor(private readonly batchService: BatchService) {}
+  constructor(
+    private readonly batchService: BatchService,
+    private readonly mortalityReversal: BatchMortalityReversalService,
+  ) {}
 
   @Post()
   @RequirePermission('PRODUCTION', 'BATCH', 'create')
@@ -277,7 +283,7 @@ export class BatchController {
   @RequirePermission('PRODUCTION', 'BATCH', 'edit')
   @ApiOperation({
     summary:
-      'ANIMAL_WISE only — reopen a locked stage/date for correction (does not reverse the underlying postings; reconciliation is manual)',
+      'ANIMAL_WISE only — reopen a locked stage/date for correction. What the day posted is reversed first (stock returned, journals mirrored, batch transactions marked reversed) and its entries return to drafts; a transfer, a recorded death and a bio-asset batch\'s output and cost stay posted and are listed in the response.',
   })
   @ApiParam({ name: 'id', description: 'Batch UUID' })
   @ApiParam({ name: 'stageId', description: 'Stage UUID' })
@@ -326,6 +332,52 @@ export class BatchController {
     return {
       success: true,
       message: 'Batch transaction recorded successfully.',
+      data: result,
+    };
+  }
+
+  @Post(':id/mortality')
+  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @ApiOperation({
+    summary:
+      'Record deaths against an ACTIVE Batch — the named animals (animal-wise) or a head count (batch-wise), all or nothing',
+  })
+  @ApiParam({ name: 'id', description: 'Batch UUID' })
+  async recordMortality(
+    @Param('id') id: string,
+    @Body() dto: RecordMortalityDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.batchService.recordMortality(id, dto, tenantId, req.user);
+    return {
+      success: true,
+      message: 'Mortality recorded successfully.',
+      data: result,
+    };
+  }
+
+  @Post(':id/mortality/:transactionId/reverse')
+  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @ApiOperation({
+    summary:
+      'Reverse a death recorded in error — the animal it named is live again; the batch head, stage counts, write-off journal and bio-asset ledger are put back. All or nothing.',
+  })
+  @ApiParam({ name: 'id', description: 'Batch UUID' })
+  @ApiParam({ name: 'transactionId', description: 'The MORTALITY transaction to reverse' })
+  async reverseMortality(
+    @Param('id') id: string,
+    @Param('transactionId') transactionId: string,
+    @Body() dto: ReverseMortalityDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.mortalityReversal.reverse(id, transactionId, dto.reason, tenantId, req.user?.userId);
+    return {
+      success: true,
+      message: result.animal_code
+        ? `Death reversed: ${result.animal_code} is live again in ${result.batch_no}.`
+        : `Death reversed: ${result.quantity} head back in ${result.batch_no}.`,
       data: result,
     };
   }

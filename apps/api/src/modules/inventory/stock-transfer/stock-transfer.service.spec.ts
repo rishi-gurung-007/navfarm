@@ -44,6 +44,7 @@ describe('StockTransferService', () => {
   // making, with the right arguments, before its own capacity check runs.
   const mockAssertCanReceive = jest.fn();
   const mockWriteNegativeEntry = jest.fn().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
+  const mockWritePositiveEntry = jest.fn().mockResolvedValue({ ledger_id: 'led-2' });
 
   /** Awaitable at any point, so .where(), .limit() and .offset() all resolve. */
   const chain = (result: unknown[]) => {
@@ -94,6 +95,7 @@ describe('StockTransferService', () => {
     // Accepts by default; a test that cares about a refusal overrides it.
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockWriteNegativeEntry.mockReset().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
+    mockWritePositiveEntry.mockReset().mockResolvedValue({ ledger_id: 'led-2' });
     mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
     mockDbInsert.mockImplementation((table: unknown) => ({
       values: jest.fn(async (v: any) => {
@@ -124,7 +126,7 @@ describe('StockTransferService', () => {
             writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
             getStockBalance: mockGetStockBalance,
             writeNegativeEntry: mockWriteNegativeEntry,
-            writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'led-2' }),
+            writePositiveEntry: mockWritePositiveEntry,
             transferShipmentRemainingValue: jest.fn().mockResolvedValue(0),
             writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
             writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
@@ -956,6 +958,39 @@ describe('StockTransferService', () => {
       );
     });
 
+    it('posts one receipt for everything that arrived and writes the DOA off against that same receipt', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      mockWritePositiveEntry.mockResolvedValue({ ledger_id: 'receipt-100' });
+
+      await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 46, doa_quantity: 4 }] }, 'tenant-1');
+
+      // One 50-unit receipt (46 good + 4 DOA), not a 46 receipt plus a 4 "twin" receipt.
+      expect(mockWritePositiveEntry).toHaveBeenCalledTimes(1);
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ quantity: 50, transactionType: 'TRANSFER_RECEIPT', externalReferenceNo: 'Incl. DOA:4' }),
+      );
+      // The DOA is drawn from that receipt, not from the oldest receipt at the location.
+      expect(mockWriteNegativeEntry).toHaveBeenCalledTimes(1);
+      expect(mockWriteNegativeEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ quantity: 4, transactionType: 'VARIANCE_NEGATIVE', sourceLedgerId: 'receipt-100' }),
+      );
+    });
+
+    it('posts a plain receipt and no write-off when nothing is DOA', async () => {
+      const draft = getTransferDraft();
+      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+
+      await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 50 }] }, 'tenant-1');
+
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ quantity: 50, externalReferenceNo: undefined }));
+      expect(mockWriteNegativeEntry).not.toHaveBeenCalled();
+    });
+
     it('correctly calculates remaining 400 qty when 600 of 1000 is shipped (partial shipment)', async () => {
       const order1000 = {
         ...getTransferDraft(),
@@ -1043,6 +1078,19 @@ describe('StockTransferService', () => {
       expect(enriched[0].doa_quantity).toBe(5);
       expect(enriched[0].qty_in_transit).toBe(0); // 75 shipped - (70 good + 5 doa) = 0
       expect(enriched[0].qty_to_receive).toBe(0);
+    });
+
+    it('reads a gross receipt (good + DOA on one row) as good received plus DOA, not as everything received', () => {
+      const lines = [{ line_id: 'ln-feed', item_id: 'item-feed', quantity: '100', remarks: '' }];
+      const mockLedger = [
+        { document_line_id: 'ln-feed', item_id: 'item-feed', transaction_type: 'TRANSFER_SHIPMENT', quantity: -100 },
+        { document_line_id: 'ln-feed', item_id: 'item-feed', transaction_type: 'TRANSFER_RECEIPT', quantity: 100, external_reference_no: 'Incl. DOA:10' },
+      ];
+
+      const enriched = (service as any).enrichLinesWithQuantities(lines, mockLedger, 'RECEIVED');
+      expect(enriched[0].qty_received).toBe(90);
+      expect(enriched[0].qty_doa).toBe(10);
+      expect(enriched[0].qty_in_transit).toBe(0); // 100 shipped - (90 good + 10 DOA)
     });
 
     it('refuses to close order when stock is still in transit', async () => {

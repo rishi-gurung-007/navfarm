@@ -20,7 +20,11 @@ const EXCLUDED_NAMES = new Set([
   'company_master', 'role_master', 'role_permissions', 'user_role_assignment', 'user_session', 'audit_log',
   'notification_log', 'notification_alert_log', 'setup_wizard_log',
 ]);
+// Link tables keyed by a pair of columns: there is no single id to replace with a fresh UUID. A cloned parent
+// simply has none of these rows (a pooled semen lot reads as a single-boar lot).
+const COMPOSITE_KEY_LINKS = new Set(['semen_batch_boar']);
 export const excludedReason = (name: string): string | undefined => {
+  if (COMPOSITE_KEY_LINKS.has(name)) return 'composite-key link table, cannot be re-keyed with a fresh UUID';
   if (name.startsWith('user_') || name === 'role_master' || name === 'role_permissions') return 'users / roles / sessions are never cloned';
   if (name.startsWith('company_')) return 'company configuration (target company keeps its own)';
   if (EXCLUDED_NAMES.has(name)) return 'audit / notification / wizard log, not business data';

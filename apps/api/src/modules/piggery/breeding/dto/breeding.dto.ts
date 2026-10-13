@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, Min, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, IsArray, ArrayMaxSize, Min, Max, IsUUID } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum MatingType {
@@ -205,6 +205,14 @@ export class CreateFarrowingDto {
   fostered_out?: number;
 
   @IsOptional()
+  @IsUUID()
+  piglet_item_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  piglet_stage_id?: string;
+
+  @IsOptional()
   @IsString()
   notes?: string;
 }
@@ -231,6 +239,14 @@ export class UpdateWeaningDto {
   cost_per_piglet?: number;
 
   @IsOptional()
+  @IsUUID()
+  move_to_batch_id?: string;
+
+  @IsOptional()
+  @IsString()
+  move_to_stage_code?: string;
+
+  @IsOptional()
   @IsString()
   notes?: string;
 }
@@ -242,6 +258,13 @@ export class CreateSemenCollectionDto {
 
   @IsUUID()
   boar_animal_id: string;
+
+  // Pooled semen: the other boars whose ejaculates are mixed into this one lot (`boar_animal_id` is the first of them).
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID('all', { each: true })
+  pool_boar_animal_ids?: string[];
 
   @IsOptional()
   @IsUUID()
@@ -302,6 +325,26 @@ export class CreateSemenCollectionDto {
   @Min(0)
   @Type(() => Number)
   doses_sold?: number;
+
+  // Quality on the collection (audit G8): carried on the lot and its QR.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  volume_ml?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  motility_pct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  concentration_m_per_ml?: number;
 
   @IsOptional()
   @IsString()

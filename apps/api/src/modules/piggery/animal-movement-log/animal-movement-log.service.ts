@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, desc, isNull, isNotNull, ne, or } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -39,8 +39,10 @@ export class AnimalMovementLogService {
       | 'RELOCATE'
       | 'UNASSIGN'
       | 'MORTALITY'
+      | 'MORTALITY_REVERSED'
       | 'OUTPUT'
-      | 'CULL';
+      | 'CULL'
+      | 'DISPOSAL';
     eventDate: string;
     fromBatchId?: string | null;
     toBatchId?: string | null;
@@ -73,6 +75,32 @@ export class AnimalMovementLogService {
       created_by: params.userId || null,
     });
     return movementId;
+  }
+
+  /**
+   * The date an animal entered the stage it is in now: the latest movement that put it into a
+   * stage it was not already in (an arrival, a transfer into a different stage, a stage change).
+   * A transfer that kept its stage is not an entry. Null when the log has no such row, in which
+   * case the caller falls back to the animal's farm entry date.
+   */
+  async stageEnteredOn(animalId: string, tenantId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ event_date: schema.animalMovementLog.event_date })
+      .from(schema.animalMovementLog)
+      .where(
+        and(
+          eq(schema.animalMovementLog.animal_id, animalId),
+          eq(schema.animalMovementLog.tenant_id, tenantId),
+          isNotNull(schema.animalMovementLog.to_stage_id),
+          or(
+            isNull(schema.animalMovementLog.from_stage_id),
+            ne(schema.animalMovementLog.from_stage_id, schema.animalMovementLog.to_stage_id),
+          ),
+        ),
+      )
+      .orderBy(desc(schema.animalMovementLog.event_date), desc(schema.animalMovementLog.created_at))
+      .limit(1);
+    return row?.event_date ?? null;
   }
 
   /**

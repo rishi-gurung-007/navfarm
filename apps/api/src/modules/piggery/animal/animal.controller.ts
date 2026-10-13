@@ -1,7 +1,8 @@
 import { Controller, Get, Post, Put, Patch, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AnimalService } from './animal.service';
-import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
+import { AnimalActivityService } from './animal-activity.service';
+import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -13,7 +14,10 @@ import { FarmScoped } from '../../../common/farm-scope';
 @FarmScoped()
 @Controller('animal')
 export class AnimalController {
-  constructor(private readonly animalService: AnimalService) {}
+  constructor(
+    private readonly animalService: AnimalService,
+    private readonly activityService: AnimalActivityService,
+  ) {}
 
   @Post()
   @RequirePermission('PIGGERY', 'ANIMAL', 'create')
@@ -85,9 +89,18 @@ export class AnimalController {
     return { success: true, message: 'Animal stage transition recorded.', data: result };
   }
 
+  @Patch(':id/out-of-production')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Take an animal out of production (BBP-1) — she is culled later, on or after this date' })
+  async markOutOfProduction(@Param('id') id: string, @Body() dto: MarkOutOfProductionDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.animalService.markOutOfProduction(id, dto, tenantId, req.user);
+    return { success: true, message: 'Taken out of production.', data: result };
+  }
+
   @Patch(':id/dispose')
   @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
-  @ApiOperation({ summary: 'Dispose an animal (sold/slaughtered/died/transferred) — never physically deleted' })
+  @ApiOperation({ summary: 'Dispose an animal (sold/slaughtered/died/transferred/culled) — never physically deleted' })
   @ApiParam({ name: 'id', description: 'Animal UUID' })
   async dispose(@Param('id') id: string, @Body() dto: DisposeAnimalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -102,6 +115,15 @@ export class AnimalController {
   async getBreedingHistory(@Param('id') id: string) {
     const result = await this.animalService.getBreedingHistory(id);
     return { success: true, message: 'Breeding history retrieved.', data: result };
+  }
+
+  @Get(':id/activity')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: "What the work done on an animal shows: its recorded weights and scores, what it consumed, how it died, a boar's semen" })
+  @ApiParam({ name: 'id', description: 'Animal UUID' })
+  async getActivity(@Param('id') id: string) {
+    const result = await this.activityService.getActivity(id);
+    return { success: true, message: 'Animal activity retrieved.', data: result };
   }
 
   @Get(':id/bio-asset-ledger')

@@ -204,13 +204,19 @@ export function farmCanRegisterAnimals(farm: DemoFarm): boolean {
  * Volume
  */
 
-export type VolumeProfileName = 'full' | 'standard' | 'light';
-export const VOLUME_PROFILES: VolumeProfileName[] = ['full', 'standard', 'light'];
+export type VolumeProfileName = 'full' | 'standard' | 'light' | 'lean';
+export const VOLUME_PROFILES: VolumeProfileName[] = ['full', 'standard', 'light', 'lean'];
 
 /** Rishi's numbers for a full farm: ~40 sows, 3 boars, 15 gilts, 3–4 batches, ~30 days. */
 const FULL: FarmVolume = { sows: 40, boars: 3, gilts: 15, countOnlyBatches: 3, herdScale: 1, days: 30, breedingSows: 5 };
 const LIGHT: FarmVolume = { sows: 12, boars: 2, gilts: 6, countOnlyBatches: 2, herdScale: 0.5, days: 14, breedingSows: 3 };
 const MINIMAL: FarmVolume = { sows: 6, boars: 1, gilts: 3, countOnlyBatches: 1, herdScale: 0.35, days: 7, breedingSows: 2 };
+/**
+ * The lean profile (`pnpm seed:lean`): the smallest herd that still runs every flow end to end — 6 sows, a boar
+ * and 2 gilts in one Animal Wise batch, one head-count weaner batch of ~60. It keeps 14 days, not MINIMAL's 7,
+ * because the breeding chapter needs a litter born, nursed and weaned between the herd's purchase and today.
+ */
+const LEAN: FarmVolume = { sows: 6, boars: 1, gilts: 2, countOnlyBatches: 1, herdScale: 0.25, days: 14, breedingSows: 3 };
 
 /**
  * Rishi asked for the full volume on every farm but said "enough or less if it
@@ -223,7 +229,7 @@ const MINIMAL: FarmVolume = { sows: 6, boars: 1, gilts: 3, countOnlyBatches: 1, 
 const FULL_TIER_CODES: DemoFarmCode[] = ['POR100', 'RIC100', 'VIL100'];
 
 export function volumeFor(code: DemoFarmCode, role: FarmRole, profile: VolumeProfileName): FarmVolume {
-  const base = profile === 'light' ? MINIMAL : profile === 'full' ? FULL : FULL_TIER_CODES.includes(code) ? FULL : LIGHT;
+  const base = profile === 'lean' ? LEAN : profile === 'light' ? MINIMAL : profile === 'full' ? FULL : FULL_TIER_CODES.includes(code) ? FULL : LIGHT;
 
   // The two specialist farms carry no sow herd at all: the AI station is boars
   // only, and the grow-out site holds bought-in weaners and growers as count

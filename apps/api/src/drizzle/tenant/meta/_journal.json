@@ -1254,6 +1254,90 @@
       "when": 1792000000047,
       "tag": "0179_batch_mortality_animal_count_only",
       "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "5",
+      "when": 1792000000048,
+      "tag": "0180_system_scheduler",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "5",
+      "when": 1792000000049,
+      "tag": "0181_headcount_transfer_and_stage_gender",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "5",
+      "when": 1792000000050,
+      "tag": "0182_bcs_metric_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "5",
+      "when": 1792000000051,
+      "tag": "0183_batch_transaction_reversed",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "5",
+      "when": 1792000000052,
+      "tag": "0184_farrowing_piglet_lot",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "5",
+      "when": 1792000000053,
+      "tag": "0185_semen_lot_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "5",
+      "when": 1792000000054,
+      "tag": "0186_daily_data_output_item",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "5",
+      "when": 1792000000055,
+      "tag": "0187_animal_cull_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "5",
+      "when": 1792000000056,
+      "tag": "0188_semen_quality",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "5",
+      "when": 1792000000057,
+      "tag": "0189_qr_pack_series",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "5",
+      "when": 1792000000058,
+      "tag": "0190_semen_pool",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "5",
+      "when": 1792000000059,
+      "tag": "0191_daily_data_reason",
+      "breakpoints": true
     }
   ]
 }

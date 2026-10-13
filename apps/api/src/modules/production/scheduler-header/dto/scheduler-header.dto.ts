@@ -16,6 +16,17 @@ export const KPI_METRICS = [
 ] as const;
 export const CAPTURE_PERS = ['AVERAGE', 'TOTAL', 'PER_HEAD'] as const;
 
+/**
+ * What the user answered when a batch's scheduler was about to be created and
+ * a system scheduler matched its stage: SYSTEM copies that scheduler's lines,
+ * EMPTY leaves the header empty for manual lines. Omitted (no one was asked —
+ * a lazy create from data entry, a split, a transfer posting) behaves as
+ * SYSTEM. With no matching system scheduler, the lines come from the breed
+ * lifecycle exactly as before.
+ */
+export const SCHEDULER_SOURCES = ['SYSTEM', 'EMPTY'] as const;
+export type SchedulerSource = (typeof SCHEDULER_SOURCES)[number];
+
 export class GenerateSchedulerHeaderDto {
   @ApiProperty({ description: 'Batch UUID to generate this stage\'s schedule for' })
   @IsUUID()
@@ -72,6 +83,11 @@ export class CreateSchedulerHeaderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateSchedulerLineDto)
   lines?: CreateSchedulerLineDto[];
+
+  @ApiProperty({ description: 'The system scheduler the sent lines were copied from — recorded as their origin', required: false })
+  @IsOptional()
+  @IsUUID()
+  system_scheduler_id?: string;
 }
 
 export class UpdateSchedulerHeaderDto {
@@ -100,6 +116,20 @@ export class UpdateSchedulerHeaderDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+/** Where an empty scheduler's activities are copied from: a system scheduler, or another batch's scheduler. */
+export const COPY_SOURCE_TYPES = ['SYSTEM', 'BATCH'] as const;
+
+export class CopySchedulerLinesDto {
+  @ApiProperty({ enum: COPY_SOURCE_TYPES, description: 'SYSTEM = a system scheduler; BATCH = a batch\'s scheduler' })
+  @IsString()
+  @IsIn(COPY_SOURCE_TYPES)
+  source_type: (typeof COPY_SOURCE_TYPES)[number];
+
+  @ApiProperty({ description: 'The system_scheduler_id or scheduler_id to copy from' })
+  @IsUUID()
+  source_id: string;
 }
 
 export const SCHEDULER_STATUSES = ['DRAFT', 'ACTIVE', 'COMPLETED', 'SUSPENDED'] as const;

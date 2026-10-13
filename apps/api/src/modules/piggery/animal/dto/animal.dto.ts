@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, Max, IsNumber, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, Max, IsNumber, IsPositive, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -23,7 +23,7 @@ const ANIMAL_TYPES = Object.values(ANIMAL_TYPES_BY_LOB).flat();
 const GENDERS = ['F', 'M'] as const;
 const ENTRY_TYPES = ['PURCHASED_IMPORTED', 'PURCHASED_LOCAL', 'BORN_ON_FARM', 'TRANSFERRED_IN'] as const;
 const STATUSES = ['ACTIVE', 'QUARANTINE', 'SICK', 'PREGNANT', 'LACTATING', 'DRY', 'CULLED', 'DEAD', 'SOLD', 'SLAUGHTERED'] as const;
-export const DISPOSAL_TYPES = ['SOLD', 'SLAUGHTERED', 'DIED', 'TRANSFERRED'] as const;
+export const DISPOSAL_TYPES = ['SOLD', 'SLAUGHTERED', 'DIED', 'TRANSFERRED', 'CULLED'] as const;
 
 export class CreateAnimalDto {
   @ApiProperty({ description: 'Optional manual code; omit to allocate from the configured animal series', required: false })
@@ -381,7 +381,7 @@ export class DisposeAnimalDto {
   @IsOptional()
   disposal_reason_id?: string;
 
-  @ApiProperty({ description: 'Date of sale/slaughter/death' })
+  @ApiProperty({ description: 'Date of sale/slaughter/death — for CULLED, the cull date' })
   @IsDateString()
   @IsNotEmpty()
   disposal_date: string;
@@ -390,6 +390,39 @@ export class DisposeAnimalDto {
   @IsNumber()
   @IsOptional()
   disposal_value?: number;
+
+  // BBP-1: "Out-of-Production Date and Cull Date are TWO SEPARATE fields … System does not allow Cull Date <
+  // Out-of-Production Date". CULLED needs it here, or set earlier with Out of production.
+  @ApiProperty({ description: 'CULLED: the date the animal was taken out of production (may have been set already)', required: false })
+  @IsDateString()
+  @IsOptional()
+  out_of_production_date?: string;
+
+  // BBP-1: "weight at death/cull recorded". Required for CULLED, optional for the other exits.
+  @ApiProperty({ description: 'Weight at exit, kg — required for CULLED', required: false })
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  exit_weight_kg?: number;
+
+  // BBP-1: "disposal destination … recorded". No list of destinations is specified, so it is free text.
+  @ApiProperty({ description: 'Where the animal went (buyer, abattoir, rendering) — required for CULLED', required: false })
+  @IsString()
+  @IsOptional()
+  disposal_destination?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  notes?: string;
+}
+
+/** BBP-1: an animal is taken out of production first; it is culled later, on or after this date. */
+export class MarkOutOfProductionDto {
+  @ApiProperty({ description: 'Date the animal was taken out of production' })
+  @IsDateString()
+  @IsNotEmpty()
+  out_of_production_date: string;
 
   @ApiProperty({ required: false })
   @IsString()

@@ -69,6 +69,9 @@ export const MASTER_STEPS: Step[] = [
   { label: 'System reference masters (UOM, species, ...)', script: 'seed-system-master-data.ts', args: [] },
   { label: 'Standard activity master catalog', script: 'seed-activity-master.ts', args: [] },
   { label: "Adopt tenant master templates into Triple C (no_series etc.)", script: 'seed-company-master-templates.ts', args: ['--apply'] },
+  // reason_master is empty on a fresh tenant: nothing else in the chain seeds it, and mortality, disposal,
+  // transfer and adjustment entries all pick a reason from it. The 57 documented rows go in per company.
+  { label: 'Documented reasons (mortality, disposal, transfer, adjustment ...)', script: 'seed-documented-reasons.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
   // The demo item catalog (feed/vaccine/medicine/bio items) must exist before
@@ -128,20 +131,43 @@ export const SMALL_PRESET = { farms: 'MUL100,POR100', volume: 'light' } as const
 const FOUR_FARM_STEP_SCRIPT = 'seed-four-farm-feed-demo.ts';
 const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and lifecycles for the small preset farms', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
 
+/**
+ * The full preset (`--preset=full`, `pnpm seed:full`): every master, then every operational chapter on all
+ * nine Triple C farms, then the reconciliation. The operational chapters (batches, daily entries, breeding,
+ * harvests, batch and stock transfers, mortality) are written around the nine-farm topology, so this swaps the
+ * four-farm feed fixture for the nine-farm masters and, as its last step, runs verify-demo-flow.ts, which reads
+ * MySQL and fails the run if the batch, inventory, transfer and output tables do not agree with one another.
+ */
+/**
+ * The lean preset (`--preset=lean`, `pnpm seed:lean`): the whole flow on the smallest data that still shows it —
+ * two Animal Wise and two Batch Wise batches on MUL100 (its sow herd and a group split out for service; a weaner
+ * batch and the one litter's piglet lot), POR100 only as a stocked store for the transfers. Same masters as the
+ * small preset (the two real farms), the same chapters as the full one with `--lean`, and the same
+ * reconciliation at the end.
+ */
+const FULL_FARM_STEP: Step = { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
+const VERIFY_STEP: Step = { label: 'Reconcile batches, inventory, transfers and outputs against each other', script: 'verify-demo-flow.ts', args: [] };
+
 export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string }): Step[] {
   // --volume=<full|standard|light> sizes the chapters' data; left out, the chapters use their own default.
   // The small preset seeds no batches or schedulers (`--no-batches`): the person using the app creates them.
-  const extra = [...(opts.volume ? [`--volume=${opts.volume}`] : []), ...(opts.preset === 'small' ? ['--no-batches'] : [])];
+  const extra = [
+    ...(opts.volume ? [`--volume=${opts.volume}`] : []),
+    ...(opts.preset === 'small' ? ['--no-batches'] : []),
+    ...(opts.preset === 'lean' ? ['--lean'] : []),
+  ];
   const chapters: Step = extra.length ? { ...CHAPTERS_STEP, args: [...CHAPTERS_STEP.args, ...extra] } : CHAPTERS_STEP;
   // --chapters-only means exactly that: skip the reset and every master step,
   // and only re-post the chapters onto whatever masters already exist.
   if (opts.chaptersOnly) return [chapters];
   const steps: Step[] = [];
   if (!opts.skipReset) steps.push(RESET_STEP);
-  const masters = opts.preset === 'small'
-    ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? SMALL_FARM_STEP : step))
+  const farmStep = opts.preset === 'small' || opts.preset === 'lean' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
+  const masters = farmStep
+    ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? farmStep : step))
     : MASTER_STEPS;
   steps.push(...masters, chapters);
+  if (opts.preset === 'full' || opts.preset === 'lean') steps.push(VERIFY_STEP);
   return steps;
 }
 
@@ -226,7 +252,7 @@ async function main() {
   const { apply, chaptersOnly, skipReset } = args;
   // The preset implies its volume unless one was given, and scopes every child step to its farms.
   const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
-  if (args.preset === 'small') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  if (args.preset === 'small' || args.preset === 'lean') process.env.DEMO_FARMS = SMALL_PRESET.farms;
   const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 
   // The real target list, derived the same way setup-fresh-database.ts

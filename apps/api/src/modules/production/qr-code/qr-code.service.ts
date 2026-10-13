@@ -6,6 +6,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateQrCodeDto, QueryQrCodeDto } from './dto/qr-code.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { assertLocationOnActiveFarm, batchReferenceScopeConditions, batchScopeConditions, farmScope } from '../../../common/farm-scope';
 
 const addDays = (dateStr: string, days: number): string => {
@@ -19,6 +20,7 @@ export class QrCodeService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
+    private readonly numberSeriesService: NumberSeriesService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -29,15 +31,12 @@ export class QrCodeService {
     return tenantDb;
   }
 
+  /**
+   * The next pack number, from the company's QR_PACK series (audit I3). It used to be MAX(pack_no)+1 read when the pack
+   * was written, so two packs made at the same moment could take the same number; the series locks its counter.
+   */
   private async generatePackNo(tenantId: string, companyId: string): Promise<string> {
-    const [row] = await this.db
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.qrCodeMaster.pack_no}, 6) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.qrCodeMaster)
-      .where(and(eq(schema.qrCodeMaster.tenant_id, tenantId), eq(schema.qrCodeMaster.company_id, companyId)));
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `PACK-${String(seq).padStart(6, '0')}`;
+    return this.numberSeriesService.generateNext('QR_PACK', tenantId, companyId);
   }
 
   /** Walks batch_input_line.source_batch_id recursively — the exact traceability chain Phase 5 built. */
@@ -206,6 +205,89 @@ export class QrCodeService {
     });
 
     return this.findOne(qrId);
+  }
+
+  /**
+   * The QR of a semen lot: one per lot, printed when the collection is posted. It carries the boar, the boar's batch and
+   * the lot's details — lot number, collection date, doses and expiry — and not its cost. It is an ordinary pack row, so
+   * it shows on the Packs screen and can be voided like any other.
+   */
+  async createForSemenLot(
+    params: {
+      boar: typeof schema.animalRegister.$inferSelect;
+      /** The other boars a pooled lot was mixed from; the lot's `boar` is the first of them. */
+      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
+      boarBatch: typeof schema.batchHeader.$inferSelect;
+      item: typeof schema.itemMaster.$inferSelect;
+      lotNo: string;
+      collectionDate: string;
+      doses: number;
+      expiryDate: string | null;
+      warehouseId: string | null;
+      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+    },
+    tenantId: string,
+    userPayload?: any,
+  ) {
+    const { boar, boarBatch, item } = params;
+    const [breed] = boar.breed_id
+      ? await this.db.select().from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, boar.breed_id)).limit(1)
+      : [];
+    let facilityCode: string | null = null;
+    if (params.warehouseId) {
+      const [wh] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.warehouseId)).limit(1);
+      facilityCode = wh?.location_code || null;
+    }
+    const packNo = await this.generatePackNo(tenantId, boarBatch.company_id);
+    const originChain = await this.buildOriginChain(boarBatch.batch_id);
+    const qrData = {
+      type: 'SEMEN_LOT',
+      pack_no: packNo,
+      lot_no: params.lotNo,
+      item_code: item.item_code,
+      item_name: item.item_name,
+      boar: { animal_code: boar.animal_code, rfid_tag: boar.rfid_tag || null, breed: breed?.breed_name || null },
+      // A pooled lot names every boar that went into it.
+      ...(params.poolBoars?.length
+        ? { pooled: true, boars: [boar, ...params.poolBoars].map((b) => ({ animal_code: b.animal_code, rfid_tag: b.rfid_tag || null })) }
+        : {}),
+      batch_no: boarBatch.batch_no,
+      collection_date: params.collectionDate,
+      doses: params.doses,
+      expiry_date: params.expiryDate,
+      facility_code: facilityCode,
+      // Quality read at collection (G8), when it was recorded.
+      ...(params.quality && Object.values(params.quality).some((v) => v != null) ? { quality: params.quality } : {}),
+    };
+    const qrId = randomUUID();
+    await this.db.insert(schema.qrCodeMaster).values({
+      qr_id: qrId,
+      tenant_id: tenantId,
+      company_id: boarBatch.company_id,
+      batch_id: boarBatch.batch_id,
+      item_id: item.item_id,
+      lot_no: params.lotNo,
+      pack_no: packNo,
+      production_date: params.collectionDate,
+      expiry_date: params.expiryDate,
+      net_weight: String(params.doses),
+      pack_uom: 'DOSE',
+      warehouse_id: params.warehouseId,
+      origin_batch_chain: originChain,
+      breed: breed?.breed_name || null,
+      qr_data: qrData,
+      generated_by: userPayload?.userId || null,
+    });
+    await this.auditService.log({
+      tenantId,
+      companyId: boarBatch.company_id,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'qr_code_master',
+      entityId: qrId,
+      newValues: { pack_no: packNo, lot_no: params.lotNo, boar: boar.animal_code, ...(params.poolBoars?.length ? { pooled_with: params.poolBoars.map((b) => b.animal_code) } : {}) },
+    });
+    return { qr_id: qrId, pack_no: packNo };
   }
 
   async findOne(id: string) {

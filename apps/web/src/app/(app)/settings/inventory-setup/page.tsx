@@ -26,6 +26,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/states";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 export interface MasterMeta {
   key: string;
@@ -157,9 +158,13 @@ export default function InventorySetupPage() {
   }, [setupData, localNumbering, localGeneral]);
 
   // Switch company context
-  const handleCompanyChange = (newCompanyId: string) => {
+  const handleCompanyChange = async (newCompanyId: string) => {
     if (newCompanyId === selectedCompanyId) return;
-    if (isDirty && !window.confirm("You have unsaved changes. Discard and switch company?")) {
+    if (isDirty && !(await confirmAction({
+      title: "Discard unsaved changes?",
+      message: "You have unsaved changes. Discard them and switch company?",
+      tone: "danger",
+    }))) {
       return;
     }
     setSelectedCompanyId(newCompanyId);

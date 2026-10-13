@@ -251,22 +251,20 @@ describe('GoodsReceiptService', () => {
 
     it('still posts when the re-check itself throws', async () => {
       const cls = transactionCls(mockDb);
-      const alertRules = { ensureDefaultRules: jest.fn().mockRejectedValue(new Error('alert_rule is locked')) };
-      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, alertRules as any);
+      const feedAlerts = new FeedAlertService(cls, {} as any, {} as any, {} as any);
       const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
       await build(feedAlerts, cls);
       postedReceipt();
-      // The hook's own read of the receipt warehouse: a silo on farm-1, so it goes on to evaluate that farm.
+      // The hook's own read of the receipt warehouse fails: the receipt is already posted and must stay posted.
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([{ location_id: 'wh-1', location_type: 'SILO', farm_id: 'farm-1', company_id: 'comp-1' }]),
+          where: jest.fn().mockRejectedValue(new Error('alert_rule is locked')),
         }),
       });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
       expect(result.status).toBe('POSTED');
-      expect(alertRules.ensureDefaultRules).toHaveBeenCalledWith('comp-1', 'tenant-123');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
     });
   });
@@ -285,6 +283,7 @@ describe('GoodsReceiptService', () => {
         where: (cond: unknown) => { capturedWhere ??= cond; return self; },
         limit: () => self,
         offset: () => self,
+        orderBy: () => self,
         for: () => self,
         then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
       };

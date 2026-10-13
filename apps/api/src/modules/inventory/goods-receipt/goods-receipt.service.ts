@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, count, sql, inArray } from 'drizzle-orm';
+import { eq, and, like, or, isNull, count, sql, inArray, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -382,6 +382,9 @@ export class GoodsReceiptService {
       .select()
       .from(schema.goodsReceipt)
       .where(and(...conditions))
+      // Newest document first. receipt_no is zero-padded (GR-000123), so it breaks
+      // ties between receipts created in the same second.
+      .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no))
       .limit(limit)
       .offset(offset);
   }

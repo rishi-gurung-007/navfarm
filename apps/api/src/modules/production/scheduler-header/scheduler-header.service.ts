@@ -9,9 +9,11 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   CreateSchedulerLineDto, UpdateSchedulerLineDto, UpdateSchedulerHeaderStatusDto, QuerySchedulerHeaderDto,
+  SchedulerSource, CopySchedulerLinesDto,
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { stageDayRange } from '../lifecycle/feed-row-days';
+import { stagesNeedingScheduler } from './occupied-stages';
 
 /** "KPI UOM fetched as per KPI" — the unit a given kpi_metric is captured in isn't a free
  * choice, it's implied by the metric itself. Known metrics auto-derive kpi_uom (overriding
@@ -61,6 +63,21 @@ const LINE_TYPE_FIELDS: Record<string, { required: string[]; forbidden?: string[
   RESOURCE: { required: ['resource_id'] },
   TRANSFER: { required: ['item_id', 'standard_qty'] },
 };
+
+export interface CreateForStageOptions { source?: SchedulerSource }
+
+/** The activity columns a batch's scheduler_line and a system_scheduler_line share — what a copy carries across. */
+export const SHARED_LINE_KEYS = [
+  'line_type', 'activity_name', 'occurrence', 'start_day', 'end_day', 'day_of_week', 'is_mandatory',
+  'item_id', 'item_description', 'standard_qty', 'qty_basis', 'allow_qty_edit', 'lot_required',
+  'creates_inventory', 'output_lot_auto', 'output_basis', 'auto_triggers_stage',
+  'kpi_metric', 'kpi_uom', 'std_value', 'lower_alert_limit', 'upper_alert_limit', 'alert_severity', 'capture_per',
+  'overhead_category', 'gl_account', 'estimated_cost', 'resource_id',
+] as const;
+
+export function pickLineFields(line: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(SHARED_LINE_KEYS.filter((k) => k in line).map((k) => [k, line[k]]));
+}
 
 @Injectable()
 export class SchedulerHeaderService {
@@ -230,13 +247,269 @@ export class SchedulerHeaderService {
   }
 
   /**
+   * The active system scheduler a batch of this breed would copy for this
+   * stage: the breed's own one first, else the one for every breed. One with
+   * no active lines is no match — copying it would only suppress the breed
+   * lifecycle lines in favour of nothing. Matched on the stage's LOB and code,
+   * since the tenant template row and the company's copy of a stage are two
+   * ids for the same stage and batches point at either.
+   */
+  async findMatchingSystemScheduler(companyId: string, stageId: string, breedId: string | null | undefined) {
+    const [stage] = await this.db
+      .select({ lob_id: schema.stageMaster.lob_id, stage_code: schema.stageMaster.stage_code })
+      .from(schema.stageMaster)
+      .where(eq(schema.stageMaster.stage_id, stageId))
+      .limit(1);
+    if (!stage) return null;
+    const candidates = await this.db
+      .select()
+      .from(schema.systemScheduler)
+      .where(and(
+        eq(schema.systemScheduler.company_id, companyId),
+        eq(schema.systemScheduler.lob_id, stage.lob_id),
+        eq(schema.systemScheduler.stage_code, stage.stage_code),
+        eq(schema.systemScheduler.is_active, true),
+        breedId ? inArray(schema.systemScheduler.breed_key, [breedId, '*']) : eq(schema.systemScheduler.breed_key, '*'),
+      ));
+    if (!candidates.length) return null;
+    const lineCounts = await this.db
+      .select({ system_scheduler_id: schema.systemSchedulerLine.system_scheduler_id, total: count() })
+      .from(schema.systemSchedulerLine)
+      .where(and(
+        inArray(schema.systemSchedulerLine.system_scheduler_id, candidates.map((c) => c.system_scheduler_id)),
+        eq(schema.systemSchedulerLine.is_active, true),
+      ))
+      .groupBy(schema.systemSchedulerLine.system_scheduler_id);
+    const lineCountById = new Map(lineCounts.map((l) => [l.system_scheduler_id, Number(l.total)]));
+    const usable = candidates.filter((c) => (lineCountById.get(c.system_scheduler_id) ?? 0) > 0);
+    const match = usable.find((c) => breedId && c.breed_key === breedId) ?? usable.find((c) => c.breed_key === '*');
+    return match ? { ...match, line_count: lineCountById.get(match.system_scheduler_id) ?? 0 } : null;
+  }
+
+  /** Copies a system scheduler's active lines (and their custom days) onto a batch's header, numbered from startSeq. Returns how many. */
+  private async copyLinesFromSystemScheduler(
+    schedulerId: string,
+    systemSchedulerId: string,
+    batch: { nob_id: string | null; lob_id: string },
+    stageId: string,
+    startSeq = 1,
+  ): Promise<number> {
+    const source = await this.db
+      .select()
+      .from(schema.systemSchedulerLine)
+      .where(and(eq(schema.systemSchedulerLine.system_scheduler_id, systemSchedulerId), eq(schema.systemSchedulerLine.is_active, true)))
+      .orderBy(asc(schema.systemSchedulerLine.line_seq));
+    if (!source.length) return 0;
+    const sourceDays = await this.db
+      .select()
+      .from(schema.systemSchedulerLineCustomDays)
+      .where(inArray(schema.systemSchedulerLineCustomDays.line_id, source.map((l) => l.line_id)));
+
+    const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
+    const customDayRows: (typeof schema.schedulerLineCustomDays.$inferInsert)[] = [];
+    source.forEach((line, idx) => {
+      const { line_id: sourceLineId, system_scheduler_id: _origin, line_seq: _seq, ...fields } = line;
+      const lineId = randomUUID();
+      lines.push({
+        ...fields,
+        line_id: lineId,
+        scheduler_id: schedulerId,
+        line_seq: startSeq + idx,
+        stage_id: stageId,
+        source: 'SYSTEM',
+        nob_id: batch.nob_id,
+        lob_id: batch.lob_id,
+      });
+      for (const day of sourceDays.filter((d) => d.line_id === sourceLineId)) {
+        customDayRows.push({ custom_day_id: randomUUID(), line_id: lineId, day_number: day.day_number });
+      }
+    });
+    await this.db.insert(schema.schedulerLine).values(lines);
+    if (customDayRows.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDayRows);
+    return lines.length;
+  }
+
+  /**
+   * Fills an empty scheduler with another scheduler's activities — a system
+   * scheduler's, or another batch's — for a header that got none (the user
+   * declined the copy, or no system scheduler existed yet). Refused once the
+   * header has an active line, so it never doubles a plan up. A copy from a
+   * system scheduler records it as the origin, as on auto-create; a copy from
+   * a batch's scheduler is the user's own choice and is marked MANUAL.
+   */
+  async copyLinesInto(headerId: string, dto: CopySchedulerLinesDto, tenantId: string, userPayload?: { userId?: string }) {
+    let copied = 0;
+    // The empty check sits inside the transaction it guards, so a line added
+    // between the check and the copy cannot leave the plan doubled.
+    await withTenantTransaction(this.cls, async () => {
+      const header = await this.findOne(headerId);
+      if (header.lines.some((l) => l.is_active)) {
+        throw new ConflictException('This scheduler already has activities. Copying is offered only while it has none.');
+      }
+      // Removed lines keep their line_seq (it is unique per scheduler), so a copy numbers on after them.
+      const startSeq = header.lines.reduce((max, l) => Math.max(max, l.line_seq), 0) + 1;
+
+      if (dto.source_type === 'SYSTEM') {
+        const [source] = await this.db.select({ system_scheduler_id: schema.systemScheduler.system_scheduler_id })
+          .from(schema.systemScheduler)
+          .where(and(eq(schema.systemScheduler.system_scheduler_id, dto.source_id), eq(schema.systemScheduler.company_id, header.company_id)))
+          .limit(1);
+        if (!source) throw new NotFoundException(`System scheduler '${dto.source_id}' not found.`);
+        copied = await this.copyLinesFromSystemScheduler(headerId, source.system_scheduler_id, header, header.stage_id, startSeq);
+        if (copied) {
+          await this.db.update(schema.schedulerHeader)
+            .set({ system_scheduler_id: source.system_scheduler_id, updated_at: toMysqlTimestamp() })
+            .where(eq(schema.schedulerHeader.scheduler_id, headerId));
+        }
+      } else {
+        if (dto.source_id === headerId) throw new BadRequestException('A scheduler cannot copy its own activities.');
+        const source = await this.findOne(dto.source_id);
+        if (source.company_id !== header.company_id) throw new NotFoundException(`Scheduler '${dto.source_id}' not found.`);
+        const sourceLines = source.lines.filter((l) => l.is_active).sort((a, b) => a.line_seq - b.line_seq);
+        const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
+        const customDayRows: (typeof schema.schedulerLineCustomDays.$inferInsert)[] = [];
+        sourceLines.forEach((line, idx) => {
+          const lineId = randomUUID();
+          lines.push({
+            ...(pickLineFields(line) as Partial<typeof schema.schedulerLine.$inferInsert>),
+            line_type: line.line_type,
+            activity_name: line.activity_name,
+            line_id: lineId,
+            scheduler_id: headerId,
+            line_seq: startSeq + idx,
+            stage_id: header.stage_id,
+            source: 'MANUAL',
+            lifecycle_ref_id: null,
+            nob_id: header.nob_id,
+            lob_id: header.lob_id,
+            is_active: true,
+          });
+          for (const day of line.custom_days) {
+            customDayRows.push({ custom_day_id: randomUUID(), line_id: lineId, day_number: day.day_number });
+          }
+        });
+        if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
+        if (customDayRows.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDayRows);
+        copied = lines.length;
+      }
+      if (!copied) throw new BadRequestException('The chosen scheduler has no activities to copy.');
+
+      await this.auditService.log({
+        tenantId, companyId: header.company_id, userId: userPayload?.userId,
+        action: 'COPY_LINES', entityName: 'scheduler_header', entityId: headerId,
+        newValues: { source_type: dto.source_type, source_id: dto.source_id, lines_copied: copied },
+      });
+    });
+
+    return this.findOne(headerId);
+  }
+
+  /**
    * Auto-creates (or returns the existing) scheduler_header for this batch's
    * stage — called by BatchService.transferStage() right after it resolves a
    * real stage_id. Idempotent on (batch_id, stage_id): re-entering the same
-  * stage never duplicates a header.
-  */
-  async createForStage(batchId: string, stageId: string, tenantId: string, userPayload?: { userId?: string }): Promise<any> {
-    return this.createForStageInternal(batchId, stageId, tenantId, userPayload);
+   * stage never duplicates a header. options.source carries the user's answer
+   * to "copy the system scheduler?" — see SchedulerSource.
+   */
+  /**
+   * Live animals of an animal-wise batch at one stage. A stage exists as a tenant row and a
+   * company copy, and animals and schedulers point at either, so stages are matched by code.
+   */
+  async countLiveAnimalsAtStage(batchId: string, stageId: string): Promise<number> {
+    const [stage] = await this.db.select({ stage_code: schema.stageMaster.stage_code })
+      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
+    if (!stage?.stage_code) {
+      const [row] = await this.db.select({ n: count() }).from(schema.animalRegister)
+        .where(and(
+          eq(schema.animalRegister.current_batch_id, batchId),
+          eq(schema.animalRegister.current_stage_id, stageId),
+          eq(schema.animalRegister.is_active, true),
+        ));
+      return Number(row?.n ?? 0);
+    }
+    const [row] = await this.db.select({ n: count() }).from(schema.animalRegister)
+      .innerJoin(schema.stageMaster, eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id))
+      .where(and(
+        eq(schema.animalRegister.current_batch_id, batchId),
+        eq(schema.animalRegister.is_active, true),
+        eq(schema.stageMaster.stage_code, stage.stage_code),
+      ));
+    return Number(row?.n ?? 0);
+  }
+
+  /**
+   * Sets every open scheduler of an animal-wise batch to the number of live animals at its stage.
+   * An animal-wise batch holds several stages at once, so a header's count is its own stage's
+   * animals, never the whole batch; deaths, transfers and stage moves all end here so the count
+   * cannot drift from the register. A batch-wise batch has no register rows and is left alone.
+   */
+  async syncAnimalWiseCounts(batchId: string): Promise<void> {
+    const [batch] = await this.db.select()
+      .from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, batchId)).limit(1);
+    if (batch?.tracking_mode !== 'ANIMAL_WISE') return;
+
+    // Every stage the animals now hold gets an open scheduler, or the animals there have no data entry.
+    if (batch.status === 'ACTIVE') await this.openOccupiedStageSchedulers(batch);
+
+    const headers = await this.db
+      .select({ scheduler_id: schema.schedulerHeader.scheduler_id, stage_code: schema.stageMaster.stage_code })
+      .from(schema.schedulerHeader)
+      .innerJoin(schema.stageMaster, eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id))
+      .where(and(
+        eq(schema.schedulerHeader.batch_id, batchId),
+        inArray(schema.schedulerHeader.scheduler_status, ['ACTIVE', 'DRAFT']),
+      ));
+    if (!headers.length) return;
+
+    const perStage = await this.db
+      .select({ stage_code: schema.stageMaster.stage_code, n: count() })
+      .from(schema.animalRegister)
+      .innerJoin(schema.stageMaster, eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id))
+      .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)))
+      .groupBy(schema.stageMaster.stage_code);
+    const byCode = new Map(perStage.map((r) => [r.stage_code, Number(r.n)]));
+
+    for (const header of headers) {
+      await this.db.update(schema.schedulerHeader)
+        .set({ animal_count: String(byCode.get(header.stage_code) ?? 0), updated_at: toMysqlTimestamp() })
+        .where(eq(schema.schedulerHeader.scheduler_id, header.scheduler_id));
+    }
+  }
+
+  /** Opens a scheduler — new, or the stage's completed one — for each stage an animal-wise batch's live animals hold. */
+  private async openOccupiedStageSchedulers(batch: typeof schema.batchHeader.$inferSelect): Promise<void> {
+    const occupied = await this.db
+      .selectDistinct({ stage_id: schema.animalRegister.current_stage_id, stage_code: schema.stageMaster.stage_code })
+      .from(schema.animalRegister)
+      .innerJoin(schema.stageMaster, eq(schema.animalRegister.current_stage_id, schema.stageMaster.stage_id))
+      .where(and(eq(schema.animalRegister.current_batch_id, batch.batch_id), eq(schema.animalRegister.is_active, true)));
+    if (!occupied.length) return;
+    const schedulers = await this.db
+      .select({
+        scheduler_id: schema.schedulerHeader.scheduler_id,
+        stage_code: schema.stageMaster.stage_code,
+        scheduler_status: schema.schedulerHeader.scheduler_status,
+      })
+      .from(schema.schedulerHeader)
+      .innerJoin(schema.stageMaster, eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id))
+      .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
+
+    const { create, reopen } = stagesNeedingScheduler(
+      occupied.flatMap((s) => (s.stage_id ? [{ stage_id: s.stage_id, stage_code: s.stage_code }] : [])),
+      schedulers,
+    );
+    for (const schedulerId of reopen) {
+      await this.db.update(schema.schedulerHeader)
+        .set({ scheduler_status: 'ACTIVE', actual_end_date: null, updated_at: toMysqlTimestamp() })
+        .where(eq(schema.schedulerHeader.scheduler_id, schedulerId));
+    }
+    for (const stageId of create) {
+      await this.createForAuthorizedBatchStage(batch, stageId, batch.tenant_id);
+    }
+  }
+
+  async createForStage(batchId: string, stageId: string, tenantId: string, userPayload?: { userId?: string }, options?: CreateForStageOptions): Promise<any> {
+    return this.createForStageInternal(batchId, stageId, tenantId, userPayload, undefined, options);
   }
 
   /**
@@ -249,9 +522,10 @@ export class SchedulerHeaderService {
     stageId: string,
     tenantId: string,
     userPayload?: { userId?: string },
+    options?: CreateForStageOptions,
   ) {
     if (batch.tenant_id !== tenantId) throw new NotFoundException(`Batch '${batch.batch_id}' not found.`);
-    return this.createForStageInternal(batch.batch_id, stageId, tenantId, userPayload, batch);
+    return this.createForStageInternal(batch.batch_id, stageId, tenantId, userPayload, batch, options);
   }
 
   private async createForStageInternal(
@@ -260,6 +534,7 @@ export class SchedulerHeaderService {
     tenantId: string,
     userPayload?: { userId?: string },
     authorizedBatch?: typeof schema.batchHeader.$inferSelect,
+    options?: CreateForStageOptions,
   ) {
     let batch = authorizedBatch;
     if (!batch) {
@@ -281,12 +556,12 @@ export class SchedulerHeaderService {
     const [stage] = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
     if (!stage) throw new NotFoundException(`Stage '${stageId}' not found.`);
 
-    // "The same as the batch start date" only holds for this batch's very
-    // first scheduler — every later stage transition begins on whatever day
-    // it actually happens, not the batch's original day-1 date.
+    // Every stage's scheduler — not just the first — starts on the batch start
+    // date, so a batch created with a back-dated start date has all its stages
+    // aligned to it instead of to the day each header happened to be generated.
     const [priorHeader] = await this.db.select({ scheduler_id: schema.schedulerHeader.scheduler_id, animal_count: schema.schedulerHeader.animal_count })
       .from(schema.schedulerHeader).where(eq(schema.schedulerHeader.batch_id, batchId)).orderBy(desc(schema.schedulerHeader.created_at)).limit(1);
-    const effectiveFrom = priorHeader ? toDateOnly(new Date()) : batch.start_date;
+    const effectiveFrom = batch.start_date || toDateOnly(new Date());
     const effectiveTo = stage.typical_duration_days ? addDays(effectiveFrom, stage.typical_duration_days) : null;
     const locationId = batch.sub_location_id || batch.location_id || batch.shed_id || null;
 
@@ -302,13 +577,26 @@ export class SchedulerHeaderService {
     //     count lives, since it has no animal_register rows to re-derive from;
     // (3) batch.closing_quantity/opening_quantity, for this batch's very first
     //     scheduler (no prior header to inherit from).
-    const [{ liveCount }] = await this.db.select({ liveCount: count() }).from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)));
-    const animalCount = liveCount > 0
-      ? liveCount
-      : priorHeader?.animal_count != null
-        ? Number(priorHeader.animal_count)
-        : Number(batch.closing_quantity ?? batch.opening_quantity);
+    // An animal-wise batch holds several stages at once, so this stage's count is the animals
+    // at this stage, even when that is none yet — inheriting the prior stage's count would
+    // give it animals it does not hold.
+    let animalCount: number;
+    if (batch.tracking_mode === 'ANIMAL_WISE') {
+      animalCount = await this.countLiveAnimalsAtStage(batchId, stageId);
+    } else {
+      const [{ liveCount }] = await this.db.select({ liveCount: count() }).from(schema.animalRegister)
+        .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)));
+      animalCount = liveCount > 0
+        ? liveCount
+        : priorHeader?.animal_count != null
+          ? Number(priorHeader.animal_count)
+          : Number(batch.closing_quantity ?? batch.opening_quantity);
+    }
+
+    // A declined copy is an empty header for manual lines; otherwise a
+    // matching system scheduler wins over the breed lifecycle.
+    const declined = options?.source === 'EMPTY';
+    const systemScheduler = declined ? null : await this.findMatchingSystemScheduler(batch.company_id, stageId, batch.breed_id);
 
     const schedulerId = randomUUID();
     await this.db.insert(schema.schedulerHeader).values({
@@ -321,15 +609,21 @@ export class SchedulerHeaderService {
       lob_id: batch.lob_id,
       nob_id: batch.nob_id,
       location_id: locationId,
+      ...(systemScheduler ? { data_entry_level: systemScheduler.data_entry_level } : {}),
       scheduler_status: batch.status === 'ACTIVE' ? 'ACTIVE' : 'DRAFT',
       effective_from: effectiveFrom,
       effective_to: effectiveTo,
       animal_count: animalCount.toString(),
       auto_generated: true,
+      system_scheduler_id: systemScheduler?.system_scheduler_id ?? null,
       created_by: userPayload?.userId || null,
     });
 
-    await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage);
+    if (systemScheduler) {
+      await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, stageId);
+    } else if (!declined) {
+      await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage);
+    }
 
     await this.auditService.log({
       tenantId,
@@ -338,7 +632,11 @@ export class SchedulerHeaderService {
       action: 'CREATE',
       entityName: 'scheduler_header',
       entityId: schedulerId,
-      newValues: { batch_id: batchId, stage_id: stageId, auto_generated: true },
+      newValues: {
+        batch_id: batchId, stage_id: stageId, auto_generated: true,
+        lines_from: systemScheduler ? 'SYSTEM_SCHEDULER' : declined ? 'NONE' : 'BREED_LIFECYCLE',
+        system_scheduler_id: systemScheduler?.system_scheduler_id ?? null,
+      },
     });
 
     return authorizedBatch ? { scheduler_id: schedulerId } : this.findOne(schedulerId);
@@ -397,17 +695,9 @@ export class SchedulerHeaderService {
       throw new BadRequestException(`Stage '${stage.stage_name}' does not belong to the batch's Line of Business.`);
     }
 
-    // Same rule as createForStage(): a batch's very first scheduler defaults to
-    // its start date; a later stage's header defaults to today, since the TDD's
-    // "must be the same as the batch start date" only literally holds for that
-    // first one. An explicit dto.effective_from always overrides either default,
-    // so the lookup only runs when it's actually needed to compute one.
-    let effectiveFrom = dto.effective_from;
-    if (!effectiveFrom) {
-      const [priorHeader] = await this.db.select({ scheduler_id: schema.schedulerHeader.scheduler_id })
-        .from(schema.schedulerHeader).where(eq(schema.schedulerHeader.batch_id, dto.batch_id)).limit(1);
-      effectiveFrom = priorHeader ? toDateOnly(new Date()) : (batch.start_date || toDateOnly(new Date()));
-    }
+    // Same rule as createForStage(): every stage's header defaults to the batch
+    // start date. An explicit dto.effective_from always overrides it.
+    const effectiveFrom = dto.effective_from || batch.start_date || toDateOnly(new Date());
     const effectiveTo = dto.effective_to || (stage.typical_duration_days ? addDays(effectiveFrom, stage.typical_duration_days) : null);
     const locationId = batch.sub_location_id || batch.location_id || batch.shed_id || null;
 
@@ -417,15 +707,33 @@ export class SchedulerHeaderService {
       // else the prior stage's own scheduler_header.animal_count (the only
       // place a STANDARD-costed batch's running count lives), else the batch's
       // closing/opening quantity for this batch's very first scheduler.
-      const [{ liveCount }] = await this.db.select({ liveCount: count() }).from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.current_batch_id, dto.batch_id), eq(schema.animalRegister.is_active, true)));
-      if (liveCount > 0) {
-        animalCount = liveCount;
+      if (batch.tracking_mode === 'ANIMAL_WISE') {
+        animalCount = await this.countLiveAnimalsAtStage(dto.batch_id, dto.stage_id);
       } else {
-        const [priorHeader] = await this.db.select({ animal_count: schema.schedulerHeader.animal_count })
-          .from(schema.schedulerHeader).where(eq(schema.schedulerHeader.batch_id, dto.batch_id)).orderBy(desc(schema.schedulerHeader.created_at)).limit(1);
-        animalCount = priorHeader?.animal_count != null ? Number(priorHeader.animal_count) : Number(batch.closing_quantity ?? batch.opening_quantity ?? 0);
+        const [{ liveCount }] = await this.db.select({ liveCount: count() }).from(schema.animalRegister)
+          .where(and(eq(schema.animalRegister.current_batch_id, dto.batch_id), eq(schema.animalRegister.is_active, true)));
+        if (liveCount > 0) {
+          animalCount = liveCount;
+        } else {
+          const [priorHeader] = await this.db.select({ animal_count: schema.schedulerHeader.animal_count })
+            .from(schema.schedulerHeader).where(eq(schema.schedulerHeader.batch_id, dto.batch_id)).orderBy(desc(schema.schedulerHeader.created_at)).limit(1);
+          animalCount = priorHeader?.animal_count != null ? Number(priorHeader.animal_count) : Number(batch.closing_quantity ?? batch.opening_quantity ?? 0);
+        }
       }
+    }
+
+    // Lines sent by the form (perhaps copied from a system scheduler, named in
+    // dto.system_scheduler_id) are taken as they are; with none sent, a
+    // matching system scheduler wins over the breed lifecycle, as on auto-create.
+    const sentLines = !!dto.lines?.length;
+    const systemScheduler = sentLines ? null : await this.findMatchingSystemScheduler(batch.company_id, dto.stage_id, batch.breed_id);
+    let originSystemSchedulerId = systemScheduler?.system_scheduler_id ?? null;
+    if (sentLines && dto.system_scheduler_id) {
+      const [origin] = await this.db.select({ system_scheduler_id: schema.systemScheduler.system_scheduler_id })
+        .from(schema.systemScheduler)
+        .where(and(eq(schema.systemScheduler.system_scheduler_id, dto.system_scheduler_id), eq(schema.systemScheduler.company_id, batch.company_id)))
+        .limit(1);
+      originSystemSchedulerId = origin?.system_scheduler_id ?? null;
     }
 
     const schedulerId = randomUUID();
@@ -446,6 +754,7 @@ export class SchedulerHeaderService {
       effective_to: effectiveTo,
       animal_count: animalCount.toString(),
       auto_generated: false,
+      system_scheduler_id: originSystemSchedulerId,
       notes: dto.notes || null,
       approved_by: status === 'ACTIVE' ? (userPayload?.userId || null) : null,
       approved_at: status === 'ACTIVE' ? toMysqlTimestamp() : null,
@@ -507,6 +816,8 @@ export class SchedulerHeaderService {
           );
         }
       }
+    } else if (systemScheduler) {
+      await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, dto.stage_id);
     } else {
       await this.generateLinesFromLifecycle(schedulerId, batch, dto.stage_id, stage);
     }
@@ -682,6 +993,9 @@ export class SchedulerHeaderService {
     const [location] = header.location_id
       ? await this.db.select({ location_name: schema.locationMaster.location_name }).from(schema.locationMaster).where(eq(schema.locationMaster.location_id, header.location_id)).limit(1)
       : [null];
+    const [systemScheduler] = header.system_scheduler_id
+      ? await this.db.select({ scheduler_name: schema.systemScheduler.scheduler_name }).from(schema.systemScheduler).where(eq(schema.systemScheduler.system_scheduler_id, header.system_scheduler_id)).limit(1)
+      : [null];
 
     // Item & Resource resolution: UOM, description, withdrawal_days, resource_name
     const allItemIds = [...new Set(lines.map((l) => l.item_id).filter((item_id): item_id is string => !!item_id))];
@@ -716,6 +1030,7 @@ export class SchedulerHeaderService {
       breed_name: breed?.breed_name ?? null,
       stage_name: stage?.stage_name ?? null,
       location_name: location?.location_name ?? null,
+      system_scheduler_name: systemScheduler?.scheduler_name ?? null,
       silo_stock: siloStock,
       lines: lines.map((line) => {
         const itemInfo = line.item_id ? itemMap.get(line.item_id) : null;
@@ -815,8 +1130,16 @@ export class SchedulerHeaderService {
       .groupBy(schema.schedulerLine.scheduler_id);
     const lineCountById = new Map(lineCounts.map((l) => [l.scheduler_id, Number(l.total)]));
 
+    const systemSchedulerIds = [...new Set(rows.map((r) => r.system_scheduler_id).filter((x): x is string => !!x))];
+    const systemSchedulerNameById = systemSchedulerIds.length ? new Map(
+      (await this.db.select({ system_scheduler_id: schema.systemScheduler.system_scheduler_id, scheduler_name: schema.systemScheduler.scheduler_name })
+        .from(schema.systemScheduler).where(inArray(schema.systemScheduler.system_scheduler_id, systemSchedulerIds))
+      ).map((s) => [s.system_scheduler_id, s.scheduler_name])
+    ) : new Map<string, string>();
+
     let result = rows.map((r) => ({
       ...r,
+      system_scheduler_name: r.system_scheduler_id ? systemSchedulerNameById.get(r.system_scheduler_id) ?? null : null,
       batch_no: batchNoById.get(r.batch_id) ?? null,
       breed_name: r.breed_id ? breedNameById.get(r.breed_id) ?? null : null,
       stage_name: r.stage_id ? stageNameById.get(r.stage_id) ?? null : null,
@@ -868,7 +1191,7 @@ export class SchedulerHeaderService {
   }
 
   /** Enforces the "LINE TYPE REFERENCE" matrix: which fields a line_type requires. */
-  private assertLineTypeFields(line_type: string, dto: CreateSchedulerLineDto | UpdateSchedulerLineDto, effective: Record<string, unknown>) {
+  assertLineTypeFields(line_type: string, dto: CreateSchedulerLineDto | UpdateSchedulerLineDto, effective: Record<string, unknown>) {
     const spec = LINE_TYPE_FIELDS[line_type];
     if (!spec) throw new BadRequestException(`Unknown line type '${line_type}'.`);
     const missing = spec.required.filter((key) => effective[key] === undefined || effective[key] === null || effective[key] === '');
@@ -903,7 +1226,7 @@ export class SchedulerHeaderService {
   }
 
   /** Enforces that two lines with the same item, resource, or metric do not overlap in their scheduled days. */
-  private assertNoConflictingLines(candidate: Record<string, any>, existingLines: Array<Record<string, any>>) {
+  assertNoConflictingLines(candidate: Record<string, any>, existingLines: Array<Record<string, any>>) {
     for (const existing of existingLines) {
       if (!this.doLinesTargetSameSubject(candidate, existing)) continue;
       if (!this.checkDaysOverlap(candidate, existing)) continue;
@@ -1090,7 +1413,7 @@ export class SchedulerHeaderService {
 
   /** "KPI UOM fetched as per KPI" — a recognized kpi_metric always wins over whatever
    * kpi_uom was supplied; only an unrecognized/CUSTOM metric keeps the caller's value. */
-  private resolveKpiUom(kpiMetric: string | null | undefined, suppliedUom: string | null | undefined): string | null {
+  resolveKpiUom(kpiMetric: string | null | undefined, suppliedUom: string | null | undefined): string | null {
     if (kpiMetric && KPI_METRIC_UOM[kpiMetric]) return KPI_METRIC_UOM[kpiMetric];
     return suppliedUom ?? null;
   }

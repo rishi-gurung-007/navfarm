@@ -76,12 +76,13 @@ const ENTRY_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   TRANSFERRED_IN: "anpEntryTransferredIn",
 };
 
-const DISPOSAL_TYPES = ["SOLD", "SLAUGHTERED", "DIED", "TRANSFERRED"] as const;
+const DISPOSAL_TYPES = ["SOLD", "SLAUGHTERED", "DIED", "TRANSFERRED", "CULLED"] as const;
 const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   SOLD: "anpDisposalSold",
   SLAUGHTERED: "anpDisposalSlaughtered",
   DIED: "anpDisposalDied",
   TRANSFERRED: "anpDisposalTransferred",
+  CULLED: "anpDisposalCulled",
 };
 
 const LEDGER_ENTRY_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
@@ -214,6 +215,27 @@ export default function AnimalPanel() {
     dose_qty: "", uom: "", administered_by: "", notes: "",
   });
 
+  // ── Out of production (BBP-1: before a cull) ──────────────────────────────────
+  const [oopOpen, setOopOpen] = useState(false);
+  const [oopDate, setOopDate] = useState("");
+  const [oopError, setOopError] = useState("");
+  const [oopSaving, setOopSaving] = useState(false);
+  const handleOutOfProduction = async () => {
+    if (!viewing || oopSaving) return;
+    setOopSaving(true);
+    setOopError("");
+    try {
+      const res: any = await api.patch(`/animal/${viewing.animal_id}/out-of-production`, { out_of_production_date: oopDate });
+      setViewing(res?.data ?? res ?? viewing);
+      setOopOpen(false);
+      load();
+    } catch (err: any) {
+      setOopError(err?.message || "Could not record the out-of-production date.");
+    } finally {
+      setOopSaving(false);
+    }
+  };
+
   // ── Dispose modal ───────────────────────────────────────────────────────────
   const [disposeOpen, setDisposeOpen]   = useState(false);
   const [disposeSaving, setDisposeSaving] = useState(false);
@@ -259,7 +281,9 @@ export default function AnimalPanel() {
     // Reason Master Template (Master Templates/, added 2026-09-21) — MORTALITY
     // and CULL reasons belong on this same Dispose action; isActive filters to
     // rows the admin hasn't blocked.
-    api.get(`/reason?${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
+    // qs already starts with "?"; prefixing another made the URL "/reason??isActive=…", which the API refused, so the
+    // Dispose reason pickers were always empty.
+    api.get(`/reason${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
     // Items — scoped for medicine/vaccine picker separately from living-asset picker
     api.get(`/item${qs}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
@@ -422,6 +446,10 @@ export default function AnimalPanel() {
         disposal_date: disposeForm.disposal_date,
         disposal_reason_id: disposeForm.disposal_reason_id || undefined,
         disposal_value: disposeForm.disposal_value ? Number(disposeForm.disposal_value) : undefined,
+        exit_weight_kg: disposeForm.exit_weight_kg ? Number(disposeForm.exit_weight_kg) : undefined,
+        disposal_destination: disposeForm.disposal_destination?.trim() || undefined,
+        out_of_production_date:
+          disposeForm.disposal_type === "CULLED" ? disposeForm.out_of_production_date || undefined : undefined,
         notes: disposeForm.notes || undefined,
       });
       setDisposeOpen(false);
@@ -714,7 +742,16 @@ export default function AnimalPanel() {
                   size="sm"
                   disabled={!viewing.is_active}
                   onClick={() => {
-                    setDisposeForm({ disposal_type: "SOLD", disposal_date: new Date().toISOString().slice(0, 10), disposal_value: "", disposal_reason_id: "", notes: "" });
+                    setDisposeForm({
+                      disposal_type: "SOLD",
+                      disposal_date: new Date().toISOString().slice(0, 10),
+                      disposal_value: "",
+                      disposal_reason_id: "",
+                      exit_weight_kg: "",
+                      disposal_destination: "",
+                      out_of_production_date: viewing.out_of_production_date ? String(viewing.out_of_production_date).slice(0, 10) : "",
+                      notes: "",
+                    });
                     setDisposeError("");
                     setDisposeIsWithdrawal(false);
                     setDisposeOpen(true);
@@ -723,6 +760,21 @@ export default function AnimalPanel() {
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                   {viewing.is_active ? t("anpDispose") : t("anpDisposed")}
                 </Button>
+
+                {viewing.is_active && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setOopDate(viewing.out_of_production_date ? String(viewing.out_of_production_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+                      setOopError("");
+                      setOopOpen(true);
+                    }}
+                  >
+                    {t("anpOutOfProduction")}
+                    {viewing.out_of_production_date ? ` · ${formatDate(viewing.out_of_production_date)}` : ""}
+                  </Button>
+                )}
 
                 {viewing.is_active && (
                   <Button
@@ -1062,10 +1114,31 @@ export default function AnimalPanel() {
               valueFormat="id"
               onChange={(val) => setDisposeForm((f) => ({ ...f, disposal_reason_id: val }))}
               onClear={() => setDisposeForm((f) => ({ ...f, disposal_reason_id: "" }))}
-              category={disposeForm.disposal_type === "DIED" ? "MORTALITY" : ["DISPOSAL", "TRANSFER"]}
+              category={disposeForm.disposal_type === "DIED" ? "MORTALITY" : disposeForm.disposal_type === "CULLED" ? "CULL" : ["DISPOSAL", "TRANSFER"]}
               placeholder={t("anpDisposalReasonNone") || "Select disposal reason…"}
               reasons={reasons as any}
             />
+          </div>
+
+          {disposeForm.disposal_type === "CULLED" && (
+            <>
+              <p className="text-xs text-[var(--text-secondary)]">{t("anpCullNeeds")}</p>
+              <div>
+                <label className="nf-label" htmlFor="dispose-oop">{t("anpOutOfProductionDate")}</label>
+                <input id="dispose-oop" type="date" className={inputCls} value={disposeForm.out_of_production_date || ""} onChange={(e) => setDisposeForm((f) => ({ ...f, out_of_production_date: e.target.value }))} />
+              </div>
+            </>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="nf-label" htmlFor="dispose-weight">{t("anpExitWeightKg")}</label>
+              <input id="dispose-weight" type="number" min="0" step="0.1" className={inputCls} value={disposeForm.exit_weight_kg || ""} onChange={(e) => setDisposeForm((f) => ({ ...f, exit_weight_kg: e.target.value }))} />
+            </div>
+            <div>
+              <label className="nf-label" htmlFor="dispose-destination">{t("anpDisposalDestination")}</label>
+              <input id="dispose-destination" type="text" className={inputCls} value={disposeForm.disposal_destination || ""} onChange={(e) => setDisposeForm((f) => ({ ...f, disposal_destination: e.target.value }))} />
+            </div>
           </div>
 
           <div>
@@ -1078,6 +1151,23 @@ export default function AnimalPanel() {
             <textarea id="dispose-notes" className={inputCls} rows={2} value={disposeForm.notes} onChange={(e) => setDisposeForm((f) => ({ ...f, notes: e.target.value }))} />
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        open={oopOpen}
+        onClose={() => setOopOpen(false)}
+        title={t("anpOutOfProduction")}
+        description={t("anpOutOfProductionDesc")}
+        maxWidth="sm"
+        footer={
+          <Button onClick={handleOutOfProduction} disabled={oopSaving || !oopDate}>
+            {oopSaving ? t("anpSaving") : t("anpOutOfProduction")}
+          </Button>
+        }
+      >
+        {oopError && <div className="mb-3"><InlineAlert variant="danger">{oopError}</InlineAlert></div>}
+        <label className="nf-label" htmlFor="oop-date">{t("anpOutOfProductionDate")}</label>
+        <input id="oop-date" type="date" className={inputCls} value={oopDate} onChange={(e) => setOopDate(e.target.value)} />
       </Dialog>
 
       {/* ── RFID / Barcode Fast Scanner Modal ── */}

@@ -2,7 +2,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, isNull, gte, lte, lt, inArray, asc, desc, sql, isNotNull, ne, like, getTableColumns, SQL } from 'drizzle-orm';
+import { eq, and, or, isNull, gte, lte, lt, inArray, notInArray, asc, desc, sql, isNotNull, ne, like, getTableColumns, SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -66,6 +66,12 @@ interface WriteNegativeEntryParams {
    */
   lots?: Array<{ lotNo: string; quantity: number }>;
   serialNo?: string;
+  /**
+   * Draw this entry from one named receipt instead of the oldest receipts at the location. For a write-off
+   * that belongs to a specific receipt — a DOA found on arrival comes out of the very receipt that brought
+   * it in, at that receipt's cost. Fails if that receipt does not hold the quantity.
+   */
+  sourceLedgerId?: string;
   batchNo?: string;
   warehouseId?: string;
   locationId?: string;
@@ -109,6 +115,9 @@ const roundMoney = (value: number) => Number(value.toFixed(4));
  * log every document type (GRN, Transfer Order, Stock
  * Adjustment) writes to. Ledger rows are never updated, only inserted.
  */
+/** Ledger rows that record a day's observation or overhead and move no stock (audit H4). */
+const INFORMATIONAL_ENTRY_TYPES = ['DESCRIPTIVE', 'OVERHEAD'];
+
 @Injectable()
 export class InventoryLedgerService {
   constructor(
@@ -244,6 +253,43 @@ export class InventoryLedgerService {
   }
 
   /**
+   * Reverses an inbound entry that nothing has drawn on yet — a batch's output entering stock, posted in error or
+   * to be posted again corrected. The entry's layer is closed (remaining quantity 0) and an outbound REVERSAL
+   * entry for the same item, lot and location is written, so the lot and location balances net to zero. It
+   * refuses once any of the stock has been used or moved: that stock is no longer ours to take back, and the
+   * correction is then a stock adjustment, not a reversal. external_reference_no links it to the original.
+   */
+  async reversePositiveEntry(ledgerId: string, tenantId: string, userId?: string) {
+    return withTenantTransaction(this.cls, async () => {
+      const [original] = await this.db.select().from(schema.inventoryLedger)
+        .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
+        .for('update');
+      if (!original || original.entry_type !== 'POSITIVE' || original.transaction_type === 'REVERSAL') {
+        throw new BadRequestException('Only an existing inbound entry can be reversed here.');
+      }
+      const [reversed] = await this.db.select().from(schema.inventoryLedger)
+        .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
+      if (reversed) throw new BadRequestException('This entry has already been reversed.');
+      if (Math.abs(Number(original.remaining_quantity ?? 0) - Number(original.quantity)) > 0.0001) {
+        throw new BadRequestException(
+          `Some of the ${original.item_code} received on ${original.document_no} has already been used or moved, so it cannot be taken back.`,
+        );
+      }
+      const reversalId = randomUUID();
+      const { created_at: _createdAt, entry_no: _entryNo, ...originalForReversal } = original;
+      await this.db.insert(schema.inventoryLedger).values({
+        ...originalForReversal, ledger_id: reversalId, entry_type: 'NEGATIVE', transaction_type: 'REVERSAL',
+        quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
+        remaining_quantity: null, external_reference_no: ledgerId, created_by: userId || null,
+      });
+      await this.db.update(schema.inventoryLedger)
+        .set({ remaining_quantity: '0' })
+        .where(eq(schema.inventoryLedger.ledger_id, ledgerId));
+      return this.loadOne(reversalId);
+    });
+  }
+
+  /**
    * item_master.is_lot_tracked/is_serial_tracked (TDD row 11's three-way
    * choice: LOT, SERIAL, or neither) says whether a movement of this item
    * must carry that identity. Shared by every ledger write — receipt, issue,
@@ -340,6 +386,8 @@ export class InventoryLedgerService {
       lotNo?: string;
       lots?: Array<{ lotNo: string; quantity: number }>;
       serialNo?: string;
+      // Draw only from this receipt (see WriteNegativeEntryParams.sourceLedgerId) instead of oldest-first.
+      sourceLedgerId?: string;
       applicationDate: string;
       userId?: string;
       // Batch consumption draws from a company-wide pool and never sets this
@@ -393,6 +441,7 @@ export class InventoryLedgerService {
       inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
     ];
     if (warehouseId) layerConditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+    if (params.sourceLedgerId) layerConditions.push(eq(schema.inventoryLedger.ledger_id, params.sourceLedgerId));
     // Oldest first: posting date, then Entry No. - created_at is only second-precise, so two receipts
     // posted together tied on it and the newer one could be drawn first.
     const availableLayers = await executor
@@ -660,6 +709,7 @@ export class InventoryLedgerService {
           lotNo: params.lotNo,
           lots: params.lots,
           serialNo: params.serialNo,
+          sourceLedgerId: params.sourceLedgerId,
           applicationDate: params.postingDate,
           userId: params.userId,
           warehouseId: params.warehouseId,
@@ -1100,6 +1150,9 @@ export class InventoryLedgerService {
       eq(schema.inventoryLedger.tenant_id, tenantId),
       eq(schema.inventoryLedger.company_id, companyId),
       eq(schema.inventoryLedger.item_id, itemId),
+      // The day's observations and overheads are recorded in this ledger too (TDD "Transaction Ledger Structure",
+      // row 11) but move no stock; an item's stock card shows its stock movements only (audit H4).
+      notInArray(schema.inventoryLedger.entry_type, INFORMATIONAL_ENTRY_TYPES),
       ...this.farmConditions(),
     ];
 
@@ -1225,7 +1278,10 @@ export class InventoryLedgerService {
       .select({
         ...getTableColumns(schema.inventoryLedger),
         // How many lots the entry issued from, when it names them as lines rather than on the entry itself.
-        lot_lines: sql<number>`(select count(*) from ${schema.inventoryLedgerLine} where ${schema.inventoryLedgerLine.ledger_id} = ${schema.inventoryLedger.ledger_id})`.mapWith(Number),
+        // The outer column is written out with its table: in a single-table select Drizzle drops the table
+        // prefix from columns inside a raw SQL field, which left `ledger_id = ledger_id` comparing the line
+        // table with itself and gave every entry the total count of lot lines.
+        lot_lines: sql<number>`(select count(*) from ${schema.inventoryLedgerLine} ill where ill.ledger_id = ${sql.raw('`inventory_ledger`.`ledger_id`')})`.mapWith(Number),
       })
       .from(schema.inventoryLedger)
       .where(and(...conditions))

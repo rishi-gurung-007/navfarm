@@ -68,8 +68,14 @@ function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
   return {
     id: `mating-${m.breeding_id}`,
     date: fmt(m.mating_date),
-    title: sire ? `Served ${partner || "a sow"}` : `Served by ${partner || "a boar"}`,
-    summary: [human(m.mating_type), fmt(m.batch_no), fmt(m.parity_number) ? `parity ${m.parity_number}` : ""]
+    // A service from a pooled semen lot has no single sire: for the boar who went into the pool it is "a pooled lot used",
+    // for the sow it was served by the lot, not by one named boar.
+    title: m.pooled
+      ? `Pooled lot ${fmt(m.semen_lot_no)} used on ${partner || "a sow"}`.replace("  ", " ")
+      : sire
+      ? `Served ${partner || "a sow"}`
+      : `Served by ${partner || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : "a boar")}`,
+    summary: [human(m.mating_type), m.pooled ? "pooled — sire not one boar" : "", fmt(m.batch_no), fmt(m.parity_number) ? `parity ${m.parity_number}` : ""]
       .filter(Boolean).join(" · "),
     detail: [
       ["Mating type", fmt(m.mating_type)], [sire ? "Sow" : "Boar", partner],
@@ -285,9 +291,10 @@ function BreedingRecordTable({
                 const open = openRow === m.breeding_id;
                 const litter = f ? `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}` : "";
                 const weaned = f && Number(f.piglets_weaned) > 0 ? fmt(f.piglets_weaned) : "";
+                const type = m.pooled ? `${human(m.mating_type)} (pooled lot ${fmt(m.semen_lot_no)})` : human(m.mating_type);
                 const values = isMale
-                  ? [m.mating_date, human(m.mating_type), m.sow_code, m.batch_no, m.parity_number, m.boar_parity_number, m.conception_result, litter, weaned]
-                  : [m.mating_date, human(m.mating_type), m.boar_code, m.batch_no, m.parity_number, m.preg_check_date, m.conception_result, m.expected_farrowing_date, litter, weaned];
+                  ? [m.mating_date, type, m.sow_code, m.batch_no, m.parity_number, m.boar_parity_number, m.conception_result, litter, weaned]
+                  : [m.mating_date, type, m.boar_code || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : ""), m.batch_no, m.parity_number, m.preg_check_date, m.conception_result, m.expected_farrowing_date, litter, weaned];
                 return (
                   <Fragment key={m.breeding_id}>
                     <tr

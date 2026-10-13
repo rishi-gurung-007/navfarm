@@ -48,4 +48,20 @@ describe('batch heads', () => {
     expect(ledger.get('b2')).toEqual([{ date: '2026-10-02', quantity: 1 }]);
     expect((await loadBatchDeaths({ select: () => { throw new Error('no query'); } } as any, [])).size).toBe(0);
   });
+
+  // 13 Oct (system-schedulers merge): Data Entry posts each death as a transaction too; it must count once.
+  it('a posted entry whose deaths became transactions counts once; an older entry without one still counts', async () => {
+    const tx = [
+      { batchId: 'b1', date: '2026-10-03', quantity: '1.0000', remarks: 'Mortality — scheduled entry. Dead weight 12 kg', reversedAt: null },
+      { batchId: 'b1', date: '2026-10-03', quantity: '1.0000', remarks: 'Mortality — scheduled entry', reversedAt: null },
+    ];
+    // 3 Oct: 2 entered, 2 transactions -> 2. 1 Oct: 2 entered, no transaction (before the merge) -> 2.
+    expect(await headsAtStartOfDate(fakeDb([tx, posted]), 'b1', 500, '2026-10-04')).toBe(495);
+  });
+
+  it('a reversed death no longer counts, and its entry is not counted in its place', async () => {
+    const tx = [{ batchId: 'b1', date: '2026-10-03', quantity: '3.0000', remarks: 'Mortality — scheduled entry', reversedAt: '2026-10-04 09:00:00' }];
+    expect(await headsAtStartOfDate(fakeDb([tx, posted]), 'b1', 500, '2026-10-04')).toBe(498);
+  });
 });
+

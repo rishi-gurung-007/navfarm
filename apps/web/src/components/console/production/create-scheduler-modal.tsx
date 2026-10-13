@@ -9,7 +9,6 @@ import {
   Loader2,
   Pencil,
   Plus,
-  Search,
   Trash2,
 } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -22,6 +21,8 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
 import { formatQuantity } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { confirmAction } from "@/components/ui/confirm-dialog";
+import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
 
 type Row = Record<string, any>;
 
@@ -190,6 +191,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     setStatus("DRAFT");
     setDataEntryLevel("SHED");
     setLines([]);
+    setCopiedSystemSchedulerId(null);
     setShowLineModal(false);
 
     setLoadingBatches(true);
@@ -264,12 +266,10 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     }
   }, [stageId, effectiveFrom]);
 
-  // Copy from Existing Scheduler
-  const [showCopyModal, setShowCopyModal] = useState(false);
-  const [existingSchedulers, setExistingSchedulers] = useState<Row[]>([]);
-  const [loadingSchedulers, setLoadingSchedulers] = useState(false);
-  const [copySearch, setCopySearch] = useState("");
-  const [copyingSchedulerId, setCopyingSchedulerId] = useState<string | null>(null);
+  // Copy from a system scheduler or a batch's scheduler — the same picker the scheduler view uses.
+  const [copyOpen, setCopyOpen] = useState(false);
+  // Set when the lines came from a system scheduler — sent as their recorded origin.
+  const [copiedSystemSchedulerId, setCopiedSystemSchedulerId] = useState<string | null>(null);
 
   const consumableItems = useMemo(() => {
     return items.filter(
@@ -282,78 +282,59 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     );
   }, [items, lineForm.item_id]);
 
-  const handleOpenCopyModal = async () => {
-    setShowCopyModal(true);
-    setLoadingSchedulers(true);
-    setCopySearch("");
-    try {
-      const p = new URLSearchParams();
-      const activeCo = companyId || getActiveCompanyId();
-      if (activeCo) p.set("companyId", activeCo);
-      p.set("limit", "100");
-      const res = await api.get(`/scheduler-header?${p.toString()}`);
-      const list = unwrap<Row[]>(res) || [];
-      setExistingSchedulers(list);
-    } catch (err) {
-      console.error("Failed to load schedulers for copy:", err);
-      setExistingSchedulers([]);
-    } finally {
-      setLoadingSchedulers(false);
+  /**
+   * Loads the picked scheduler's activities into this form, replacing any
+   * already added (after asking). Throws on failure so the picker shows why;
+   * returns false to keep the picker open when the user keeps their own.
+   */
+  const loadActivitiesFrom = async (sourceType: CopySourceType, sourceId: string): Promise<boolean> => {
+    if (lines.length > 0 && !(await confirmAction({
+      title: t("scCopyReplaceTitle"),
+      message: t("scCopyReplaceMessage", { n: lines.length }),
+    }))) {
+      return false;
     }
-  };
-
-  const handleCopyActivitiesFrom = async (targetSchedulerId: string) => {
-    setCopyingSchedulerId(targetSchedulerId);
-    try {
-      const res = await api.get(`/scheduler-header/${targetSchedulerId}`);
-      const data = unwrap<Row>(res);
-      const rawLines = data?.lines || [];
-      if (!rawLines.length) {
-        setError("The selected scheduler has no activities to copy.");
-        setShowCopyModal(false);
-        return;
-      }
-      const mappedLines = rawLines.map((l: any, idx: number) => ({
-        line_seq: idx + 1,
-        line_type: l.line_type,
-        activity_name: l.activity_name,
-        occurrence: l.occurrence,
-        start_day: l.start_day ?? 1,
-        end_day: l.end_day != null ? l.end_day : "",
-        day_of_week: l.day_of_week != null ? l.day_of_week : "",
-        custom_days: Array.isArray(l.custom_days)
-          ? l.custom_days.map((d: any) => (typeof d === "object" ? d.day_number : d)).join(", ")
-          : (l.custom_days ?? ""),
-        is_mandatory: !!l.is_mandatory,
-        item_id: l.item_id || "",
-        item_description: l.item_description || "",
-        standard_qty: l.standard_qty != null ? l.standard_qty : "",
-        qty_basis: l.qty_basis || "PER_HEAD",
-        allow_qty_edit: l.allow_qty_edit !== false,
-        lot_required: !!l.lot_required,
-        creates_inventory: l.creates_inventory !== false,
-        output_lot_auto: l.output_lot_auto !== false,
-        output_basis: l.output_basis || "PER_BATCH",
-        kpi_metric: l.kpi_metric || "",
-        kpi_uom: l.kpi_uom || "",
-        std_value: l.std_value != null ? l.std_value : "",
-        lower_alert_limit: l.lower_alert_limit != null ? l.lower_alert_limit : "",
-        upper_alert_limit: l.upper_alert_limit != null ? l.upper_alert_limit : "",
-        alert_severity: l.alert_severity || "WARNING",
-        capture_per: l.capture_per || "AVERAGE",
-        overhead_category: l.overhead_category || "",
-        gl_account: l.gl_account || "",
-        estimated_cost: l.estimated_cost != null ? l.estimated_cost : "",
-        resource_id: l.resource_id || "",
-        resource_name: l.resource_name || "",
-      }));
-      setLines(mappedLines);
-      setShowCopyModal(false);
-    } catch (err: any) {
-      setError(err?.message || "Failed to copy activities from scheduler.");
-    } finally {
-      setCopyingSchedulerId(null);
-    }
+    const fromSystem = sourceType === "SYSTEM";
+    const data = unwrap<Row>(await api.get(`${fromSystem ? "/system-scheduler" : "/scheduler-header"}/${sourceId}`));
+    const rawLines = (data?.lines || []).filter((l: Row) => l.is_active !== false);
+    if (!rawLines.length) throw new Error(t("scCopyNoActivities"));
+    const mappedLines = rawLines.map((l: any, idx: number) => ({
+      line_seq: idx + 1,
+      line_type: l.line_type,
+      activity_name: l.activity_name,
+      occurrence: l.occurrence,
+      start_day: l.start_day ?? 1,
+      end_day: l.end_day != null ? l.end_day : "",
+      day_of_week: l.day_of_week != null ? l.day_of_week : "",
+      custom_days: Array.isArray(l.custom_days)
+        ? l.custom_days.map((d: any) => (typeof d === "object" ? d.day_number : d)).join(", ")
+        : (l.custom_days ?? ""),
+      is_mandatory: !!l.is_mandatory,
+      item_id: l.item_id || "",
+      item_description: l.item_description || "",
+      standard_qty: l.standard_qty != null ? l.standard_qty : "",
+      qty_basis: l.qty_basis || "PER_HEAD",
+      allow_qty_edit: l.allow_qty_edit !== false,
+      lot_required: !!l.lot_required,
+      creates_inventory: l.creates_inventory !== false,
+      output_lot_auto: l.output_lot_auto !== false,
+      output_basis: l.output_basis || "PER_BATCH",
+      kpi_metric: l.kpi_metric || "",
+      kpi_uom: l.kpi_uom || "",
+      std_value: l.std_value != null ? l.std_value : "",
+      lower_alert_limit: l.lower_alert_limit != null ? l.lower_alert_limit : "",
+      upper_alert_limit: l.upper_alert_limit != null ? l.upper_alert_limit : "",
+      alert_severity: l.alert_severity || "WARNING",
+      capture_per: l.capture_per || "AVERAGE",
+      overhead_category: l.overhead_category || "",
+      gl_account: l.gl_account || "",
+      estimated_cost: l.estimated_cost != null ? l.estimated_cost : "",
+      resource_id: l.resource_id || "",
+      resource_name: l.resource_name || "",
+    }));
+    setLines(mappedLines);
+    setCopiedSystemSchedulerId(fromSystem ? sourceId : null);
+    return true;
   };
 
   // Open line editor for adding a new activity
@@ -536,6 +517,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         scheduler_status: status,
         notes: notes || undefined,
         lines: lines.length > 0 ? lines : undefined,
+        system_scheduler_id: lines.length > 0 && copiedSystemSchedulerId ? copiedSystemSchedulerId : undefined,
       };
 
       const res = await api.post("/scheduler-header", payload);
@@ -745,11 +727,11 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   size="sm"
                   variant="outline"
                   type="button"
-                  onClick={handleOpenCopyModal}
+                  onClick={() => setCopyOpen(true)}
                   className="flex items-center gap-1.5 text-xs font-medium"
                 >
                   <Copy className="h-3.5 w-3.5" />
-                  Copy Activities
+                  {t("scCopyActivities")}
                 </Button>
                 <Button size="sm" onClick={handleOpenAddLine} className="flex items-center gap-1.5 text-xs font-medium">
                   <Plus className="h-3.5 w-3.5" />
@@ -1517,128 +1499,14 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         </div>
       </Dialog>
 
-      {/* Copy Activities Modal */}
-      <Dialog
-        open={showCopyModal}
-        onClose={() => setShowCopyModal(false)}
-        title="Copy Activities from Existing Scheduler"
-        maxWidth="lg"
-      >
-        <div className="flex flex-col gap-4 text-xs">
-          <p style={S.sub}>
-            Select an existing scheduler to prefill all its activities into this schedule. You can edit, remove, or add new activities after copying.
-          </p>
-
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5" style={S.muted} />
-            <input
-              type="text"
-              value={copySearch}
-              onChange={(e) => setCopySearch(e.target.value)}
-              placeholder="Search by batch no, stage name, or breed..."
-              className={`${inputCls} w-full pl-8`}
-              style={S.input}
-            />
-          </div>
-
-          {loadingSchedulers ? (
-            <div className="flex items-center justify-center py-8 gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" style={S.muted} />
-              <span style={S.muted}>Loading existing schedulers...</span>
-            </div>
-          ) : (
-            <div className="max-h-[50vh] overflow-y-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-              {existingSchedulers.filter((s) => {
-                if (!copySearch.trim()) return true;
-                const q = copySearch.toLowerCase();
-                return (
-                  (s.batch_no || "").toLowerCase().includes(q) ||
-                  (s.stage_name || "").toLowerCase().includes(q) ||
-                  (s.breed_name || "").toLowerCase().includes(q)
-                );
-              }).length === 0 ? (
-                <div className="py-8 text-center" style={S.muted}>
-                  No schedulers found matching your search.
-                </div>
-              ) : (
-                <table className="w-full border-collapse text-left text-xs">
-                  <TableHeader>
-                    <tr className="border-b border-[var(--row-border)]">
-                      <TableHead className="h-auto px-3 py-2">Batch No</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Stage</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Breed</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Activities</TableHead>
-                      <TableHead className="h-auto px-3 py-2">Status</TableHead>
-                      <TableHead className="h-auto px-3 py-2 text-right">Action</TableHead>
-                    </tr>
-                  </TableHeader>
-                  <TableBody>
-                    {existingSchedulers
-                      .filter((s) => {
-                        if (!copySearch.trim()) return true;
-                        const q = copySearch.toLowerCase();
-                        return (
-                          (s.batch_no || "").toLowerCase().includes(q) ||
-                          (s.stage_name || "").toLowerCase().includes(q) ||
-                          (s.breed_name || "").toLowerCase().includes(q)
-                        );
-                      })
-                      .map((sch) => (
-                        <TableRow key={sch.scheduler_id}>
-                          <TableCell className="px-3 py-2 font-semibold" style={S.primary}>
-                            {sch.batch_no || "—"}
-                          </TableCell>
-                          <TableCell className="px-3 py-2" style={S.sub}>
-                            {sch.stage_name || "—"}
-                          </TableCell>
-                          <TableCell className="px-3 py-2" style={S.sub}>
-                            {sch.breed_name || "—"}
-                          </TableCell>
-                          <TableCell className="px-3 py-2 font-mono font-medium" style={S.primary}>
-                            {sch.line_count ?? "—"}
-                          </TableCell>
-                          <TableCell className="px-3 py-2">
-                            <span
-                              className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold"
-                              style={{
-                                backgroundColor:
-                                  sch.scheduler_status === "ACTIVE"
-                                    ? "var(--success-muted)"
-                                    : "var(--surface-raised)",
-                                color:
-                                  sch.scheduler_status === "ACTIVE"
-                                    ? "var(--success)"
-                                    : "var(--text-muted)",
-                              }}
-                            >
-                              {sch.scheduler_status}
-                            </span>
-                          </TableCell>
-                          <TableCell className="px-3 py-2 text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={copyingSchedulerId === sch.scheduler_id}
-                              onClick={() => handleCopyActivitiesFrom(sch.scheduler_id)}
-                              className="h-7 text-[11px] gap-1"
-                            >
-                              {copyingSchedulerId === sch.scheduler_id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Copy className="h-3 w-3" />
-                              )}
-                              Copy Activities
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </table>
-              )}
-            </div>
-          )}
-        </div>
-      </Dialog>
+      <CopyActivitiesDialog
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        companyId={companyId || getActiveCompanyId()}
+        targetId=""
+        stageName={selectedStage?.stage_name}
+        onCopy={loadActivitiesFrom}
+      />
     </>
   );
 }

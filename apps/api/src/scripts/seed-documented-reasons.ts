@@ -10,10 +10,11 @@ import * as mysql from 'mysql2/promise';
 import { DOCUMENTED_REASONS } from '../core/database/reason-code-seed';
 import { seedDocumentedReasons } from './lib/seed-demo-detail';
 
-const DB = process.env.TENANT_DB_NAME || 'tenant_devco';
+const DB = process.env.TENANT_DB_NAME || 'nf_devco';
 
 async function main() {
-  const mode = process.argv[2] || 'READ_ONLY';
+  // `pnpm nx … -- --apply` can hand the script a bare `--` first.
+  const mode = process.argv.slice(2).find((a) => a !== '--') || 'READ_ONLY';
   if (!['READ_ONLY', '--verify', '--apply'].includes(mode)) {
     throw new Error('Use no flags (read-only plan), --verify (rolled back), or --apply (commit).');
   }

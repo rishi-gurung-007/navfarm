@@ -46,6 +46,7 @@ const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'movement', label: 'Movement / Transfers', icon: ArrowRightLeft },
   { key: 'costing', label: 'Costing & Valuation', icon: DollarSign },
 ];
+import { WeightReadings, ConsumptionSummary, DeathRecord, SemenLots } from './animal-card-activity';
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
@@ -73,16 +74,6 @@ function formatMoney(amount?: number | string | null): string {
   if (isNaN(num)) return '—';
   return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
-
-const asObject = (value: any): Row => {
-  if (!value) return {};
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-};
 
 const human = (v: any) =>
   fmt(v).replaceAll('_', ' ').toLowerCase();
@@ -119,6 +110,11 @@ export default function AnimalDetailsModal({
   const [ledgerEntries, setLedgerEntries] = useState<Row[]>([]);
   const [loadingLedger, setLoadingLedger] = useState(false);
 
+  // What the work done on the animal shows: recorded weights, consumption, death record, a boar's semen.
+  const [activity, setActivity] = useState<Row | null>(null);
+  // The append-only movement log — the one source of the animal's moves (assignments, transfers, stage changes, death).
+  const [movementLog, setMovementLog] = useState<Row[]>([]);
+
   const [openEventId, setOpenEventId] = useState<string | null>(null);
 
   // Load all animal datasets when animalId changes
@@ -128,6 +124,8 @@ export default function AnimalDetailsModal({
       setBreeding(null);
       setMedications([]);
       setLedgerEntries([]);
+      setActivity(null);
+      setMovementLog([]);
       setActiveTab('overview');
       return;
     }
@@ -186,6 +184,14 @@ export default function AnimalDetailsModal({
         if (!isCancelled) setLoadingLedger(false);
       });
 
+    // 5. Recorded weights, consumption, death record, semen — and the movement log
+    api.get(`/animal/${animalId}/activity`)
+      .then((res) => { if (!isCancelled) setActivity(unwrap<Row>(res)); })
+      .catch(() => { if (!isCancelled) setActivity(null); });
+    api.get(`/animal/${animalId}/movement-log`)
+      .then((res) => { if (!isCancelled) setMovementLog(unwrap<Row[]>(res) || []); })
+      .catch(() => { if (!isCancelled) setMovementLog([]); });
+
     return () => {
       isCancelled = true;
     };
@@ -193,10 +199,8 @@ export default function AnimalDetailsModal({
 
   const matings: Row[] = breeding?.matings ?? [];
   const farrowings: Row[] = breeding?.farrowings ?? [];
-  const movements: Row[] = breeding?.movements ?? [];
-  const transfers: Row[] = breeding?.transfers ?? [];
   const labels = breeding?.traceability_labels ?? { stages: {}, batches: {}, locations: {} };
-  const lineage: Row = breeding?.lineage ?? { offspring: [] };
+  const lineage: Row = breeding?.lineage ?? { offspring: [], litters: [] };
   const current: Row = breeding?.current_labels ?? {};
 
   const isMale =
@@ -235,6 +239,15 @@ export default function AnimalDetailsModal({
     }
     return null;
   }, [medications]);
+
+  // Parity counts completed pregnancies, post weaning: a farrowing numbered above the sow's parity is a litter still
+  // on her. (The card used to show the number of farrowing records when the count was zero, which is the number of
+  // litters including that unweaned one.)
+  const litterInProgress = useMemo(() => {
+    const done = Number(animal?.parity_count ?? 0);
+    const open = farrowings.map((f) => Number(f.parity_number)).filter((n) => Number.isFinite(n) && n > done);
+    return open.length ? Math.max(...open) : null;
+  }, [animal?.parity_count, farrowings]);
 
   // Sow Lifetime Reproductive KPIs
   const sowStats = useMemo(() => {
@@ -346,54 +359,59 @@ export default function AnimalDetailsModal({
       });
     }
 
-    // 3. Stage Transitions
-    for (const mov of movements) {
-      if (mov.action === 'TRANSITION_STAGE') {
-        const oldVal = asObject(mov.old_values);
-        const newVal = asObject(mov.new_values);
-        const fromStage = labels.stages?.[oldVal.current_stage_id] || 'Previous Stage';
-        const toStage = labels.stages?.[newVal.current_stage_id] || 'New Stage';
-        list.push({
-          id: `mov-${mov.movement_id || mov.occurred_at}-${toStage}`,
-          date: formatDate(newVal.transition_date || mov.occurred_at),
-          title: `Stage Transition: ${toStage}`,
-          badge: 'Stage Transition',
-          summary: `${fromStage} → ${toStage} · Pen: ${labels.locations?.[newVal.current_location_id] || '—'}`,
-          detail: [
-            ['From Stage', fromStage],
-            ['To Stage', toStage],
-            ['Batch', labels.batches?.[newVal.current_batch_id] || '—'],
-            ['Pen / Location', labels.locations?.[newVal.current_location_id] || '—'],
-            ['Reason', fmt(newVal.reason)],
-            ['Remarks', fmt(newVal.remarks)],
-          ],
-        });
-      }
-    }
-
-    // 4. Batch / Pen Transfers
-    for (const tr of transfers) {
+    // 3. Everything that moved the animal, from the movement log: assignments, transfers (including those made
+    // by a batch-level stage move), stage changes and death. Read from the log rather than pieced together
+    // from the audit trail, so a batch's own moves and a data-entry death are not missing.
+    const MOVE_TITLE: Record<string, [string, string]> = {
+      PURCHASE: ['Purchased', 'Purchase'],
+      ASSIGN: ['Assigned to batch', 'Assignment'],
+      TRANSFER: ['Batch / pen transfer', 'Transfer'],
+      STAGE_CHANGE: ['Stage change', 'Stage Transition'],
+      RELOCATE: ['Moved pen', 'Relocation'],
+      UNASSIGN: ['Removed from batch', 'Removal'],
+      MORTALITY: ['Death', 'Mortality'],
+      OUTPUT: ['Output', 'Output'],
+      CULL: ['Culled', 'Cull'],
+    };
+    for (const m of movementLog) {
+      const [title, badge] = MOVE_TITLE[m.movement_type] ?? [human(m.movement_type), human(m.movement_type)];
+      const fromStage = fmt(m.from_stage_code);
+      const toStage = fmt(m.to_stage_code);
+      const stageChanged = m.to_stage_code && m.from_stage_code !== m.to_stage_code;
+      const parts = [
+        m.movement_type === 'TRANSFER' || m.movement_type === 'ASSIGN' ? `Batch ${fmt(labels.batches?.[m.from_batch_id])} → ${fmt(m.to_batch_no)}` : '',
+        stageChanged ? `${fromStage} → ${toStage}` : m.to_stage_code ? `Stage ${toStage}` : '',
+        m.to_location_name ? `Pen ${m.to_location_name}` : '',
+        m.reason ? String(m.reason) : '',
+      ].filter((p) => p && !p.includes('— → —'));
       list.push({
-        id: `trans-${tr.transfer_id}`,
-        date: formatDate(tr.transfer_date),
-        title: `Batch/Pen Transfer (${fmt(tr.transfer_no)})`,
-        badge: 'Transfer',
-        summary: `Batch: ${fmt(tr.from_batch_no)} → ${fmt(tr.to_batch_no)} | Pen: ${fmt(tr.from_pen_code)} → ${fmt(tr.to_pen_code)}`,
+        id: `log-${m.movement_id}`,
+        date: formatDate(m.event_date),
+        title: stageChanged && m.movement_type === 'STAGE_CHANGE' ? `Stage change: ${toStage}` : title,
+        badge,
+        summary: parts.length ? parts.join(' · ') : title,
         detail: [
-          ['Transfer No.', fmt(tr.transfer_no)],
-          ['Transfer Date', formatDate(tr.transfer_date)],
-          ['From Batch', fmt(tr.from_batch_no)],
-          ['To Batch', fmt(tr.to_batch_no)],
-          ['From Pen', fmt(tr.from_pen_code)],
-          ['To Pen', fmt(tr.to_pen_code)],
-          ['Reason', fmt(tr.reason)],
-          ['Remarks', fmt(tr.remarks)],
+          ['Event date', formatDate(m.event_date)],
+          ['Previous event', formatDate(m.last_date)],
+          ['Entry no.', fmt(m.entry_no)],
+          ['From stage', fromStage],
+          ['To stage', toStage],
+          ['To batch', fmt(m.to_batch_no)],
+          ['From pen', fmt(m.from_location_name)],
+          ['To pen', fmt(m.to_location_name)],
+          ['Reason', fmt(m.reason)],
+          ['Remarks', fmt(m.remarks)],
         ],
       });
     }
 
-    // 5. Disposal (if applicable)
-    if (animal.disposal_date) {
+    // 4. Herd exit. A death is on the log (above); a sale, slaughter or transfer out is not, so it comes from the
+    // register row.
+    // The log is newest first. A death that was later reversed (a MORTALITY_REVERSED newer than it) is not her exit.
+    const types = movementLog.map((m) => m.movement_type);
+    const newestDeath = types.indexOf('MORTALITY');
+    const diedOnLog = newestDeath >= 0 && !types.slice(0, newestDeath).includes('MORTALITY_REVERSED');
+    if (animal.disposal_date && !(animal.disposal_type === 'DIED' && diedOnLog)) {
       list.push({
         id: 'event-disposal',
         date: formatDate(animal.disposal_date),
@@ -410,7 +428,7 @@ export default function AnimalDetailsModal({
     }
 
     return list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  }, [animal, movements, transfers, labels, lineage, current]);
+  }, [animal, movementLog, labels, lineage, current]);
 
   if (!animalId) return null;
 
@@ -555,9 +573,11 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
                     <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Current Weight</span>
                     <span className="text-base font-bold font-mono text-[var(--text-primary)] mt-0.5 block">
-                      {animal?.current_weight_kg ? `${Number(animal.current_weight_kg).toFixed(1)} kg` : '—'}
+                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : '—'}
                     </span>
-                    <span className="text-[10px] text-[var(--text-secondary)]">Live weight</span>
+                    <span className="text-[10px] text-[var(--text-secondary)]">
+                      {activity?.current_weight_date ? `Recorded ${activity.current_weight_date}` : 'None recorded'}
+                    </span>
                   </div>
 
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
@@ -754,16 +774,51 @@ export default function AnimalDetailsModal({
                 <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
                   <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2">
                     <h4 className="font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                      <Dna className="h-3.5 w-3.5 text-[var(--accent)]" /> Progeny & Registered Offspring
+                      <Dna className="h-3.5 w-3.5 text-[var(--accent)]" /> Progeny — litters and registered offspring
                     </h4>
                     <span className="rounded-full bg-[var(--accent-muted)] px-2 py-0.5 text-[10px] font-bold font-mono text-[var(--accent)]">
-                      {(lineage.offspring || []).length} Offspring
+                      {(lineage.litters || []).length} {(lineage.litters || []).length === 1 ? 'litter' : 'litters'} · {(lineage.offspring || []).length} registered
                     </span>
                   </div>
 
+                  {/* Piglets are held as a lot per litter, not registered one by one (decision of 9 Oct): a litter is
+                      offspring as a lot, with its batch and the head it holds now. A boar's are his matings' litters. */}
+                  {(lineage.litters || []).length > 0 && (
+                    <div className="mb-3 overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-[var(--border)] text-[10px] uppercase font-bold text-[var(--text-muted)] bg-[var(--surface-raised)]">
+                            <th className="px-3 py-2">Litter</th>
+                            <th className="px-3 py-2">Farrowed</th>
+                            {animal?.gender === 'M' && <th className="px-3 py-2">Dam</th>}
+                            <th className="px-3 py-2 text-right">Born live</th>
+                            <th className="px-3 py-2 text-right">Weaned</th>
+                            <th className="px-3 py-2">Piglet lot</th>
+                            <th className="px-3 py-2 text-right">Head now</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border)]">
+                          {(lineage.litters as Row[]).map((l, idx) => (
+                            <tr key={l.farrow_id || idx}>
+                              <td className="px-3 py-2 font-mono">{l.litter_number ?? '—'}</td>
+                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{formatDate(l.farrowing_date)}</td>
+                              {animal?.gender === 'M' && <td className="px-3 py-2 font-mono">{l.dam_code || '—'}</td>}
+                              <td className="px-3 py-2 text-right font-mono">{l.piglets_born_live ?? '—'}</td>
+                              <td className="px-3 py-2 text-right font-mono">{l.weaning_date ? l.piglets_weaned : 'not yet'}</td>
+                              <td className="px-3 py-2 font-mono">
+                                {l.piglet_lot_no ? `${l.piglet_lot_no} · ${l.piglet_batch_no ?? ''}` : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono">{l.head_now ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
                   {(lineage.offspring || []).length === 0 ? (
-                    <div className="py-8 text-center text-[var(--text-muted)]">
-                      <p>No registered offspring for this animal.</p>
+                    <div className="py-4 text-center text-[var(--text-muted)]">
+                      <p>No animal is registered with this animal as a parent.</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
@@ -824,6 +879,8 @@ export default function AnimalDetailsModal({
                   </span>
                 </div>
 
+                <DeathRecord activity={activity} />
+
                 {loadingMedications ? (
                   <div className="py-12 text-center">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin text-[var(--text-muted)]" />
@@ -881,6 +938,8 @@ export default function AnimalDetailsModal({
                     </div>
                   </div>
                 )}
+
+                <ConsumptionSummary activity={activity} />
               </div>
             )}
 
@@ -889,80 +948,39 @@ export default function AnimalDetailsModal({
             {/* ═══════════════════════════════════════════════════════════════════ */}
             {activeTab === 'weight' && (
               <div className="space-y-4 animate-fade-in text-xs">
-                {/* Weight Overview Cards */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Current Live Weight</span>
+                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Current Weight</span>
                     <span className="font-mono text-2xl font-bold text-[var(--accent)] block mt-1">
-                      {animal?.current_weight_kg ? `${Number(animal.current_weight_kg).toFixed(1)} kg` : '—'}
+                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : '—'}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
-                      Recorded on current stage
+                      {activity?.current_weight_date ? `Last recorded ${activity.current_weight_date}` : 'No weight recorded yet'}
                     </span>
                   </div>
 
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Estimated Daily Gain</span>
+                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Average Daily Gain</span>
                     <span className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400 block mt-1">
-                      {ageDays && animal?.current_weight_kg && Number(animal.current_weight_kg) > 0
-                        ? `${((Number(animal.current_weight_kg) / ageDays) * 1000).toFixed(0)} g/d`
-                        : '—'}
+                      {activity?.adg_g_per_day != null ? `${activity.adg_g_per_day} g/d` : '—'}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
-                      Lifetime ADG average
+                      {activity?.adg_g_per_day != null
+                        ? `Between ${activity.first_weight_date} and ${activity.current_weight_date}`
+                        : 'Needs two weights on different days'}
                     </span>
                   </div>
 
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Target Weight by Stage</span>
+                    <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Body Condition Score</span>
                     <span className="font-mono text-2xl font-bold text-[var(--text-primary)] block mt-1">
-                      {animal?.animal_type === 'BOAR' ? '220–280 kg' : animal?.animal_type === 'SOW' ? '180–240 kg' : '95–115 kg'}
+                      {activity?.latest_condition_score != null ? Number(activity.latest_condition_score).toFixed(1) : '—'}
                     </span>
-                    <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
-                      Breed standard for {current.breed || 'Commercial Pig'}
-                    </span>
+                    <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">Latest score, 1 to 5</span>
                   </div>
                 </div>
 
-                <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                  <h4 className="font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] mb-2 flex items-center gap-1.5 border-b border-[var(--border)] pb-2">
-                    <Scale className="h-3.5 w-3.5 text-[var(--accent)]" /> Weight Milestones & Checkpoints
-                  </h4>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-[var(--border)] text-[10px] uppercase font-bold text-[var(--text-muted)] bg-[var(--surface-raised)]">
-                          <th className="px-3 py-2">Milestone / Stage</th>
-                          <th className="px-3 py-2">Recorded Weight</th>
-                          <th className="px-3 py-2">Status</th>
-                          <th className="px-3 py-2">Benchmark</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border)]">
-                        <tr>
-                          <td className="px-3 py-2.5 font-medium text-[var(--text-primary)]">Current Live Weight</td>
-                          <td className="px-3 py-2.5 font-mono font-bold text-[var(--accent)]">
-                            {animal?.current_weight_kg ? `${Number(animal.current_weight_kg).toFixed(1)} kg` : '—'}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                              Active
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 text-[var(--text-muted)]">Within Expected Curve</td>
-                        </tr>
-                        {animal?.entry_type === 'BORN_ON_FARM' && (
-                          <tr>
-                            <td className="px-3 py-2.5 font-medium text-[var(--text-primary)]">Birth Weight</td>
-                            <td className="px-3 py-2.5 font-mono text-[var(--text-secondary)]">~1.40 kg</td>
-                            <td className="px-3 py-2.5 text-[var(--text-muted)]">Recorded at Farrowing</td>
-                            <td className="px-3 py-2.5 text-[var(--text-muted)]">Standard: 1.3–1.6 kg</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <WeightReadings activity={activity} />
               </div>
             )}
 
@@ -984,8 +1002,13 @@ export default function AnimalDetailsModal({
                         <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-2.5 text-center">
                           <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Parity</span>
                           <span className="font-mono text-base font-bold text-[var(--text-primary)] mt-0.5 block">
-                            {fmt(animal?.parity_count || farrowings.length)}
+                            {fmt(animal?.parity_count ?? 0)}
                           </span>
+                          {litterInProgress != null && (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 block">
+                              Litter {litterInProgress} not weaned yet
+                            </span>
+                          )}
                         </div>
                         <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-2.5 text-center">
                           <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Born Live</span>
@@ -1026,8 +1049,13 @@ export default function AnimalDetailsModal({
                         <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3 text-center">
                           <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Services Performed</span>
                           <span className="font-mono text-xl font-bold text-[var(--accent)] block mt-0.5">
-                            {matings.length}
+                            {matings.filter((m) => !m.pooled).length}
                           </span>
+                          {matings.some((m) => m.pooled) && (
+                            <span className="text-[10px] text-[var(--text-muted)] block">
+                              + {matings.filter((m) => m.pooled).length} from pooled lots
+                            </span>
+                          )}
                         </div>
                         <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3 text-center">
                           <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Litters Sired</span>
@@ -1049,6 +1077,8 @@ export default function AnimalDetailsModal({
                         </div>
                       </div>
                     )}
+
+                    {isMale && <SemenLots activity={activity} />}
 
                     {/* Matings & Services Table */}
                     <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
@@ -1078,9 +1108,16 @@ export default function AnimalDetailsModal({
                                   <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
                                     {formatDate(m.mating_date)}
                                   </td>
-                                  <td className="px-3 py-2 text-[var(--text-secondary)]">{human(m.mating_type)}</td>
+                                  <td className="px-3 py-2 text-[var(--text-secondary)]">
+                                    {human(m.mating_type)}
+                                    {m.pooled && (
+                                      <span className="block text-[10px] text-[var(--text-muted)]">
+                                        pooled lot {m.semen_lot_no || ''} — sire not one boar
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="px-3 py-2 font-mono font-bold text-[var(--accent)]">
-                                    {isMale ? m.sow_code || '—' : m.boar_code || '—'}
+                                    {isMale ? m.sow_code || '—' : m.boar_code || (m.semen_lot_no ? 'pooled lot' : '—')}
                                   </td>
                                   <td className="px-3 py-2 text-[var(--text-secondary)]">{m.batch_no || '—'}</td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
@@ -1129,6 +1166,7 @@ export default function AnimalDetailsModal({
                                 <th className="px-3 py-2">Stillborn</th>
                                 <th className="px-3 py-2">Weaned</th>
                                 <th className="px-3 py-2">Avg Wean Wt</th>
+                                <th className="px-3 py-2">Piglet Lot</th>
                                 <th className="px-3 py-2">Status</th>
                               </tr>
                             </thead>
@@ -1152,6 +1190,9 @@ export default function AnimalDetailsModal({
                                   </td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
                                     {f.avg_weaning_weight_kg ? `${f.avg_weaning_weight_kg} kg` : '—'}
+                                  </td>
+                                  <td className="px-3 py-2 font-mono text-[var(--text-secondary)] whitespace-nowrap">
+                                    {f.piglet_batch_no ? `${f.piglet_batch_no} · ${f.piglet_lot_no ?? ''}` : '—'}
                                   </td>
                                   <td className="px-3 py-2">
                                     <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">

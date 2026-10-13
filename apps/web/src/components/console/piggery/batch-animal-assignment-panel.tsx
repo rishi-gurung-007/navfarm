@@ -18,6 +18,7 @@ import AnimalStageTransitionModal from "./animal-stage-transition-modal";
 import AnimalDetailsModal from "./animal-details-modal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ReasonSelect } from "@/components/ui/reason-select";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 export interface AnimalAssignmentRow {
   id: string;
@@ -114,10 +115,6 @@ export default function BatchAnimalAssignmentPanel() {
   const [moveLocationId, setMoveLocationId] = useState("");
   const [moveReason, setMoveReason] = useState("");
 
-  const [splitOpen, setSplitOpen] = useState(false);
-  const [splitStageCode, setSplitStageCode] = useState("");
-  const [splitLocationId, setSplitLocationId] = useState("");
-  const [splitReason, setSplitReason] = useState("PREGNANCY_FAILED");
   // Register New Animal (directly into this batch)
   const [regNobId, setRegNobId] = useState("");
   const [regForm, setRegForm] = useState<Row>({
@@ -425,33 +422,6 @@ export default function BatchAnimalAssignmentPanel() {
     }
   };
 
-  /** Hold the selected animals back as their own batch while the rest of the
-      cohort moves on. The child keeps the parent's scheduler and records its
-      own stage, so data entry and records work against it unchanged. */
-  const handleSplit = async () => {
-    if (selectedIds.size === 0 || !currentBatch?.id) return;
-    setGroupBusy(true);
-    setGroupError("");
-    try {
-      const res: any = await api.post(`/batch-transfer/split/${currentBatch.id}`, {
-        animal_ids: [...selectedIds],
-        transfer_date: new Date().toISOString().slice(0, 10),
-        hold_stage_code: splitStageCode || undefined,
-        to_location_id: splitLocationId || undefined,
-        reason: splitReason || undefined,
-      });
-      const data = res?.data ?? res;
-      setToastMsg(`Split into ${data?.child?.batch_no ?? "a new group"}.`);
-      setSplitOpen(false);
-      setSelectedIds(new Set());
-      loadAssignedAnimals();
-    } catch (err: any) {
-      setGroupError(err?.message || "Could not split the selected animals.");
-    } finally {
-      setGroupBusy(false);
-    }
-  };
-
   const handleConfirmTransfer = async () => {
     if (!selectedAnimalForTransfer || !targetLocationId) return;
     setTransferSaving(true);
@@ -475,7 +445,7 @@ export default function BatchAnimalAssignmentPanel() {
   };
 
   const handleRemoveAnimal = async (animal: AnimalAssignmentRow) => {
-    if (!confirm(t("baapConfirmRemoveAnimal", { tag: animal.tagLabel }))) return;
+    if (!(await confirmAction({ title: t("cfRemoveAnimalTitle"), message: t("baapConfirmRemoveAnimal", { tag: animal.tagLabel }), tone: "danger" }))) return;
     setRemovingAnimalId(animal.id);
     setRemoveError("");
     try {
@@ -1209,68 +1179,6 @@ export default function BatchAnimalAssignmentPanel() {
           <p className="text-[11px] text-[var(--text-muted)]">
             Animals short of their stage minimum are reported back and skipped; the rest still move.
           </p>
-        </div>
-      </Dialog>
-
-      {/* Hold a group back as its own batch while the cohort moves on. */}
-      <Dialog
-        open={splitOpen}
-        onClose={() => setSplitOpen(false)}
-        title={`Hold ${selectedIds.size} animal(s) back as a split group`}
-        maxWidth="sm"
-        footer={
-          <Button size="sm" className="nf-btn-primary" onClick={handleSplit} disabled={groupBusy}>
-            {groupBusy ? "Splitting…" : "Create split group"}
-          </Button>
-        }
-      >
-        <div className="space-y-3">
-          {groupError && <p className="text-xs text-[var(--danger)]">{groupError}</p>}
-          <p className="text-[11px] text-[var(--text-muted)]">
-            These animals become their own batch, keeping {currentBatch?.code || "the batch"}&rsquo;s schedule.
-            The rest of the cohort moves on without them. Merge them back from the batch list when they are ready.
-          </p>
-          <label className="block">
-            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Stage the group holds at</span>
-            <SearchableSelect
-              ariaLabel="Stage the group holds at"
-              value={splitStageCode}
-              onChange={(val) => setSplitStageCode(val)}
-              options={stages.map((st: any) => ({
-                value: st.stage_code,
-                label: `${st.stage_code} — ${st.stage_name}`, shortLabel: (st.stage_name) ?? "",
-              }))}
-              placeholder="Keep the batch's current stage"
-              searchPlaceholder="Search stage…"
-              onClear={splitStageCode ? () => setSplitStageCode("") : undefined}
-            />
-          </label>
-          <label className="block">
-            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Pen (optional)</span>
-            <SearchableSelect
-              ariaLabel="Pen"
-              value={splitLocationId}
-              onChange={(val) => setSplitLocationId(val)}
-              options={locations.map((l: any) => ({
-                value: l.location_id,
-                label: `${l.location_code} — ${l.location_name}`, shortLabel: (l.location_name) ?? "",
-              }))}
-              placeholder="Keep the batch's pen"
-              searchPlaceholder="Search pen…"
-              onClear={splitLocationId ? () => setSplitLocationId("") : undefined}
-            />
-          </label>
-          <label className="block">
-            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Reason</span>
-            <ReasonSelect
-              ariaLabel="Reason"
-              value={splitReason}
-              onChange={(val) => setSplitReason(val)}
-              onClear={() => setSplitReason("")}
-              placeholder="Select reason from Reason Master…"
-              triggerClassName="nf-input-sm"
-            />
-          </label>
         </div>
       </Dialog>
 

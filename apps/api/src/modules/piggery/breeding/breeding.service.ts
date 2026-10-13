@@ -1,8 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, isNull, lt, sql, aliasedTable } from 'drizzle-orm';
+import { eq, and, or, desc, inArray, isNull, lt, sql, aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
+import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { PigletLotService } from '../../production/batch/piglet-lot.service';
+import { BatchService } from '../../production/batch/batch.service';
+import { BatchTransferService } from '../../production/batch/batch-transfer.service';
+import { SemenLotService } from './semen-lot.service';
+import { AnimalService } from '../animal/animal.service';
+import { dayAfter, periodCostsOf, type PeriodCosts, type PostedCost } from './semen-cost';
 import * as schema from '../../../core/database/schema';
 import { farmScope, animalScopeConditions, batchScopeConditions, farmOfLocation } from '../../../common/farm-scope';
 import {
@@ -16,6 +23,9 @@ import {
   MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
 
+/** The stage a sow goes to when her litter is weaned (Stage Master seed code). */
+const DRY_SOW_STAGE = 'DRY_SOW';
+
 function addDaysToDate(dateStr: string, days: number): string {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
@@ -24,7 +34,14 @@ function addDaysToDate(dateStr: string, days: number): string {
 
 @Injectable()
 export class BreedingService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly pigletLots: PigletLotService,
+    private readonly batchService: BatchService,
+    private readonly batchTransfers: BatchTransferService,
+    private readonly semenLots: SemenLotService,
+    private readonly animals: AnimalService,
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -124,8 +141,11 @@ export class BreedingService {
     return animal;
   }
 
-  /** The boar behind an AI dose is the boar its semen lot was collected from. */
-  private async boarOfSemenLot(semenLotId: string, companyId: string, tenantId: string): Promise<string> {
+  /**
+   * The boar behind an AI dose is the boar its semen lot was collected from. A pooled lot has no single boar — its doses
+   * are the mix of several — so the sire of a service from it is not known to be any one of them (null).
+   */
+  private async boarOfSemenLot(semenLotId: string, companyId: string, tenantId: string): Promise<{ boarId: string | null; poolBoarIds: string[] }> {
     // semen_batch has no farm of its own; it reaches one through its boar.
     const [lot] = await this.db
       .select({ boar_animal_id: schema.semenBatch.boar_animal_id })
@@ -139,7 +159,12 @@ export class BreedingService {
       ))
       .limit(1);
     if (!lot) throw new NotFoundException(`Semen lot with ID '${semenLotId}' not found.`);
-    return lot.boar_animal_id;
+    const pool = await this.db
+      .select({ boar_animal_id: schema.semenBatchBoar.boar_animal_id })
+      .from(schema.semenBatchBoar)
+      .where(eq(schema.semenBatchBoar.semen_batch_id, semenLotId));
+    const poolBoarIds = pool.map((p) => p.boar_animal_id);
+    return { boarId: poolBoarIds.length ? null : lot.boar_animal_id, poolBoarIds };
   }
 
   /**
@@ -221,11 +246,18 @@ export class BreedingService {
 
     let boarAnimalId = dto.boar_animal_id || null;
     if (dto.semen_lot_id) {
-      const lotBoar = await this.boarOfSemenLot(dto.semen_lot_id, companyId, tenantId);
-      if (boarAnimalId && boarAnimalId !== lotBoar) {
-        throw new BadRequestException('The semen lot was not collected from the selected boar.');
+      const lot = await this.boarOfSemenLot(dto.semen_lot_id, companyId, tenantId);
+      if (lot.poolBoarIds.length) {
+        // A pooled lot: any boar named must be one of those mixed into it; none named leaves the sire unrecorded.
+        if (boarAnimalId && !lot.poolBoarIds.includes(boarAnimalId)) {
+          throw new BadRequestException('The selected boar is not one of the boars this pooled semen lot was mixed from.');
+        }
+      } else {
+        if (boarAnimalId && boarAnimalId !== lot.boarId) {
+          throw new BadRequestException('The semen lot was not collected from the selected boar.');
+        }
+        boarAnimalId = lot.boarId;
       }
-      boarAnimalId = lotBoar;
     }
 
     // Verified whenever one is named, AI included — an unverified boar id used
@@ -249,6 +281,11 @@ export class BreedingService {
   }
 
   async recordMating(dto: CreateMatingDto, tenantId: string, userPayload?: any) {
+    // The service and the doses it used are one event: both recorded, or neither.
+    return withTenantTransaction(this.cls, () => this.recordMatingInner(dto, tenantId, userPayload));
+  }
+
+  private async recordMatingInner(dto: CreateMatingDto, tenantId: string, userPayload?: any) {
     const { sow, companyId, boarAnimalId } = await this.resolveSowAndBoar(dto, tenantId);
     if (dto.batch_id) await this.assertBatchOnSowFarm(dto.batch_id, sow, tenantId);
 
@@ -290,6 +327,18 @@ export class BreedingService {
     };
 
     await this.db.insert(schema.breedingRecord).values(newRecord);
+
+    // An AI service that names a semen lot uses doses from it: refused if the lot has too few, and a lot held as stock
+    // has them issued from that stock.
+    if (dto.semen_lot_id) {
+      const [lot] = await this.db
+        .select()
+        .from(schema.semenBatch)
+        .where(and(eq(schema.semenBatch.semen_batch_id, dto.semen_lot_id), eq(schema.semenBatch.tenant_id, tenantId)))
+        .limit(1);
+      if (lot) await this.semenLots.issueDoses(lot, Number(newRecord.semen_dose_qty), breedingId, dto.mating_date, tenantId, userPayload);
+    }
+
     if (conceptionResult === ConceptionResult.CONFIRMED) {
       await this.db
         .update(schema.animalRegister)
@@ -450,6 +499,11 @@ export class BreedingService {
   // ==========================================
 
   async recordFarrowing(dto: CreateFarrowingDto, tenantId: string, userPayload?: any) {
+    // The litter and its piglet lot are one event: both are recorded, or neither.
+    return withTenantTransaction(this.cls, () => this.recordFarrowingInner(dto, tenantId, userPayload));
+  }
+
+  private async recordFarrowingInner(dto: CreateFarrowingDto, tenantId: string, userPayload?: any) {
     const [sow] = await this.db
       .select()
       .from(schema.animalRegister)
@@ -468,20 +522,11 @@ export class BreedingService {
 
     const companyId = this.assertAnimalCompany(dto.company_id, sow, 'sow');
     await this.assertScopedBatch(dto.batch_id, companyId, tenantId);
-    if (dto.breeding_id) {
-      // The breeding row carries no farm; it is in scope only as this sow's own mating.
-      const [breeding] = await this.db
-        .select({ breeding_id: schema.breedingRecord.breeding_id })
-        .from(schema.breedingRecord)
-        .where(and(
-          eq(schema.breedingRecord.breeding_id, dto.breeding_id),
-          eq(schema.breedingRecord.tenant_id, tenantId),
-          eq(schema.breedingRecord.sow_animal_id, dto.sow_animal_id),
-        ))
-        .limit(1);
-      if (!breeding) throw new NotFoundException(`Breeding record with ID '${dto.breeding_id}' not found.`);
-    }
-
+    // A litter comes from a mating (audit G9): the one named, else the sow's open mating — her latest service on or
+    // before the farrowing, not failed and not already farrowed. With none, the farrowing is refused: the sire, and the
+    // boar's own litters, come through the mating. The breeding row carries no farm; it is in scope only as this
+    // sow's own mating.
+    const breedingId = await this.matingOfLitter(dto, sow.animal_code, tenantId);
     const stillborn = dto.piglets_stillborn || 0;
     const mummified = dto.piglets_mummified || 0;
     const live = dto.piglets_born_live;
@@ -492,16 +537,50 @@ export class BreedingService {
       totalLitterWeight = Number((dto.avg_birth_weight_kg * live).toFixed(3));
     }
 
+    // Parity counts completed pregnancies, post weaning (decisions.md, TDD row 27): this
+    // litter is parity_count + 1, and parity_count itself only moves when it is weaned.
+    // A farrowing numbered above parity_count has not been weaned, so a second one now
+    // would be numbered the same. Read from the records rather than the sow's status,
+    // which can be set by hand or by a seed without any farrowing behind it.
+    const [nursing] = await this.db
+      .select({ farrow_id: schema.farrowingRecord.farrow_id })
+      .from(schema.farrowingRecord)
+      .where(
+        and(
+          eq(schema.farrowingRecord.sow_animal_id, dto.sow_animal_id),
+          eq(schema.farrowingRecord.tenant_id, tenantId),
+          sql`${schema.farrowingRecord.parity_number} > ${sow.parity_count || 0}`,
+        ),
+      )
+      .limit(1);
+    if (nursing) {
+      throw new BadRequestException(
+        `Sow '${sow.animal_code}' has a litter that is not weaned yet. Record its weaning before a new farrowing.`,
+      );
+    }
     const plannedWeaningDate = addDaysToDate(dto.farrowing_date, 28);
     const parityNumber = sow.parity_count + 1;
     const farrowId = randomUUID();
+
+    // The piglets, as a lot of the piglet bio-asset item in a batch-wise batch. Fostering moves piglets between
+    // litters, so the lot is the litter as it stands: born live, plus received, less fostered out. A farrowing recorded
+    // without a piglet item records the litter only.
+    const netLitter = Math.max(0, live + (dto.foster_received || 0) - (dto.fostered_out || 0));
+    const pigletLot =
+      dto.piglet_item_id && netLitter > 0
+        ? await this.pigletLots.createLot(
+            { sow, farrowing_date: dto.farrowing_date, quantity: netLitter, item_id: dto.piglet_item_id, stage_id: dto.piglet_stage_id },
+            tenantId,
+            userPayload,
+          )
+        : null;
 
     const newRecord = {
       farrow_id: farrowId,
       tenant_id: tenantId,
       company_id: companyId,
       sow_animal_id: dto.sow_animal_id,
-      breeding_id: dto.breeding_id || null,
+      breeding_id: breedingId,
       batch_id: dto.batch_id || sow.current_batch_id || null,
       farrowing_date: dto.farrowing_date,
       piglets_born_total: totalBorn,
@@ -513,6 +592,8 @@ export class BreedingService {
       farrowing_status: dto.farrowing_status || 'NORMAL',
       foster_received: dto.foster_received || 0,
       fostered_out: dto.fostered_out || 0,
+      piglet_batch_id: pigletLot?.batch_id ?? null,
+      piglet_lot_no: pigletLot?.lot_no ?? null,
       weaning_date: plannedWeaningDate,
       piglets_weaned: 0,
       avg_weaning_weight_kg: null,
@@ -527,10 +608,10 @@ export class BreedingService {
     // Update sow lifetime statistics and status — a GILT (never farrowed)
     // becomes a SOW on her first farrowing, in the same write, so a second
     // farrowing recorded against her doesn't still read her as a GILT.
+    // parity_count is deliberately not touched here; weaning completes the parity.
     await this.db
       .update(schema.animalRegister)
       .set({
-        parity_count: parityNumber,
         total_piglets_born_live: (sow.total_piglets_born_live || 0) + live,
         status: 'LACTATING',
         ...(sow.animal_type === 'GILT' ? { animal_type: 'SOW' } : {}),
@@ -539,11 +620,21 @@ export class BreedingService {
 
     return {
       ...newRecord,
-      message: `Farrowing recorded: ${live} live piglets born. Sow parity incremented to ${parityNumber} and status set to LACTATING.`,
+      piglet_batch_no: pigletLot?.batch_no ?? null,
+      message:
+        `Farrowing recorded: ${live} live piglets born (litter ${parityNumber}). Sow status set to LACTATING; parity completes at weaning.` +
+        (pigletLot
+          ? ` ${netLitter} piglets held as lot ${pigletLot.lot_no} in batch ${pigletLot.batch_no}.`
+          : ' No piglet lot was created — choose the piglet item to hold them as a lot.'),
     };
   }
 
   async recordWeaning(farrowId: string, dto: UpdateWeaningDto, tenantId: string, userPayload?: any) {
+    // The litter's weaning, the losses before it and the piglets' move are one event: all recorded, or none.
+    return withTenantTransaction(this.cls, () => this.recordWeaningInner(farrowId, dto, tenantId, userPayload));
+  }
+
+  private async recordWeaningInner(farrowId: string, dto: UpdateWeaningDto, tenantId: string, userPayload?: any) {
     const [farrow] = await this.db
       .select()
       .from(schema.farrowingRecord)
@@ -570,6 +661,63 @@ export class BreedingService {
       throw new NotFoundException(`Farrowing record with ID '${farrowId}' not found.`);
     }
 
+    // The piglets. Anything the lot has lost since farrowing and not yet recorded is pre-weaning mortality; the head
+    // that were weaned then go where they are sent — to another batch, or on to a stage — by the ordinary transfer.
+    // Only the first weaning of a litter moves them, so posting it again cannot move the same piglets twice.
+    let pigletNote = '';
+    if (dto.move_to_batch_id && dto.move_to_stage_code) {
+      throw new BadRequestException('Send the weaned piglets to a batch or on to a stage, not both.');
+    }
+    if (farrow.piglet_batch_id && (farrow.piglets_weaned || 0) === 0) {
+      const onHand = await this.pigletHead(farrow.piglet_batch_id);
+      if (dto.piglets_weaned > onHand + 1e-9) {
+        throw new BadRequestException(
+          `The piglet lot ${farrow.piglet_lot_no ?? ''} holds ${onHand} piglets; ${dto.piglets_weaned} cannot have been weaned.`,
+        );
+      }
+      const lost = onHand - dto.piglets_weaned;
+      if (lost > 0) {
+        await this.batchService.recordMortality(
+          farrow.piglet_batch_id,
+          { transaction_date: dto.weaning_date, quantity: lost, remarks: 'Pre-weaning loss, recorded at weaning' },
+          tenantId,
+          userPayload,
+        );
+        pigletNote += ` ${lost} lost before weaning.`;
+      }
+      if (dto.move_to_batch_id && dto.piglets_weaned > 0) {
+        await this.batchTransfers.create(
+          {
+            company_id: farrow.company_id ?? sow.company_id,
+            to_batch_id: dto.move_to_batch_id,
+            transfer_date: dto.weaning_date,
+            transfer_type: 'PARTIAL',
+            quantity: dto.piglets_weaned,
+            reason: 'WEANING',
+            remarks: `Weaned from ${sow.animal_code}, lot ${farrow.piglet_lot_no ?? ''}`,
+          } as any,
+          tenantId,
+          farrow.piglet_batch_id,
+          userPayload,
+        );
+        pigletNote += ` ${dto.piglets_weaned} moved to the destination batch.`;
+      } else if (dto.move_to_stage_code) {
+        await this.batchService.transferStage(
+          farrow.piglet_batch_id,
+          { to_stage_code: dto.move_to_stage_code, transfer_date: dto.weaning_date } as any,
+          tenantId,
+          userPayload,
+        );
+        pigletNote += ` The piglet lot moved on to ${dto.move_to_stage_code}.`;
+      }
+    } else if (dto.move_to_batch_id || dto.move_to_stage_code) {
+      throw new BadRequestException(
+        farrow.piglet_batch_id
+          ? 'This litter was already weaned, so its piglets have already been dealt with.'
+          : 'This litter has no piglet lot to move — it was recorded without a piglet item.',
+      );
+    }
+
     await this.db
       .update(schema.farrowingRecord)
       .set({
@@ -581,19 +729,134 @@ export class BreedingService {
       })
       .where(eq(schema.farrowingRecord.farrow_id, farrowId));
 
+    // Weaning completes this litter's parity (BBP: "Parity incremented on weaning POST").
+    // Set from the farrowing's own number, and the weaned total moved by the change from
+    // what was already recorded, so posting the same weaning twice (or correcting it)
+    // cannot count the litter or its piglets twice.
     await this.db
       .update(schema.animalRegister)
       .set({
-        total_piglets_weaned: (sow.total_piglets_weaned || 0) + dto.piglets_weaned,
+        parity_count: Math.max(sow.parity_count || 0, farrow.parity_number),
+        total_piglets_weaned: Math.max(0, (sow.total_piglets_weaned || 0) + dto.piglets_weaned - (farrow.piglets_weaned || 0)),
         status: 'ACTIVE',
       })
       .where(eq(schema.animalRegister.animal_id, sow.animal_id));
 
+    const sowNote = await this.moveWeanedSowToDrySow(sow, farrow.parity_number, dto.weaning_date, tenantId, userPayload);
+
     return {
       farrow_id: farrowId,
       piglets_weaned: dto.piglets_weaned,
-      message: `Weaning recorded: ${dto.piglets_weaned} piglets weaned. Sow returned to ACTIVE status.`,
+      parity_count: Math.max(sow.parity_count || 0, farrow.parity_number),
+      message: `Weaning recorded: ${dto.piglets_weaned} piglets weaned. Parity ${farrow.parity_number} complete; ${sowNote}${pigletNote}`,
     };
+  }
+
+  /** The mating a farrowing comes from: the one named, or the sow's open one. Refuses when there is none. */
+  private async matingOfLitter(dto: CreateFarrowingDto, sowCode: string, tenantId: string): Promise<string> {
+    const farrowed = aliasedTable(schema.farrowingRecord, 'farrowed');
+    const conditions = [
+      eq(schema.breedingRecord.tenant_id, tenantId),
+      eq(schema.breedingRecord.sow_animal_id, dto.sow_animal_id),
+    ];
+    if (dto.breeding_id) {
+      const [named] = await this.db
+        .select({ breeding_id: schema.breedingRecord.breeding_id, mating_date: schema.breedingRecord.mating_date, farrow_id: farrowed.farrow_id })
+        .from(schema.breedingRecord)
+        .leftJoin(farrowed, eq(farrowed.breeding_id, schema.breedingRecord.breeding_id))
+        .where(and(eq(schema.breedingRecord.breeding_id, dto.breeding_id), ...conditions))
+        .limit(1);
+      if (!named) throw new NotFoundException(`Breeding record with ID '${dto.breeding_id}' not found.`);
+      if (named.farrow_id) throw new BadRequestException(`That mating of ${sowCode} has already farrowed.`);
+      if (String(named.mating_date).slice(0, 10) > dto.farrowing_date) {
+        throw new BadRequestException(`The mating of ${sowCode} is dated after this farrowing.`);
+      }
+      return named.breeding_id;
+    }
+    const [open] = await this.db
+      .select({ breeding_id: schema.breedingRecord.breeding_id })
+      .from(schema.breedingRecord)
+      .leftJoin(farrowed, eq(farrowed.breeding_id, schema.breedingRecord.breeding_id))
+      .where(
+        and(
+          ...conditions,
+          isNull(farrowed.farrow_id),
+          sql`${schema.breedingRecord.mating_date} <= ${dto.farrowing_date}`,
+          sql`COALESCE(${schema.breedingRecord.conception_result}, 'PENDING') <> ${ConceptionResult.FAILED}`,
+        ),
+      )
+      .orderBy(desc(schema.breedingRecord.mating_date))
+      .limit(1);
+    if (!open) {
+      throw new BadRequestException(
+        `No open mating is recorded for ${sowCode} on or before ${dto.farrowing_date}. Record her mating (Breeding → Mating) before her farrowing — the litter's sire comes from it.`,
+      );
+    }
+    return open.breeding_id;
+  }
+
+  /**
+   * A weaned sow goes to the Dry Sow stage (agreed 9 Oct), by the ordinary stage move, so it is checked, logged and
+   * counted like any other. Only for a sow in an animal-wise batch — the stage is hers there — and only when her company
+   * has a Dry Sow stage; her status stays ACTIVE (the stage carries "dry"). Returns what the message should say.
+   */
+  private async moveWeanedSowToDrySow(
+    sow: typeof schema.animalRegister.$inferSelect,
+    litter: number,
+    weaningDate: string,
+    tenantId: string,
+    userPayload?: any,
+  ): Promise<string> {
+    const [batch] = sow.current_batch_id
+      ? await this.db
+          .select({ tracking_mode: schema.batchHeader.tracking_mode })
+          .from(schema.batchHeader)
+          .where(eq(schema.batchHeader.batch_id, sow.current_batch_id))
+          .limit(1)
+      : [];
+    if (batch?.tracking_mode !== 'ANIMAL_WISE') return 'sow returned to ACTIVE status.';
+
+    const [drySow] = await this.db
+      .select({ stage_id: schema.stageMaster.stage_id })
+      .from(schema.stageMaster)
+      .where(
+        and(
+          eq(schema.stageMaster.tenant_id, tenantId),
+          eq(schema.stageMaster.company_id, sow.company_id),
+          eq(schema.stageMaster.nob_id, sow.nob_id),
+          eq(schema.stageMaster.lob_id, sow.lob_id),
+          eq(schema.stageMaster.stage_code, DRY_SOW_STAGE),
+          eq(schema.stageMaster.is_active, true),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (!drySow) return 'sow returned to ACTIVE status (no Dry Sow stage is set up, so her stage is unchanged).';
+    if (drySow.stage_id === sow.current_stage_id) return 'sow returned to ACTIVE status in Dry Sow.';
+
+    await this.animals.transitionStage(
+      sow.animal_id,
+      { to_stage_id: drySow.stage_id, transition_date: weaningDate, reason: `Weaned litter ${litter}` } as any,
+      tenantId,
+      userPayload,
+    );
+    return 'sow returned to ACTIVE status and moved to Dry Sow.';
+  }
+
+  /** The head a piglet lot holds now: its bio-asset state, else the batch's own figure. */
+  private async pigletHead(batchId: string): Promise<number> {
+    const [state] = await this.db
+      .select({ current_quantity: schema.batchBioAssetState.current_quantity })
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, batchId))
+      .limit(1);
+    if (state) return Number(state.current_quantity) || 0;
+    const [batch] = await this.db
+      .select({ closing_quantity: schema.batchHeader.closing_quantity, opening_quantity: schema.batchHeader.opening_quantity })
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, batchId))
+      .limit(1);
+    return Number(batch?.closing_quantity ?? batch?.opening_quantity) || 0;
   }
 
   async getFarrowingRecords(tenantId: string, companyId?: string) {
@@ -622,6 +885,8 @@ export class BreedingService {
         avg_weaning_weight_kg: schema.farrowingRecord.avg_weaning_weight_kg,
         cost_per_piglet: schema.farrowingRecord.cost_per_piglet,
         parity_number: schema.farrowingRecord.parity_number,
+        piglet_batch_id: schema.farrowingRecord.piglet_batch_id,
+        piglet_lot_no: schema.farrowingRecord.piglet_lot_no,
         notes: schema.farrowingRecord.notes,
         created_at: schema.farrowingRecord.created_at,
         sow_id: schema.farrowingRecord.sow_animal_id,
@@ -649,6 +914,11 @@ export class BreedingService {
   // ==========================================
 
   async recordSemenCollection(dto: CreateSemenCollectionDto, tenantId: string, userPayload?: any) {
+    // The lot, its stock and its QR are one event: all recorded, or none.
+    return withTenantTransaction(this.cls, () => this.recordSemenCollectionInner(dto, tenantId, userPayload));
+  }
+
+  private async recordSemenCollectionInner(dto: CreateSemenCollectionDto, tenantId: string, userPayload?: any) {
     const [boar] = await this.db
       .select()
       .from(schema.animalRegister)
@@ -667,15 +937,65 @@ export class BreedingService {
 
     const companyId = this.assertAnimalCompany(dto.company_id, boar, 'boar');
     await this.assertScopedBatch(dto.boar_batch_id, companyId, tenantId);
+    // Pooled semen: the lot is mixed from several boars. The first is the lot's primary boar; each of the others must be a
+    // live boar of the same company, and counts once however often he is named.
+    const poolBoars = await this.loadPoolBoars(boar, dto.pool_boar_animal_ids ?? [], companyId, tenantId);
+    const allBoars = [boar, ...poolBoars];
 
-    const amort = dto.amortisation_period || 0;
-    const feed = dto.feed_cost_period || 0;
-    const drug = dto.drug_cost_period || 0;
-    const overhead = dto.overhead_cost_period || 0;
+    // The period costs: as typed (for the lot as a whole), else worked out from what was posted for each boar over his own
+    // period and added up (G7) — a pooled lot carries what every boar in it cost.
+    const typed = [dto.amortisation_period, dto.feed_cost_period, dto.drug_cost_period, dto.overhead_cost_period].some((v) => v != null);
+    let period: { from: string | null; to: string | null };
+    let amort: number, feed: number, drug: number, overhead: number;
+    let costShares: number[];
+    let derived: PeriodCosts | null = null;
+    if (typed) {
+      period = { from: dto.period_from || null, to: dto.period_to || null };
+      amort = dto.amortisation_period || 0;
+      feed = dto.feed_cost_period || 0;
+      drug = dto.drug_cost_period || 0;
+      overhead = dto.overhead_cost_period || 0;
+      costShares = allBoars.map(() => (amort + feed + drug + overhead) / allBoars.length);
+    } else {
+      const perBoar: { from: string; to: string; costs: PeriodCosts }[] = [];
+      for (const b of allBoars) {
+        const p = await this.semenCostPeriod(b, dto, tenantId);
+        const batchId = b === boar ? dto.boar_batch_id || boar.current_batch_id || null : b.current_batch_id || null;
+        perBoar.push({ ...p, costs: await this.postedSemenCosts(b, batchId, p.from, p.to, tenantId) });
+      }
+      const sum = (pick: (c: PeriodCosts) => number) => perBoar.reduce((t, x) => t + pick(x.costs), 0);
+      amort = sum((c) => c.amortisation);
+      feed = sum((c) => c.feed);
+      drug = sum((c) => c.drug);
+      overhead = sum((c) => c.overhead);
+      derived = { feed, drug, overhead, amortisation: amort };
+      costShares = perBoar.map((x) => x.costs.feed + x.costs.drug + x.costs.overhead + x.costs.amortisation);
+      period = {
+        from: perBoar.map((x) => x.from).sort()[0],
+        to: perBoar.map((x) => x.to).sort().slice(-1)[0],
+      };
+    }
     const runningCost = amort + feed + drug + overhead;
     const unitCostPerDose = dto.doses_collected > 0 ? runningCost / dto.doses_collected : 0;
 
     const semenBatchId = randomUUID();
+    // Naming an item posts the collection to inventory as a lot of it, with its QR (any item the farm uses for semen).
+    const posted = dto.output_item_id
+      ? await this.semenLots.postCollection(
+          {
+            boar,
+            poolBoars,
+            boarBatchId: dto.boar_batch_id || boar.current_batch_id || null,
+            semenBatchId,
+            collectionDate: dto.collection_date,
+            doses: dto.doses_collected,
+            itemId: dto.output_item_id,
+            quality: { volume_ml: dto.volume_ml ?? null, motility_pct: dto.motility_pct ?? null, concentration_m_per_ml: dto.concentration_m_per_ml ?? null },
+          },
+          tenantId,
+          userPayload,
+        )
+      : null;
     const newRecord = {
       semen_batch_id: semenBatchId,
       tenant_id: tenantId,
@@ -683,8 +1003,8 @@ export class BreedingService {
       boar_animal_id: dto.boar_animal_id,
       boar_batch_id: dto.boar_batch_id || boar.current_batch_id || null,
       collection_date: dto.collection_date,
-      period_from: dto.period_from || null,
-      period_to: dto.period_to || null,
+      period_from: period.from,
+      period_to: period.to,
       amortisation_period: String(amort.toFixed(4)),
       feed_cost_period: String(feed.toFixed(4)),
       drug_cost_period: String(drug.toFixed(4)),
@@ -695,17 +1015,156 @@ export class BreedingService {
       doses_used_internal: String(dto.doses_used_internal || 0),
       doses_sold: String(dto.doses_sold || 0),
       output_item_id: dto.output_item_id || null,
-      inventory_posted: false,
+      inventory_posted: !!posted,
+      lot_no: posted?.lot_no ?? null,
+      expiry_date: posted?.expiry_date ?? null,
+      warehouse_id: posted?.warehouse_id ?? null,
+      qr_id: posted?.qr_id ?? null,
+      volume_ml: dto.volume_ml != null ? String(dto.volume_ml) : null,
+      motility_pct: dto.motility_pct != null ? String(dto.motility_pct) : null,
+      concentration_m_per_ml: dto.concentration_m_per_ml != null ? String(dto.concentration_m_per_ml) : null,
       notes: dto.notes || null,
       created_by: userPayload?.userId || null,
     };
 
     await this.db.insert(schema.semenBatch).values(newRecord);
+    if (poolBoars.length) {
+      await this.db.insert(schema.semenBatchBoar).values(
+        allBoars.map((b, i) => ({
+          semen_batch_id: semenBatchId,
+          boar_animal_id: b.animal_id,
+          tenant_id: tenantId,
+          boar_batch_id: (i === 0 ? newRecord.boar_batch_id : b.current_batch_id) || null,
+          sort_order: i,
+          cost_share: costShares[i].toFixed(4),
+        })),
+      );
+    }
 
     return {
       ...newRecord,
-      message: `Semen collection logged: ${dto.doses_collected} doses collected at computed unit cost of ${unitCostPerDose.toFixed(4)}/dose.`,
+      pooled_boars: poolBoars.length ? allBoars.map((b) => b.animal_code) : undefined,
+      qr_pack_no: posted?.pack_no ?? null,
+      message:
+        `Semen collection logged: ${dto.doses_collected} doses collected${poolBoars.length ? ` as one pooled lot from ${allBoars.length} boars (${allBoars.map((b) => b.animal_code).join(', ')})` : ''} at computed unit cost of ${unitCostPerDose.toFixed(4)}/dose` +
+        (derived ? ` (worked out from ${poolBoars.length ? 'their' : 'his'} posted costs ${period.from} to ${period.to})` : '') +
+        '.' +
+        (posted
+          ? ` Posted to inventory as lot ${posted.lot_no}${posted.expiry_date ? ` (expires ${posted.expiry_date})` : ''}${posted.pack_no ? `, QR ${posted.pack_no}` : ', no QR — the boar is in no batch'}.`
+          : ' Not posted to inventory — choose the semen item to hold the doses as stock.'),
     };
+  }
+
+  /**
+   * The other boars of a pooled lot, in the order named: each must exist in scope, be male, live, and belong to the same
+   * company as the primary boar. The primary is not repeated, and a boar named twice counts once.
+   */
+  private async loadPoolBoars(
+    primary: typeof schema.animalRegister.$inferSelect,
+    ids: string[],
+    companyId: string,
+    tenantId: string,
+  ): Promise<(typeof schema.animalRegister.$inferSelect)[]> {
+    const wanted = [...new Set(ids.filter((id) => id && id !== primary.animal_id))];
+    if (!wanted.length) return [];
+    if (primary.gender !== 'M') {
+      throw new BadRequestException(`${primary.animal_code} is not a boar, so semen cannot be pooled from him.`);
+    }
+    const rows = await this.db
+      .select()
+      .from(schema.animalRegister)
+      .where(
+        and(
+          inArray(schema.animalRegister.animal_id, wanted),
+          eq(schema.animalRegister.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
+        ),
+      );
+    const byId = new Map(rows.map((r) => [r.animal_id, r]));
+    return wanted.map((id) => {
+      const b = byId.get(id);
+      if (!b) throw new NotFoundException(`Boar animal with ID '${id}' not found.`);
+      if (b.gender !== 'M') throw new BadRequestException(`${b.animal_code} is not a boar, so his semen cannot be pooled.`);
+      if (b.is_active === false) throw new BadRequestException(`${b.animal_code} is no longer active, so he cannot go into a pooled lot.`);
+      this.assertAnimalCompany(companyId, b, 'boar');
+      return b;
+    });
+  }
+
+  /** The period a collection's cost covers: as given, else from the day after his last collection (or his entry) to this one. */
+  private async semenCostPeriod(
+    boar: typeof schema.animalRegister.$inferSelect,
+    dto: CreateSemenCollectionDto,
+    tenantId: string,
+  ): Promise<{ from: string; to: string }> {
+    const to = dto.period_to || dto.collection_date;
+    if (dto.period_from) return { from: dto.period_from, to };
+    // His last collection is a lot he was the primary boar of, or one he was pooled into.
+    const [last] = await this.db
+      .select({ collection_date: schema.semenBatch.collection_date })
+      .from(schema.semenBatch)
+      .where(
+        and(
+          eq(schema.semenBatch.tenant_id, tenantId),
+          or(
+            eq(schema.semenBatch.boar_animal_id, boar.animal_id),
+            sql`${schema.semenBatch.semen_batch_id} IN (SELECT semen_batch_id FROM semen_batch_boar WHERE boar_animal_id = ${boar.animal_id})`,
+          ),
+          lt(schema.semenBatch.collection_date, dto.collection_date),
+        ),
+      )
+      .orderBy(desc(schema.semenBatch.collection_date))
+      .limit(1);
+    const from = last ? dayAfter(String(last.collection_date)) : String(boar.entry_date ?? dto.collection_date).slice(0, 10);
+    return { from, to };
+  }
+
+  /** What was posted for the boar over the period: his consumption, overhead and amortisation, with his batch share (G7). */
+  private async postedSemenCosts(
+    boar: typeof schema.animalRegister.$inferSelect,
+    batchId: string | null,
+    from: string,
+    to: string,
+    tenantId: string,
+  ): Promise<PeriodCosts> {
+    if (!batchId) return periodCostsOf([], 0);
+    const inPeriod = and(
+      eq(schema.batchTransaction.batch_id, batchId),
+      isNull(schema.batchTransaction.reversed_at),
+      sql`${schema.batchTransaction.transaction_date} BETWEEN ${from} AND ${to}`,
+    );
+    const txs = await this.db
+      .select({
+        type: schema.batchTransaction.transaction_type,
+        animal_id: schema.batchTransaction.animal_id,
+        amount: schema.batchTransaction.amount,
+        item_type: schema.itemMaster.item_type,
+      })
+      .from(schema.batchTransaction)
+      .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.batchTransaction.item_id))
+      .where(and(inPeriod, inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD'])));
+    const amortisation = await this.db
+      .select({ animal_id: schema.bioAssetLedger.animal_id, batch_id: schema.bioAssetLedger.batch_id, amount: schema.bioAssetLedger.cost_amount })
+      .from(schema.bioAssetLedger)
+      .where(
+        and(
+          eq(schema.bioAssetLedger.tenant_id, tenantId),
+          eq(schema.bioAssetLedger.entry_type, 'AMORTIZATION'),
+          sql`${schema.bioAssetLedger.posting_date} BETWEEN ${from} AND ${to}`,
+          sql`(${schema.bioAssetLedger.animal_id} = ${boar.animal_id} OR (${schema.bioAssetLedger.batch_id} = ${batchId} AND ${schema.bioAssetLedger.animal_id} IS NULL))`,
+        ),
+      );
+    const [{ head }] = await this.db
+      .select({ head: sql<number>`COUNT(*)` })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)));
+    const postings: PostedCost[] = [
+      ...txs
+        .filter((t) => t.animal_id === boar.animal_id || (t.type === 'OVERHEAD' && !t.animal_id))
+        .map((t) => ({ kind: t.type as 'CONSUMPTION' | 'OVERHEAD', own: t.animal_id === boar.animal_id, amount: Number(t.amount ?? 0), item_type: t.item_type })),
+      ...amortisation.map((a) => ({ kind: 'AMORTIZATION' as const, own: a.animal_id === boar.animal_id, amount: Number(a.amount ?? 0) })),
+    ];
+    return periodCostsOf(postings, Number(head) || 0);
   }
 
   async getSemenBatches(tenantId: string, companyId?: string) {
@@ -716,7 +1175,7 @@ export class BreedingService {
     }
     conditions.push(...animalScopeConditions(scope));
 
-    return await this.db
+    const lots = await this.db
       .select({
         semen_batch_id: schema.semenBatch.semen_batch_id,
         collection_date: schema.semenBatch.collection_date,
@@ -728,6 +1187,10 @@ export class BreedingService {
         doses_used_internal: schema.semenBatch.doses_used_internal,
         doses_sold: schema.semenBatch.doses_sold,
         inventory_posted: schema.semenBatch.inventory_posted,
+        lot_no: schema.semenBatch.lot_no,
+        expiry_date: schema.semenBatch.expiry_date,
+        warehouse_id: schema.semenBatch.warehouse_id,
+        qr_id: schema.semenBatch.qr_id,
         notes: schema.semenBatch.notes,
         created_at: schema.semenBatch.created_at,
         boar_id: schema.semenBatch.boar_animal_id,
@@ -738,5 +1201,23 @@ export class BreedingService {
       .innerJoin(schema.animalRegister, eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id))
       .where(and(...conditions))
       .orderBy(desc(schema.semenBatch.collection_date));
+
+    // A pooled lot names every boar that went into it, in the order they were chosen.
+    const pooled = lots.length
+      ? await this.db
+          .select({
+            semen_batch_id: schema.semenBatchBoar.semen_batch_id,
+            boar_id: schema.semenBatchBoar.boar_animal_id,
+            boar_code: schema.animalRegister.animal_code,
+          })
+          .from(schema.semenBatchBoar)
+          .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.semenBatchBoar.boar_animal_id))
+          .where(inArray(schema.semenBatchBoar.semen_batch_id, lots.map((l) => l.semen_batch_id)))
+          .orderBy(schema.semenBatchBoar.sort_order)
+      : [];
+    return lots.map((l) => {
+      const boars = pooled.filter((p) => p.semen_batch_id === l.semen_batch_id);
+      return { ...l, pooled: boars.length > 0, boars: boars.map((b) => ({ boar_id: b.boar_id, boar_code: b.boar_code })) };
+    });
   }
 }

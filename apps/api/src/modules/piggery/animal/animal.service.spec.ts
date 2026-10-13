@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AnimalService, resolveAgeAtEntryWeeks } from './animal.service';
+import { BatchService } from '../../production/batch/batch.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -11,6 +12,8 @@ import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cl
 
 describe('AnimalService', () => {
   let service: AnimalService;
+  let module: TestingModule;
+  let batchService: { addTransaction: jest.Mock };
   let numberSeriesService: NumberSeriesService;
   let cls: ReturnType<typeof transactionCls>;
 
@@ -64,7 +67,7 @@ describe('AnimalService', () => {
     }));
 
     cls = transactionCls(mockDb);
-    const module: TestingModule = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         AnimalService,
         { provide: ClsService, useValue: cls },
@@ -72,11 +75,13 @@ describe('AnimalService', () => {
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
         // Checklist 6: transitionStage records a STAGE_CHANGE row.
-        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined) } },
+        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
     service = module.get<AnimalService>(AnimalService);
+    batchService = module.get(BatchService);
     numberSeriesService = module.get<NumberSeriesService>(NumberSeriesService);
   });
 
@@ -827,6 +832,61 @@ describe('AnimalService', () => {
   });
 
   describe('dispose', () => {
+    // E1: a sale, slaughter, transfer out or cull keeps the batch in step, as a death does.
+    it('tells the batch when an animal leaves it other than by dying', async () => {
+      const sow = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '3000.00', animal_code: 'PIG-2026-0001', current_batch_id: 'batch-1', current_stage_id: 'st', current_location_id: 'pen' };
+      mockDbSelect.mockReturnValueOnce(found(sow)).mockReturnValueOnce(found({ ...sow, is_active: false }));
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+      await service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-06-01', disposal_value: 3200 }, 'tenant-123', { userId: 'user-1' });
+
+      expect(batchService.recordAnimalExit).toHaveBeenCalledWith(expect.objectContaining({ animal_id: 'a-1', current_batch_id: 'batch-1' }), 'SOLD', '2026-06-01', 'tenant-123', { userId: 'user-1' });
+    });
+
+    // E5, to BBP-1: out-of-production date, then a cull date not before it, a CULL reason, the weight and destination.
+    describe('culling', () => {
+      const sow = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '28000', animal_code: 'PIG-0024', current_batch_id: 'batch-1', out_of_production_date: '2026-09-20' };
+      const cull = (over: object = {}) =>
+        service.dispose('a-1', { disposal_type: 'CULLED', disposal_date: '2026-10-01', disposal_reason_id: 'r-cull', exit_weight_kg: 210, disposal_destination: 'Abattoir', ...over } as any, 'tenant-123', { userId: 'user-1' });
+      const arrange = (animal: object, reason: object | null = { reason_id: 'r-cull', category: 'CULL' }) => {
+        mockDbSelect.mockReset(); // a refused cull leaves the reads it never made queued
+        mockDbSelect.mockReturnValueOnce(found(animal));
+        if (reason) mockDbSelect.mockReturnValueOnce(found(reason));
+        mockDbSelect.mockReturnValueOnce(found({ ...animal, is_active: false, status: 'CULLED' }));
+        mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+        mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      };
+
+      it('closes the record with both dates, the weight and destination, writes her value off and tells the batch', async () => {
+        arrange(sow);
+        await cull();
+        const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+        expect(setArg).toMatchObject({ is_active: false, status: 'CULLED', disposal_type: 'CULLED', out_of_production_date: '2026-09-20', cull_date: '2026-10-01', exit_weight_kg: '210', disposal_destination: 'Abattoir' });
+        const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+        expect(ledger).toMatchObject({ animal_id: 'a-1', quantity: '-1.0000', cost_amount: '-28000', status: 'CULLED' });
+        expect(batchService.recordAnimalExit).toHaveBeenCalledWith(expect.objectContaining({ animal_id: 'a-1' }), 'CULLED', '2026-10-01', 'tenant-123', { userId: 'user-1' });
+      });
+
+      it('refuses a cull before the out-of-production date, or with none', async () => {
+        arrange(sow);
+        await expect(cull({ disposal_date: '2026-09-10' })).rejects.toThrow('before the out-of-production date 2026-09-20');
+        arrange({ ...sow, out_of_production_date: null });
+        await expect(cull()).rejects.toThrow('taken out of production');
+      });
+
+      it('needs a CULL reason, the weight and the destination', async () => {
+        arrange(sow, { reason_id: 'r-mrt', category: 'MORTALITY', reason_name: 'Pneumonia' });
+        await expect(cull()).rejects.toThrow('not CULL');
+        arrange(sow, null);
+        await expect(cull({ disposal_reason_id: undefined })).rejects.toThrow('needs its reason');
+        arrange(sow);
+        await expect(cull({ exit_weight_kg: undefined })).rejects.toThrow('weight at cull');
+        arrange(sow);
+        await expect(cull({ disposal_destination: ' ' })).rejects.toThrow('where the animal went');
+      });
+    });
+
     it('computes gain_loss_on_disposal when book_value is set', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '3000.00', animal_code: 'PIG-2026-0001' }))
@@ -852,6 +912,7 @@ describe('AnimalService', () => {
 
     it('leaves gain_loss_on_disposal null when book_value is not set', async () => {
       mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0002' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false }));
 
@@ -862,6 +923,37 @@ describe('AnimalService', () => {
       const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
       expect(setArg.gain_loss_on_disposal).toBeNull();
       expect(setArg.status).toBe('DEAD');
+    });
+
+    it('posts a death inside an ACTIVE batch through the batch mortality path, not a bare register flip', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: 'batch-1' })) // peek
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ for: jest.fn().mockResolvedValue([{ batch_id: 'batch-1' }]) }) }) }) // batch lock
+        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, current_batch_id: 'batch-1', animal_code: 'PIG-2026-0006' }))
+        .mockReturnValueOnce(found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }))
+        .mockReturnValueOnce(found({ status: 'ACTIVE' })) // batch status
+        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false })); // findOne
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+      await service.dispose(
+        'a-1',
+        { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-mrt-007', notes: 'found dead' },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(batchService.addTransaction).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          transaction_type: 'MORTALITY',
+          quantity: 1,
+          animal_id: 'a-1',
+          transaction_date: '2026-06-01',
+          mortality_detail: { reason_id: 'r-mrt-007' },
+        }),
+        'tenant-123',
+        { userId: 'user-1' },
+      );
     });
 
     it('rejects disposing an already-disposed animal', async () => {
@@ -877,6 +969,7 @@ describe('AnimalService', () => {
     // validation in dispose().
     it('stores disposal_reason_id when the reason is a matching MORTALITY code', async () => {
       mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0004' }))
         .mockReturnValueOnce(found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, disposal_reason_id: 'r-mrt-007' }));
@@ -890,6 +983,7 @@ describe('AnimalService', () => {
 
     it('rejects a DIED disposal against a non-MORTALITY reason', async () => {
       mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
         .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0005' }))
         .mockReturnValueOnce(found({ reason_id: 'r-cul-005', category: 'CULL', reason_name: 'Leg / Feet / Structural Unsoundness' }));
 
@@ -1228,7 +1322,38 @@ describe('AnimalService', () => {
       expect(res.current_location_id).toBe('loc-1');
     });
 
-    it.each(['WEANING', 'DRY_PERIOD', 'GESTATION', 'FLUSH'])('preserves the post-farrowing parity rule for %s', async (destination) => {
+    it('refuses a stage that is set to the other sex', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-10', company_id: 'comp-1', animal_code: 'PIG-0010', is_active: true, gender: 'M',
+          current_stage_id: 'st-boar', current_batch_id: 'batch-1', entry_date: '2026-01-01',
+        }))
+        .mockReturnValueOnce(found({ stage_id: 'st-gest', stage_code: 'GESTATION', stage_name: 'Gestation', applicable_gender: 'F' }));
+
+      await expect(
+        service.transitionStage('a-10', { to_stage_id: 'st-gest', transition_date: '2026-06-01' }, 'tenant-123'),
+      ).rejects.toThrow("Stage 'Gestation' is for female animals only; PIG-0010 is male.");
+    });
+
+    it('counts the minimum days from when the animal entered its current stage, not from joining the farm', async () => {
+      const movementLog = module.get(AnimalMovementLogService) as any;
+      movementLog.stageEnteredOn.mockResolvedValueOnce('2026-05-30'); // entered 2 days before the move
+      mockDbSelect
+        .mockReturnValueOnce(found({
+          animal_id: 'a-2', company_id: 'comp-1', animal_code: 'PIG-2026-0002', is_active: true, gender: 'F',
+          current_stage_id: 'st-lact', current_location_id: 'loc-1', current_batch_id: 'batch-1',
+          parity_count: 2, entry_date: '2025-01-01', // a year on the farm
+        }))
+        .mockReturnValueOnce(found({ stage_id: 'st-dry', stage_code: 'DRY_SOW', stage_name: 'Dry Sow' }))
+        .mockReturnValueOnce(found({ stage_id: 'st-lact', stage_code: 'LACTATION', stage_name: 'Lactation', min_days_before_move: 28 }));
+
+      await expect(
+        service.transitionStage('a-2', { to_stage_id: 'st-dry', transition_date: '2026-06-01' }, 'tenant-123'),
+      ).rejects.toThrow('Minimum duration of 28 days');
+      expect(movementLog.stageEnteredOn).toHaveBeenCalledWith('a-2', 'tenant-123');
+    });
+
+    it.each(['WEANING', 'DRY_PERIOD', 'GESTATION', 'FLUSH'])('leaves parity alone when a sow moves out of farrowing to %s (it completes at weaning)', async (destination) => {
       let captured: any = null;
       mockDbSelect
         .mockReturnValueOnce(found({
@@ -1292,7 +1417,7 @@ describe('AnimalService', () => {
         { userId: 'user-1' }
       );
 
-      expect(captured.parity_count).toBe(3);
+      expect(captured).not.toHaveProperty('parity_count');
     });
 
     it('moves every selected animal in one bulk call', async () => {

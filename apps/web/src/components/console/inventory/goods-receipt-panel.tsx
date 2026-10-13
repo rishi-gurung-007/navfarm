@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 const PAGE_SIZE = 25;
 
@@ -509,7 +510,7 @@ export default function GoodsReceiptPanel() {
             item_id: value,
             lot_no: "",
             serial_no: "",
-            uom: selectedItem?.base_uom || l.uom || "",
+            uom: selectedItem?.uom_primary || "",
           };
         }
         return { ...l, [key]: value };
@@ -549,7 +550,10 @@ export default function GoodsReceiptPanel() {
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (idx: number) => setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
 
-  const handleSave = async () => {
+  // `postNow` saves the form and posts it in one go. It asks first — posting
+  // writes ledger and GL entries and cannot be edited afterwards.
+  const handleSave = async (postNow = false) => {
+    if (postNow && !(await confirmAction({ title: t("grpPostConfirmTitle"), message: t("grpPostConfirmMessage") }))) return;
     setSaving(true);
     setFormError("");
     try {
@@ -571,6 +575,7 @@ export default function GoodsReceiptPanel() {
       // UpdateGoodsReceiptDto does not declare company_id (it is create-only —
       // an existing receipt's company cannot change) and the global pipe
       // rejects any undeclared property, so the PUT payload must omit it.
+      let receiptId = editingId;
       if (editingId) {
         await api.put(`/goods-receipt/${editingId}`, {
           warehouse_id: header.warehouse_id,
@@ -581,15 +586,32 @@ export default function GoodsReceiptPanel() {
           lines: cleanLines,
         });
       } else {
-        await api.post("/goods-receipt", {
-          company_id: companyId,
-          warehouse_id: header.warehouse_id,
-          posting_date: header.posting_date,
-          supplier_id: header.supplier_id || undefined,
-          external_reference_no: header.external_reference_no || undefined,
-          remarks: header.remarks || undefined,
-          lines: cleanLines,
-        });
+        const created = unwrap<Row>(
+          await api.post("/goods-receipt", {
+            company_id: companyId,
+            warehouse_id: header.warehouse_id,
+            posting_date: header.posting_date,
+            supplier_id: header.supplier_id || undefined,
+            external_reference_no: header.external_reference_no || undefined,
+            remarks: header.remarks || undefined,
+            lines: cleanLines,
+          }),
+        );
+        receiptId = created?.receipt_id ?? null;
+      }
+      if (postNow) {
+        if (!receiptId) throw new Error(t("grpFailedToPostReceipt"));
+        try {
+          await api.post(`/goods-receipt/${receiptId}/post`, {});
+        } catch (postErr: any) {
+          // The draft is saved; only the posting failed. Close the form so a
+          // retry does not create a duplicate, and say where the receipt is.
+          setModalOpen(false);
+          setEditingId(null);
+          load();
+          setError(`${t("grpSavedAsDraftPostFailed")} ${postErr?.message || ""}`.trim());
+          return;
+        }
       }
       setModalOpen(false);
       setEditingId(null);
@@ -719,9 +741,14 @@ export default function GoodsReceiptPanel() {
         maxWidth="xl"
         className="max-w-5xl lg:max-w-6xl"
         footer={
-          <Button size="sm" onClick={handleSave} disabled={saving} className="nf-btn-primary">
-            {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
-          </Button>
+          <>
+            <Button size="sm" variant="outline" onClick={() => handleSave(false)} disabled={saving}>
+              {saving ? t("grpSaving") : editingId ? t("grpSaveChanges") : t("grpSaveDraft")}
+            </Button>
+            <Button size="sm" onClick={() => handleSave(true)} disabled={saving} className="flex items-center gap-1.5 nf-btn-primary">
+              <CheckCircle2 className="h-4 w-4" /> {t("grpPost")}
+            </Button>
+          </>
         }
       >
         <div className="flex flex-col gap-4">
@@ -859,10 +886,14 @@ export default function GoodsReceiptPanel() {
                         <select
                           value={line.uom}
                           onChange={(e) => setLineField(idx, "uom", e.target.value)}
-                          className={`${lineInputCls} nf-select appearance-none pr-7`}
+                          disabled={!line.item_id || !!items.find((it) => it.item_id === line.item_id)?.uom_primary}
+                          className={`${lineInputCls} nf-select appearance-none pr-7 disabled:cursor-not-allowed disabled:opacity-70`}
                           style={S.input}
                         >
                           <option value="">{t("grpSelectEllipsis")}</option>
+                          {line.uom && !uoms.some((u) => u.uom_code === line.uom) && (
+                            <option value={line.uom}>{line.uom}</option>
+                          )}
                           {uoms.map((u) => (
                             <option key={u.uom_code} value={u.uom_code}>
                               {u.uom_code}

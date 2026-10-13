@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsNumber, IsBoolean, IsIn, IsInt, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsNumber, IsBoolean, IsIn, IsInt, Min, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -100,6 +100,11 @@ export class CreateStageDto {
   @IsIn(DATA_ENTRY_FORMS)
   data_entry_form?: string;
 
+  @ApiProperty({ description: 'F or M when only that sex belongs in this stage; leave empty for either', enum: ['F', 'M'], required: false })
+  @IsIn(['F', 'M'])
+  @IsOptional()
+  applicable_gender?: 'F' | 'M';
+
   @ApiProperty({ description: 'Auto-create the next scheduler when this stage starts', required: false, default: true })
   @IsBoolean()
   @IsOptional()
@@ -198,6 +203,12 @@ export class UpdateStageDto {
   @IsOptional()
   @IsIn(DATA_ENTRY_FORMS)
   data_entry_form?: string;
+
+  @ApiProperty({ required: false, enum: ['F', 'M'], nullable: true })
+  @ValidateIf((_o, v) => v !== null)
+  @IsIn(['F', 'M'])
+  @IsOptional()
+  applicable_gender?: 'F' | 'M' | null;
 
   @ApiProperty({ required: false })
   @IsBoolean()

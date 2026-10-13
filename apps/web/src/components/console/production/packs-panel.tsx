@@ -11,6 +11,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/hooks/useLanguage";
 import { Badge } from "@/components/ui/badge";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 const PAGE_SIZE = 25;
 
@@ -86,7 +87,7 @@ export default function PacksPanel() {
   const pagedFiltered = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   const handleVoid = async (row: Row) => {
-    if (!confirm(t("pkVoidPackConfirm", { packNo: row.pack_no }))) return;
+    if (!(await confirmAction({ title: t("cfVoidPackTitle"), message: t("pkVoidPackConfirm", { packNo: row.pack_no }), tone: "danger" }))) return;
     setVoidingId(row.qr_id);
     setError("");
     try {

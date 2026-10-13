@@ -10,6 +10,7 @@ import {
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
 import { Dialog, DialogHeaderActions } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { Popover } from "@/components/ui/popover";
 import { Menu, MenuItem } from "@/components/ui/menu";
@@ -528,6 +529,8 @@ export function MasterDataTable({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
+  // A row command that asks for a reason is answered in a dialog (never a browser prompt).
+  const [reasonCommand, setReasonCommand] = useState<{ row: Row; command: NonNullable<MasterDataConfig["rowCommands"]>[number]; reason: string } | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [actionMenuRowId, setActionMenuRowId] = useState<string | null>(null);
   const [form, setForm] = useState<Row>({});
@@ -1784,6 +1787,12 @@ export function MasterDataTable({
         if (f.multiple && f.allOption && Array.isArray(v) && v.length === 1 && v[0] === String(f.allOption[f.entityValueKey || "id"])) {
           v = [];
         }
+        // A cleared Prefix / "Same as separator" has to reach the API as a
+        // clear: skipping an empty value would leave the old one in every code.
+        if (isNumberSeriesForm && editing && (f.key === "prefix" || f.key === "seq_separator") && (v === "" || v === undefined || v === null)) {
+          payload[f.key] = "";
+          continue;
+        }
         if (v === "" || v === undefined || v === null) continue;
         if (f.type === "number") v = Number(v);
         if (f.type === "json") {
@@ -2002,13 +2011,7 @@ export function MasterDataTable({
     }
   };
 
-  const handleRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number]) => {
-    let body: Record<string, string> | undefined;
-    if (command.reasonPrompt) {
-      const reason = window.prompt(command.reasonPrompt);
-      if (reason === null) return;
-      body = { reason };
-    }
+  const runRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number], body?: Record<string, string>) => {
     try {
       await api.post(`${config.apiBase}/${row[config.idKey]}/${command.path}`, body ?? {});
       showToast.success(command.successMessage);
@@ -2016,6 +2019,14 @@ export function MasterDataTable({
     } catch (err: any) {
       showToast.error(err?.message || t("mdFailedToSave"));
     }
+  };
+
+  const handleRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number]) => {
+    if (command.reasonPrompt) {
+      setReasonCommand({ row, command, reason: "" });
+      return;
+    }
+    await runRowCommand(row, command);
   };
 
   /** Why a locked field is locked, when its config says (`lockReason`). */
@@ -2104,7 +2115,9 @@ export function MasterDataTable({
         .filter((c) => c.type === "select" || c.type === "select-entity" || c.type === "date" || c.key === firstTextField)
         .map((c) => ({ value: c.key, label: `${tLabel(c.label)} (${c.key})` }));
       if (!target) {
-        return <p className="py-2 text-xs" style={S.sub}>Choose what this series applies to first — the fields offered here are that master's own.</p>;
+        return <p className="py-2 text-xs" style={S.sub}>{masterKey
+          ? "This master has no fields a code can be built from — it uses the prefix and number only."
+          : "Choose what this series applies to first — the fields offered here are that master's own."}</p>;
       }
       if (f.type === "select") {
         return (
@@ -3739,6 +3752,45 @@ export function MasterDataTable({
           </div>
         </Dialog>
       )}
+
+      <Dialog
+        open={!!reasonCommand}
+        onClose={() => setReasonCommand(null)}
+        title={reasonCommand?.command.label || ""}
+        presentation="compact"
+        maxWidth="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setReasonCommand(null)} className="min-w-[6rem]">
+              {t("cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                const pending = reasonCommand;
+                if (!pending) return;
+                setReasonCommand(null);
+                void runRowCommand(pending.row, pending.command, { reason: pending.reason });
+              }}
+              className="min-w-[6rem]"
+            >
+              {reasonCommand?.command.label}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2 text-sm">
+          <label className="block" style={S.primary} htmlFor="row-command-reason">{reasonCommand?.command.reasonPrompt}</label>
+          <textarea
+            id="row-command-reason"
+            autoFocus
+            rows={3}
+            value={reasonCommand?.reason ?? ""}
+            onChange={(e) => setReasonCommand((c) => (c ? { ...c, reason: e.target.value } : c))}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            style={S.input}
+          />
+        </div>
+      </Dialog>
 
       <Dialog
         open={!!duplicateCodeMessage}

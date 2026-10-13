@@ -29,8 +29,13 @@ describe("every master's own code is fixed after create", () => {
 
 describe("number series lock once numbers are issued", () => {
   const series = MASTER_DATA_CONFIGS.find((c) => c.key === "number-series")!;
-  it.each(["document_type", "no_series_code", "seq_length", "increment_by", "is_default", "manual_nos"])("%s locks once issued", (key) => {
+  it.each(["document_type", "no_series_code", "seq_length", "increment_by", "is_default"])("%s locks once issued", (key) => {
     expect(series.fields.find((f) => f.key === key)!.lockWhenIssued).toBe(true);
+  });
+
+  // Requested 2026-10-11: whether a person may type a number changes nothing already issued, so it stays editable after use.
+  it("manual_nos stays editable after numbers are issued", () => {
+    expect(series.fields.find((f) => f.key === "manual_nos")!.lockWhenIssued).toBeFalsy();
   });
 });
 

@@ -1,11 +1,12 @@
 /**
  * One head-count rule for a batch, shared by the feed forecast's history and the lifecycle KPI evaluator.
  *
- * Heads at a date = the batch's opening quantity less the deaths recorded before it. Deaths come from two sources
- * that exist side by side and are never the same row:
- *  - batch_transaction MORTALITY rows (stock movements), and
- *  - POSTED batch_daily_data entries on MORTALITY_COUNT scheduler lines (what Data Entry writes; it lowers
- *    scheduler_header.animal_count but creates no batch_transaction).
+ * Heads at a date = the batch's opening quantity less the deaths recorded before it:
+ *  - every batch_transaction MORTALITY row not reversed, and
+ *  - POSTED batch_daily_data entries on MORTALITY_COUNT scheduler lines, only for the deaths that have no
+ *    transaction of their own. Since the system-schedulers merge (13 Oct) Data Entry posts each death as a
+ *    transaction with "— scheduled entry" in its remarks; entries posted before that have none, so without this
+ *    rule a death would count twice, and before it a merged batch would lose the older ones.
  * Unposted entries do not count. Transfers are not subtracted (the forecast never did).
  */
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
@@ -32,12 +33,22 @@ export async function loadBatchDeaths(db: MySql2Database<typeof schema>, batchId
     batchId: schema.batchTransaction.batch_id,
     date: schema.batchTransaction.transaction_date,
     quantity: schema.batchTransaction.quantity,
+    remarks: schema.batchTransaction.remarks,
+    reversedAt: schema.batchTransaction.reversed_at,
   }).from(schema.batchTransaction).where(and(
     inArray(schema.batchTransaction.batch_id, ids),
     eq(schema.batchTransaction.transaction_type, 'MORTALITY'),
     ...(upTo ? [lte(schema.batchTransaction.transaction_date, upTo)] : []),
   ));
-  for (const row of transactions) add(row.batchId, row.date, row.quantity);
+  // Deaths a Data Entry post already turned into transactions, reversed or not, per batch and day.
+  const fromEntries = new Map<string, number>();
+  for (const row of transactions) {
+    if (String(row.remarks ?? '').includes('— scheduled entry')) {
+      const key = `${row.batchId}|${String(row.date).slice(0, 10)}`;
+      fromEntries.set(key, (fromEntries.get(key) ?? 0) + (Number(row.quantity) || 0));
+    }
+    if (!row.reversedAt) add(row.batchId, row.date, row.quantity);
+  }
 
   const entries = await db.select({
     batchId: schema.batchDailyData.batch_id,
@@ -51,7 +62,16 @@ export async function loadBatchDeaths(db: MySql2Database<typeof schema>, batchId
       eq(schema.schedulerLine.kpi_metric, 'MORTALITY_COUNT'),
       ...(upTo ? [sql`${schema.batchDailyData.entry_date} <= ${upTo}`] : []),
     ));
-  for (const row of entries) add(row.batchId, row.date, row.quantity);
+  // Summed per batch and day first: an animal-wise day has one row per animal.
+  const entered = new Map<string, number>();
+  for (const row of entries) {
+    const key = `${row.batchId}|${String(row.date).slice(0, 10)}`;
+    entered.set(key, (entered.get(key) ?? 0) + (Number(row.quantity) || 0));
+  }
+  for (const [key, quantity] of entered) {
+    const [batchId, date] = key.split('|');
+    add(batchId, date, Math.max(0, quantity - (fromEntries.get(key) ?? 0)));
+  }
   return ledger;
 }
 

@@ -85,6 +85,130 @@ describe('SchedulerHeaderService', () => {
     }).compile();
 
     service = module.get<SchedulerHeaderService>(SchedulerHeaderService);
+    // No system scheduler matches unless a test says so — the mocked select
+    // sequences below are the breed-lifecycle path, which only runs then.
+    jest.spyOn(service, 'findMatchingSystemScheduler').mockResolvedValue(null);
+  });
+
+  describe('createForStage — system schedulers', () => {
+    const systemScheduler = {
+      system_scheduler_id: 'sys-1', company_id: 'comp-1', stage_id: 'stage-gest', breed_id: null, breed_key: '*',
+      scheduler_name: 'Gestation standard', data_entry_level: 'PEN', is_active: true, line_count: 2,
+    };
+    const select = (result: unknown, shape: 'limit' | 'where' | 'orderBy' | 'orderByLimit') => ({
+      from: jest.fn().mockReturnValue({
+        where: shape === 'where'
+          ? jest.fn().mockResolvedValue(result)
+          : jest.fn().mockReturnValue(
+            shape === 'limit' ? { limit: jest.fn().mockResolvedValue(result) }
+              : shape === 'orderBy' ? { orderBy: jest.fn().mockResolvedValue(result) }
+                : { orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(result) }) },
+          ),
+      }),
+    });
+    /** Batch, no existing header, stage, no prior header, no live animals — the reads before the insert. */
+    const headerReads = () => mockDbSelect
+      .mockReturnValueOnce(select([batch], 'limit'))
+      .mockReturnValueOnce(select([], 'limit'))
+      .mockReturnValueOnce(select([stage], 'limit'))
+      .mockReturnValueOnce(select([], 'orderByLimit'))
+      .mockReturnValueOnce(select([{ liveCount: 0 }], 'where'));
+    let inserted: Record<string, any[]>;
+    beforeEach(() => {
+      inserted = {};
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn((v: any) => {
+          const key = Array.isArray(v) ? 'many' : 'one';
+          (inserted[key] = inserted[key] || []).push(v);
+          return Promise.resolve({});
+        }),
+      }));
+    });
+
+    it("copies a matching system scheduler's lines instead of the breed lifecycle's, and records where they came from", async () => {
+      (service.findMatchingSystemScheduler as jest.Mock).mockResolvedValue(systemScheduler);
+      headerReads()
+        .mockReturnValueOnce(select([
+          { line_id: 'sl-7', system_scheduler_id: 'sys-1', line_seq: 7, line_type: 'CONSUMPTION', activity_name: 'Gestation feed', occurrence: 'DAILY', start_day: 1, end_day: 114, item_id: 'item-feed', standard_qty: '2.200000', qty_basis: 'PER_HEAD', is_active: true },
+          { line_id: 'sl-9', system_scheduler_id: 'sys-1', line_seq: 9, line_type: 'CONSUMPTION', activity_name: 'Vaccination', occurrence: 'CUSTOM', start_day: 1, end_day: null, item_id: 'item-vac', standard_qty: '1.000000', qty_basis: 'PER_HEAD', is_active: true },
+        ], 'orderBy')) // system scheduler's active lines
+        .mockReturnValueOnce(select([{ custom_day_id: 'cd-1', line_id: 'sl-9', day_number: 21 }], 'where')); // their custom days
+      jest.spyOn(service, 'findOne').mockResolvedValue({ scheduler_id: 'new' } as any);
+
+      await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' }, { source: 'SYSTEM' });
+
+      expect(service.findMatchingSystemScheduler).toHaveBeenCalledWith('comp-1', 'stage-gest', 'breed-1');
+      const header = inserted.one.find((v) => v.batch_id === 'batch-1');
+      expect(header).toEqual(expect.objectContaining({ system_scheduler_id: 'sys-1', data_entry_level: 'PEN', auto_generated: true }));
+      const [lines, customDays] = inserted.many;
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toEqual(expect.objectContaining({ line_seq: 1, source: 'SYSTEM', stage_id: 'stage-gest', lob_id: 'lob-1', nob_id: 'nob-1', item_id: 'item-feed', activity_name: 'Gestation feed' }));
+      expect(lines[1]).toEqual(expect.objectContaining({ line_seq: 2, occurrence: 'CUSTOM' }));
+      expect(lines[0]).not.toHaveProperty('system_scheduler_id');
+      expect(lines[0].line_id).not.toBe('sl-7');
+      expect(customDays).toEqual([expect.objectContaining({ line_id: lines[1].line_id, day_number: 21 })]);
+      // The breed lifecycle was never read — every select is accounted for above.
+      expect(mockDbSelect).toHaveBeenCalledTimes(7);
+    });
+
+    it('leaves the header empty when the user declined the copy, reading neither the system scheduler nor the lifecycle', async () => {
+      headerReads();
+      jest.spyOn(service, 'findOne').mockResolvedValue({ scheduler_id: 'new' } as any);
+
+      await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' }, { source: 'EMPTY' });
+
+      expect(service.findMatchingSystemScheduler).not.toHaveBeenCalled();
+      expect(inserted.one.find((v) => v.batch_id === 'batch-1')).toEqual(expect.objectContaining({ system_scheduler_id: null }));
+      expect(inserted.many).toBeUndefined();
+      expect(mockDbSelect).toHaveBeenCalledTimes(5);
+      expect(auditLog.log).toHaveBeenCalledWith(expect.objectContaining({ newValues: expect.objectContaining({ lines_from: 'NONE' }) }));
+    });
+  });
+
+  describe('findMatchingSystemScheduler', () => {
+    const row = (id: string, breedKey: string) => ({ system_scheduler_id: id, breed_key: breedKey, breed_id: breedKey === '*' ? null : breedKey, scheduler_name: id });
+    const stageRow = { from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ lob_id: 'lob-1', stage_code: 'GESTATION' }]) }) }) };
+    const candidates = (rows: unknown[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn((cond: unknown) => { capturedWhere = cond; return Promise.resolve(rows); }) }) });
+    const counts = (rows: unknown[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue(rows) }) }) });
+    beforeEach(() => (service.findMatchingSystemScheduler as jest.Mock).mockRestore());
+
+    it("prefers the breed's own system scheduler over the every-breed one", async () => {
+      mockDbSelect
+        .mockReturnValueOnce(stageRow)
+        .mockReturnValueOnce(candidates([row('all', '*'), row('own', 'breed-1')]))
+        .mockReturnValueOnce(counts([{ system_scheduler_id: 'all', total: 3 }, { system_scheduler_id: 'own', total: 2 }]));
+      const found = await service.findMatchingSystemScheduler('comp-1', 'stage-gest', 'breed-1');
+      expect(found).toEqual(expect.objectContaining({ system_scheduler_id: 'own', line_count: 2 }));
+      // Matched on the stage's LOB and code, so either id of the stage finds it.
+      const { sql, params } = renderedWhere();
+      expect(sql).toContain('`system_scheduler`.`stage_code` = ?');
+      expect(sql).toContain('`system_scheduler`.`lob_id` = ?');
+      expect(sql).not.toContain('`system_scheduler`.`stage_id`');
+      expect(params).toEqual(expect.arrayContaining(['comp-1', 'lob-1', 'GESTATION', 'breed-1', '*']));
+    });
+
+    it('falls back to the every-breed one when the breed has none with lines', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(stageRow)
+        .mockReturnValueOnce(candidates([row('all', '*'), row('own', 'breed-1')]))
+        .mockReturnValueOnce(counts([{ system_scheduler_id: 'all', total: 3 }]));
+      const found = await service.findMatchingSystemScheduler('comp-1', 'stage-gest', 'breed-1');
+      expect(found?.system_scheduler_id).toBe('all');
+    });
+
+    it('is no match when the only system scheduler has no lines, so the breed lifecycle still fills the stage', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(stageRow)
+        .mockReturnValueOnce(candidates([row('all', '*')]))
+        .mockReturnValueOnce(counts([]));
+      expect(await service.findMatchingSystemScheduler('comp-1', 'stage-gest', null)).toBeNull();
+    });
+
+    it('does not query lines when no system scheduler exists for the stage', async () => {
+      mockDbSelect.mockReturnValueOnce(stageRow).mockReturnValueOnce(candidates([]));
+      expect(await service.findMatchingSystemScheduler('comp-1', 'stage-gest', 'breed-1')).toBeNull();
+      expect(mockDbSelect).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('createForStage', () => {

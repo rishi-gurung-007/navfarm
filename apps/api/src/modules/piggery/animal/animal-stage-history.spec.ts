@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { AnimalService } from './animal.service';
+import { BatchService } from '../../production/batch/batch.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
@@ -25,7 +26,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
     update: (...args: unknown[]) => mockDbUpdate(...args),
     insert: jest.fn(() => ({ values: async () => undefined })),
   };
-  const movementLog = { record: jest.fn().mockResolvedValue(undefined) };
+  const movementLog = { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) };
   let service: AnimalService;
   let cls: ClsService;
 
@@ -59,6 +60,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn() } },
         { provide: NobLobResolutionService, useValue: { resolve: jest.fn(async () => ({ nob_id: 'nob-1', lob_id: 'lob-pig' })) } },
         { provide: AnimalMovementLogService, useValue: movementLog },
+        { provide: BatchService, useValue: { addTransaction: jest.fn(), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = module.get<AnimalService>(AnimalService);

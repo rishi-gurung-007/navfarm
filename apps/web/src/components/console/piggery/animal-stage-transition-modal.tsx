@@ -9,7 +9,7 @@ import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
-import { Field, FieldGroup, ReadField } from "@/components/ui/field";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ReasonSelect } from "@/components/ui/reason-select";
@@ -74,6 +74,12 @@ export default function AnimalStageTransitionModal({
   reasons,
 }: AnimalStageTransitionModalProps) {
   const [toStageId, setToStageId]       = useState("");
+  // Only for a move into another batch: the stage the animal should enter there. Empty keeps the
+  // stage it has, which is what an animal-wise destination does by default.
+  const [batchMoveStageId, setBatchMoveStageId] = useState("");
+  // When the animal entered the stage it is in, from its movement history. The minimum-days check
+  // counted from the day it joined the farm, so an animal long on the farm never looked premature.
+  const [stageEnteredOn, setStageEnteredOn] = useState<string | null>(null);
   const [toBatchId, setToBatchId]       = useState("");
   const [transitionDate, setTransitionDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason]             = useState("");
@@ -95,6 +101,18 @@ export default function AnimalStageTransitionModal({
     setReason("");
     setRemarks("");
     setToBatchId(String(animal.current_batch_id || ""));
+    setBatchMoveStageId("");
+    setStageEnteredOn(null);
+    let cancelled = false;
+    api.get(`/animal/${animal.animal_id}/movement-log`)
+      .then((res: any) => {
+        if (cancelled) return;
+        const rows: any[] = Array.isArray(res) ? res : (res?.data ?? []);
+        // Oldest first: the last row that put the animal into a stage it was not already in.
+        const entry = [...rows].reverse().find((r) => r.to_stage_id && (!r.from_stage_id || r.from_stage_id !== r.to_stage_id));
+        setStageEnteredOn(entry?.event_date ? String(entry.event_date).slice(0, 10) : null);
+      })
+      .catch(() => { if (!cancelled) setStageEnteredOn(null); });
 
     const currentStage = stages.find(
       (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
@@ -104,6 +122,7 @@ export default function AnimalStageTransitionModal({
     } else {
       setToStageId("");
     }
+    return () => { cancelled = true; };
   }, [animal, open, stages]);
 
   if (!animal) return null;
@@ -111,7 +130,7 @@ export default function AnimalStageTransitionModal({
   const currentStage = stages.find(
     (s) => s.stage_id === animal.current_stage_id || (animal.stage_code && s.stage_code === animal.stage_code),
   );
-  const entryDate = animal.entry_date ? new Date(String(animal.entry_date)) : new Date(String(animal.created_at || Date.now()));
+  const entryDate = stageEnteredOn ? new Date(stageEnteredOn) : animal.entry_date ? new Date(String(animal.entry_date)) : new Date(String(animal.created_at || Date.now()));
   const daysInStage = Math.max(0, Math.floor((new Date(transitionDate).getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24)));
   const minDays = Number(currentStage?.min_days_before_move) || 0;
   const isPrematureMove = minDays > 0 && daysInStage < minDays;
@@ -144,6 +163,7 @@ export default function AnimalStageTransitionModal({
           transfer_date: transitionDate,
           transfer_type: "PARTIAL",
           animal_ids: [animal.animal_id],
+          to_stage_id: batchMoveStageId || undefined,
           reason: reason || undefined,
           remarks: remarks || undefined,
         });
@@ -241,11 +261,20 @@ export default function AnimalStageTransitionModal({
           </Field>
 
           {isBatchMove ? (
-            <ReadField
-              label="Destination Stage"
-              value="Set by the destination batch"
-              className="sm:col-span-6"
-            />
+            <Field label="Destination Stage (optional)" className="sm:col-span-6">
+              <SearchableSelect
+                ariaLabel="Destination Stage"
+                value={batchMoveStageId}
+                onChange={(val) => setBatchMoveStageId(val)}
+                options={stages.map((s) => ({
+                  value: s.stage_id,
+                  label: `${s.stage_name} (${s.stage_code}) — ${s.stage_category}`,
+                }))}
+                placeholder="Keep the stage the animal is in"
+                searchPlaceholder="Search stages…"
+                onClear={() => setBatchMoveStageId("")}
+              />
+            </Field>
           ) : (
             <Field label={t("astmDestinationStageLabel")} required className="sm:col-span-6">
               <SearchableSelect

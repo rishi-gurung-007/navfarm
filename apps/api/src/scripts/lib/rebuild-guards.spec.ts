@@ -40,6 +40,8 @@ describe('rebuild guards', () => {
 
   it('accepts the small preset and refuses an unknown one', () => {
     expect(parseRebuildArgs(['--apply', '--preset=small']).preset).toBe('small');
+    expect(parseRebuildArgs(['--apply', '--preset=full']).preset).toBe('full');
+    expect(parseRebuildArgs(['--apply', '--preset=lean']).preset).toBe('lean');
     expect(() => parseRebuildArgs(['--preset=huge'])).toThrow("Unknown preset 'huge'");
   });
 

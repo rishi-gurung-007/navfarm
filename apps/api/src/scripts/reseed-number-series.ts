@@ -78,10 +78,10 @@ async function run() {
         if (apply || verify) {
           await db.execute(
             'INSERT INTO no_series (id, tenant_id, company_id, nob_id, lob_id, code, description, document_type,' +
-            ' prefix, `separator`, seq_separator, seq_length, current_seq, reset_frequency, manual_nos, blocked, code_segments, prefix_position)' +
-            ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
+            ' master_type, no_series_code, prefix, `separator`, seq_separator, seq_length, current_seq, reset_frequency, manual_nos, blocked, code_segments, prefix_position)' +
+            ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
             [randomUUID(), scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id, s.series_code, s.series_name, s.document_type,
-             s.prefix ?? null, s.separator, s.seq_separator ?? null, s.seq_length, carried, s.reset_frequency,
+             s.document_type, s.prefix ?? null, s.prefix ?? null, s.separator, s.seq_separator ?? null, s.seq_length, carried, s.reset_frequency,
              s.allow_manual ?? false, s.code_segments ? JSON.stringify(s.code_segments) : null, s.prefix_position ?? 'END']
           );
         }

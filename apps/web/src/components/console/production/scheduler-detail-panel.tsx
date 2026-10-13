@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { Plus, Loader2, Trash2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Loader2, Trash2, Pencil, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
@@ -12,6 +12,8 @@ import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
 import { formatQuantity } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DAYS_OF_WEEK_OPTIONS, DAYS_OF_MONTH_OPTIONS } from "./create-scheduler-modal";
+import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
+import { confirmAction } from "@/components/ui/confirm-dialog";
 
 type Row = Record<string, any>;
 
@@ -76,10 +78,14 @@ interface SchedulerDetailPanelProps {
    * (e.g. the standalone Schedulers list page, which has no such batch context). */
   items?: Row[];
   resources?: Row[];
+  /** "system" shows a system scheduler (no batch, dates or status cycle) through the same line table and form. */
+  kind?: "batch" | "system";
 }
 
-export default function SchedulerDetailPanel({ schedulerId, onChanged, items: itemsProp, resources: resourcesProp }: SchedulerDetailPanelProps) {
+export default function SchedulerDetailPanel({ schedulerId, onChanged, items: itemsProp, resources: resourcesProp, kind = "batch" }: SchedulerDetailPanelProps) {
   const { t } = useLanguage();
+  const isSystem = kind === "system";
+  const apiBase = isSystem ? "/system-scheduler" : "/scheduler-header";
   const [header, setHeader] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -94,6 +100,8 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   const [lineError, setLineError] = useState("");
   const [savingLine, setSavingLine] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
+
+  const [copyOpen, setCopyOpen] = useState(false);
 
   // Collapsible sections
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
@@ -125,7 +133,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     if (!schedulerId) return;
     setLoading(true);
     setError("");
-    api.get(`/scheduler-header/${schedulerId}`)
+    api.get(`${apiBase}/${schedulerId}`)
       .then((r) => setHeader(unwrap<Row>(r)))
       .catch((err: any) => setError(err?.message || "Could not load the scheduler."))
       .finally(() => setLoading(false));
@@ -145,7 +153,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     if (!resourcesProp) api.get(`/resource?${qs}`).then((r) => setResources(unwrap<Row[]>(r) || [])).catch(() => setResources([]));
     api.get(`/activity?isActive=true&limit=500`).then((r) => setActivities(unwrap<Row[]>(r) || [])).catch(() => setActivities([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [header?.scheduler_id]);
+  }, [header?.scheduler_id ?? header?.system_scheduler_id]);
 
   const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_name || id;
   const resourceLabel = (id: string) => resources.find((r) => r.resource_id === id)?.resource_name || id;
@@ -160,6 +168,21 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       onChanged?.();
     } catch (err: any) {
       setError(err?.message || "Could not update the scheduler status.");
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const toggleSystemActive = async () => {
+    if (!header) return;
+    setActing(true);
+    setError("");
+    try {
+      await api.patch(`/system-scheduler/${schedulerId}`, { is_active: !header.is_active });
+      load();
+      onChanged?.();
+    } catch (err: any) {
+      setError(err?.message || "Could not update the system scheduler.");
     } finally {
       setActing(false);
     }
@@ -300,9 +323,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       }
 
       if (editingLineId) {
-        await api.put(`/scheduler-header/${header.scheduler_id}/lines/${editingLineId}`, payload);
+        await api.put(`${apiBase}/${schedulerId}/lines/${editingLineId}`, payload);
       } else {
-        await api.post(`/scheduler-header/${header.scheduler_id}/lines`, payload);
+        await api.post(`${apiBase}/${schedulerId}/lines`, payload);
       }
       setAddingLine(false);
       load();
@@ -314,11 +337,18 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     }
   };
 
+  /** Fills this (empty) scheduler from the one picked in the copy dialog; the API refuses once it has a line. */
+  const copyActivities = async (sourceType: CopySourceType, sourceId: string) => {
+    await api.post(`${apiBase}/${schedulerId}/copy-lines`, { source_type: sourceType, source_id: sourceId });
+    load();
+    onChanged?.();
+  };
+
   const deactivateLine = async (line: Row) => {
     if (!header) return;
-    if (!window.confirm(t("scConfirmDeactivateLine"))) return;
+    if (!(await confirmAction({ title: t("cfRemoveActivityTitle"), message: t("scConfirmDeactivateLine"), tone: "danger" }))) return;
     try {
-      await api.delete(`/scheduler-header/${header.scheduler_id}/lines/${line.line_id}`);
+      await api.delete(`${apiBase}/${schedulerId}/lines/${line.line_id}`);
       load();
       onChanged?.();
     } catch (err: any) {
@@ -333,12 +363,32 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   if (!header) return null;
 
   const lineType = lineForm.line_type;
+  // Copying is offered while the scheduler has no active activity — removed ones stay listed, greyed.
+  const canCopy = !(header.lines || []).some((l: Row) => l.is_active !== false);
 
   return (
     <div className="flex flex-col gap-4 text-xs">
       {error && <InlineAlert>{error}</InlineAlert>}
 
+      {isSystem && (
+        <div className="rounded-[var(--radius-md)] border shadow-2xs p-3.5" style={S.raised}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("sysSchColName")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.scheduler_name}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || "—"}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || t("sysSchAllBreeds")}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || "—"}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStatus")}</p><StatusBadge status={header.is_active ? "ACTIVE" : "INACTIVE"} className="mt-1" /></div>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
+            <Button size="sm" variant={header.is_active ? "outline" : "default"} onClick={toggleSystemActive} disabled={acting}>
+              {header.is_active ? t("sysSchDeactivate") : t("sysSchActivate")}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Collapsible Header Section */}
+      {!isSystem && (
       <div className="rounded-[var(--radius-md)] border shadow-2xs overflow-hidden" style={S.raised}>
         <div
           className="flex items-center justify-between p-3 cursor-pointer select-none hover:bg-(--surface) transition-colors"
@@ -383,6 +433,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
               {header.actual_end_date && (
                 <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelActualEndDate")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.actual_end_date}</p></div>
               )}
+              {header.system_scheduler_name && (
+                <div className="col-span-2"><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("schTabSystem")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.system_scheduler_name}</p></div>
+              )}
             </div>
 
             <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
@@ -402,6 +455,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
           </div>
         )}
       </div>
+      )}
 
       {header.silo_stock && header.silo_stock.length > 0 && (
         <div>
@@ -438,6 +492,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
             </span>
           </div>
           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            {canCopy && (
+              <Button size="sm" variant="outline" onClick={() => setCopyOpen(true)} className="gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
+            )}
             <Button size="sm" variant="outline" onClick={openAddLine} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("scAddLine")}</Button>
             <button
               type="button"
@@ -462,12 +519,15 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                   <TableHead className="h-auto px-3 py-2">{t("scColItem")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">{t("scColQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">UOM</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("scColSource")}</TableHead>
+                  {!isSystem && <TableHead className="h-auto px-3 py-2">{t("scColSource")}</TableHead>}
                   <TableHead className="h-auto px-3 py-2"></TableHead>
                 </tr></TableHeader>
                 <TableBody>
                   {(header.lines || []).length === 0 ? (
-                    <tr><TableCell colSpan={8} className="py-6 text-center" style={S.sub}>{t("scNoLines")}</TableCell></tr>
+                    <tr><TableCell colSpan={isSystem ? 7 : 8} className="py-6 text-center" style={S.sub}>
+                      <p>{t("scCopyEmptyHint")}</p>
+                      <Button size="sm" onClick={() => setCopyOpen(true)} className="mt-3 gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
+                    </TableCell></tr>
                   ) : (header.lines || []).map((line: Row) => {
                     const itemObj = items.find((i) => i.item_id === line.item_id);
                     const resObj = resources.find((r) => r.resource_id === line.resource_id);
@@ -523,7 +583,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                           </div>
                         </TableCell>
                         <TableCell className="px-3 py-2 font-mono" style={S.sub}>{lineUom || "—"}</TableCell>
-                        <TableCell className="px-3 py-2" style={S.sub}>{line.source}</TableCell>
+                        {!isSystem && <TableCell className="px-3 py-2" style={S.sub}>{line.source}</TableCell>}
                         <TableCell className="px-2 py-1.5">
                           <div className="flex items-center gap-1">
                             <button onClick={() => openEditLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scEditLine")}><Pencil className="h-3.5 w-3.5" style={S.sub} /></button>
@@ -980,6 +1040,14 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
           <p style={S.sub}>{header.notes}</p>
         </div>
       )}
+      <CopyActivitiesDialog
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        companyId={header.company_id}
+        targetId={schedulerId}
+        stageName={header.stage_name}
+        onCopy={copyActivities}
+      />
     </div>
   );
 }

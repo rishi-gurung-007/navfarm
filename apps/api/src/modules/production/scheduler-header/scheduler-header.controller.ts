@@ -4,7 +4,7 @@ import { SchedulerHeaderService } from './scheduler-header.service';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   GenerateSchedulerHeaderDto, QuerySchedulerHeaderDto, UpdateSchedulerHeaderStatusDto,
-  CreateSchedulerLineDto, UpdateSchedulerLineDto,
+  CreateSchedulerLineDto, UpdateSchedulerLineDto, CopySchedulerLinesDto,
 } from './dto/scheduler-header.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -100,6 +100,16 @@ export class SchedulerHeaderController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.schedulerHeaderService.addLine(id, dto, tenantId, req.user);
     return { success: true, message: 'Line added.', data: result };
+  }
+
+  @Post(':id/copy-lines')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'edit')
+  @ApiOperation({ summary: 'Fill an empty scheduler with the activities of a system scheduler or another batch\'s scheduler' })
+  @ApiParam({ name: 'id', description: 'Scheduler UUID' })
+  async copyLines(@Param('id') id: string, @Body() dto: CopySchedulerLinesDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.schedulerHeaderService.copyLinesInto(id, dto, tenantId, req.user);
+    return { success: true, message: 'Activities copied.', data: result };
   }
 
   @Put(':id/lines/:lineId')

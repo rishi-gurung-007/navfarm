@@ -50,6 +50,6 @@ describe("KPI casing — every user-facing string reads KPI", () => {
     const thresholds = breed.fields.find((f) => f.key === "kpi_thresholds");
     expect(thresholds).toBeDefined();
     expect(thresholds!.label).toBe("KPIs & Alerts");
-    expect(thresholds!.jsonRow!.find((r) => r.key === "metric")!.label).toBe("KPI");
+    expect(thresholds!.jsonRow!.find((r) => r.key === "metric")!.label).toBe("KPI Item"); // renamed at Rishi's request, 12 Oct
   });
 });

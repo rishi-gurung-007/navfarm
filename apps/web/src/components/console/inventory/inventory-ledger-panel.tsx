@@ -23,7 +23,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType } from "./inventory-ledger-detail";
+import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType, isInboundEntry } from "./inventory-ledger-detail";
 
 const PAGE_SIZE = 25;
 
@@ -368,7 +368,7 @@ export default function InventoryLedgerPanel() {
                 </tr>
               ) : (
                 pagedRows.map((row) => {
-                  const isPos = row.entry_type === "POSITIVE";
+                  const isPos = isInboundEntry(row);
                   const qty = Number(row.quantity || 0);
                   const rem = row.remaining_quantity !== null && row.remaining_quantity !== undefined 
                     ? Number(row.remaining_quantity) 
@@ -434,14 +434,14 @@ export default function InventoryLedgerPanel() {
                       {/* Movement (Positive / Negative / Transfer / Overhead / Descriptive) */}
                       <TableCell className="whitespace-nowrap">
                         <StatusBadge
-                          status={row.entry_type}
+                          status={isPos ? "POSITIVE" : row.entry_type}
                           label={
                             row.entry_type === "POSITIVE"
                               ? "Positive (+)"
                               : row.entry_type === "NEGATIVE"
                               ? "Negative (-)"
                               : row.entry_type === "TRANSFER"
-                              ? "Transfer"
+                              ? (isPos ? "Receipt" : "Transfer")
                               : row.entry_type === "OVERHEAD"
                               ? "Overhead"
                               : row.entry_type === "DESCRIPTIVE"
@@ -455,14 +455,14 @@ export default function InventoryLedgerPanel() {
                       <TableCell 
                         className="whitespace-nowrap text-right font-mono font-semibold"
                         style={{
-                          color: (isPos || (row.entry_type === "TRANSFER" && qty > 0))
+                          color: isPos
                             ? "var(--success)"
                             : qty < 0
                             ? "var(--danger)"
                             : "var(--text-primary)",
                         }}
                       >
-                        {(isPos || (row.entry_type === "TRANSFER" && qty > 0))
+                        {isPos
                           ? `+${qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
                           : qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                         <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>

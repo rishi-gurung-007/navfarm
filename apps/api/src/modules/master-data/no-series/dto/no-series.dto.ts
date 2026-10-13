@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min, Max } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min, Max } from 'class-validator';
 
 export class CreateNoSeriesDto {
   @ApiProperty({ description: 'Series Code (unique identifier)', maxLength: 20 })
@@ -38,6 +38,34 @@ export class CreateNoSeriesDto {
   @Min(1)
   @Max(10)
   seq_length?: number;
+
+  @ApiPropertyOptional({ description: 'Separator joining the parts of the code (one character)', maxLength: 1 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1)
+  separator?: string;
+
+  @ApiPropertyOptional({ description: 'Separator before the number when it differs from the one joining the parts. Blank uses the main separator.', maxLength: 1 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1)
+  seq_separator?: string;
+
+  @ApiPropertyOptional({ description: 'When the sequence restarts', enum: ['NEVER', 'YEARLY', 'MONTHLY'] })
+  @IsOptional()
+  @IsIn(['NEVER', 'YEARLY', 'MONTHLY'])
+  reset_frequency?: string;
+
+  @ApiPropertyOptional({ description: 'Ordered fields of the master the code is built from, e.g. ["parent_location_id", "location_type"] or ["dob:YEAR"]', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  code_segments?: string[];
+
+  @ApiPropertyOptional({ description: 'Where the prefix sits relative to the segments', enum: ['START', 'END'] })
+  @IsOptional()
+  @IsIn(['START', 'END'])
+  prefix_position?: string;
 
   @ApiPropertyOptional({ description: 'Increment step', default: 1 })
   @IsOptional()
@@ -103,6 +131,34 @@ export class UpdateNoSeriesDto {
   @Min(1)
   @Max(10)
   seq_length?: number;
+
+  @ApiPropertyOptional({ description: 'Separator joining the parts of the code (one character)', maxLength: 1 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1)
+  separator?: string;
+
+  @ApiPropertyOptional({ description: 'Separator before the number when it differs from the one joining the parts. Blank uses the main separator.', maxLength: 1 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1)
+  seq_separator?: string;
+
+  @ApiPropertyOptional({ description: 'When the sequence restarts', enum: ['NEVER', 'YEARLY', 'MONTHLY'] })
+  @IsOptional()
+  @IsIn(['NEVER', 'YEARLY', 'MONTHLY'])
+  reset_frequency?: string;
+
+  @ApiPropertyOptional({ description: 'Ordered fields of the master the code is built from, e.g. ["parent_location_id", "location_type"] or ["dob:YEAR"]', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  code_segments?: string[];
+
+  @ApiPropertyOptional({ description: 'Where the prefix sits relative to the segments', enum: ['START', 'END'] })
+  @IsOptional()
+  @IsIn(['START', 'END'])
+  prefix_position?: string;
 
   @ApiPropertyOptional({ description: 'Increment step' })
   @IsOptional()

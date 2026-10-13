@@ -7,10 +7,11 @@ import {
   IsNumber,
   IsDateString,
   IsBoolean,
+  IsArray,
+  ArrayMaxSize,
   IsInt,
   Min,
   MaxLength,
-  IsArray,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -106,12 +107,42 @@ export class CreateBatchDailyDataDto {
 
   @ApiProperty({
     description:
-      'TRANSFER only — the batch this entry moves animals/stock into',
+      'TRANSFER — the batch this entry moves animals/stock into. On an OUTPUT that posts as a weaning, the batch the weaned piglets move to (left out, they stay in their lot).',
     required: false,
   })
   @IsOptional()
   @IsUUID()
   destination_batch_id?: string;
+
+  @ApiProperty({
+    description:
+      "OUTPUT of a boar only — the other boars this semen collection is pooled with: one lot is mixed from all of them. The boar the entry is made against is the first; he is not repeated here.",
+    required: false,
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID('all', { each: true })
+  pool_animal_ids?: string[];
+
+  @ApiProperty({
+    description:
+      'MORTALITY lines only — the Reason Master reason (category MORTALITY) for the death. Recorded on the animal and the batch transaction when the entry posts.',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID()
+  reason_id?: string;
+
+  @ApiProperty({
+    description:
+      "OUTPUT only — the item this entry takes out of the batch (piglets of a sow, semen of a boar, any item of a batch-wise batch). Defaults to the line's own item; required when the line has none.",
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID()
+  item_id?: string;
 
   @ApiProperty({
     description:

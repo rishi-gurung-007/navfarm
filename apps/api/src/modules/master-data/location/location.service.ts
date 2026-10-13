@@ -1911,9 +1911,13 @@ export class LocationService {
         location_id: schema.batchHeader.location_id,
         shed_id: schema.batchHeader.shed_id,
         opening_quantity: schema.batchHeader.opening_quantity,
+        closing_quantity: schema.batchHeader.closing_quantity,
       })
       .from(schema.batchHeader)
-      .where(and(...batchConditions));
+      // Only a batch-wise batch is a head count with no animal rows. An animal-wise batch's animals are
+      // already counted one by one from the register above; adding its opening quantity as well counted
+      // each of them twice, and neither figure came down with a death or a transfer.
+      .where(and(...batchConditions, eq(schema.batchHeader.tracking_mode, 'BATCH_WISE')));
 
     // Group counts by location
     const animalCountMap: Record<string, number> = {};
@@ -1932,7 +1936,8 @@ export class LocationService {
     for (const b of batches) {
       const locId = b.location_id || b.shed_id;
       if (locId) {
-        batchCountMap[locId] = (batchCountMap[locId] || 0) + Number(b.opening_quantity || 0);
+        // The head on hand now (closing), falling back to what the batch opened with before anything moved.
+        batchCountMap[locId] = (batchCountMap[locId] || 0) + Number(b.closing_quantity ?? b.opening_quantity ?? 0);
       }
     }
 

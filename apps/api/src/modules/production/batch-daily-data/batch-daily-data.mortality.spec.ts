@@ -40,6 +40,10 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
   let deletes: string[];
   let movementLog: { record: jest.Mock };
   let service: BatchDailyDataService;
+  // Since the system-schedulers merge (13 Oct) each death posts through BatchService.addTransaction, which flips the
+  // register, logs the movement and writes the cost off; these tests check what Data Entry hands it.
+  let addTx: jest.Mock;
+  const txCalls = () => addTx.mock.calls.map((c) => c[1]);
 
   const fakeDb: any = {
     select: () => {
@@ -76,12 +80,13 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     };
     updates = []; inserts = []; deletes = [];
     movementLog = { record: jest.fn().mockResolvedValue('m-1') };
+    addTx = jest.fn().mockResolvedValue({});
     const module = await Test.createTestingModule({
       providers: [
         BatchDailyDataService,
         { provide: ClsService, useValue: { get: jest.fn().mockImplementation((k: string) => (k === 'tenantDb' ? fakeDb : undefined)), run: (w: () => unknown) => w(), set: jest.fn() } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-        { provide: BatchService, useValue: { findOne: jest.fn().mockResolvedValue({}) } },
+        { provide: BatchService, useValue: { findOne: jest.fn().mockResolvedValue({}), addTransaction: addTx } },
         { provide: BatchTransferService, useValue: {} },
         { provide: GlPostingService, useValue: {} },
         { provide: AnimalMovementLogService, useValue: movementLog },
@@ -133,15 +138,13 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
       entered_value: 2,
       mortality_animals: [dead(A1), { animal_id: A3, dead_weight_kg: 22, reason_text: '  Crushed by sow ' }],
     });
-    const died = animalUpdates();
-    expect(died).toHaveLength(2);
-    expect(died.every((u) => u.set.status === 'DEAD' && u.set.disposal_type === 'DIED')).toBe(true);
-    expect(died[0].set.disposal_reason_id).toBe(R1);
-    expect(died[1].set.disposal_reason_id).toBeNull();
-    expect(died[1].set.notes).toBe('Cause of death: Crushed by sow');
-    // PIG-2 was never named: it is untouched.
-    expect(movementLog.record.mock.calls.map((c) => c[0].animalId).sort()).toEqual([A1, A3].sort());
-    expect(movementLog.record.mock.calls.find((c) => c[0].animalId === A1)[0]).toMatchObject({ movementType: 'MORTALITY', reason: 'Respiratory disease', remarks: 'Dead weight 18.5 kg' });
+    // One MORTALITY posting per named animal, each with its own reason and dead weight; PIG-2 is untouched.
+    expect(txCalls()).toEqual([
+      expect.objectContaining({ transaction_type: 'MORTALITY', quantity: 1, animal_id: A1, mortality_detail: { reason_id: R1 }, remarks: expect.stringContaining('Dead weight 18.5 kg'), skip_scheduler_count: true }),
+      expect.objectContaining({ transaction_type: 'MORTALITY', quantity: 1, animal_id: A3, mortality_detail: { cause_of_death: 'Crushed by sow' }, remarks: expect.stringContaining('Dead weight 22 kg') }),
+    ]);
+    // A typed cause also stays on the animal's notes.
+    expect(animalUpdates().map((u) => u.set.notes)).toEqual(['Cause of death: Crushed by sow']);
     const detail = inserts.find((i) => i.table === 'batch_mortality_animal')!.values;
     expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_id, d.reason_text, d.posted])).toEqual([
       [A1, '18.5', R1, null, true],
@@ -153,7 +156,7 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
 
   it('a draft keeps the choice without killing anyone; posting the draft later uses it', async () => {
     await post({ entered_value: 1, draft: true, mortality_animals: [dead(A2)] });
-    expect(animalUpdates()).toHaveLength(0);
+    expect(addTx).not.toHaveBeenCalled();
     expect(inserts.find((i) => i.table === 'batch_mortality_animal')!.values[0]).toMatchObject({ animal_id: A2, posted: false });
 
     // POST Day re-submits the draft row with the value only; the stored choice is read back.
@@ -161,7 +164,7 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     rows.batch_mortality_animal = [{ animal_id: A2, dead_weight_kg: '18.500', reason_id: R1, reason_text: null }];
     updates = []; inserts = [];
     await post({ entered_value: 1 });
-    expect(animalUpdates().map((u) => u.set.status)).toEqual(['DEAD']);
+    expect(txCalls().map((t) => t.animal_id)).toEqual([A2]);
     expect(inserts.find((i) => i.table === 'batch_mortality_animal')!.values[0]).toMatchObject({ animal_id: A2, posted: true });
     // A draft row carries the typed value but has recorded nothing, so the whole count is the delta.
     expect(updates.find((u) => u.table === 'scheduler_header')!.set.animal_count).toBe('9');
@@ -172,13 +175,13 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     rows.animal_register = [animal(A2, 'PIG-2'), animal(A3, 'PIG-3')]; // PIG-1 already died
     await expect(post({ entered_value: 3, mortality_animals: [dead(A2)] })).rejects.toThrow(/exactly 2 animals/);
     await post({ entered_value: 2, mortality_animals: [dead(A2)] });
-    expect(animalUpdates()).toHaveLength(1);
+    expect(txCalls().map((t) => t.animal_id)).toEqual([A2]);
   });
 
   it('a correction downward adds no deaths and names none', async () => {
     rows.batch_daily_data = [{ posted: true, entered_value: '2', entered_text: null, lot_no: null, serial_no: null }];
     await post({ entered_value: 1 });
-    expect(animalUpdates()).toHaveLength(0);
+    expect(addTx).not.toHaveBeenCalled();
     await expect(post({ entered_value: 1, mortality_animals: [dead(A1)] })).rejects.toThrow(/exactly 0 animals/);
   });
 
@@ -199,7 +202,11 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
 
     await post({ entered_value: 2, mortality_animals: [{ dead_weight_kg: 15, reason_id: R1 }, { dead_weight_kg: 12.25, reason_text: 'Crushed' }] });
     expect(animalUpdates()).toHaveLength(0);
-    expect(movementLog.record).not.toHaveBeenCalled();
+    // Each death posts on its own, naming no animal; the line keeps the headcount itself.
+    expect(txCalls()).toEqual([
+      expect.objectContaining({ quantity: 1, animal_id: undefined, mortality_detail: { reason_id: R1 }, remarks: expect.stringContaining('Dead weight 15 kg'), skip_scheduler_count: true }),
+      expect.objectContaining({ quantity: 1, animal_id: undefined, mortality_detail: { cause_of_death: 'Crushed' }, remarks: expect.stringContaining('Dead weight 12.25 kg') }),
+    ]);
     const detail = inserts.find((i) => i.table === 'batch_mortality_animal')!.values;
     expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_id, d.reason_text, d.posted])).toEqual([
       [null, '15', R1, null, true],
@@ -219,10 +226,10 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     expect(updates).toHaveLength(0);
 
     await aw({ entered_value: 1, mortality_animals: [{ dead_weight_kg: 9.25, reason_text: 'Crushed' }] });
-    const died = animalUpdates();
-    expect(died).toHaveLength(1);
-    expect(died[0].set).toMatchObject({ status: 'DEAD', disposal_reason_id: null, notes: 'Cause of death: Crushed' });
-    expect(movementLog.record.mock.calls[0][0]).toMatchObject({ animalId: A1, reason: 'Crushed', remarks: 'Dead weight 9.25 kg' });
+    expect(txCalls()).toEqual([
+      expect.objectContaining({ quantity: 1, animal_id: A1, mortality_detail: { cause_of_death: 'Crushed' }, remarks: expect.stringContaining('Dead weight 9.25 kg'), skip_scheduler_count: false }),
+    ]);
+    expect(animalUpdates().map((u) => u.set.notes)).toEqual(['Cause of death: Crushed']);
     const detail = inserts.find((i) => i.table === 'batch_mortality_animal')!.values;
     expect(detail.map((d: any) => [d.animal_id, d.dead_weight_kg, d.reason_text, d.posted])).toEqual([[A1, '9.25', 'Crushed', true]]);
   });
@@ -231,7 +238,7 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
     rows.batch_header = [{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', batch_no: 'B-1', farm_id: 'farm-1' }];
     rows.animal_register = [{ ...animal(A1, 'PIG-1'), current_batch_id: 'batch-1', current_stage_id: 'stage-1' }];
     await post({ animal_id: A1, entered_value: 0 });
-    expect(animalUpdates()).toHaveLength(0);
+    expect(addTx).not.toHaveBeenCalled();
     expect(inserts.some((i) => i.table === 'batch_mortality_animal')).toBe(false);
   });
 

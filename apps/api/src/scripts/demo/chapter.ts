@@ -32,6 +32,11 @@ export interface DemoContext {
    * person using the app creates the Animal Wise and Batch Wise batches (and their schedulers) themselves.
    */
   withBatches: boolean;
+  /**
+   * The lean seed (`--lean`): batches, animals and breeding on MUL100 only — two Animal Wise and two Batch Wise
+   * batches — with the other demo farm kept as a stocked store for the transfers to land in.
+   */
+  lean: boolean;
   log(line: string): void;
 }
 
