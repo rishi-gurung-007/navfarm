@@ -43,8 +43,11 @@ export interface MasterDataField {
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
-  /** Edited in a stacked dialog opened from the record dialog's header ("KPIs & Alerts"), not in the form grid. Still part of the form state and payload. */
-  subDialog?: boolean;
+  /**
+   * Edited in a stacked dialog opened from a button in the record dialog's header, not in the form grid. Still part
+   * of the form state and payload. `true` = the "KPIs & Alerts" dialog; a string names another dialog (and button).
+   */
+  subDialog?: boolean | string;
   placeholder?: string;
   /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
   defaultFromField?: string;

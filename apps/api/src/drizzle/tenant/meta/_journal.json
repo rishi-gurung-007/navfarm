@@ -1352,6 +1352,13 @@
       "when": 1792000000061,
       "tag": "0193_inventory_application_no",
       "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "5",
+      "when": 1792000000062,
+      "tag": "0194_lifecycle_json_unencode",
+      "breakpoints": true
     }
   ]
 }

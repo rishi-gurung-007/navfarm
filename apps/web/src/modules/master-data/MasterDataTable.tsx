@@ -704,7 +704,8 @@ export function MasterDataTable({
     return Array.isArray(loaded) && loaded.length === 0;
   })();
 
-  const [subDialogOpen, setSubDialogOpen] = useState(false);
+  // The stacked dialog open over the record dialog, by name ("KPIs & Alerts", "Feed Consumption"), or null.
+  const [openSubDialog, setOpenSubDialog] = useState<string | null>(null);
   const visibleFields = (
     editing
       ? formFields
@@ -725,11 +726,14 @@ export function MasterDataTable({
     // list keeps it, disabled, so the form can say why it has nothing to offer.
     .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
   const subDialogFields = visibleFields.filter((f) => f.subDialog);
-  const subDialogCount = (() => {
-    const kpiField = subDialogFields.find((f) => f.type === "json");
-    if (!kpiField) return 0;
-    try { const parsed = JSON.parse(String(form[kpiField.key] || "[]")); return Array.isArray(parsed) ? parsed.length : 0; } catch { return 0; }
-  })();
+  // One header button and one stacked dialog per name; `subDialog: true` is the original "KPIs & Alerts".
+  const subDialogName = (f: { subDialog?: boolean | string }) => (typeof f.subDialog === "string" ? f.subDialog : "KPIs & Alerts");
+  const subDialogNames = [...new Set(subDialogFields.map(subDialogName))];
+  const subDialogCount = (name: string) => {
+    const listField = subDialogFields.find((f) => subDialogName(f) === name && f.type === "json");
+    if (!listField) return 0;
+    try { const parsed = JSON.parse(String(form[listField.key] || "[]")); return Array.isArray(parsed) ? parsed.length : 0; } catch { return 0; }
+  };
   const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
@@ -3625,12 +3629,14 @@ export function MasterDataTable({
         }
       >
         <div className="flex flex-col gap-4">
-          {subDialogFields.length > 0 && (
+          {subDialogNames.length > 0 && (
             <DialogHeaderActions>
-              <button type="button" onClick={() => setSubDialogOpen(true)}
-                className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer" style={S.surface}>
-                {tLabel("KPIs & Alerts")}{subDialogCount > 0 ? ` (${subDialogCount})` : ""}
-              </button>
+              {subDialogNames.map((name) => (
+                <button key={name} type="button" onClick={() => setOpenSubDialog(name)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer" style={S.surface}>
+                  {tLabel(name)}{subDialogCount(name) > 0 ? ` (${subDialogCount(name)})` : ""}
+                </button>
+              ))}
             </DialogHeaderActions>
           )}
           {(() => {
@@ -3751,26 +3757,26 @@ export function MasterDataTable({
         </div>
       </Dialog>
 
-      {subDialogFields.length > 0 && (
-        <Dialog open={modalOpen && subDialogOpen} onClose={() => setSubDialogOpen(false)}
-          title={tLabel("KPIs & Alerts")}
+      {subDialogNames.map((name) => (
+        <Dialog key={name} open={modalOpen && openSubDialog === name} onClose={() => setOpenSubDialog(null)}
+          title={tLabel(name)}
           footer={
             <div className="flex items-center justify-end w-full">
-              <button type="button" onClick={() => setSubDialogOpen(false)}
+              <button type="button" onClick={() => setOpenSubDialog(null)}
                 className="rounded-lg px-5 py-2 text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "var(--accent)" }}>
                 Done
               </button>
             </div>
           }>
           <div className="flex flex-col gap-4">
-            {[...subDialogFields].sort((a, b) => Number(a.type === "json") - Number(b.type === "json")).map((f) => (
+            {subDialogFields.filter((f) => subDialogName(f) === name).sort((a, b) => Number(a.type === "json") - Number(b.type === "json")).map((f) => (
               <Field key={f.key} label={tLabel(currentLabel(f, form))} htmlFor={`master-${config.key}-${f.key}`} tooltip={f.helpText}>
                 {renderField(f)}
               </Field>
             ))}
           </div>
         </Dialog>
-      )}
+      ))}
 
       <Dialog
         open={!!reasonCommand}

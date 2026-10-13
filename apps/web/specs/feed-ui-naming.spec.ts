@@ -35,11 +35,17 @@ describe("feed forecasting terminology", () => {
     expect(label(location.fields, "low_level_kg")).toBe("Below Feed Level KG");
     expect(label(location.fields, "high_level_kg")).toBe("Above Threshold KG");
     expect(label(location.fields, "silo_reorder_days")).toBe("Refill Lead Time (days)");
-    expect(label(lifecycle.fields, "feed_item_id")).toBe("Feed");
-    expect(label(lifecycle.fields, "feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head (kg)");
-    expect(label(lifecycle.fields, "feed_form")).toBe("Feed Form");
+    // The lifecycle's feed is Feed Consumption lines (13 Oct): the same names, one row per feed.
+    const lines = lifecycle.fields.find((field) => field.key === "feed_lines")!;
+    expect(lines.label).toBe("Feed Consumption");
+    expect(lines.subDialog).toBe("Feed Consumption");
+    const rowLabel = (key: string) => lines.jsonRow!.find((c) => c.key === key)?.label;
+    expect(rowLabel("feed_item_id")).toBe("Feed Item");
+    expect(rowLabel("feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head (kg)");
+    expect(rowLabel("feed_form")).toBe("Feed Form");
+    expect(label(lifecycle.fields, "feed_item_id")).toBeUndefined();
     expect(label(getConfig("item")!.fields, "diet_no")).toBe("Diet No.");
-    expect(label(lifecycle.fields, "feed_wastage_pct")).toBe("Feed Wastage (%)");
+    expect(rowLabel("feed_wastage_pct")).toBe("Feed Wastage (%)");
     expect(label(lifecycle.fields, "effective_from")).toBe("Effective From");
     expect(label(lifecycle.fields, "effective_to")).toBe("Effective To");
   });

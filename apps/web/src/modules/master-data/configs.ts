@@ -1313,8 +1313,10 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "calc_unit", label: "Period Unit", type: "select", required: true,
       options: ["DAY", "WEEK", "MONTH"].map((v) => ({ value: v, label: v })),
     },
-    { key: "period_from", label: "Period From", type: "number", min: 0, required: true },
-    { key: "period_to", label: "Period To", type: "number", min: 0, required: true },
+    // With Feed Consumption lines the stage's range is the lines' (first From .. last To) and these are not needed;
+    // they set the range only for a stage with no feed (13 Oct).
+    { key: "period_from", label: "Period From", type: "number", min: 0, helpText: "Only for a stage without feed lines. With feed lines, the range is the lines' first From to last To." },
+    { key: "period_to", label: "Period To", type: "number", min: 0, helpText: "Only for a stage without feed lines. With feed lines, the range is the lines' first From to last To." },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
     // for the stage; BBP §6 hard-blocks gilt selection below 15. Shown only for
     // Category SOW (2026-09-21) — the same restriction Animal Register's own
@@ -1331,14 +1333,22 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
-    // TDD Master Setup row 37: how this stage's feed is supplied.
+    // Feed Consumption (Rishi, 13 Oct): the stage's feeds as lines, edited in a dialog from the header like KPIs &
+    // Alerts. Each line is a run of the stage's days (in the Period Unit) with its own feed; lines follow one another
+    // with no gap or overlap (1-8, 9-20, ...). Each is stored as one of the stage's rows, which the scheduler,
+    // forecast and requisition already read. TDD Master Setup row 37: Feed Form = how that feed is supplied.
     {
-      key: "feed_form", label: "Feed Form", type: "select",
-      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
+      key: "feed_lines", label: "Feed Consumption", type: "json", subDialog: "Feed Consumption", singleRow: true,
+      jsonRow: [
+        { key: "period_from", label: "From", type: "number", step: "1", min: 0 },
+        { key: "period_to", label: "To", type: "number", step: "1", min: 0 },
+        { key: "feed_item_id", label: "Feed Item", type: "select-entity", entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+        { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }] },
+        { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
+        { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
+      ],
+      helpText: "One line per feed. From / To are the stage's days in the Period Unit; lines must follow one another with no gap or overlap (e.g. 1-8, then 9-20).",
     },
-    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
     {
       key: "farm_id", label: "Farm (override)", type: "select-entity", searchable: true,
       entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
