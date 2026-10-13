@@ -1,10 +1,10 @@
 # Test-server release 2 — feed workbook completion (11 Oct 2026)
 
 Follows `docs/RELEASE-2026-10-10-test-server.md`. That release took every tenant to migration **164**. This release
-takes every tenant to **175**. Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
+takes every tenant to **191** (0165-0179 from main, 0180-0191 from the feat/system-schedulers merge of 13 Oct). Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
 testers' data must survive.
 
-## What changes in the databases (10 migrations, all additive — nothing dropped)
+## What changes in the databases (27 migrations, 0165-0191; nothing dropped — 0182 and 0189 also change data, see their rows)
 | Migration | Adds |
 |---|---|
 | 0165 | Receipt line controls: variance, variance reason, bag count, delivery note, loading sheet ref |
@@ -22,6 +22,18 @@ testers' data must survive.
 | 0177 | Item Master: nullable `feed_form` column (BULK/BAGGED) on feed items (12 Oct) |
 | 0178 | New table `batch_mortality_animal`: which registered animals died on a Data Entry mortality line, with dead weight and reason (12 Oct) |
 | 0179 | `batch_mortality_animal.animal_id` may be empty: a count-only batch records each death's dead weight and reason without naming an animal (12 Oct) |
+| 0180 | System schedulers: new tables `system_scheduler`, `system_scheduler_line`, `system_scheduler_line_custom_days`; `scheduler_header.system_scheduler_id` |
+| 0181 | `batch_transfer.transfer_basis` (ANIMALS / HEADCOUNT); `stage_master.applicable_gender` |
+| 0182 | Data repair: the BCS activity's KPI code `BCS` -> `BCS_SCORE`, and BCS lines left on BODY_WEIGHT -> BCS_SCORE / SCORE (posted values untouched) |
+| 0183 | `batch_transaction.reversed_at`, `reversed_by` (mortality reversal) |
+| 0184 | `farrowing_record.piglet_batch_id`, `piglet_lot_no` |
+| 0185 | `semen_batch`: lot no, expiry date, warehouse, QR |
+| 0186 | `batch_daily_data.item_id`, `destination_batch_id` (output item, weaning destination) |
+| 0187 | `animal_register`: out-of-production date, cull date, exit weight, disposal destination |
+| 0188 | `semen_batch`: volume, motility, concentration |
+| 0189 | Data: a QR_PACK number series per tenant and per company, counter continuing after the highest existing pack no. (idempotent) |
+| 0190 | New table `semen_batch_boar` (pooled semen); `batch_daily_data.pool_animal_ids` |
+| 0191 | `batch_daily_data.reason_id` |
 
 Run the migrations as **root**. If any line says FAILED: stop, restore that database from the backup, and report it.
 Do not re-run blindly, because MySQL table changes are not transactional.
@@ -32,8 +44,8 @@ Do not re-run blindly, because MySQL table changes are not transactional.
 3. Update the code: `git pull --ff-only origin main`, then `pnpm install --frozen-lockfile` (adds the `@nestjs/schedule`
    package). Check `git log --oneline -1` shows the commit that adds this runbook or later.
 4. Migrate: `pnpm nx run api:db-bootstrap`, then `pnpm nx run api:db-migrate-all-tenants`. Every tenant must end at
-   **175**. Check:
-   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 175 / 175.
+   **191**. Check:
+   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 191 / 191.
 5. Data scripts, per tenant. Run read-only first (it prints a plan), then add `-- --apply` only if the plan lists rows:
    ```
    set DEV_TENANT_DATABASE=nf_portatestnavfarm
