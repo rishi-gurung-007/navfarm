@@ -71,6 +71,8 @@ describe('BatchService', () => {
             generateForBatchCurrentStage: jest.fn().mockResolvedValue({}),
             syncAnimalWiseCounts: jest.fn().mockResolvedValue(undefined),
             countLiveAnimalsAtStage: jest.fn().mockResolvedValue(0),
+            alignToStageEntry: jest.fn().mockResolvedValue(null),
+            stageEntryDate: jest.fn().mockResolvedValue(null),
           },
         },
         {

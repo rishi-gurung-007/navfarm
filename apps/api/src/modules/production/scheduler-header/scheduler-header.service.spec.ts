@@ -436,6 +436,7 @@ describe('SchedulerHeaderService', () => {
   describe('createManualHeader', () => {
     it('creates a manual scheduler_header with auto_generated=false', async () => {
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      const align = jest.spyOn(service, 'alignToStageEntry').mockResolvedValue(null);
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // existing check (none)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...batch, lob_id: 'lob-1' }]) }) }) }) // batch lookup
@@ -458,6 +459,8 @@ describe('SchedulerHeaderService', () => {
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result).toBeDefined();
+      // Created for a stage its animals may already be at: its start follows their arrival.
+      expect(align).toHaveBeenCalledWith('batch-1', 'stage-gest');
     });
 
     // Before the fix, the header insert committed on its own ahead of the line
@@ -540,6 +543,22 @@ describe('SchedulerHeaderService', () => {
 
       await expect(service.deleteHeader('sched-1', 'tenant-123')).rejects.toThrow(NotFoundException);
       expect(mockDbDelete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assertLineTypeFields — start and end day', () => {
+    const line = { line_type: 'DESCRIPTIVE', activity_name: 'Mortality', occurrence: 'DAILY', kpi_metric: 'MORTALITY_COUNT', kpi_uom: 'HEAD', capture_per: 'AVERAGE', std_value: 0.2 };
+
+    it('reads an empty End Day as no end day — a copied line sends ""', () => {
+      // Copying activities into a new scheduler failed with "End Day () cannot be
+      // earlier than Start Day (1)": "" compared as a number is 0.
+      const dto = { ...line, start_day: 1, end_day: '' } as any;
+      expect(() => service.assertLineTypeFields('DESCRIPTIVE', dto, dto)).not.toThrow();
+    });
+
+    it('still refuses an End Day before the Start Day', () => {
+      const dto = { ...line, start_day: 5, end_day: 3 } as any;
+      expect(() => service.assertLineTypeFields('DESCRIPTIVE', dto, dto)).toThrow('End Day (3) cannot be earlier than Start Day (5).');
     });
   });
 

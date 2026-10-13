@@ -438,6 +438,106 @@ export class SchedulerHeaderService {
   }
 
   /**
+   * The day the first of a stage's live animals entered it, in an animal-wise batch: per animal,
+   * the latest movement INTO the stage it is at now (a later movement into some other stage is
+   * not its entry here), then the earliest of those. Null when nobody is at the stage or no
+   * movement records how they got there. Stages are matched by code, as countLiveAnimalsAtStage().
+   */
+  async stageEntryDate(batchId: string, stageId: string): Promise<string | null> {
+    const [stage] = await this.db.select({ stage_code: schema.stageMaster.stage_code })
+      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
+    const sameStage = stage?.stage_code
+      ? (await this.db.select({ stage_id: schema.stageMaster.stage_id }).from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_code, stage.stage_code))).map((s) => s.stage_id)
+      : [stageId];
+    if (!sameStage.length) return null;
+
+    const animals = await this.db.select({ animal_id: schema.animalRegister.animal_id })
+      .from(schema.animalRegister)
+      .where(and(
+        eq(schema.animalRegister.current_batch_id, batchId),
+        eq(schema.animalRegister.is_active, true),
+        inArray(schema.animalRegister.current_stage_id, sameStage),
+      ));
+    if (!animals.length) return null;
+
+    const moves = await this.db.select({
+      animal_id: schema.animalMovementLog.animal_id,
+      event_date: schema.animalMovementLog.event_date,
+      from_stage_id: schema.animalMovementLog.from_stage_id,
+    })
+      .from(schema.animalMovementLog)
+      .where(and(
+        inArray(schema.animalMovementLog.animal_id, animals.map((a) => a.animal_id)),
+        inArray(schema.animalMovementLog.to_stage_id, sameStage),
+      ));
+    const enteredOn = new Map<string, string>();
+    for (const move of moves) {
+      // A move within the stage (from it, to it) is not an entry.
+      if (move.from_stage_id && sameStage.includes(move.from_stage_id)) continue;
+      const day = String(move.event_date).slice(0, 10);
+      const known = enteredOn.get(move.animal_id);
+      if (!known || day > known) enteredOn.set(move.animal_id, day);
+    }
+    const days = [...enteredOn.values()].sort();
+    return days[0] ?? null;
+  }
+
+  /**
+   * Starts an animal-wise stage's scheduler on the day its animals entered the stage. A scheduler
+   * created ahead of the move — or after it, with the form's default of the batch start — ran from
+   * the batch's first day: Farrowing on BATCH-000008 ran 9–12 Sep while its sows moved in on 13
+   * Sep, so data entry asked for 9 Sep, found the sows already posted there under Insemination,
+   * and showed the stage completed with nothing to enter. Moved only while nothing has been
+   * entered against it, so a schedule already in use keeps the days its data was entered under.
+   * The length of the schedule is kept. Returns the new start, or null when nothing moved.
+   */
+  async alignToStageEntry(batchId: string, stageId: string): Promise<string | null> {
+    const [batch] = await this.db.select({ tracking_mode: schema.batchHeader.tracking_mode })
+      .from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, batchId)).limit(1);
+    if (batch?.tracking_mode !== 'ANIMAL_WISE') return null;
+
+    const [stage] = await this.db.select({ stage_code: schema.stageMaster.stage_code })
+      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
+    const sameStage = stage?.stage_code
+      ? (await this.db.select({ stage_id: schema.stageMaster.stage_id }).from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_code, stage.stage_code))).map((s) => s.stage_id)
+      : [stageId];
+    const [header] = await this.db.select().from(schema.schedulerHeader)
+      .where(and(
+        eq(schema.schedulerHeader.batch_id, batchId),
+        inArray(schema.schedulerHeader.stage_id, sameStage),
+        inArray(schema.schedulerHeader.scheduler_status, ['DRAFT', 'ACTIVE']),
+      ))
+      .limit(1);
+    if (!header) return null;
+
+    const entered = await this.stageEntryDate(batchId, stageId);
+    const from = String(header.effective_from).slice(0, 10);
+    if (!entered || entered <= from) return null;
+
+    const lineIds = (await this.db.select({ line_id: schema.schedulerLine.line_id })
+      .from(schema.schedulerLine).where(eq(schema.schedulerLine.scheduler_id, header.scheduler_id))).map((l) => l.line_id);
+    if (lineIds.length) {
+      const [used] = await this.db.select({ n: count() }).from(schema.batchDailyData)
+        .where(and(eq(schema.batchDailyData.batch_id, batchId), inArray(schema.batchDailyData.line_id, lineIds)));
+      if (Number(used?.n ?? 0) > 0) return null;
+    }
+    const [locked] = await this.db.select({ n: count() }).from(schema.batchDataEntryLock)
+      .where(and(eq(schema.batchDataEntryLock.batch_id, batchId), inArray(schema.batchDataEntryLock.stage_id, sameStage)));
+    if (Number(locked?.n ?? 0) > 0) return null;
+
+    const dayMs = 86_400_000;
+    const shift = Math.round((Date.parse(`${entered}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / dayMs);
+    const to = header.effective_to ? String(header.effective_to).slice(0, 10) : null;
+    const newTo = to ? new Date(Date.parse(`${to}T00:00:00Z`) + shift * dayMs).toISOString().slice(0, 10) : null;
+    await this.db.update(schema.schedulerHeader)
+      .set({ effective_from: entered, effective_to: newTo, updated_at: toMysqlTimestamp() })
+      .where(eq(schema.schedulerHeader.scheduler_id, header.scheduler_id));
+    return entered;
+  }
+
+  /**
    * Sets every open scheduler of an animal-wise batch to the number of live animals at its stage.
    * An animal-wise batch holds several stages at once, so a header's count is its own stage's
    * animals, never the whole batch; deaths, transfers and stage moves all end here so the count
@@ -832,6 +932,10 @@ export class SchedulerHeaderService {
       newValues: { batch_id: dto.batch_id, stage_id: dto.stage_id, auto_generated: false, status, lines_count: dto.lines?.length || 0 },
     });
 
+    // Created for a stage its animals are already at: its days start when they entered it,
+    // not on the batch start date the form offers.
+    await this.alignToStageEntry(dto.batch_id, dto.stage_id);
+
     return this.findOne(schedulerId);
   }
 
@@ -1218,8 +1322,12 @@ export class SchedulerHeaderService {
     if (dto.occurrence === 'CUSTOM' && !(dto.custom_days && dto.custom_days.length)) {
       throw new ConflictException('Occurrence CUSTOM requires at least one custom day.');
     }
-    const startDay = effective.start_day as number | undefined;
-    const endDay = effective.end_day as number | null | undefined;
+    // An empty box arrives as "" and means no end day: compared as a number it is 0,
+    // and every copied scheduler was refused with "End Day () cannot be earlier than
+    // Start Day (1)".
+    const asDay = (value: unknown) => (value === null || value === undefined || value === '' ? null : Number(value));
+    const startDay = asDay(effective.start_day);
+    const endDay = asDay(effective.end_day);
     if (startDay != null && endDay != null && endDay < startDay) {
       throw new ConflictException(`End Day (${endDay}) cannot be earlier than Start Day (${startDay}).`);
     }

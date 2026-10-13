@@ -9,7 +9,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, or, sql, isNull, isNotNull, gt, like, desc } from 'drizzle-orm';
+import { eq, and, inArray, or, sql, isNull, isNotNull, gt, lte, like, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import { ModuleRef } from '@nestjs/core';
@@ -1160,7 +1160,7 @@ export class BatchDailyDataService {
     // A silo that holds the item but not enough of it gives what it has and the farm store the rest.
     const split =
       !lots && !singleLot && !dto.serial_no && first.sourceWarehouseId
-        ? await this.splitSiloShortfall(first.sourceWarehouseId, resolvedItemId, total, first.farmId, header.company_id, tenantId)
+        ? await this.splitSiloShortfall(first.sourceWarehouseId, resolvedItemId, total, first.farmId, header.company_id, tenantId, dto.entry_date)
         : null;
     const parts: Array<{ warehouseId: string | undefined; quantity: number }> = split
       ? split.shares
@@ -1412,6 +1412,7 @@ export class BatchDailyDataService {
     farmId: string | null,
     companyId: string,
     tenantId: string,
+    postingDate?: string,
   ): Promise<{ shares: Array<{ quantity: number; warehouseId: string }>; note: string } | null> {
     const [source] = await this.db
       .select({ type: schema.locationMaster.location_type, code: schema.locationMaster.location_code })
@@ -1429,6 +1430,8 @@ export class BatchDailyDataService {
           eq(schema.inventoryLedger.warehouse_id, warehouseId),
           eq(schema.inventoryLedger.item_id, itemId),
           inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
+          // Stock received under a later posting date is not in the silo yet on the entry's date.
+          ...(postingDate ? [lte(schema.inventoryLedger.posting_date, postingDate)] : []),
         ),
       );
     const inSilo = round(Number(held?.total ?? 0));

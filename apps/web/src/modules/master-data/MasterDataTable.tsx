@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ageBetween, formatAge } from "./utils/age";
 import {
   Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
   ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
@@ -2048,7 +2049,25 @@ export function MasterDataTable({
     const lockedByRule = lockedByIssuedNumbers || lockedByRowFlag || lockedByOtherField;
     const fieldDisabled = readOnly || immutableOnEdit || lockedByRule || !!f.readOnly || isLockedByTemplate || disabledByStageTrigger;
     const isCodeField = f.key === numbering.codeKey;
-    const value = isCodeField && (codeFieldTouchedRef.current || isLockedByTemplate || !!editing)
+    // An age worked out live from two dates on the form. An entry date that is create-only is not on the
+    // form while editing, so the row being edited supplies it.
+    const ageValue = (() => {
+      if (!f.ageFromDates) return undefined;
+      const { from, to, unit } = f.ageFromDates;
+      const age = ageBetween(form[from] ?? editing?.[from], form[to] ?? editing?.[to]);
+      // No date of birth: the weeks an animal was entered with stay on show, since only the farm knows them.
+      if (!age) {
+        if (unit !== "weeks" && unit !== "weeksAndDays") return "";
+        const stored = form[f.key] ?? editing?.[f.key];
+        if (stored === undefined || stored === null || stored === "") return "";
+        return unit === "weeks" ? String(stored) : `${stored} ${Number(stored) === 1 ? "week" : "weeks"}`;
+      }
+      if (unit === "weeksAndDays") return formatAge(age);
+      return String(unit === "weeks" ? age.weeks : unit === "days" ? age.days : age.totalDays);
+    })();
+    const value = f.ageFromDates
+      ? ageValue
+      : isCodeField && (codeFieldTouchedRef.current || isLockedByTemplate || !!editing)
       ? (form[f.key] ?? "")
       : (numbering.value(f.key, form[f.key] !== undefined && form[f.key] !== "" ? form[f.key] : undefined) as any);
     const accessibility = { id: `master-${config.key}-${f.key}`, "aria-label": tLabel(currentLabel(f, form)), "aria-required": isFieldRequired(f, form) };

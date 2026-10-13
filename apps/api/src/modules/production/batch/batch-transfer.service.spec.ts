@@ -73,7 +73,7 @@ describe('BatchTransferService', () => {
         },
         {
           provide: SchedulerHeaderService,
-          useValue: { createForStage: jest.fn().mockResolvedValue({}), syncAnimalWiseCounts: jest.fn().mockResolvedValue(undefined) },
+          useValue: { createForStage: jest.fn().mockResolvedValue({}), syncAnimalWiseCounts: jest.fn().mockResolvedValue(undefined), alignToStageEntry: jest.fn().mockResolvedValue(null), stageEntryDate: jest.fn().mockResolvedValue(null) },
         },
         {
           provide: AnimalMovementLogService,

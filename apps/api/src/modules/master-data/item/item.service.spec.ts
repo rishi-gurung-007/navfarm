@@ -682,4 +682,42 @@ describe('ItemService', () => {
       ).rejects.toThrow(new BadRequestException('Inventory GL Account not found in Chart of Accounts.'));
     });
   });
+  describe('restore (the Activate toggle)', () => {
+    const itemRow = (over: object) => ({ item_id: 'item-1', company_id: 'co-1', status: 'ACTIVE', is_active: false, deleted_at: null, ...over });
+    const selectsItem = (row: object) =>
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([row]) }) }) });
+    const capturesUpdate = () => {
+      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      mockDbUpdate.mockReturnValueOnce({ set });
+      return set;
+    };
+
+    it('activates an item that is inactive without being deleted - the toggle used to report success and change nothing', async () => {
+      selectsItem(itemRow({}));
+      const set = capturesUpdate();
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+      await service.restore('item-1', 'tenant-123');
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ is_active: true, status: 'ACTIVE', deleted_at: null }));
+    });
+
+    it('restores a soft-deleted item', async () => {
+      selectsItem(itemRow({ status: 'INACTIVE', deleted_at: '2026-10-01 10:00:00' }));
+      const set = capturesUpdate();
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+      await service.restore('item-1', 'tenant-123');
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ is_active: true, status: 'ACTIVE', deleted_at: null }));
+    });
+
+    it('leaves an item that is already active alone', async () => {
+      selectsItem(itemRow({ is_active: true }));
+      await service.restore('item-1', 'tenant-123');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses to switch on a draft - it is completed and saved instead', async () => {
+      selectsItem(itemRow({ status: 'DRAFT' }));
+      await expect(service.restore('item-1', 'tenant-123')).rejects.toThrow(/still a draft/);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
 });

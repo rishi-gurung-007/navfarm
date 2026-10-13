@@ -6,7 +6,6 @@ import {
   ConflictException,
   Inject,
 } from '@nestjs/common';
-import { stagesOnDate, type StageAnimal, type StageMove } from './batch-stage-on-date';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
@@ -1719,6 +1718,9 @@ export class BatchService {
         userPayload,
         { source: dto.scheduler_source },
       );
+      // An animal-wise stage's scheduler, created now or earlier, starts on the day of this move
+      // (createForStage dates every header from the batch start). A no-op for batch-wise batches.
+      await this.schedulerHeaderService.alignToStageEntry(id, matchedStage.stage_id);
     }
 
     // The stages just changed hands: each open scheduler counts the animals now at its stage.
@@ -2230,6 +2232,11 @@ export class BatchService {
   /** Recounts an animal-wise batch's stage headcounts from the register (no-op for a batch-wise batch). */
   async syncSchedulerCounts(batchId: string): Promise<void> {
     await this.schedulerHeaderService.syncAnimalWiseCounts(batchId);
+  }
+
+  /** See SchedulerHeaderService.alignToStageEntry: a stage's unused scheduler starts when its animals entered it. */
+  async alignSchedulerToStageEntry(batchId: string, stageId: string): Promise<string | null> {
+    return this.schedulerHeaderService.alignToStageEntry(batchId, stageId);
   }
 
   /**
@@ -3590,46 +3597,33 @@ export class BatchService {
                 eq(schema.animalRegister.is_active, true),
               ),
             )) || [];
-        // The stage each animal stood in on a past day comes from its movements, not its current stage: a day
-        // posted before a stage change stays complete after it (13 Oct).
-        const moves: StageMove[] = liveAnimals.length
-          ? ((await this.db
-              .select({
-                animal_id: schema.animalMovementLog.animal_id,
-                movement_type: schema.animalMovementLog.movement_type,
-                event_date: schema.animalMovementLog.event_date,
-                to_batch_id: schema.animalMovementLog.to_batch_id,
-                from_stage_id: schema.animalMovementLog.from_stage_id,
-                to_stage_id: schema.animalMovementLog.to_stage_id,
-                created_at: schema.animalMovementLog.created_at,
-              })
-              .from(schema.animalMovementLog)
-              .where(
-                and(
-                  inArray(schema.animalMovementLog.animal_id, liveAnimals.map((a: any) => a.animal_id)),
-                  inArray(schema.animalMovementLog.movement_type, ['STAGE_CHANGE', 'ASSIGN', 'TRANSFER', 'PURCHASE']),
-                ),
-              )) as StageMove[]) || []
-          : [];
+        const activeStageIds = new Set(
+          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
+        );
+        // A stage is owed a day's entry only from the day its animals entered it. Counting
+        // from the batch start, sows moved into Farrowing on 13 Sep made 9 Sep the next
+        // pending date — a day they had already been posted on, under Insemination.
+        const stageStart = new Map<string, string>();
+        for (const sId of activeStageIds) {
+          const entered = await this.schedulerHeaderService.stageEntryDate(batch.batch_id, sId as string);
+          stageStart.set(sId as string, entered && entered > startDate ? entered : startDate);
+        }
 
         let cursor = startDate;
         let count = 0;
         while (count < 365) {
-          const activeStageIds = stagesOnDate(liveAnimals as StageAnimal[], moves, batch.batch_id, cursor);
           let isComplete = false;
           if (activeStageIds.size === 0) {
-            // No live animals at all: any lock completes the day. Live animals that had not yet joined the batch
-            // that day: there was nothing to post, so the day is complete.
-            isComplete = liveAnimals.length > 0 || locks.some((l: any) => l.entry_date === cursor);
+            isComplete = locks.some((l: any) => l.entry_date === cursor);
           } else {
             const lockedStages = new Set(
               locks
                 .filter((l: any) => l.entry_date === cursor)
                 .map((l: any) => l.stage_id),
             );
-            isComplete = Array.from(activeStageIds).every((sId) =>
-              lockedStages.has(sId!),
-            );
+            isComplete = Array.from(activeStageIds)
+              .filter((sId) => (stageStart.get(sId as string) ?? startDate) <= cursor)
+              .every((sId) => lockedStages.has(sId!));
           }
 
           if (!isComplete) {

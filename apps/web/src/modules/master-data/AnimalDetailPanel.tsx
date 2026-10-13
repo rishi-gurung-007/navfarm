@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { ageBetween, formatAge } from "./utils/age";
 import { X, Loader2, ChevronRight } from "lucide-react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
@@ -639,9 +640,11 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
                 age is the only record of how old the animal was. */}
             <ReadField
               label="Age at entry"
-              value={row.age_at_entry_weeks === null || row.age_at_entry_weeks === undefined
-                ? ""
-                : `${row.age_at_entry_weeks} weeks`}
+              value={(() => {
+                const age = ageBetween(row.dob, row.entry_date);
+                if (age) return formatAge(age);
+                return row.age_at_entry_weeks === null || row.age_at_entry_weeks === undefined ? "" : `${row.age_at_entry_weeks} weeks`;
+              })()}
             />
             <ReadField label="Entry type" value={fmt(row.entry_type)} />
             <ReadField label="Entry date" value={fmt(row.entry_date)} />

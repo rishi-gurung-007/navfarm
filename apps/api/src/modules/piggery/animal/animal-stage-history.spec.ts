@@ -60,7 +60,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn() } },
         { provide: NobLobResolutionService, useValue: { resolve: jest.fn(async () => ({ nob_id: 'nob-1', lob_id: 'lob-pig' })) } },
         { provide: AnimalMovementLogService, useValue: movementLog },
-        { provide: BatchService, useValue: { addTransaction: jest.fn(), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn(), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = module.get<AnimalService>(AnimalService);

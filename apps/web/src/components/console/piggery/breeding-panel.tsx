@@ -19,11 +19,28 @@ import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
 import { InlineAlert } from "@/components/ui/alert";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import AnimalDetailsModal from "./animal-details-modal";
 
 type Row = Record<string, any>;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
+}
+
+/** An animal code that opens that animal's details, the same card the Batch Animals page opens. */
+function AnimalCodeLink({ animalId, code, onOpen, style }: { animalId?: string | null; code?: string | null; onOpen: (id: string) => void; style?: React.CSSProperties }) {
+  if (!animalId || !code) return <>{code || "--"}</>;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(animalId)}
+      className="font-mono font-bold text-[var(--accent)] hover:underline text-left cursor-pointer"
+      style={style}
+      title="View animal details"
+    >
+      {code}
+    </button>
+  );
 }
 
 const S = {
@@ -71,6 +88,7 @@ export function BreedingPanel() {
   const [showPregCheckModal, setShowPregCheckModal] = useState(false);
   const [selectedMating, setSelectedMating] = useState<Row | null>(null);
   const [selectedFarrow, setSelectedFarrow] = useState<Row | null>(null);
+  const [detailsAnimalId, setDetailsAnimalId] = useState<string | null>(null);
 
   // Forms
   const emptyMatingForm = () => ({
@@ -552,7 +570,7 @@ export function BreedingPanel() {
                     matings.map((m) => (
                       <tr key={m.breeding_id} className="hover:bg-[var(--surface-raised)] transition-colors">
                         <td className="py-3.5 px-4">
-                          <div className="font-semibold" style={S.primary}>{m.sow_code}</div>
+                          <div className="font-semibold" style={S.primary}><AnimalCodeLink animalId={m.sow_id} code={m.sow_code} onOpen={setDetailsAnimalId} /></div>
                           <div className="text-xs" style={S.sub}>{t("brpTagParity", { tag: m.sow_tag || "--", parity: m.parity_number })}</div>
                         </td>
                         <td className="py-3.5 px-4">
@@ -568,7 +586,7 @@ export function BreedingPanel() {
                           </span>
                         </td>
                         <td className="py-3.5 px-4">
-                          <div className="text-xs font-semibold" style={m.boar_code ? S.primary : S.muted}>{m.boar_code || "--"}</div>
+                          <div className="text-xs font-semibold" style={m.boar_code ? S.primary : S.muted}><AnimalCodeLink animalId={m.boar_id} code={m.boar_code} onOpen={setDetailsAnimalId} /></div>
                           {m.boar_parity_number != null && (
                             <div className="text-[11px]" style={S.sub}>{t("brpBoarParity", { parity: m.boar_parity_number })}</div>
                           )}
@@ -674,7 +692,7 @@ export function BreedingPanel() {
                     farrowings.map((f) => (
                       <tr key={f.farrow_id} className="hover:bg-[var(--surface-raised)] transition-colors">
                         <td className="py-3.5 px-4">
-                          <div className="font-semibold" style={S.primary}>{f.sow_code}</div>
+                          <div className="font-semibold" style={S.primary}><AnimalCodeLink animalId={f.sow_id} code={f.sow_code} onOpen={setDetailsAnimalId} /></div>
                           <div className="text-xs" style={S.sub}>{t("brpTagParity", { tag: f.sow_tag || "--", parity: f.parity_number })}</div>
                         </td>
                         <td className="py-3.5 px-4 font-mono text-xs" style={S.sub}>
@@ -752,7 +770,14 @@ export function BreedingPanel() {
                     semenBatches.map((s) => (
                       <tr key={s.semen_batch_id} className="hover:bg-[var(--surface-raised)] transition-colors">
                         <td className="py-3.5 px-4 font-semibold" style={S.primary}>
-                          {s.pooled ? (s.boars || []).map((b: Row) => b.boar_code).join(" + ") : s.boar_code}
+                          {s.pooled
+                            ? (s.boars || []).map((b: Row, i: number) => (
+                                <span key={b.boar_id ?? b.boar_code}>
+                                  {i > 0 && " + "}
+                                  <AnimalCodeLink animalId={b.boar_id} code={b.boar_code} onOpen={setDetailsAnimalId} />
+                                </span>
+                              ))
+                            : <AnimalCodeLink animalId={s.boar_id} code={s.boar_code} onOpen={setDetailsAnimalId} />}
                           {s.pooled ? (
                             <span className="block text-xs font-normal" style={S.sub}>
                               Pooled lot · {(s.boars || []).length} boars mixed
@@ -1563,6 +1588,9 @@ export function BreedingPanel() {
           </div>
         </div>
       )}
+
+      {/* ── ANIMAL DETAILS POPUP ── */}
+      <AnimalDetailsModal animalId={detailsAnimalId} onClose={() => setDetailsAnimalId(null)} />
     </div>
   );
 }

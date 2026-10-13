@@ -198,6 +198,13 @@ export interface MasterDataField {
   hideInForm?: boolean;
   /** Visible for context but never editable or included in a save payload. */
   readOnly?: boolean;
+  /**
+   * A display-only age worked out live from two date fields on this form: whole weeks, the days
+   * past the last whole week ("11 weeks 6 days" is 11 and 6), both as one reading ("11 weeks 6 days"),
+   * or the total days. Never saved - the API computes what it stores. Empty until both dates are
+   * filled and the entry is not before birth.
+   */
+  ageFromDates?: { from: string; to: string; unit: "weeks" | "days" | "weeksAndDays" | "totalDays" };
   /** Excluded from the list table */
   hideInTable?: boolean;
   /**
