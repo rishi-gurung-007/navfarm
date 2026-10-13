@@ -14,7 +14,11 @@ describe("Location Master Cost Centre field (11 Oct)", () => {
     expect(field.required).toBeFalsy();
   });
 
-  it("is shown for FARM and MILL only", () => {
+  it("is hidden from the Location Master form for every location type", () => {
+    expect(field.hideInForm).toBe(true);
+  });
+
+  it("only applies to FARM and MILL when the field is restored", () => {
     expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] });
   });
 });

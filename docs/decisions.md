@@ -33,6 +33,15 @@ These apply to all work and are not up for re-litigation.
 
 ## Master data
 
+### Location Master Cost Centre is temporarily hidden
+*Decided 2026-10-13.*
+
+Hide the optional **Cost Centre** picker in Location Master for every location
+type, including Farm and Mill, until Rishi brings it back into scope. This is a
+presentation change only: `location.cost_center_id` values already saved remain
+unchanged and are not cleared on later edits because the hidden field is not
+submitted.
+
 ### Every master carries a code, from a number series
 *Asked 2026-09-06 ("add code for them too"), extended 2026-09-07.*
 

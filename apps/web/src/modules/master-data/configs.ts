@@ -106,6 +106,9 @@ const location: MasterDataConfig = {
       key: "cost_center_id", label: "Cost Centre", type: "select-entity",
       entityEndpoint: "/cost-center?isActive=true", entityValueKey: "cost_center_id",
       entityLabelKeys: ["cost_center_code", "cost_center_name"],
+      // Rishi, 13 Oct: hide this temporarily for every Location Master type.
+      // Existing values remain untouched because hidden fields are not submitted on edit.
+      hideInForm: true,
       visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
       helpText: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
       section: "Identification",
