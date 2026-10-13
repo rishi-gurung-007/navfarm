@@ -2,8 +2,10 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import CopyActivitiesDialog from '../src/components/console/production/copy-activities-dialog';
 import { api } from '../src/services/api-client';
+import { toast } from 'react-toastify';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
+jest.mock('react-toastify', () => ({ toast: { error: jest.fn(), success: jest.fn(), info: jest.fn(), warn: jest.fn() } }));
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
@@ -63,7 +65,8 @@ describe('CopyActivitiesDialog', () => {
     render(<CopyActivitiesDialog open onClose={onClose} companyId="co-1" targetId="target" stageName="Quarantine" onCopy={onCopy} />);
     const row = (await screen.findByText('BATCH-000001')).closest('tr')!;
     fireEvent.click(within(row).getByRole('button', { name: 'scCopyAction' }));
-    await screen.findByText('This scheduler already has activities.');
+    // The refusal is a toast now, like every other refusal in the app.
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('This scheduler already has activities.', expect.anything()));
     expect(onCopy).toHaveBeenCalledWith('BATCH', 'b-q');
     expect(onClose).not.toHaveBeenCalled();
   });

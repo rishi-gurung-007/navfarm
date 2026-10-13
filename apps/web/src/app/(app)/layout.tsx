@@ -23,7 +23,7 @@ import {
   AlertTriangle,
   Package,
   CalendarClock,
-  Gauge,
+  TrendingUp,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -292,11 +292,20 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   }));
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
-    { label: t("invFeedForecast"), href: "/inventory/feed-forecast" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
     { label: t("invTransfers"), href: "/inventory/transfers" },
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
     { label: t("invLedger"), href: "/inventory/ledger" },
+  ];
+  const feedForecastChildren = [
+    { label: t("fftTabDashboard"), href: "/inventory/feed-forecast?tab=dashboard" },
+    { label: t("fftTabForecast"), href: "/inventory/feed-forecast?tab=forecast" },
+    { label: t("fftTabFeedPlan"), href: "/inventory/feed-forecast?tab=feed-plan" },
+    { label: t("fftTabCompareReport"), href: "/inventory/feed-forecast?tab=compare-report" },
+    { label: t("fftTabFeedRequisition"), href: "/inventory/feed-forecast?tab=feed-requisition" },
+    { label: t("invFeedConsolidations"), href: "/inventory/feed-forecast?tab=mill-consolidation" },
+    { label: t("invFeedLoading"), href: "/inventory/feed-forecast?tab=loading-instructions" },
+    { label: t("fftTabPhysicalCount"), href: "/inventory/feed-forecast?tab=physical-count" },
   ];
   // Same list master-data-page-shell.tsx used to render as its own docked
   // column — folded into the primary nav's hover flyout instead, in the
@@ -318,7 +327,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   if (activeScope === "TENANT") {
     navItems = [
       { label: t("dashboard"),       href: "/dashboard",      icon: LayoutDashboard },
-      { label: t("execDashboard"),   href: "/executive-dashboard", icon: Gauge },
       { label: t("companies"),       href: "/companies",      icon: Building2 },
       // No Master Data at tenant level (client ruling, 12 Oct): it is managed
       // inside a company or an operational area.
@@ -329,7 +337,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   } else if (activeScope === "COMPANY") {
     navItems = [
       { label: t("companyDashboard"), href: "/dashboard",      icon: LayoutDashboard },
-      { label: t("execDashboard"),    href: "/executive-dashboard", icon: Gauge },
       // The work-shaped spine first, in the order an operational area lists it,
       // then the company's own entities. Master Data used to sit 4th here and
       // 10th in an area, Batches 7th and 2nd, Livestock 8th and 4th — so what
@@ -342,7 +349,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // and a stage — which is exactly what the shared-order spec is for.
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
-      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren },
+      { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
@@ -391,7 +399,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
      */
     navItems = [
       { label: t("lobDashboard", { lob: tLob(activeLob) }), href: "/dashboard", icon: LayoutDashboard },
-      { label: t("execDashboard"), href: "/executive-dashboard", icon: Gauge },
       {
         label: t("navBatches"),
         href: "/batches",
@@ -416,7 +423,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         // else, and that is the only per-LOB override.
         children: livestockChildren,
       },
-      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren, flyout: true },
+      { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren },
+      { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },

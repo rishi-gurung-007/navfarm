@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { FarmScope } from '../../../common/farm-scope';
 import { transactionCls, useFarmScope as useFarmScopeCls } from '../../../test-utils/transaction-cls';
 
@@ -64,6 +65,10 @@ describe('SchedulerHeaderService', () => {
     typical_duration_days: 114,
   };
 
+  // Every new scheduler takes the next number from its company's SCHEDULER series.
+
+  const numberSeries = { generateNext: jest.fn().mockResolvedValue('SCH-000001'), ensureCompanySeries: jest.fn().mockResolvedValue(undefined) };
+
   const auditLog = { log: jest.fn().mockResolvedValue({}) };
 
   beforeEach(async () => {
@@ -75,12 +80,15 @@ describe('SchedulerHeaderService', () => {
     capturedWhere = undefined;
     delete (mockDb as any).transaction; // transactionCls() re-attaches it fresh each test
 
+    numberSeries.generateNext.mockClear();
+    numberSeries.ensureCompanySeries.mockClear();
     cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SchedulerHeaderService,
         { provide: ClsService, useValue: cls },
         { provide: AuditLogService, useValue: auditLog },
+        { provide: NumberSeriesService, useValue: numberSeries },
       ],
     }).compile();
 
@@ -461,6 +469,11 @@ describe('SchedulerHeaderService', () => {
       expect(result).toBeDefined();
       // Created for a stage its animals may already be at: its start follows their arrival.
       expect(align).toHaveBeenCalledWith('batch-1', 'stage-gest');
+      // A readable number from the company's SCHEDULER series, beside the UUID key.
+      expect(numberSeries.generateNext).toHaveBeenCalledWith('SCHEDULER', 'tenant-123', batch.company_id);
+      // A company that started blank (no series yet) gets one made first, so the create cannot fail on it.
+      expect(numberSeries.ensureCompanySeries).toHaveBeenCalledWith('tenant-123', batch.company_id, expect.objectContaining({ seriesCode: 'SCHEDULER', prefix: 'SCH', seqLength: 6 }), expect.any(Function));
+      expect(mockDbInsert.mock.results[0].value.values).toHaveBeenCalledWith(expect.objectContaining({ scheduler_no: 'SCH-000001' }));
     });
 
     // Before the fix, the header insert committed on its own ahead of the line

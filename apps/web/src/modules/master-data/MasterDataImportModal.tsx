@@ -14,7 +14,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import type { MasterDataConfig } from "./types";
 import {
@@ -577,7 +577,7 @@ export default function MasterDataImportModal({
       }
     >
       <div className="flex flex-col gap-4 text-xs">
-        {generalError && <InlineAlert variant="danger">{generalError}</InlineAlert>}
+        <Toast variant="danger" message={generalError} onClose={() => setGeneralError("")} />
 
         {/* Step 1: Template Download Banner */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-(--border) bg-(--surface-raised) p-3">

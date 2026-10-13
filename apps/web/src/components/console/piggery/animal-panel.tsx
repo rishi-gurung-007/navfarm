@@ -7,7 +7,7 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -20,6 +20,7 @@ import {
   TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { formatQuantity } from "@/lib/utils";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -524,7 +525,7 @@ export default function AnimalPanel() {
         </Button>
       </div>
 
-      {error && <div className="mb-4"><InlineAlert variant="danger">{error}</InlineAlert></div>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* ── List table ── */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
@@ -608,7 +609,7 @@ export default function AnimalPanel() {
           </Button>
         }
       >
-        {createError && <div className="mb-4"><InlineAlert variant="danger">{createError}</InlineAlert></div>}
+        <Toast variant="danger" message={createError} onClose={() => setCreateError("")} />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* NOB */}
@@ -863,7 +864,7 @@ export default function AnimalPanel() {
                 )}
               </div>
 
-              {medError && <div className="mb-4"><InlineAlert variant="danger">{medError}</InlineAlert></div>}
+              <Toast variant="danger" message={medError} onClose={() => setMedError("")} />
 
               {medLoading ? (
                 <div className="py-10 text-center">
@@ -894,7 +895,7 @@ export default function AnimalPanel() {
                             items.find((i) => i.item_id === log.item_id)?.item_name || log.item_id
                           }</TableCell>
                           <TableCell style={S.muted}>
-                            {log.dose_qty ? `${log.dose_qty}${log.uom ? " " + log.uom : ""}` : "—"}
+                            {log.dose_qty ? `${formatQuantity(log.dose_qty)}${log.uom ? " " + log.uom : ""}` : "—"}
                           </TableCell>
                           <TableCell style={S.muted}>{log.administered_by || "—"}</TableCell>
                           <TableCell style={S.muted}>{log.notes || "—"}</TableCell>
@@ -943,7 +944,7 @@ export default function AnimalPanel() {
                 <span className="text-xs" style={S.muted}>{t("anpTransactionCount", { count: ledgerEntries.length })}</span>
               </div>
 
-              {ledgerError && <div className="mb-4"><InlineAlert variant="danger">{ledgerError}</InlineAlert></div>}
+              <Toast variant="danger" message={ledgerError} onClose={() => setLedgerError("")} />
 
               {ledgerLoading ? (
                 <div className="py-10 text-center">
@@ -1007,7 +1008,7 @@ export default function AnimalPanel() {
           </Button>
         }
       >
-        {doseError && <div className="mb-4"><InlineAlert variant="danger">{doseError}</InlineAlert></div>}
+        <Toast variant="danger" message={doseError} onClose={() => setDoseError("")} />
 
         <div className="space-y-4">
           <div>
@@ -1070,12 +1071,8 @@ export default function AnimalPanel() {
         }
       >
         {/* Structured withdrawal warning — shown instead of generic error when it's that specific error */}
-        {disposeError && disposeIsWithdrawal
-          ? <WithdrawalWarning message={disposeError} t={t} />
-          : disposeError
-            ? <div className="mb-4"><InlineAlert variant="danger">{disposeError}</InlineAlert></div>
-            : null
-        }
+        {disposeError && disposeIsWithdrawal && <WithdrawalWarning message={disposeError} t={t} />}
+        <Toast variant="danger" message={disposeIsWithdrawal ? "" : disposeError} onClose={() => setDisposeError("")} />
 
         {/* Show a proactive hint when slaughter is selected, before the user submits */}
         {disposeForm.disposal_type === "SLAUGHTERED" && !disposeError && (
@@ -1165,7 +1162,7 @@ export default function AnimalPanel() {
           </Button>
         }
       >
-        {oopError && <div className="mb-3"><InlineAlert variant="danger">{oopError}</InlineAlert></div>}
+        <Toast variant="danger" message={oopError} onClose={() => setOopError("")} />
         <label className="nf-label" htmlFor="oop-date">{t("anpOutOfProductionDate")}</label>
         <input id="oop-date" type="date" className={inputCls} value={oopDate} onChange={(e) => setOopDate(e.target.value)} />
       </Dialog>

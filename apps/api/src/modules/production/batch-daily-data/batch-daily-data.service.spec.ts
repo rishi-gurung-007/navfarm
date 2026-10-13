@@ -1071,7 +1071,7 @@ describe('BatchDailyDataService', () => {
 
       await expect(
         service.postEntry('batch-1', { line_id: 'line-death', entry_date: '2026-10-01', animal_id: 'a-7', entered_value: 0 } as any, 'tenant-123'),
-      ).rejects.toThrow("'Daily Mortality Check' is already posted and it recorded a death (one recorded in error is reversed on the Mortality & Health panel), so it cannot be changed in place.");
+      ).rejects.toThrow("'Daily Mortality Check' is already posted and it recorded a death, which is final, so it cannot be changed in place.");
       expect(batchService.addTransaction).not.toHaveBeenCalled();
     });
 

@@ -33,7 +33,10 @@ import type { ReactNode } from "react";
 export interface PageHeaderProps {
   /** The page's H1. Exactly one per route — the shell renders no other. */
   title: ReactNode;
-  /** One quiet line explaining what this page is. */
+  /**
+   * Accepted for compatibility and not shown: the app shows no description line under
+   * a page title (13 Oct 2026). Callers may still pass one; it is ignored.
+   */
   description?: ReactNode;
   /**
    * Primary page actions — Add, Create, Export. Shares the title row on
@@ -58,7 +61,6 @@ export interface PageHeaderProps {
 
 export function PageHeader({
   title,
-  description,
   actions,
   meta,
   toolbar,
@@ -75,7 +77,6 @@ export function PageHeader({
           <h1 className="nf-text-page-title" data-page-title>
             {title}
           </h1>
-          {description && <p data-page-description>{description}</p>}
           {meta && <div data-page-header-meta>{meta}</div>}
         </div>
         {actions && <div data-page-header-actions>{actions}</div>}

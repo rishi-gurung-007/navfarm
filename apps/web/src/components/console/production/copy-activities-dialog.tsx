@@ -5,7 +5,7 @@ import { Copy, Loader2, Search } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 
@@ -127,7 +127,7 @@ export default function CopyActivitiesDialog({ open, onClose, companyId, targetI
   return (
     <Dialog open={open} onClose={onClose} title={t("scCopyTitle")} description={t("scCopyHint")} presentation="compact" maxWidth="lg">
       <div className="flex flex-col gap-4">
-        {error && <InlineAlert>{error}</InlineAlert>}
+        <Toast variant="danger" message={error} onClose={() => setError("")} />
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
           <input

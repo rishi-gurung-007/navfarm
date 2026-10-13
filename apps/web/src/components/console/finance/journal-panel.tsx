@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { formatAmount } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -221,7 +222,7 @@ export default function JournalPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
@@ -248,8 +249,8 @@ export default function JournalPanel() {
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{row.journal_no}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{row.posting_date}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.source}{row.source_document_no ? ` · ${row.source_document_no}` : ""}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right" style={S.primary}>{row.total_debit}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right" style={S.primary}>{row.total_credit}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right" style={S.primary}>{formatAmount(row.total_debit)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right" style={S.primary}>{formatAmount(row.total_credit)}</TableCell>
                     <TableCell className="text-right">
                       <Badge variant={STATUS_VARIANT[row.status] || "neutral"}>{row.status}</Badge>
                     </TableCell>
@@ -284,7 +285,7 @@ export default function JournalPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">

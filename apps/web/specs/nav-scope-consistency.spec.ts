@@ -147,6 +147,14 @@ describe('Sidebar consistency across workspace scopes', () => {
     }
   });
 
+  it('lists Feed Forecast as a top-level item in the company and operational workspaces', () => {
+    const scopes = navByScope();
+    for (const scope of ['COMPANY', 'OPERATIONAL']) {
+      expect([...scopes[scope].keys()]).toContain('/inventory/feed-forecast');
+      expect(scopes[scope].get('/inventory/feed-forecast')).toBe('navFeedForecast');
+    }
+  });
+
   it('keeps shared routes in one relative order across scopes', () => {
     const scopes = navByScope();
     const names = Object.keys(scopes).sort();

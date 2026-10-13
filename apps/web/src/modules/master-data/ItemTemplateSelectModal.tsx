@@ -3,8 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Search, Loader2, CheckCircle2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
 import { api } from "@/services/api-client";
 
 export interface ItemTemplateItem {
@@ -135,7 +134,7 @@ export function ItemTemplateSelectModal({
       }
     >
       <div className="space-y-4">
-        {error && <InlineAlert>{error}</InlineAlert>}
+        <Toast variant="danger" message={error} onClose={() => setError("")} />
 
         {/* Search Bar */}
         <div className="relative">

@@ -27,7 +27,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, resolve } from 'node:path';
 import { BatchService } from './batch.service';
-import { BatchMortalityReversalService } from './batch-mortality-reversal.service';
 import {
   CreateBatchDto,
   AddBatchTransactionDto,
@@ -43,7 +42,6 @@ import {
   ReopenStageDayDto,
   UpdateBatchShedDto,
   RecordMortalityDto,
-  ReverseMortalityDto,
 } from './dto/batch.dto';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -57,10 +55,7 @@ import { FarmScoped } from '../../../common/farm-scope';
 @FarmScoped()
 @Controller('batch')
 export class BatchController {
-  constructor(
-    private readonly batchService: BatchService,
-    private readonly mortalityReversal: BatchMortalityReversalService,
-  ) {}
+  constructor(private readonly batchService: BatchService) {}
 
   @Post()
   @RequirePermission('PRODUCTION', 'BATCH', 'create')
@@ -353,31 +348,6 @@ export class BatchController {
     return {
       success: true,
       message: 'Mortality recorded successfully.',
-      data: result,
-    };
-  }
-
-  @Post(':id/mortality/:transactionId/reverse')
-  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
-  @ApiOperation({
-    summary:
-      'Reverse a death recorded in error — the animal it named is live again; the batch head, stage counts, write-off journal and bio-asset ledger are put back. All or nothing.',
-  })
-  @ApiParam({ name: 'id', description: 'Batch UUID' })
-  @ApiParam({ name: 'transactionId', description: 'The MORTALITY transaction to reverse' })
-  async reverseMortality(
-    @Param('id') id: string,
-    @Param('transactionId') transactionId: string,
-    @Body() dto: ReverseMortalityDto,
-    @Req() req: any,
-  ) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const result = await this.mortalityReversal.reverse(id, transactionId, dto.reason, tenantId, req.user?.userId);
-    return {
-      success: true,
-      message: result.animal_code
-        ? `Death reversed: ${result.animal_code} is live again in ${result.batch_no}.`
-        : `Death reversed: ${result.quantity} head back in ${result.batch_no}.`,
       data: result,
     };
   }

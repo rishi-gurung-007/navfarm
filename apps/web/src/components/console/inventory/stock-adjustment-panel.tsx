@@ -18,7 +18,6 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -27,7 +26,8 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -552,7 +552,7 @@ export default function StockAdjustmentPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Adjustment Voucher Grid */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
@@ -665,7 +665,7 @@ export default function StockAdjustmentPanel() {
         }
       >
         <div className="flex flex-col gap-5">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           {/* SECTION 1: HEADER (Gray bar title matching screenshot) */}
           <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
@@ -1076,7 +1076,7 @@ export default function StockAdjustmentPanel() {
               <div>
                 <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Adjustment Qty</span>
                 <span className="font-semibold font-mono text-(--text-primary)">
-                  {activeTrackingLine.quantity || 0} {activeTrackingLine.uom}
+                  {formatQuantity(activeTrackingLine.quantity || 0, activeTrackingLine.uom)} {activeTrackingLine.uom}
                 </span>
               </div>
               <div>
@@ -1279,7 +1279,7 @@ export default function StockAdjustmentPanel() {
                         className="px-3 py-2 font-semibold font-mono"
                         style={Number(l.quantity) >= 0 ? { color: "var(--success)" } : { color: "var(--danger)" }}
                       >
-                        {Number(l.quantity) > 0 ? `+${l.quantity}` : l.quantity}
+                        {Number(l.quantity) > 0 ? `+${formatQuantity(l.quantity)}` : formatQuantity(l.quantity)}
                       </TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>
                         {l.uom}

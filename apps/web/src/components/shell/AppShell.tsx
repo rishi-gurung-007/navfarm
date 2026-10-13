@@ -34,11 +34,9 @@ export interface AppShellNavItem {
   icon: ElementType;
   children?: AppShellNavChild[];
   /**
-   * Shows `children` as a floating menu that opens on hover, instead of the
-   * inline expand/collapse accordion `children` gets by default. For an index
-   * too flat and too long (Master Data's ~14 primary masters) to read as one
-   * level of hierarchy the way Batches/Livestock's accordion does, and not
-   * worth a permanently-docked second column either.
+   * Every item with `children` opens them as a floating menu, the way Farm Master always
+   * has (13 Oct 2026: every sidebar menu, not just Master Data). `false` keeps the older
+   * inline expand/collapse accordion for an item that needs it.
    */
   flyout?: boolean;
   /**
@@ -123,6 +121,10 @@ function isHrefActive(
     for (const [key, val] of targetParams.entries()) {
       const currentVal = searchParams ? searchParams.get(key) : null;
       if (currentVal !== val) {
+        // Special case for default tab on feed-forecast: tab=forecast is active when tab param is omitted
+        if (targetPath === "/inventory/feed-forecast" && key === "tab" && val === "forecast" && !currentVal) {
+          continue;
+        }
         return false;
       }
     }
@@ -224,19 +226,42 @@ function PrimaryNavContent({
           // children could never take the active treatment, so the section you
           // were in looked unselected.
           //
-          // activePrefix is a plain containment test, deliberately outside
-          // isHrefActive's most-specific-wins logic: that logic would see the
-          // item's own deep-link href as a "deeper match" and rule the module
-          // item out on the very page it links to.
+          // activePrefix matches any page within the module. However, if another
+          // nav item in the sidebar targets a more specific path inside this
+          // prefix (for example, Feed Forecast at /inventory/feed-forecast vs
+          // Inventory at /inventory), the broader prefix must not stay active on
+          // that sibling's page — otherwise both items would highlight at once.
           const currentPath = pathname.split("?")[0];
-          const isPrefixActive = item.activePrefix
+          const hasDeeperSiblingMatch = Boolean(
+            item.activePrefix &&
+            navItems.some((other) => {
+              if (other === item) return false;
+              if (
+                other.activePrefix &&
+                other.activePrefix.length > item.activePrefix!.length &&
+                (currentPath === other.activePrefix || currentPath.startsWith(other.activePrefix + "/"))
+              ) {
+                return true;
+              }
+              const otherPath = other.href.split("?")[0];
+              if (
+                otherPath.length > item.activePrefix!.length &&
+                otherPath.startsWith(item.activePrefix + "/") &&
+                (currentPath === otherPath || currentPath.startsWith(otherPath + "/"))
+              ) {
+                return true;
+              }
+              return false;
+            })
+          );
+          const isPrefixActive = item.activePrefix && !hasDeeperSiblingMatch
             ? currentPath === item.activePrefix || currentPath.startsWith(item.activePrefix + "/")
             : false;
           const isDirectActive =
             isPrefixActive || isHrefActive(item.href, pathname, searchParams, allNavHrefs);
           const isExpanded = expandedItems[item.label] ?? isChildActive;
 
-          if (hasChildren && item.flyout) {
+          if (hasChildren && item.flyout !== false) {
             const isFlyoutOpen = flyoutOpen === item.label;
             return (
               <li key={item.label}>

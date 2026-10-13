@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, ChevronDown, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, Sparkles, ListChecks, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast, showToast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Popover, usePopoverSurface } from "@/components/ui/popover";
 import { confirmAction } from "@/components/ui/confirm-dialog";
+import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -45,346 +46,180 @@ const emptyLine = () => ({
   expiry_date: "",
 });
 
-function LotDropdownPanel({
-  itemId,
-  warehouseId,
-  hasSeries,
-  currentLot,
-  onSelectLot,
+/**
+ * Item Tracking Lines for one receipt line — the GRN's counterpart of the Transfer Order's dialog. A receipt
+ * brings new stock in, so its lots and serials are new ones: typed from the supplier's papers, or generated
+ * from the item's tracking series. (Choosing stock that is already there is a Transfer Order's job.)
+ */
+function TrackingLinesDialog({
+  open,
+  lineIdx,
+  line,
+  item,
+  onClose,
+  onApply,
   onGenerate,
-  isGenerating,
 }: {
-  itemId: string;
-  warehouseId?: string;
-  hasSeries: boolean;
-  currentLot: string;
-  onSelectLot: (lotNo: string, expiryDate?: string) => void;
-  onGenerate: () => void;
-  isGenerating?: boolean;
+  open: boolean;
+  lineIdx: number | null;
+  line: Row | null;
+  item: Row | undefined;
+  onClose: () => void;
+  onApply: (patch: { lot_no?: string; serial_no?: string; expiry_date?: string }) => void;
+  onGenerate: (type: "LOT" | "SERIAL", count: number) => Promise<string[]>;
 }) {
-  const { close } = usePopoverSurface();
-  const [existingLots, setExistingLots] = useState<
-    Array<{
-      lot_no: string;
-      remaining_quantity: number;
-      expiry_date: string | null;
-    }>
-  >([]);
-  const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState("");
+  const { t } = useLanguage();
+  const isLot = Boolean(item?.is_lot_tracked);
+  const hasSeries = Boolean(item?.tracking_series_id);
+  const targetQty = Math.max(0, Math.round(Number(line?.quantity || 0)));
+  const [lotNo, setLotNo] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [serials, setSerials] = useState<string[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
 
+  // A fresh draft each time the dialog opens on a line; edits stay here until Apply.
   useEffect(() => {
-    if (!itemId) return;
-    let active = true;
-    setLoading(true);
-    const params = new URLSearchParams();
-    params.set("item_id", itemId);
-    if (warehouseId) params.set("warehouse_id", warehouseId);
+    if (!open || !line) return;
+    setLotNo(line.lot_no || "");
+    setExpiry(line.expiry_date || "");
+    setSerials(String(line.serial_no || "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean));
+    setError("");
+  }, [open, lineIdx]);
 
-    api
-      .get(`/inventory-ledger/available-lots?${params.toString()}`)
-      .then((res) => {
-        if (!active) return;
-        const list = unwrap<any[]>(res) || [];
-        setExistingLots(list);
-      })
-      .catch(() => {
-        if (active) setExistingLots([]);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+  const generate = async () => {
+    setGenerating(true);
+    setError("");
+    try {
+      const numbers = await onGenerate(isLot ? "LOT" : "SERIAL", isLot ? 1 : Math.max(1, targetQty));
+      if (isLot) setLotNo(numbers[0] || "");
+      else setSerials(numbers);
+    } catch (err: any) {
+      setError(err?.message || t("grpTrkGenerateFailed"));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
-    return () => {
-      active = false;
-    };
-  }, [itemId, warehouseId]);
-
-  const filteredLots = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return existingLots;
-    return existingLots.filter(
-      (l) =>
-        (l.lot_no || "").toLowerCase().includes(q) ||
-        (l.expiry_date || "").includes(q)
-    );
-  }, [existingLots, query]);
-
-  return (
-    <div
-      className="w-80 rounded-lg border shadow-2xl p-3"
-      style={{
-        backgroundColor: "var(--surface-raised)",
-        borderColor: "var(--border)",
-      }}
-    >
-      <div
-        className="flex items-center justify-between pb-2 mb-2 border-b"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-300">
-            LOT
-          </span>
-          <span className="text-xs font-semibold" style={S.primary}>
-            Select or Assign Lot
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => close()}
-          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
-          style={S.sub}
-        >
-          ✕
-        </button>
-      </div>
-
-      {hasSeries && (
-        <button
-          type="button"
-          disabled={isGenerating}
-          onClick={onGenerate}
-          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-          style={{ backgroundColor: "rgba(16, 185, 129, 0.05)" }}
-        >
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
-            Generate Next Lot No.
-          </span>
-          <span className="text-[10px] font-mono opacity-80">
-            {isGenerating ? "…" : "Preview (Series)"}
-          </span>
-        </button>
-      )}
-
-      <div>
-        <div className="flex items-center justify-between text-[11px] font-medium mb-1" style={S.sub}>
-          <span>Existing Lots in Stock ({existingLots.length})</span>
-          {existingLots.length > 2 && (
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search lots…"
-              className="text-[10px] px-1.5 py-0.5 rounded border w-24 font-mono"
-              style={S.input}
-            />
-          )}
-        </div>
-
-        <div className="max-h-36 overflow-y-auto border rounded text-xs" style={{ borderColor: "var(--border-subtle)" }}>
-          {loading ? (
-            <div className="p-3 text-center text-xs" style={S.muted}>
-              Loading lots…
-            </div>
-          ) : filteredLots.length === 0 ? (
-            <div className="p-3 text-center text-[11px]" style={S.muted}>
-              {existingLots.length === 0
-                ? "No existing lots found. Enter or generate a new lot."
-                : "No matching lots found."}
-            </div>
-          ) : (
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b text-[10px] uppercase font-semibold" style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}>
-                  <th className="px-2 py-1">Lot No.</th>
-                  <th className="px-2 py-1 text-right">In Stock</th>
-                  <th className="px-2 py-1 text-right">Expiry</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLots.map((lot) => {
-                  const isSelected = lot.lot_no === currentLot;
-                  return (
-                    <tr
-                      key={lot.lot_no}
-                      onClick={() => {
-                        onSelectLot(lot.lot_no, lot.expiry_date || undefined);
-                        close();
-                      }}
-                      className={`cursor-pointer transition-colors border-b ${
-                        isSelected ? "bg-emerald-500/20 text-emerald-300" : "hover:bg-white/5"
-                      }`}
-                      style={{ borderColor: "var(--border-subtle)" }}
-                    >
-                      <td className="px-2 py-1.5 font-mono text-xs font-medium">
-                        {lot.lot_no}
-                      </td>
-                      <td className="px-2 py-1.5 text-right font-mono text-[11px]">
-                        {lot.remaining_quantity}
-                      </td>
-                      <td className="px-2 py-1.5 text-right text-[11px]" style={S.muted}>
-                        {lot.expiry_date ? String(lot.expiry_date).slice(0, 10) : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
-        {currentLot ? (
-          <button
-            type="button"
-            onClick={() => {
-              onSelectLot("");
-              close();
-            }}
-            className="text-[11px] text-zinc-400 hover:text-zinc-200"
-          >
-            Clear Lot
-          </button>
-        ) : <div />}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => close()}
-          className="h-6 text-[11px] px-2.5"
-        >
-          Done
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function SerialDropdownPanel({
-  targetQty,
-  serialValue,
-  hasSeries,
-  isGenerating,
-  onGenerate,
-  onChange,
-}: {
-  targetQty: number;
-  serialValue: string;
-  hasSeries: boolean;
-  isGenerating?: boolean;
-  onGenerate?: () => void;
-  onChange: (serials: string) => void;
-}) {
-  const { close } = usePopoverSurface();
-  const serials = useMemo(() => {
-    return serialValue
-      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-      : [];
-  }, [serialValue]);
-
-  const [items, setItems] = useState<string[]>(() => {
-    const arr = [...serials];
-    while (arr.length < targetQty) arr.push("");
-    return arr;
-  });
-
-  useEffect(() => {
-    const parsed = serialValue
-      ? serialValue.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-      : [];
-    const arr = [...parsed];
-    while (arr.length < targetQty) arr.push("");
-    setItems(arr);
-  }, [serialValue, targetQty]);
-
-  const updateItem = (index: number, val: string) => {
-    const next = [...items];
-    next[index] = val;
-    setItems(next);
-    onChange(next.map((s) => s.trim()).filter(Boolean).join(", "));
+  const filledSerials = serials.map((s) => s.trim()).filter(Boolean);
+  const apply = () => {
+    onApply(isLot
+      ? { lot_no: lotNo.trim(), expiry_date: expiry }
+      : { serial_no: filledSerials.join(", "), expiry_date: expiry });
   };
 
   return (
-    <div
-      className="w-80 rounded-lg border shadow-2xl p-3"
-      style={{
-        backgroundColor: "var(--surface-raised)",
-        borderColor: "var(--border)",
-      }}
-    >
-      <div
-        className="flex items-center justify-between pb-2 mb-2 border-b"
-        style={{ borderColor: "var(--border)" }}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-300">
-            SERIAL NS
-          </span>
-          <span className="text-xs font-semibold" style={S.primary}>
-            Serials ({serials.length}/{targetQty})
-          </span>
+    <Dialog
+      open={open && !!line}
+      onClose={onClose}
+      title={t("grpTrkTitle", { code: item?.item_code || "" })}
+      description={t("grpTrkDescription")}
+      maxWidth="md"
+      footer={
+        <div className="flex w-full items-center justify-between gap-2">
+          <Button size="sm" variant="outline" onClick={onClose} className="text-xs">{t("cancel")}</Button>
+          <Button size="sm" onClick={apply} className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold">
+            <CheckCircle2 className="h-3.5 w-3.5" /> {t("grpTrkApply")}
+          </Button>
         </div>
-        <button
-          type="button"
-          onClick={() => close()}
-          className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
-          style={S.sub}
-        >
-          ✕
-        </button>
-      </div>
-
-      {hasSeries && (
-        <button
-          type="button"
-          disabled={isGenerating}
-          onClick={onGenerate}
-          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded border text-xs font-medium transition-all mb-2.5 hover:bg-blue-500/10 border-blue-500/30 text-blue-400"
-          style={{ backgroundColor: "rgba(59, 130, 246, 0.05)" }}
-        >
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-blue-400" />
-            {serials.length >= targetQty ? "Regenerate All Serials" : `Generate All ${targetQty} Serials`}
-          </span>
-          <span className="text-[10px] font-mono opacity-80">
-            {isGenerating ? "…" : "Preview (Series)"}
-          </span>
-        </button>
-      )}
-
-      <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
-        {items.map((s, sIdx) => (
-          <div key={sIdx} className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-black/30 text-zinc-400 w-7 text-center shrink-0 border border-white/5">
-              #{sIdx + 1}
-            </span>
-            <input
-              type="text"
-              value={s}
-              placeholder={`Serial #${sIdx + 1}`}
-              onChange={(e) => updateItem(sIdx, e.target.value)}
-              className="w-full text-xs h-7 px-2 font-mono rounded border"
-              style={S.input}
-            />
+      }
+    >
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
+      {line && (
+        <div className="flex flex-col gap-4 text-xs">
+          <div className="grid grid-cols-2 gap-3 rounded-[var(--radius-md)] border p-3 sm:grid-cols-3" style={S.raised}>
+            <div>
+              <span className="block text-[10px] font-semibold uppercase" style={S.muted}>{t("grpTrkItem")}</span>
+              <span className="font-mono font-semibold" style={S.primary}>{item?.item_code || "—"}</span>
+              <p className="truncate text-[11px]" style={S.sub}>{item?.item_name || ""}</p>
+            </div>
+            <div>
+              <span className="block text-[10px] font-semibold uppercase" style={S.muted}>{t("grpColQty")}</span>
+              <span className="font-mono font-semibold" style={S.primary}>{formatQuantity(line.quantity || 0, line.uom)} {line.uom}</span>
+            </div>
+            <div>
+              <span className="block text-[10px] font-semibold uppercase" style={S.muted}>{t("grpTrkMode")}</span>
+              <span className="font-semibold" style={S.accent}>{isLot ? t("grpTrkLotTracked") : t("grpTrkSerialTracked")}</span>
+            </div>
           </div>
-        ))}
-      </div>
 
-      <div className="mt-2.5 pt-2 border-t flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
-        {serials.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => {
-              setItems(Array.from({ length: targetQty }, () => ""));
-              onChange("");
-            }}
-            className="text-[11px] text-zinc-400 hover:text-zinc-200"
-          >
-            Clear Serials
-          </button>
-        ) : <div />}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => close()}
-          className="h-6 text-[11px] px-2.5"
-        >
-          Done
-        </Button>
-      </div>
-    </div>
+          {isLot ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub} htmlFor="grn-trk-lot">{t("grpTrkLotNo")}</label>
+                <input id="grn-trk-lot" value={lotNo} onChange={(e) => setLotNo(e.target.value)} placeholder={t("grpTrkLotPlaceholder")} className={`${inputCls} font-mono`} style={S.input} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub} htmlFor="grn-trk-expiry">{t("grpColExpiry")}</label>
+                <input id="grn-trk-expiry" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} style={S.input} />
+              </div>
+              <div className="sm:col-span-2">
+                <Button size="sm" variant="outline" onClick={generate} disabled={!hasSeries || generating} className="flex items-center gap-1.5 text-xs" title={hasSeries ? undefined : t("grpTrkNoSeries")}>
+                  <Sparkles className="h-3.5 w-3.5" /> {generating ? t("grpTrkGenerating") : t("grpTrkGenerateLot")}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold" style={S.primary}>
+                  {t("grpTrkSerialCount", { n: filledSerials.length, total: targetQty })}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setSerials((list) => [...list, ""])} className="flex items-center gap-1 text-xs">
+                    <Plus className="h-3.5 w-3.5" /> {t("grpTrkAddSerial")}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={generate} disabled={!hasSeries || generating || targetQty < 1} className="flex items-center gap-1.5 text-xs" title={hasSeries ? undefined : t("grpTrkNoSeries")}>
+                    <Sparkles className="h-3.5 w-3.5" /> {generating ? t("grpTrkGenerating") : t("grpTrkGenerateSerials", { n: Math.max(1, targetQty) })}
+                  </Button>
+                </div>
+              </div>
+              {targetQty > 0 && filledSerials.length !== targetQty && (
+                <p className="text-[11px]" style={{ color: "var(--warning)" }}>{t("grpTrkSerialMismatch", { n: filledSerials.length, total: targetQty })}</p>
+              )}
+              <div className="max-h-64 overflow-y-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+                {serials.length === 0 ? (
+                  <p className="p-3 text-center text-[11px]" style={S.muted}>{t("grpTrkNoSerials")}</p>
+                ) : (
+                  serials.map((serial, i) => (
+                    <div key={i} className="flex items-center gap-2 border-b px-2 py-1.5 last:border-b-0" style={{ borderColor: "var(--row-border)" }}>
+                      <span className="w-6 text-right font-mono text-[10px]" style={S.muted}>{i + 1}</span>
+                      <input
+                        value={serial}
+                        onChange={(e) => setSerials((list) => list.map((s, j) => (j === i ? e.target.value : s)))}
+                        aria-label={t("grpTrkSerialNo", { n: i + 1 })}
+                        className={`${inputCls} h-8 flex-1 font-mono text-xs`}
+                        style={S.input}
+                      />
+                      <button type="button" onClick={() => setSerials((list) => list.filter((_, j) => j !== i))} className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)]" style={{ color: "var(--danger)" }} aria-label={t("grpTrkRemoveSerial")}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5 sm:w-1/2">
+                <label className="nf-text-label" style={S.sub} htmlFor="grn-trk-expiry-s">{t("grpColExpiry")}</label>
+                <input id="grn-trk-expiry-s" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} style={S.input} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+type GrnSortKey = "receipt_no" | "posting_date" | "warehouse" | "external_reference_no" | "status";
+
+/** A column header that sorts the list, showing which way it is sorted. */
+function SortButton({ label, active, dir, onClick, alignEnd = false }: { label: string; active: boolean; dir: "asc" | "desc"; onClick: () => void; alignEnd?: boolean }) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <button type="button" onClick={onClick} className={`inline-flex items-center gap-1 uppercase ${alignEnd ? "ml-auto" : ""}`} style={active ? { color: "var(--text-primary)" } : undefined}>
+      {label}
+      <Icon className="h-3 w-3" style={{ opacity: active ? 1 : 0.45 }} />
+    </button>
   );
 }
 
@@ -413,9 +248,10 @@ export default function GoodsReceiptPanel() {
   // title/button copy. A POSTED receipt never sets this: its row offers View
   // only, and the Edit action itself never appears for it (see the table).
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [generatingIdx, setGeneratingIdx] = useState<number | null>(null);
-  const [openSerialIdx, setOpenSerialIdx] = useState<number | null>(null);
-  const [openLotIdx, setOpenLotIdx] = useState<number | null>(null);
+  // The line the Item Tracking Lines dialog is open on, and the line last worked on (the header button's target).
+  const [trackingIdx, setTrackingIdx] = useState<number | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const { formatMoney } = useCompanyCurrency();
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
@@ -445,8 +281,20 @@ export default function GoodsReceiptPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, statusFilter]);
 
-  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  // Newest receipt first unless a column header says otherwise; a second click on the same header reverses it.
+  const [sort, setSort] = useState<{ key: GrnSortKey; dir: "asc" | "desc" }>({ key: "receipt_no", dir: "desc" });
+  const toggleSort = (key: GrnSortKey) =>
+    setSort((cur) => (cur.key === key ? { key, dir: cur.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "receipt_no" || key === "posting_date" ? "desc" : "asc" }));
+  const sortedRows = useMemo(() => {
+    const value = (r: Row) =>
+      sort.key === "warehouse"
+        ? warehouses.find((w) => w.warehouse_id === r.warehouse_id)?.warehouse_name || ""
+        : String(r[sort.key] ?? "");
+    const ordered = [...rows].sort((a, b) => value(a).localeCompare(value(b), undefined, { numeric: true }) || String(a.receipt_no).localeCompare(String(b.receipt_no)));
+    return sort.dir === "desc" ? ordered.reverse() : ordered;
+  }, [rows, sort, warehouses]);
+  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize, sort]);
+  const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -485,9 +333,10 @@ export default function GoodsReceiptPanel() {
       });
       const fullLines = (full.lines || []).map((l: Row) => ({
         item_id: l.item_id || "",
-        quantity: l.quantity ?? "",
+        // MySQL returns DECIMAL columns as text at full scale ("12.5000", "78.000000"); the boxes show the number.
+        quantity: l.quantity != null ? String(Number(l.quantity)) : "",
         uom: l.uom || "",
-        rate: l.rate ?? "",
+        rate: l.rate != null ? String(Number(l.rate)) : "",
         lot_no: l.lot_no || "",
         serial_no: l.serial_no || "",
         expiry_date: l.expiry_date || "",
@@ -518,34 +367,24 @@ export default function GoodsReceiptPanel() {
     );
   };
 
-  const handleGenerateTracking = async (idx: number, type: 'LOT' | 'SERIAL') => {
-    const line = lines[idx];
-    const it = items.find((i) => i.item_id === line.item_id);
-    if (!it?.tracking_series_id) return;
-    setGeneratingIdx(idx);
-    setFormError("");
-    try {
-      const count = type === 'SERIAL' ? Math.max(1, parseInt(line.quantity || '1', 10) || 1) : 1;
-      const res = await api.get(`/no-series/${it.tracking_series_id}/preview-numbers?count=${count}`);
-      const data = unwrap<any>(res);
-      if (type === 'LOT') {
-        const nextNum = data.next_number || (data.numbers && data.numbers[0]);
-        if (nextNum) setLineField(idx, 'lot_no', nextNum);
-      } else {
-        const nums = data.numbers || [data.next_number];
-        if (nums && nums.length > 0) {
-          setLineField(idx, 'serial_no', nums.join(', '));
-          if (nums.length > 1) {
-            setOpenSerialIdx(idx);
-          }
-        }
-      }
-    } catch (err: any) {
-      setFormError(err?.message || 'Failed to preview number series');
-    } finally {
-      setGeneratingIdx(null);
-    }
+  // The next numbers from the item's tracking series, for the Item Tracking Lines dialog to place. A preview:
+  // the series moves on when the receipt is posted.
+  const previewTracking = async (idx: number, count: number): Promise<string[]> => {
+    const it = items.find((i) => i.item_id === lines[idx]?.item_id);
+    if (!it?.tracking_series_id) return [];
+    const data = unwrap<any>(await api.get(`/no-series/${it.tracking_series_id}/preview-numbers?count=${Math.max(1, count)}`));
+    return data?.numbers?.length ? data.numbers : data?.next_number ? [data.next_number] : [];
   };
+
+  // The money a line is worth: quantity at its unit cost.
+  const lineTotal = (line: Row) => {
+    const qty = Number(line.quantity);
+    const cost = Number(line.rate);
+    return Number.isFinite(qty) && Number.isFinite(cost) && line.rate !== "" ? qty * cost : null;
+  };
+  const receiptTotal = lines.reduce((sum, l) => sum + (lineTotal(l) ?? 0), 0);
+  const activeItem = items.find((i) => i.item_id === lines[activeIdx]?.item_id);
+  const activeLineTracked = Boolean(activeItem?.is_lot_tracked || activeItem?.is_serial_tracked);
 
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (idx: number) => setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
@@ -576,6 +415,7 @@ export default function GoodsReceiptPanel() {
       // an existing receipt's company cannot change) and the global pipe
       // rejects any undeclared property, so the PUT payload must omit it.
       let receiptId = editingId;
+      let receiptNo: string = rows.find((r) => r.receipt_id === editingId)?.receipt_no || "";
       if (editingId) {
         await api.put(`/goods-receipt/${editingId}`, {
           warehouse_id: header.warehouse_id,
@@ -598,6 +438,7 @@ export default function GoodsReceiptPanel() {
           }),
         );
         receiptId = created?.receipt_id ?? null;
+        receiptNo = created?.receipt_no || "";
       }
       if (postNow) {
         if (!receiptId) throw new Error(t("grpFailedToPostReceipt"));
@@ -609,10 +450,14 @@ export default function GoodsReceiptPanel() {
           setModalOpen(false);
           setEditingId(null);
           load();
-          setError(`${t("grpSavedAsDraftPostFailed")} ${postErr?.message || ""}`.trim());
+          setError(`${receiptNo ? `${receiptNo}: ` : ""}${t("grpSavedAsDraftPostFailed")} ${postErr?.message || ""}`.trim());
           return;
         }
       }
+      // Say which receipt it was, and show it: the list goes back to page one, newest first.
+      showToast.success(t(postNow ? "grpToastPosted" : editingId ? "grpToastDraftUpdated" : "grpToastDraftSaved", { no: receiptNo }));
+      setSort({ key: "receipt_no", dir: "desc" });
+      setPage(1);
       setModalOpen(false);
       setEditingId(null);
       load();
@@ -637,7 +482,9 @@ export default function GoodsReceiptPanel() {
     setPosting(true);
     try {
       const res = await api.post(`/goods-receipt/${viewing.receipt_id}/post`, {});
-      setViewing(unwrap<Row>(res));
+      const posted = unwrap<Row>(res);
+      setViewing(posted);
+      showToast.success(t("grpToastPosted", { no: posted?.receipt_no || viewing.receipt_no || "" }));
       load();
     } catch (err: any) {
       setError(err?.message || t("grpFailedToPostReceipt"));
@@ -676,20 +523,26 @@ export default function GoodsReceiptPanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
-                <TableHead className="whitespace-nowrap">{t("grpColReceiptNo")}</TableHead>
-                <TableHead className="whitespace-nowrap">{t("grpColPostingDate")}</TableHead>
-                <TableHead className="whitespace-nowrap">{t("grpColWarehouse")}</TableHead>
-                <TableHead className="whitespace-nowrap">{t("grpColReference")}</TableHead>
-                <TableHead className="text-right">{t("grpColStatus")}</TableHead>
+                {([
+                  ["receipt_no", t("grpColReceiptNo")],
+                  ["posting_date", t("grpColPostingDate")],
+                  ["warehouse", t("grpColWarehouse")],
+                  ["external_reference_no", t("grpColReference")],
+                ] as Array<[GrnSortKey, string]>).map(([key, label]) => (
+                  <TableHead key={key} className="whitespace-nowrap" aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortButton label={label} active={sort.key === key} dir={sort.dir} onClick={() => toggleSort(key)} />
+                  </TableHead>
+                ))}
+                <TableHead className="text-right" aria-sort={sort.key === "status" ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+                  <SortButton label={t("grpColStatus")} active={sort.key === "status"} dir={sort.dir} onClick={() => toggleSort("status")} alignEnd />
+                </TableHead>
                 <TableHead className="text-right">{t("grpColActions")}</TableHead>
               </tr>
             </TableHeader>
@@ -752,9 +605,7 @@ export default function GoodsReceiptPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && (
-            <InlineAlert>{formError}</InlineAlert>
-          )}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -804,9 +655,23 @@ export default function GoodsReceiptPanel() {
 
           <div className="flex items-center justify-between pt-2">
             <p className="text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("grpLines")}</p>
-            <button onClick={addLine} type="button" className="flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold" style={S.surface}>
-              <Plus className="h-3 w-3" /> {t("grpAddLine")}
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Opens on the line last worked on, as the Transfer Order's button does. */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setTrackingIdx(activeIdx)}
+                disabled={!activeLineTracked}
+                title={t("grpTrkButtonHint")}
+                className="flex items-center gap-1.5 text-[11px] font-semibold"
+              >
+                <ListChecks className="h-3.5 w-3.5" /> {t("grpItemTrackingLines")}
+              </Button>
+              <button onClick={addLine} type="button" className="flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold" style={S.surface}>
+                <Plus className="h-3 w-3" /> {t("grpAddLine")}
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
@@ -817,8 +682,9 @@ export default function GoodsReceiptPanel() {
                   <TableHead className="h-auto px-3 py-2 min-w-[220px]">Item Description</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-28 min-w-[105px]">{t("grpColQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColUom")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 w-24 min-w-[85px]">{t("grpColRate")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2 min-w-[280px]">Tracking (Lot / Serial)</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-28 min-w-[100px]">{t("grpColRate")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 w-32 min-w-[110px] text-right">{t("grpColTotalCost")}</TableHead>
+                  <TableHead className="h-auto px-3 py-2 min-w-[220px]">{t("grpColTracking")}</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-36 min-w-[140px]">{t("grpColExpiry")}</TableHead>
                   <TableHead className="h-auto px-3 py-2 w-10 min-w-[40px] text-center"></TableHead>
                 </tr>
@@ -828,12 +694,10 @@ export default function GoodsReceiptPanel() {
                   const it = items.find((i) => i.item_id === line.item_id);
                   const isLot = Boolean(it?.is_lot_tracked);
                   const isSerial = Boolean(it?.is_serial_tracked);
-                  const hasSeries = Boolean(it?.tracking_series_id);
-                  const isGenerating = generatingIdx === idx;
                   const lineInputCls = "w-full h-9 min-h-[36px] max-h-[36px] px-2.5 py-1 text-xs rounded-[var(--radius-sm)] border outline-none transition-colors box-border";
 
                   return (
-                    <TableRow key={idx}>
+                    <TableRow key={idx} onFocusCapture={() => setActiveIdx(idx)} onClick={() => setActiveIdx(idx)}>
                       {/* Item Code (Disabled, Auto-filled from selected Item Description) */}
                       <TableCell className="px-2 py-1.5 w-32 min-w-[120px]">
                         <input
@@ -913,162 +777,26 @@ export default function GoodsReceiptPanel() {
                           style={S.input}
                         />
                       </TableCell>
-                      <TableCell className="px-2 py-1.5 min-w-[280px]">
-                        {isLot ? (
-                          <div className="flex items-center gap-1.5 w-full">
-                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
-                              LOT
-                            </span>
-                            <div className="relative flex-1 flex items-center min-w-0">
-                              <input
-                                value={line.lot_no}
-                                onChange={(e) => setLineField(idx, "lot_no", e.target.value)}
-                                placeholder={hasSeries ? "Auto / Enter or pick Lot…" : "Enter or pick Lot…"}
-                                className={`${lineInputCls} font-mono text-xs pr-7`}
-                                style={S.input}
-                              />
-                              <Popover
-                                open={openLotIdx === idx}
-                                onOpenChange={(open) => setOpenLotIdx(open ? idx : null)}
-                                floating
-                                align="end"
-                                side="bottom"
-                                haspopup="dialog"
-                                className="absolute right-1 top-1/2 -translate-y-1/2"
-                                panelClassName="nf-tracking-popover-panel"
-                                trigger={(triggerProps) => (
-                                  <button
-                                    {...triggerProps}
-                                    className="text-zinc-400 hover:text-zinc-200 p-1 rounded flex items-center justify-center"
-                                    title="Pick from existing lots or manage lot"
-                                  >
-                                    <ChevronDown
-                                      className={`h-3.5 w-3.5 transition-transform ${openLotIdx === idx ? "rotate-180" : ""}`}
-                                    />
-                                  </button>
-                                )}
-                              >
-                                <LotDropdownPanel
-                                  itemId={line.item_id}
-                                  warehouseId={header.warehouse_id}
-                                  hasSeries={Boolean(hasSeries)}
-                                  currentLot={line.lot_no}
-                                  onSelectLot={(lotNo, expiryDate) => {
-                                    setLineField(idx, "lot_no", lotNo);
-                                    if (expiryDate) {
-                                      setLineField(idx, "expiry_date", expiryDate.slice(0, 10));
-                                    }
-                                  }}
-                                  onGenerate={() => handleGenerateTracking(idx, 'LOT')}
-                                  isGenerating={isGenerating}
-                                />
-                              </Popover>
+                      <TableCell className="px-2 py-1.5 w-32 text-right font-mono" style={S.primary}>
+                        {lineTotal(line) === null ? <span style={S.muted}>—</span> : formatMoney(lineTotal(line))}
+                      </TableCell>
+                      <TableCell className="px-2 py-1.5 min-w-[220px]">
+                        {isLot || isSerial ? (() => {
+                          const serialCount = String(line.serial_no || "").split(/[\n,]+/).map((x: string) => x.trim()).filter(Boolean).length;
+                          const assigned = isLot ? (line.lot_no || "") : serialCount > 0 ? t("grpTrkSerialSummary", { n: serialCount, total: Math.round(Number(line.quantity || 0)) }) : "";
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="shrink-0 rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] font-bold uppercase" style={{ color: "var(--success)", borderColor: "var(--success)" }}>
+                                {isLot ? t("grpTrkYesLot") : t("grpTrkYesSerial")}
+                              </span>
+                              {/* What Item Tracking Lines assigned, once it has; the button above the lines opens it. */}
+                              {assigned && <span className="min-w-0 flex-1 truncate font-mono text-[11px]" style={S.primary}>{assigned}</span>}
                             </div>
-                            {hasSeries && (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                disabled={isGenerating}
-                                onClick={() => handleGenerateTracking(idx, 'LOT')}
-                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
-                                title="Preview next Lot No. from series"
-                              >
-                                {isGenerating ? "…" : "Gen"}
-                              </Button>
-                            )}
-                          </div>
-                        ) : isSerial ? (
-                          <div className="flex items-center gap-1.5 w-full">
-                            <span className="h-9 px-2 text-[10px] font-bold tracking-wider uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30 shrink-0 flex items-center justify-center rounded-[var(--radius-sm)]">
-                              SERIAL NS
-                            </span>
-                            {Math.round(Number(line.quantity || 1)) > 1 ? (
-                              <div className="flex-1 min-w-0">
-                                <Popover
-                                  open={openSerialIdx === idx}
-                                  onOpenChange={(open) => setOpenSerialIdx(open ? idx : null)}
-                                  floating
-                                  align="start"
-                                  side="bottom"
-                                  haspopup="dialog"
-                                  className="w-full !block"
-                                  panelClassName="nf-tracking-popover-panel"
-                                  trigger={(triggerProps) => {
-                                    const serials = line.serial_no
-                                      ? line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
-                                      : [];
-                                    const targetQty = Math.round(Number(line.quantity || 1));
-                                    return (
-                                      <button
-                                        {...triggerProps}
-                                        className={`flex items-center justify-between ${lineInputCls}`}
-                                        style={{
-                                          backgroundColor: "var(--input-bg)",
-                                          borderColor: openSerialIdx === idx ? "var(--accent)" : "var(--input-border)",
-                                          color: line.serial_no ? "var(--text-primary)" : "var(--text-muted)",
-                                        }}
-                                      >
-                                        <span className="truncate font-mono text-xs">
-                                          {serials.length === 0
-                                            ? "Click Gen / Serials…"
-                                            : `${serials.length} Serials: ${serials[0]}${serials.length > 1 ? ", …" : ""}`}
-                                        </span>
-                                        <div className="flex items-center gap-1 shrink-0 ml-1.5">
-                                          {serials.length > 0 && (
-                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-500/20 text-blue-300">
-                                              {serials.length}/{targetQty}
-                                            </span>
-                                          )}
-                                          <ChevronDown
-                                            className={`h-3.5 w-3.5 transition-transform ${openSerialIdx === idx ? "rotate-180" : ""}`}
-                                          />
-                                        </div>
-                                      </button>
-                                    );
-                                  }}
-                                >
-                                  <SerialDropdownPanel
-                                    targetQty={Math.max(1, Math.round(Number(line.quantity || 1)))}
-                                    serialValue={line.serial_no}
-                                    hasSeries={Boolean(hasSeries)}
-                                    isGenerating={isGenerating}
-                                    onGenerate={() => handleGenerateTracking(idx, 'SERIAL')}
-                                    onChange={(val) => setLineField(idx, "serial_no", val)}
-                                  />
-                                </Popover>
-                              </div>
-                            ) : (
-                              <div className="flex-1 min-w-0">
-                                <input
-                                  value={line.serial_no}
-                                  onChange={(e) => setLineField(idx, "serial_no", e.target.value)}
-                                  placeholder={hasSeries ? "Auto / Enter Serial No." : "Serial No."}
-                                  className={`${lineInputCls} font-mono text-xs`}
-                                  style={S.input}
-                                />
-                              </div>
-                            )}
-                            {hasSeries && (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                disabled={isGenerating}
-                                onClick={() => handleGenerateTracking(idx, 'SERIAL')}
-                                className="px-2.5 text-[11px] h-9 min-h-[36px] font-mono shrink-0 nf-btn-secondary"
-                                title="Preview / Generate Serial No.(s) for quantity"
-                              >
-                                {isGenerating ? "…" : "Gen"}
-                              </Button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="h-9 flex items-center pl-2">
-                            <span className="text-xs italic" style={S.muted}>
-                              — Not Tracked —
-                            </span>
-                          </div>
+                          );
+                        })() : (
+                          <span className="rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] font-bold uppercase" style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}>
+                            {t("grpTrkNo")}
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-36">
@@ -1097,8 +825,26 @@ export default function GoodsReceiptPanel() {
               </TableBody>
             </table>
           </div>
+          <div className="flex items-center justify-end gap-3 px-1 text-xs">
+            <span style={S.sub}>{t("grpReceiptTotal")}</span>
+            <span className="font-mono text-sm font-semibold" style={S.primary}>{formatMoney(receiptTotal)}</span>
+          </div>
         </div>
       </Dialog>
+
+      <TrackingLinesDialog
+        open={trackingIdx !== null}
+        lineIdx={trackingIdx}
+        line={trackingIdx !== null ? lines[trackingIdx] ?? null : null}
+        item={trackingIdx !== null ? items.find((i) => i.item_id === lines[trackingIdx]?.item_id) : undefined}
+        onClose={() => setTrackingIdx(null)}
+        onGenerate={(_type, count) => previewTracking(trackingIdx ?? 0, count)}
+        onApply={(patch) => {
+          const idx = trackingIdx;
+          if (idx !== null) setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+          setTrackingIdx(null);
+        }}
+      />
 
       {/* View / Post modal */}
       <Dialog
@@ -1131,17 +877,21 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2 min-w-[240px]">{t("grpColItem")}</TableHead>
                     <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px]">{t("grpColQty")}</TableHead>
                     <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColUom")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColRate")}</TableHead>
-                    <TableHead className="h-auto px-3 py-2 min-w-[220px]">Tracking (Lot / Serial)</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px] text-right">{t("grpColRate")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-32 min-w-[100px] text-right">{t("grpColTotalCost")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[220px]">{t("grpColTracking")}</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
                   {(viewing.lines || []).map((l: Row) => (
                     <TableRow key={l.line_id}>
                       <TableCell className="px-3 py-2" style={S.primary}>{itemLabel(l.item_id)}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
+                      <TableCell className="px-3 py-2 font-mono" style={S.primary}>{formatQuantity(l.quantity, l.uom)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{l.rate ?? "—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>{l.rate != null ? formatMoney(l.rate) : "—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>
+                        {l.amount != null ? formatMoney(l.amount) : l.rate != null ? formatMoney(Number(l.rate) * Number(l.quantity || 0)) : "—"}
+                      </TableCell>
                       <TableCell className="px-3 py-2 font-mono text-xs" style={S.primary}>
                         {l.lot_no ? (
                           <span className="inline-flex items-center gap-1 text-emerald-400">

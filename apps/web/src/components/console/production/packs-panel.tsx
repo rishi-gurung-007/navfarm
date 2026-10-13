@@ -5,13 +5,14 @@ import { Search, Loader2, Inbox, Ban } from "lucide-react";
 import QRCode from "react-qr-code";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/hooks/useLanguage";
 import { Badge } from "@/components/ui/badge";
 import { confirmAction } from "@/components/ui/confirm-dialog";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -114,9 +115,7 @@ export default function PacksPanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {loading ? (
         <div className="rounded-[var(--radius-md)] border py-10 text-center text-xs" style={S.surface}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("pkLoading")}</div>
@@ -142,7 +141,7 @@ export default function PacksPanel() {
               <div className="w-full text-[11px]" style={S.sub}>
                 <p style={S.primary}>{itemLabel(row.item_id)}</p>
                 <p>{t("pkBatchLabel", { batch: batchLabel(row.batch_id) })}</p>
-                <p>{row.net_weight} {row.pack_uom}{row.gross_weight ? ` ${t("pkGrossWeightSuffix", { gross: row.gross_weight })}` : ""}</p>
+                <p>{formatQuantity(row.net_weight)} {row.pack_uom}{row.gross_weight ? ` ${t("pkGrossWeightSuffix", { gross: formatQuantity(row.gross_weight) })}` : ""}</p>
                 <p>{row.production_date}{row.expiry_date ? ` → ${row.expiry_date}` : ""}</p>
               </div>
             </button>
@@ -183,7 +182,7 @@ export default function PacksPanel() {
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkBatch")}</p><p style={S.primary}>{batchLabel(viewing.batch_id)}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkLotNo")}</p><p style={S.primary}>{viewing.lot_no || "—"}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkGradeLabel")}</p><p style={S.primary}>{viewing.grade || "—"}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{viewing.net_weight} / {viewing.gross_weight ?? "—"} {viewing.pack_uom}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{formatQuantity(viewing.net_weight)} / {viewing.gross_weight != null ? formatQuantity(viewing.gross_weight) : "—"} {viewing.pack_uom}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkProductionExpiry")}</p><p style={S.primary}>{viewing.production_date} {viewing.expiry_date ? `→ ${viewing.expiry_date}` : ""}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkQcLink")}</p><p style={S.primary}>{viewing.qc_id ? t("pkLinkedResult", { result: viewing.qr_data?.qc?.overall_result || "—" }) : t("pkNotLinked")}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkStatus")}</p><p style={viewing.is_voided ? { color: "var(--danger)" } : { color: "var(--success)" }}>{viewing.is_voided ? t("pkVoided2") : t("pkActive")}</p></div>

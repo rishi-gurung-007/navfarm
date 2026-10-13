@@ -14,7 +14,7 @@ function ThemedToastContainer() {
     <ToastContainer
       position="top-right"
       transition={Slide}
-      autoClose={4000}
+      autoClose={1000}
       hideProgressBar={false}
       newestOnTop
       closeOnClick

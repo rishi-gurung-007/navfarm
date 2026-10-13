@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ReasonSelect } from "@/components/ui/reason-select";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
@@ -217,7 +217,7 @@ export default function BatchTransferPanel() {
 
   return (
     <div className="space-y-6">
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
+      <Toast variant="success" message={notice} onClose={() => setNotice("")} />
 
       <StatRow columns={4}>
         <StatCard label={t("btStatTransfers")} value={totals.count} icon={MoveRight} />
@@ -301,7 +301,7 @@ export default function BatchTransferPanel() {
         }
       >
         <div className="space-y-4">
-          {formError && <InlineAlert variant="danger">{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
@@ -459,7 +459,7 @@ export default function BatchTransferPanel() {
           ) : undefined
         }
       >
-        {reverseError && <InlineAlert variant="danger">{reverseError}</InlineAlert>}
+        <Toast variant="danger" message={reverseError} onClose={() => setReverseError("")} />
         {viewing && <TransferLines transferId={viewing.transfer_id} headcount={viewing.transfer_basis === "HEADCOUNT"} />}
       </Dialog>
     </div>

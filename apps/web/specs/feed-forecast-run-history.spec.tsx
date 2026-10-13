@@ -1,10 +1,12 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { api } from '../src/services/api-client';
+import { toast } from 'react-toastify';
 import { FeedForecastRunHistory } from '../src/components/console/inventory/feed-forecast-run-history';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), delete: jest.fn() } }));
-jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn() } }));
+jest.mock('../src/components/ui/toast', () => ({ ...jest.requireActual('../src/components/ui/toast'), showToast: { success: jest.fn(), error: jest.fn() } }));
+jest.mock('react-toastify', () => ({ toast: { error: jest.fn(), success: jest.fn(), info: jest.fn(), warn: jest.fn() } }));
 jest.mock('../src/components/console/inventory/feed-forecast-grid', () => ({
   FeedForecastGrid: ({ rows }: { rows: unknown[] }) => <div data-testid="run-grid">{rows.length} rows</div>,
 }));
@@ -102,7 +104,7 @@ describe('FeedForecastRunHistory', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'ffRunDelete' })[0]);
     const buttons = screen.getAllByRole('button', { name: 'ffRunDelete' });
     fireEvent.click(buttons[buttons.length - 1]);
-    expect(await screen.findByText(/Used by requisition REQ-0007/)).toBeTruthy();
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Used by requisition REQ-0007/), expect.anything()));
     expect(screen.getAllByText('FFR-farm-1-000002').length).toBeGreaterThan(0);
   });
 

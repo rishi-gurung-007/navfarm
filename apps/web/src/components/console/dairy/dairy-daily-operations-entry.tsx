@@ -8,7 +8,7 @@ import { getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth"
 import { useLanguage } from "@/hooks/useLanguage";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
@@ -186,8 +186,8 @@ export default function DairyDailyOperationsEntry() {
 
   return (
     <div className="space-y-6 text-[var(--text-primary)]">
-      {saveError && <InlineAlert variant="danger">{saveError}</InlineAlert>}
-      {saveSuccess && <InlineAlert variant="success">{t("dyMilkSaved")}</InlineAlert>}
+      <Toast variant="danger" message={saveError} onClose={() => setSaveError("")} />
+      <Toast variant="success" message={saveSuccess ? t("dyMilkSaved") : ""} onClose={() => setSaveSuccess(false)} />
 
       {/* Batch, date and the save action */}
       <div

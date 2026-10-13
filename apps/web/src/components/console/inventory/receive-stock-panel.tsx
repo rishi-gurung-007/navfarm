@@ -20,11 +20,12 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 type Row = Record<string, any>;
@@ -249,7 +250,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
         </div>
       </div>
 
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Receipts History Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
@@ -584,7 +585,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                 </span>
               </div>
               <p className="mt-1 text-[11px]" style={S.sub}>
-                Entry No.: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.entry_no}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{viewingReceipt.quantity} {viewingReceipt.uom}).
+                Entry No.: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.entry_no}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{formatQuantity(viewingReceipt.quantity)} {viewingReceipt.uom}).
               </p>
             </div>
           </div>

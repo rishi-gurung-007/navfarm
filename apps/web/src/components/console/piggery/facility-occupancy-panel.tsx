@@ -7,11 +7,12 @@ import {
 } from "lucide-react";
 
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
+import { formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -87,7 +88,7 @@ export default function FacilityOccupancyPanel() {
         <p className="text-xs" style={S.muted}>{t("fopSubtitle")}</p>
       </div>
 
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* ── Top Executive KPI Cards ── */}
       <StatRow>
@@ -180,7 +181,7 @@ export default function FacilityOccupancyPanel() {
                   <div className="flex justify-between text-xs font-medium">
                     <span style={S.sub}>{t("fopOccupancy")}</span>
                     <span className="font-mono font-bold" style={S.primary}>
-                      {loc.current_occupancy} / {loc.max_capacity != null ? `${loc.max_capacity} ${loc.capacity_uom}` : "∞"}
+                      {loc.current_occupancy} / {loc.max_capacity != null ? `${formatQuantity(loc.max_capacity)} ${loc.capacity_uom}` : "∞"}
                     </span>
                   </div>
 

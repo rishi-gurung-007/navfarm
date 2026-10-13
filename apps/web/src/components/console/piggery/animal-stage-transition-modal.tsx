@@ -8,7 +8,7 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -201,7 +201,7 @@ export default function AnimalStageTransitionModal({
       }
     >
       <div className="space-y-4">
-        {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+        <Toast variant="danger" message={error} onClose={() => setError("")} />
 
         {/* Current State Info */}
         <div className="rounded-[var(--radius-md)] border p-4 space-y-2" style={S.raised}>

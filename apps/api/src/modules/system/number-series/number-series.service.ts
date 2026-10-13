@@ -1574,8 +1574,6 @@ export class NumberSeriesService {
     }
 
     const increment = series.increment_by || 1;
-    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
 
     let startVal = increment;
     if (series.last_no_used) {
@@ -1590,14 +1588,17 @@ export class NumberSeriesService {
       }
     }
 
+    // Formatted like every other series code (prefix, separator, digits). This path used to glue the prefix to
+    // the digits itself and dropped the separator, so a GRN issued LOT00007 and SN00020 from series configured
+    // as LOT-00000 and SN-00000, while every other path gave LOT-00001.
+    const now = new Date();
     const numbers: string[] = [];
-    for (let i = 0; i < count; i++) {
-      const val = startVal + i * increment;
-      numbers.push(`${prefix}${String(val).padStart(padDigits, '0')}`);
+    for (let i = 0; i < Math.max(1, count); i++) {
+      numbers.push(formatSeriesCode(series, startVal + i * increment, now));
     }
 
     return {
-      next_number: numbers[0] || `${prefix}${String(startVal).padStart(padDigits, '0')}`,
+      next_number: numbers[0],
       numbers,
       series,
     };

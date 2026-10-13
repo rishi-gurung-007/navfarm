@@ -1363,10 +1363,13 @@ export class InventoryLedgerService {
         warehouse_name: warehouse.location_name,
         location_code: batchLocation.location_code,
         location_name: batchLocation.location_name,
-        created_by: schema.inventoryLedger.created_by,
+        // The person, not their user id: the file is read by people. A user no longer on the
+        // register keeps the id rather than a blank, so the row still says someone posted it.
+        created_by: sql<string | null>`COALESCE(${schema.userMaster.full_name}, ${schema.inventoryLedger.created_by})`,
         created_at: schema.inventoryLedger.created_at,
       })
       .from(schema.inventoryLedger)
+      .leftJoin(schema.userMaster, eq(schema.inventoryLedger.created_by, schema.userMaster.user_id))
       .leftJoin(schema.itemCategoryMaster, eq(schema.inventoryLedger.category_id, schema.itemCategoryMaster.category_id))
       .leftJoin(warehouse, eq(schema.inventoryLedger.warehouse_id, warehouse.location_id))
       .leftJoin(batchLocation, eq(schema.inventoryLedger.location_id, batchLocation.location_id))

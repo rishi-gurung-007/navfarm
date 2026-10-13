@@ -176,6 +176,18 @@ describe('NumberSeriesService', () => {
     });
   });
 
+  describe('previewNextNumbersById — GRN lot and serial numbers', () => {
+    it('formats with the series separator and carries on from the last number, even an old one without the dash', async () => {
+      jest.spyOn(service, 'findOneById').mockResolvedValue({
+        code: 'ITEM_LOT', prefix: 'LOT', no_series_code: 'LOT', separator: '-', seq_length: 5, increment_by: 1,
+        last_no_used: 'LOT00007', blocked: false, prefix_position: 'END', code_segments: null,
+      } as any);
+      const res = await service.previewNextNumbersById('series-1', 2);
+      expect(res.numbers).toEqual(['LOT-00008', 'LOT-00009']);
+      expect(res.next_number).toBe('LOT-00008');
+    });
+  });
+
   describe('read-only preview', () => {
     const returning = (rows: any[]) => {
       const builder: any = { from: () => builder, where: () => builder, limit: async () => rows, then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject) };

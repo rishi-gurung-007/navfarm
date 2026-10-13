@@ -24,7 +24,7 @@ import { getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalArea, 
 import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
 import { formatColumnValue } from "./column-format";
-import { cn } from "@/lib/utils";
+import { cn, formatDecimal, toInputNumber } from "@/lib/utils";
 import type { MasterDataConfig, MasterDataField, RequiredCondition } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
 import { MASTER_DATA_CONFIGS } from "./configs";
@@ -240,6 +240,8 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
     const places = fromSibling !== undefined && !isNaN(fromSibling) && fromSibling > 0 ? fromSibling : col.decimals;
     return Number(v).toFixed(places);
   }
+  // A DECIMAL column arrives as "150.000000": show the number, not the stored padding.
+  if (typeof v === "string" && /^-?\d+\.\d+$/.test(v.trim())) return formatDecimal(v);
   return String(v);
 }
 
@@ -555,7 +557,6 @@ export function MasterDataTable({
   const deepLinkOpenedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
-  const [duplicateCodeMessage, setDuplicateCodeMessage] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -1358,7 +1359,6 @@ export function MasterDataTable({
 
   const openCreate = () => {
     if (readOnly) return;
-    setDuplicateCodeMessage(null);
     setEditing(null);
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
@@ -1498,7 +1498,6 @@ export function MasterDataTable({
       return;
     }
     if (action === "none") return;
-    setDuplicateCodeMessage(null);
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
@@ -1546,6 +1545,9 @@ export function MasterDataTable({
         }
         v = JSON.stringify(v, null, 2);
       }
+      // A number box starts with the stored number without its padding zeros ("150.000000" -> 150); never rounded,
+      // so saving the form leaves the value as it was.
+      if (f.type === "number" && v !== null && v !== undefined && v !== "") v = toInputNumber(v);
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
     // storage_type is hidden from the form (see configs.ts) and derived from
@@ -1948,19 +1950,10 @@ export function MasterDataTable({
         }
       }
     } catch (err: any) {
-      const msg = err?.message || t("mdFailedToSave");
-      const manuallyEnteredCode = !!numbering.codeKey
-        && codeFieldTouchedRef.current
-        && String(form[numbering.codeKey] ?? "").trim() !== "";
-      if (!editing && err?.status === 409 && manuallyEnteredCode) {
-        // ApiError.message is extracted from the server's response payload by
-        // api-client. Some masters include the existing record's name/details
-        // in that message; preserve it verbatim rather than inventing fields
-        // the API did not return.
-        setDuplicateCodeMessage(msg);
-      } else {
-        showToast.error(msg);
-      }
+      // Every refusal is a toast carrying the API's own message. A 409 on a typed code
+      // used to open a "Code already exists" dialog whatever the 409 was about — a
+      // location refused for exceeding its parent's area was announced as a duplicate code.
+      showToast.error(err?.message || t("mdFailedToSave"));
       if (!editing) numbering.refresh();
     } finally {
       setSaving(false);
@@ -3808,19 +3801,6 @@ export function MasterDataTable({
             className="w-full rounded-md border px-3 py-2 text-sm"
             style={S.input}
           />
-        </div>
-      </Dialog>
-
-      <Dialog
-        open={!!duplicateCodeMessage}
-        onClose={() => setDuplicateCodeMessage(null)}
-        title="Code already exists"
-        presentation="compact"
-        maxWidth="sm"
-      >
-        <div className="space-y-2 text-sm">
-          <p style={S.primary}>{duplicateCodeMessage}</p>
-          <p style={S.sub}>This code is already in use. Change the code in the creation form and try again.</p>
         </div>
       </Dialog>
 

@@ -16,7 +16,7 @@ import {
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { api } from "@/services/api-client";
 
 type Row = Record<string, any>;
@@ -290,11 +290,7 @@ export default function AnimalSerialAssignmentModal({
         </div>
 
         {/* Feedback Alert */}
-        {feedback && (
-          <InlineAlert variant={feedback.type}>
-            {feedback.message}
-          </InlineAlert>
-        )}
+        <Toast variant={feedback?.type} message={feedback?.message ?? ""} onClose={() => setFeedback(null)} />
 
         {/* Search & Stats Filter */}
         <div className="flex items-center justify-between gap-3">

@@ -28,8 +28,7 @@ import { api } from "@/services/api-client";
 import { useLanguage } from "@/hooks/useLanguage";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId, getActiveFarmId, getStoredUser, hasPermission } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -41,6 +40,7 @@ import { confirmAction } from "@/components/ui/confirm-dialog";
 import { transferStatusText } from "./stock-transfer-status";
 import { transferSourceLinks } from "./transfer-source-links";
 import { itemCodeOf, userDisplayNameOf, warehouseCodeOf } from "./stock-transfer-display";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -553,13 +553,13 @@ export default function StockTransferPanel() {
             const assignedCount = l.serial_no.split(",").map((s) => s.trim()).filter(Boolean).length;
             if (assignedCount !== Number(l.quantity)) {
               throw new Error(
-                `Item Tracking: Line for "${it.item_code}" has quantity ${l.quantity}, but ${assignedCount} serial ${assignedCount === 1 ? "number is" : "numbers are"} selected. Each serial number represents 1 unit.`
+                `Item Tracking: Line for "${it.item_code}" has quantity ${formatQuantity(l.quantity)}, but ${assignedCount} serial ${assignedCount === 1 ? "number is" : "numbers are"} selected. Each serial number represents 1 unit.`
               );
             }
           }
           if (l.maxQty !== undefined && Number(l.quantity) > Number(l.maxQty)) {
             throw new Error(
-              `Quantity ${l.quantity} for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}" exceeds available stock (${l.maxQty} ${l.uom}).`
+              `Quantity ${formatQuantity(l.quantity)} for "${itemCodeOf(items, l.item_id, l.item_code, notAvailable)}" exceeds available stock (${formatQuantity(l.maxQty)} ${l.uom}).`
             );
           }
           const noteParts: string[] = [];
@@ -604,12 +604,12 @@ export default function StockTransferPanel() {
           }
           if (l.qty_to_ship > l.quantity + 0.0001) {
             throw new Error(
-              `Quantity to Ship (${l.qty_to_ship}) cannot exceed Ordered Quantity (${l.quantity}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
+              `Quantity to Ship (${formatQuantity(l.qty_to_ship)}) cannot exceed Ordered Quantity (${formatQuantity(l.quantity)}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
             );
           }
           if (l.maxQty !== undefined && l.qty_to_ship > Number(l.maxQty) + 0.0001) {
             throw new Error(
-              `Quantity to Ship (${l.qty_to_ship}) exceeds available stock (${l.maxQty} ${l.uom}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
+              `Quantity to Ship (${formatQuantity(l.qty_to_ship)}) exceeds available stock (${formatQuantity(l.maxQty)} ${l.uom}) for "${itemCodeOf(items, l.item_id, lines.find((x) => x.item_id === l.item_id)?.item_code, notAvailable)}".`
             );
           }
         }
@@ -1296,7 +1296,7 @@ export default function StockTransferPanel() {
             </div>
           </div>
 
-          {error && <InlineAlert>{error}</InlineAlert>}
+          <Toast variant="danger" message={error} onClose={() => setError("")} />
           {successMsg && (
             <div className="flex items-center gap-2 rounded-[var(--radius-md)] border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-400">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
@@ -1634,7 +1634,7 @@ export default function StockTransferPanel() {
             }
           >
             <div className="flex flex-col gap-5">
-              {formError && <InlineAlert>{formError}</InlineAlert>}
+              <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
               {editingTransfer && transferSourceLinks(editingTransfer).length > 0 && (
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs" aria-label={t("w2tColSource")}>
                   {transferSourceLinks(editingTransfer).map((link) => (
@@ -2295,7 +2295,7 @@ export default function StockTransferPanel() {
                                 </div>
                               ) : (
                                 <div className="flex h-11 items-center justify-end px-2 font-mono font-semibold text-xs" style={S.primary}>
-                                  {line.quantity}
+                                  {formatQuantity(line.quantity)}
                                 </div>
                               )}
                             </TableCell>
@@ -2357,7 +2357,7 @@ export default function StockTransferPanel() {
                                 if (!canEditReceive) {
                                   return (
                                     <div className="flex h-11 items-center justify-end px-1 font-mono text-xs opacity-60">
-                                      {line.qty_to_receive ?? 0}
+                                      {formatQuantity(line.qty_to_receive ?? 0)}
                                     </div>
                                   );
                                 }
@@ -3168,7 +3168,7 @@ export default function StockTransferPanel() {
                     </div>
                     <div>
                       <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Quantity to Track</span>
-                      <span className="font-semibold font-mono text-(--text-primary)">{line.quantity || 0} {line.uom || it?.uom_primary || ""}</span>
+                      <span className="font-semibold font-mono text-(--text-primary)">{formatQuantity(line.quantity || 0, line.uom || it?.uom_primary)} {line.uom || it?.uom_primary || ""}</span>
                     </div>
                     <div>
                       <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Tracking Specification</span>

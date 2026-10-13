@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Inbox, AlertTriangle } from "lucide-react";
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -87,11 +87,6 @@ export default function StockBalancePanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-lg font-semibold" style={S.primary}>{t("sbpTitle")}</h2>
-        <p className="mt-0.5 text-xs" style={S.sub}>{t("sbpDescription")}</p>
-      </div>
-
       {/* Summary figures read as a single line of related numbers; three
           bordered boxes would imply they are independent modules. */}
       <dl className="flex flex-wrap gap-x-10 gap-y-4 border-y py-4" style={{ borderColor: "var(--border)" }}>
@@ -128,9 +123,7 @@ export default function StockBalancePanel() {
         </label>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">

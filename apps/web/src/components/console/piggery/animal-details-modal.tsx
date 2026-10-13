@@ -47,6 +47,7 @@ const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'costing', label: 'Costing & Valuation', icon: DollarSign },
 ];
 import { WeightReadings, ConsumptionSummary, DeathRecord, SemenLots } from './animal-card-activity';
+import { formatQuantity } from "@/lib/utils";
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
@@ -914,7 +915,7 @@ export default function AnimalDetailsModal({
                                 {m.item_name || m.item_code || 'Standard Dose'}
                               </td>
                               <td className="px-3 py-2.5 font-mono text-[var(--text-secondary)] whitespace-nowrap">
-                                {m.dose_qty ? `${m.dose_qty} ${m.uom || 'dose'}` : '—'}
+                                {m.dose_qty ? `${formatQuantity(m.dose_qty)} ${m.uom || 'dose'}` : '—'}
                               </td>
                               <td className="px-3 py-2.5 whitespace-nowrap">
                                 {m.withdrawal_days ? (
@@ -1189,7 +1190,7 @@ export default function AnimalDetailsModal({
                                     {f.piglets_weaned || '0'}
                                   </td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                    {f.avg_weaning_weight_kg ? `${f.avg_weaning_weight_kg} kg` : '—'}
+                                    {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : '—'}
                                   </td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-secondary)] whitespace-nowrap">
                                     {f.piglet_batch_no ? `${f.piglet_batch_no} · ${f.piglet_lot_no ?? ''}` : '—'}
@@ -1429,7 +1430,7 @@ export default function AnimalDetailsModal({
                                 {formatMoney(le.unit_cost)}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {le.quantity ?? 1}
+                                {formatQuantity(le.quantity ?? 1)}
                               </td>
                               <td className="px-3 py-2 font-mono font-bold text-right text-[var(--text-primary)]">
                                 {formatMoney(le.computed_cost || le.amount)}

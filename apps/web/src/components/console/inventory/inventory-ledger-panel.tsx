@@ -13,8 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { apiDownload } from "@/lib/api-client";
-import { showToast } from "@/components/ui/toast";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast, Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -178,14 +177,8 @@ export default function InventoryLedgerPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Title & Stats */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold" style={S.primary}>{t("ilpTitle")}</h2>
-          <p className="mt-0.5 text-xs" style={S.sub}>
-            {t("ilpSubtitle")}
-          </p>
-        </div>
+      {/* Stats & export — no heading of its own: the page title already names the ledger. */}
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           <Badge variant="neutral" className="text-xs font-mono">
             {rows.length} {rows.length === 1 ? "entry" : "entries"}
@@ -327,7 +320,7 @@ export default function InventoryLedgerPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Main Inventory Ledger Entries Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>

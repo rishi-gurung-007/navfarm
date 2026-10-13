@@ -12,6 +12,7 @@ import {
   SchedulerSource, CopySchedulerLinesDto,
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { stagesNeedingScheduler } from './occupied-stages';
 
@@ -84,7 +85,25 @@ export class SchedulerHeaderService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
+    private readonly numberSeries: NumberSeriesService,
   ) {}
+
+  /**
+   * The readable number a new scheduler is shown by (SCH-000001), from the company's SCHEDULER series. A company
+   * created after 12 Oct starts with no master data and so no series at all (client ruling); the series is made the
+   * first time it is needed, as supplier and customer codes do, carrying on after any number the company already
+   * holds — nobody has to know a SCHEDULER series exists before a stage can be scheduled.
+   */
+  private async nextSchedulerNo(tenantId: string, companyId: string): Promise<string> {
+    await this.numberSeries.ensureCompanySeries(
+      tenantId,
+      companyId,
+      { seriesCode: 'SCHEDULER', seriesName: 'Scheduler Number', documentType: 'SCHEDULER', prefix: 'SCH', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.schedulerHeader.scheduler_no }).from(schema.schedulerHeader)
+        .where(eq(schema.schedulerHeader.company_id, companyId))).map((r) => r.no),
+    );
+    return this.numberSeries.generateNext('SCHEDULER', tenantId, companyId);
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -701,6 +720,7 @@ export class SchedulerHeaderService {
     const schedulerId = randomUUID();
     await this.db.insert(schema.schedulerHeader).values({
       scheduler_id: schedulerId,
+      scheduler_no: await this.nextSchedulerNo(tenantId, batch.company_id),
       tenant_id: tenantId,
       company_id: batch.company_id,
       batch_id: batchId,
@@ -840,6 +860,7 @@ export class SchedulerHeaderService {
     const status = dto.scheduler_status || 'DRAFT';
     await this.db.insert(schema.schedulerHeader).values({
       scheduler_id: schedulerId,
+      scheduler_no: await this.nextSchedulerNo(tenantId, batch.company_id),
       tenant_id: tenantId,
       company_id: batch.company_id,
       batch_id: dto.batch_id,
@@ -1253,7 +1274,7 @@ export class SchedulerHeaderService {
 
     if (query.search) {
       const needle = query.search.toLowerCase();
-      result = result.filter((r) => (r.batch_no || '').toLowerCase().includes(needle));
+      result = result.filter((r) => (r.batch_no || '').toLowerCase().includes(needle) || (r.scheduler_no || '').toLowerCase().includes(needle));
     }
 
     return result;

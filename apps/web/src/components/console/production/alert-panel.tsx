@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -175,7 +176,7 @@ export default function AlertPanel() {
       </div>
 
       {notice && <InlineAlert variant="warning">{notice}</InlineAlert>}
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <ScrollTable label={t("alrtTableLabel")}>
         <thead>

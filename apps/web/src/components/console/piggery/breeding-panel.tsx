@@ -16,10 +16,11 @@ import {
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import AnimalDetailsModal from "./animal-details-modal";
+import { formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -444,8 +445,8 @@ export function BreedingPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
-      {success && <InlineAlert variant="success">{success}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError(null)} />
+      <Toast variant="success" message={success} onClose={() => setSuccess(null)} />
 
       {/* ── KPI Stat Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -708,7 +709,7 @@ export function BreedingPanel() {
                           <span style={S.sub}>{t("brpMummifiedCount", { count: f.piglets_mummified })}</span>
                         </td>
                         <td className="py-3.5 px-4 text-xs font-mono" style={S.sub}>
-                          {f.total_litter_weight_kg ? `${f.total_litter_weight_kg} kg` : "--"}
+                          {f.total_litter_weight_kg ? `${formatQuantity(f.total_litter_weight_kg)} kg` : "--"}
                           {f.avg_birth_weight_kg && (
                             <span className="block text-[11px]" style={S.muted}>{t("brpAvgWeight", { weight: f.avg_birth_weight_kg })}</span>
                           )}

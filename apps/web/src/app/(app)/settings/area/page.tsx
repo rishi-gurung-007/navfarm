@@ -22,7 +22,7 @@ import { ConsolePage } from "@/components/ui/console-page";
 import { Field } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { api } from "@/services/api-client";
 import { resolveLobFamily, type LobFamily } from "@/lib/lob";
@@ -254,7 +254,7 @@ export default function AreaSettingsPage() {
           <span>{t("asSaved")}</span>
         </div>
       )}
-      {saveError && <InlineAlert variant="danger">{saveError}</InlineAlert>}
+      <Toast variant="danger" message={saveError} onClose={() => setSaveError("")} />
 
       {loading ? (
         <LoadingState label={t("asLoading")} />
@@ -489,7 +489,7 @@ export default function AreaSettingsPage() {
         }
       >
         <div className="space-y-3 pt-1 text-xs">
-          {staffError && <InlineAlert variant="danger">{staffError}</InlineAlert>}
+          <Toast variant="danger" message={staffError} onClose={() => setStaffError("")} />
           <div>
             <label className="nf-text-label">{t("asStaffEmail")}</label>
             <input

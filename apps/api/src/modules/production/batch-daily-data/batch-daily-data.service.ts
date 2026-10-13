@@ -662,8 +662,8 @@ export class BatchDailyDataService {
             // This line keeps the stage headcount itself (below), so the shared
             // path is told not to touch it. Only a net increase in deaths posts;
             // a downward correction has no unambiguous animal to revive, so it
-            // corrects animal_count alone — a death recorded in error is taken
-            // back by reversing it (BatchMortalityReversalService), naming it.
+            // corrects animal_count alone. A recorded death is final: there is
+            // no reversal (removed 13 Oct 2026, docs/decisions.md).
             const deathsToRecord = Math.round(delta);
             if (deathsToRecord > 0) {
               // Each death posts through addTransaction (feat/system-schedulers' accounting: the batch transaction,

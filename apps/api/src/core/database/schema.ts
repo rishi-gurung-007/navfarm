@@ -3023,6 +3023,9 @@ export const parameterMaster = mysqlTable('parameter_master', {
  */
 export const schedulerHeader = mysqlTable('scheduler_header', {
   scheduler_id: varchar('scheduler_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  // The readable number people see and quote (SCH-000001), from the company's SCHEDULER
+  // series; the UUID stays the key (0194, 13 Oct 2026).
+  scheduler_no: varchar('scheduler_no', { length: 30 }),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
@@ -3057,6 +3060,7 @@ export const schedulerHeader = mysqlTable('scheduler_header', {
 }, (table) => ({
   // "One scheduler_header per batch per stage" — the spec's own words.
   uqBatchStage: uniqueIndex('uq_scheduler_header_batch_stage').on(table.batch_id, table.stage_id),
+  uqCompanyNo: uniqueIndex('uq_scheduler_header_company_no').on(table.company_id, table.scheduler_no),
 }));
 
 /**

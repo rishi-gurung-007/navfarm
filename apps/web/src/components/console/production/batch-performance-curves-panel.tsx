@@ -9,7 +9,7 @@ import {
 
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -112,7 +112,7 @@ export default function BatchPerformanceCurvesPanel({
 
   return (
     <div className="space-y-6">
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* ── Top Header / Actions Bar ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border p-4" style={S.surface}>

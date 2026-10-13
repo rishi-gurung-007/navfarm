@@ -538,6 +538,8 @@ export const SYSTEM_NO_SERIES_SEED: Array<{
   { series_code: 'ITEM_APPLICATION', series_name: 'Item Application Series', document_type: 'APPLICATION', prefix: 'APP', separator: '-', seq_length: 5, reset_frequency: 'NEVER', allow_manual: true },
   // QR pack numbers (audit I3): issued from the series, not MAX(pack_no)+1, so two packs at once cannot share one.
   { series_code: 'QR_PACK', series_name: 'QR Pack Number Series', document_type: 'QR_PACK', prefix: 'PACK', separator: '-', seq_length: 6, reset_frequency: 'NEVER', allow_manual: false },
+  // Scheduler numbers (13 Oct 2026): a readable SCH-000001 in place of the UUID on screen.
+  { series_code: 'SCHEDULER', series_name: 'Scheduler Number', document_type: 'SCHEDULER', prefix: 'SCH', separator: '-', seq_length: 6, reset_frequency: 'NEVER', allow_manual: false },
 ];
 
 /**

@@ -14,12 +14,12 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
-import { formatQuantity } from "@/lib/utils";
+import { toInputNumber } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
@@ -266,7 +266,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
     const today = new Date().toISOString().slice(0, 10);
     setEffectiveFrom(selectedBatch.start_date || today);
-    setAnimalCount(formatQuantity(selectedBatch.closing_quantity ?? selectedBatch.opening_quantity ?? "", "HEAD"));
+    // An edit box: a plain whole number ("1200", not the grouped "1,200" a screen shows), since it is read back.
+    const heads = toInputNumber(selectedBatch.closing_quantity ?? selectedBatch.opening_quantity);
+    setAnimalCount(heads === "" ? "" : String(Math.round(Number(heads))));
 
     if (selectedBatch.lob_id) {
       setLoadingStages(true);
@@ -341,7 +343,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       is_mandatory: !!l.is_mandatory,
       item_id: l.item_id || "",
       item_description: l.item_description || "",
-      standard_qty: l.standard_qty != null ? l.standard_qty : "",
+      standard_qty: toInputNumber(l.standard_qty),
       qty_basis: l.qty_basis || "PER_HEAD",
       allow_qty_edit: l.allow_qty_edit !== false,
       lot_required: !!l.lot_required,
@@ -350,14 +352,14 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       output_basis: l.output_basis || "PER_BATCH",
       kpi_metric: l.kpi_metric || "",
       kpi_uom: l.kpi_uom || "",
-      std_value: l.std_value != null ? l.std_value : "",
-      lower_alert_limit: l.lower_alert_limit != null ? l.lower_alert_limit : "",
-      upper_alert_limit: l.upper_alert_limit != null ? l.upper_alert_limit : "",
+      std_value: toInputNumber(l.std_value),
+      lower_alert_limit: toInputNumber(l.lower_alert_limit),
+      upper_alert_limit: toInputNumber(l.upper_alert_limit),
       alert_severity: l.alert_severity || "WARNING",
       capture_per: l.capture_per || "AVERAGE",
       overhead_category: l.overhead_category || "",
       gl_account: l.gl_account || "",
-      estimated_cost: l.estimated_cost != null ? l.estimated_cost : "",
+      estimated_cost: toInputNumber(l.estimated_cost),
       resource_id: l.resource_id || "",
       resource_name: l.resource_name || "",
     }));
@@ -551,7 +553,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     <>
       <Dialog open={open} onClose={() => !saving && onClose()} title="Create New Scheduler & Activities" maxWidth="xl">
         <div className="flex flex-col gap-5 text-xs max-h-[78vh] overflow-y-auto pr-1">
-          {error && <InlineAlert>{error}</InlineAlert>}
+          <Toast variant="danger" message={error} onClose={() => setError("")} />
 
           {/* Section 1: Header Configuration (Collapsible) */}
           <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
@@ -902,7 +904,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         maxWidth="lg"
       >
         <div className="flex flex-col gap-4 text-xs">
-          {lineFormError && <InlineAlert>{lineFormError}</InlineAlert>}
+          <Toast variant="danger" message={lineFormError} onClose={() => setLineFormError("")} />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* Line Type */}
