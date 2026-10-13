@@ -27,6 +27,7 @@ import {
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
 import { findEffectiveOverlap } from '../../production/lifecycle/lifecycle-effective.rules';
+import { refreshSchedulerFeedLines } from '../../production/lifecycle/refresh-scheduler-feed';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -921,6 +922,30 @@ export class BreedService {
   }
 
   /**
+   * After a stage's feed changes, the open batch schedulers of that breed and stage follow it for the days not yet
+   * entered (Rishi, 13 Oct; refresh-scheduler-feed.ts). Each scheduler changed is written to the audit log.
+   */
+  private async refreshStageSchedulers(stages: Array<{ breed_id: string; stage_id: string } | undefined>, tenantId: string, userPayload?: any) {
+    const seen = new Set<string>();
+    for (const { breed_id, stage_id } of stages.filter((s): s is { breed_id: string; stage_id: string } => !!s)) {
+      const key = `${breed_id}|${stage_id}`;
+      if (!breed_id || !stage_id || seen.has(key)) continue;
+      seen.add(key);
+      const changed = await refreshSchedulerFeedLines(this.db, { tenantId, breedId: breed_id, stageId: stage_id });
+      for (const schedulerId of changed) {
+        await this.auditService.log({
+          tenantId,
+          userId: userPayload?.userId,
+          action: 'UPDATE',
+          entityName: 'scheduler_header',
+          entityId: schedulerId,
+          newValues: { feed_lines_refreshed_from: 'breed_lifecycle_stages', breed_id, stage_id },
+        });
+      }
+    }
+  }
+
+  /**
    * The rows that make one stage record (its Feed Consumption lines, 13 Oct): same breed, stage, farm override,
    * season and category, and the same active state. Sorted by Period From.
    */
@@ -1052,6 +1077,7 @@ export class BreedService {
       await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null }, tenantId, [lifecycleId]);
       await this.db.insert(schema.breedLifecycleStages).values({ ...newLifecycleStage, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null });
     }
+    await this.refreshStageSchedulers([{ breed_id: dto.breed_id, stage_id: dto.stage_id }], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1357,6 +1383,8 @@ export class BreedService {
         await this.db.delete(schema.breedLifecycleStages).where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
       }
     }
+    // The stage it was and the stage it is (a changed Stage moves the feed from one to the other).
+    await this.refreshStageSchedulers([lifecycleStage, updated], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1380,6 +1408,7 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set({ is_active: false })
       .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
+    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1412,6 +1441,7 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set({ is_active: true })
       .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
+    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
