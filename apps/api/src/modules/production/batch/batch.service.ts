@@ -1787,9 +1787,11 @@ export class BatchService {
         tx.transaction_type !== 'OVERHEAD'
       )
         continue;
+      // Consumption and overhead are stored as outflows (negative); the cost they add to the batch is their size, as
+      // the cost-per-unit and closing valuation already total it. Summed raw, every open batch showed a negative WIP.
       accrued.set(
         tx.batch_id,
-        (accrued.get(tx.batch_id) ?? 0) + Number(tx.amount || 0),
+        (accrued.get(tx.batch_id) ?? 0) + Math.abs(Number(tx.amount || 0)),
       );
     }
 

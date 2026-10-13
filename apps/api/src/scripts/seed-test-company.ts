@@ -341,6 +341,12 @@ async function run() {
       // A company whose setup wizard is unfinished opens on the wizard, not the console (Rishi, 13 Oct): the seeded
       // test company is marked set up so it can be used straight away. Only the target company row changes.
       await tdb.update(schema.companyMaster).set({ onboarding_status: 'COMPLETED' }).where(eq(schema.companyMaster.company_id, targetCompany));
+      // Feed planning needs a feed item's form (Bulk/Bagged) as well as its Diet No; the source's feed items carry no
+      // form, so the test company's FEED items without one are set to BULK (silos hold bulk feed). Target company only.
+      await tdb.update(schema.itemMaster).set({ feed_form: 'BULK' }).where(and(
+        eq(schema.itemMaster.company_id, targetCompany), eq(schema.itemMaster.item_type, 'FEED'), isNull(schema.itemMaster.feed_form),
+      ));
+      console.log('  feed items without a form set to BULK (needed for bin diet assignments).');
       console.log('  company setup marked COMPLETED (opens in the console, not the setup wizard).');
     } catch (err) { await tgt.rollback(); throw err; }
     if (verify) {

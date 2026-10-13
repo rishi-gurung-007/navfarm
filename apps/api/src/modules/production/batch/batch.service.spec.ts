@@ -2243,6 +2243,29 @@ describe('BatchService', () => {
       expect(rows[0].wip_value).toBe(4532);
     });
 
+    it('counts consumption and overhead stored as outflows (negative) as positive WIP (13 Oct)', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              limit: jest.fn().mockReturnValue({
+                offset: jest.fn().mockResolvedValue([{ ...activeBatch, batch_id: 'b1', total_cost: null, closing_quantity: '20.0000' }]),
+              }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockResolvedValue([
+              { batch_id: 'b1', transaction_type: 'CONSUMPTION', amount: '-1232.0000' },
+              { batch_id: 'b1', transaction_type: 'OVERHEAD', amount: '-3300.0000' },
+            ]),
+          }),
+        });
+      const rows = await service.findAll({ limit: 50 } as any, 'tenant-123');
+      expect(rows[0].wip_value).toBe(4532);
+    });
+
     it('prefers the posted total_cost once a batch is closed', async () => {
       mockDbSelect
         .mockReturnValueOnce({

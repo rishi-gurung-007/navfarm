@@ -397,6 +397,19 @@ export default function OperationalBatchDataEntry() {
   const [savingNotes, setSavingNotes] = useState(false);
 
   const [postedDates, setPostedDates] = useState<Row[]>([]);
+  // One History entry per day: an animal-wise day has one lock per stage, and listing each made 14 days read
+  // "42 posted dates" (13 Oct). The day's stages are named in its label.
+  const postedDays = useMemo(() => {
+    const byDate = new Map<string, { date: string; stages: string[]; reopened: boolean }>();
+    for (const d of postedDates) {
+      const date = String(d.entry_date).slice(0, 10);
+      const day = byDate.get(date) ?? { date, stages: [], reopened: false };
+      if (d.stage_name && !day.stages.includes(d.stage_name)) day.stages.push(d.stage_name);
+      if (d.status === 'REOPENED') day.reopened = true;
+      byDate.set(date, day);
+    }
+    return [...byDate.values()];
+  }, [postedDates]);
 
   // Which activity-type boxes (Feed, Medicine, Mortality, …) are collapsed —
   // keyed by bucket key, not scoped per animal/date, so a stage with a lot
@@ -2777,11 +2790,11 @@ export default function OperationalBatchDataEntry() {
                         userPickedDateRef.current = true;
                         setSelectedDate(val);
                       }}
-                      options={postedDates.map((d: Row) => ({
-                        value: String(d.entry_date),
-                        label: `${String(d.entry_date)}${d.stage_name ? ` — ${d.stage_name}` : ''}${d.status === 'REOPENED' ? ' (reopened)' : ''}`,
+                      options={postedDays.map((d) => ({
+                        value: d.date,
+                        label: `${d.date}${d.stages.length ? ` — ${d.stages.join(', ')}` : ''}${d.reopened ? ' (reopened)' : ''}`,
                       }))}
-                      placeholder={`${postedDates.length} posted date${postedDates.length === 1 ? '' : 's'} — view…`}
+                      placeholder={`${postedDays.length} posted date${postedDays.length === 1 ? '' : 's'} — view…`}
                       searchPlaceholder="Search dates…"
                     />
                   </div>

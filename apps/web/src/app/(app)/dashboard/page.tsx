@@ -148,7 +148,14 @@ export default function DashboardPage() {
       ]);
 
       setTenantInfo(tenant);
-      if (Array.isArray(compRes)) setCompanies(compRes);
+      // The company list saved at login goes stale: a company made active (or seeded) since then is missing from it,
+      // and the title fell back to the first company's name (Blank Test Co showed as "Triple C", 13 Oct).
+      let companyList: any[] = Array.isArray(compRes) ? compRes : [];
+      if (!isTenantScope && compId && !companyList.some((c: any) => c.company_id === compId)) {
+        const own = await api.get(`/company/${compId}`).then((r: any) => r?.data ?? r).catch(() => null);
+        if (own?.company_id) companyList = [...companyList, own];
+      }
+      setCompanies(companyList);
       if (Array.isArray(areasRes)) setOperationalAreas(areasRes);
       setBatches(Array.isArray(batchRes) ? batchRes : (batchRes?.data ?? []));
       setAnimals(Array.isArray(animalRes) ? animalRes : (animalRes?.data ?? []));
