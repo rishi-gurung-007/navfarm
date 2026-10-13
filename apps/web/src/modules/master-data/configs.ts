@@ -1340,9 +1340,9 @@ const breedLifecycleStage: MasterDataConfig = {
     {
       key: "feed_lines", label: "Feed Consumption", type: "json", subDialog: "Feed Consumption", singleRow: true,
       jsonRow: [
+        { key: "feed_item_id", label: "Feed Item", type: "select-entity", entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
         { key: "period_from", label: "From", type: "number", step: "1", min: 0 },
         { key: "period_to", label: "To", type: "number", step: "1", min: 0 },
-        { key: "feed_item_id", label: "Feed Item", type: "select-entity", entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
         { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }] },
         { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
         { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
