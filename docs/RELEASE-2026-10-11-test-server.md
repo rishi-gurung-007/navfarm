@@ -1,10 +1,10 @@
 # Test-server release 2 — feed workbook completion (11 Oct 2026)
 
 Follows `docs/RELEASE-2026-10-10-test-server.md`. That release took every tenant to migration **164**. This release
-takes every tenant to **192** (0165-0179 from main, 0180-0191 from the feat/system-schedulers merge of 13 Oct, 0192 Cost Centre spelling). Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
+takes every tenant to **193** (0165-0179 from main, 0180-0191 from the feat/system-schedulers merge of 13 Oct, 0192 Cost Centre spelling, 0193 application code per company). Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
 testers' data must survive.
 
-## What changes in the databases (28 migrations, 0165-0192; nothing dropped — 0182, 0189 and 0192 also change data, see their rows)
+## What changes in the databases (29 migrations, 0165-0193; nothing dropped — 0182, 0189, 0192 and 0193 also change data, see their rows)
 | Migration | Adds |
 |---|---|
 | 0165 | Receipt line controls: variance, variance reason, bag count, delivery note, loading sheet ref |
@@ -35,6 +35,7 @@ testers' data must survive.
 | 0190 | New table `semen_batch_boar` (pooled semen); `batch_daily_data.pool_animal_ids` |
 | 0191 | `batch_daily_data.reason_id` |
 | 0192 | Data, text only: the Cost Centre number series renamed "Cost Center Code ..." -> "Cost Centre Code ..." (13 Oct) |
+| 0193 | `inventory_application.application_no`: the readable APP code, unique per company (each company's own ITEM_APPLICATION series); the row key stays a UUID. Existing rows copy their id as their code. Fixes the second company's first FIFO movement failing on a duplicate APP-00001 (13 Oct) |
 
 Run the migrations as **root**. If any line says FAILED: stop, restore that database from the backup, and report it.
 Do not re-run blindly, because MySQL table changes are not transactional.
@@ -45,8 +46,8 @@ Do not re-run blindly, because MySQL table changes are not transactional.
 3. Update the code: `git pull --ff-only origin main`, then `pnpm install --frozen-lockfile` (adds the `@nestjs/schedule`
    package). Check `git log --oneline -1` shows the commit that adds this runbook or later.
 4. Migrate: `pnpm nx run api:db-bootstrap`, then `pnpm nx run api:db-migrate-all-tenants`. Every tenant must end at
-   **192**. Check:
-   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 192 / 192.
+   **193**. Check:
+   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 193 / 193.
 5. Data scripts, per tenant. Run read-only first (it prints a plan), then add `-- --apply` only if the plan lists rows:
    ```
    set DEV_TENANT_DATABASE=nf_portatestnavfarm
@@ -125,3 +126,18 @@ Rules:
 ## Rollback
 Stop the API and web, restore each database from its step-2 dump, check out the previous commit (`214b2a9f`, release 1),
 then rebuild and start.
+
+## Reseed one test company (replaces that company's data; testing only)
+`db-seed-test-company` wipes ONE company's data in one tenant (its users, roles and the company row stay) and builds:
+4 test farms (4/5/6/5 sheds, pens, silos, stores, farm cost centre + department), 16 batches (per farm: 1 animal-wise
+with 20 registered animals, 1 batch-wise with 20 registered animals, 2 count-only), opening stock, 14 days of posted and
+locked history ending yesterday (today pending), a few deaths with weight and reason, and feed-planning bin diets.
+Masters are copied from the source company (default devco / TRIPLEC). Never target the source company.
+Read-only first (prints the plan), then `--apply`:
+```
+pnpm nx run api:db-seed-test-company -- --tenant <tenant code> --company <company code>
+pnpm nx run api:db-seed-test-company -- --tenant <tenant code> --company <company code> --apply
+```
+The company and its operational area must be active. It ends by printing counts, per-batch locked days / next pending
+date / herd vs closing vs stage counts, and the source company's counts before and after.
+

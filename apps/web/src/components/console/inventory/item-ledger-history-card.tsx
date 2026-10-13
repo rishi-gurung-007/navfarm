@@ -609,7 +609,7 @@ export default function ItemLedgerHistoryCard({
                                   >
                                     <span
                                       className="font-mono text-[11px] font-bold text-[var(--accent)]"
-                                      title={`Application ${app.application_id}`}
+                                      title={`Application ${app.application_no ?? app.application_id}`}
                                     >
                                       Entry #{app.inbound_entry_no}
                                     </span>
@@ -617,7 +617,7 @@ export default function ItemLedgerHistoryCard({
                                       type="button"
                                       onClick={() =>
                                         copyToClipboard(
-                                          app.application_id,
+                                          app.application_no ?? app.application_id,
                                           app.application_id,
                                         )
                                       }

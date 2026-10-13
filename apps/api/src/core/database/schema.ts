@@ -3885,6 +3885,8 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
 // ledger row drew its quantity/cost from.
 export const inventoryApplication = mysqlTable('inventory_application', {
   application_id: varchar('application_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  // The readable code (APP-00001), from the company's ITEM_APPLICATION series; unique per company (0193).
+  application_no: varchar('application_no', { length: 50 }),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),

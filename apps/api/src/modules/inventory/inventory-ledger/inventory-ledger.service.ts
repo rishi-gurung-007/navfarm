@@ -125,7 +125,8 @@ export class InventoryLedgerService {
     @Optional() private readonly numberSeriesService?: NumberSeriesService,
   ) { }
 
-  private async generateApplicationId(
+  /** The readable application code from the company's ITEM_APPLICATION series; the row's key is a UUID (0193). */
+  private async generateApplicationNo(
     tenantId: string,
     companyId?: string | null,
     executor?: MySql2Database<typeof schema>,
@@ -146,13 +147,14 @@ export class InventoryLedgerService {
     try {
       const [{ maxId }] = await db
         .select({
-          maxId: sql<string>`MAX(${schema.inventoryApplication.application_id})`,
+          maxId: sql<string>`MAX(${schema.inventoryApplication.application_no})`,
         })
         .from(schema.inventoryApplication)
         .where(
           and(
             eq(schema.inventoryApplication.tenant_id, tenantId),
-            like(schema.inventoryApplication.application_id, 'APP-%'),
+            ...(companyId ? [eq(schema.inventoryApplication.company_id, companyId)] : []),
+            like(schema.inventoryApplication.application_no, 'APP-%'),
           ),
         );
       const seqMatch = maxId ? maxId.match(/APP-(\d+)/) : null;
@@ -218,13 +220,13 @@ export class InventoryLedgerService {
           .set({ remaining_quantity: sql`${schema.inventoryLedger.remaining_quantity} + ${application.applied_qty}` })
           .where(eq(schema.inventoryLedger.ledger_id, application.inbound_ledger_id));
         const { created_at: _appCreatedAt, inbound_entry_no: _inNo, outbound_entry_no: _outNo, ...applicationForReversal } = application;
-        const revAppId = await this.generateApplicationId(
+        const revAppNo = await this.generateApplicationNo(
           original.tenant_id,
           original.company_id,
           this.db,
         );
         await this.db.insert(schema.inventoryApplication).values({
-          ...applicationForReversal, application_id: revAppId, outbound_ledger_id: reversalId,
+          ...applicationForReversal, application_id: randomUUID(), application_no: revAppNo, outbound_ledger_id: reversalId,
           applied_qty: (-Number(application.applied_qty)).toString(),
           applied_cost_amount: (-Number(application.applied_cost_amount)).toString(),
           created_by: userId || null,
@@ -499,7 +501,8 @@ export class InventoryLedgerService {
     }
     for (const { layer, qty, cost } of draws) {
       await executor.insert(schema.inventoryApplication).values({
-        application_id: await this.generateApplicationId(params.tenantId, params.companyId, executor),
+        application_id: randomUUID(),
+        application_no: await this.generateApplicationNo(params.tenantId, params.companyId, executor),
         tenant_id: params.tenantId,
         company_id: params.companyId,
         item_id: params.itemId,
@@ -911,6 +914,7 @@ export class InventoryLedgerService {
       applications = await this.db
         .select({
           application_id: schema.inventoryApplication.application_id,
+          application_no: schema.inventoryApplication.application_no,
           applied_qty: schema.inventoryApplication.applied_qty,
           applied_cost_amount: schema.inventoryApplication.applied_cost_amount,
           application_date: schema.inventoryApplication.application_date,
@@ -938,6 +942,7 @@ export class InventoryLedgerService {
       applications = await this.db
         .select({
           application_id: schema.inventoryApplication.application_id,
+          application_no: schema.inventoryApplication.application_no,
           applied_qty: schema.inventoryApplication.applied_qty,
           applied_cost_amount: schema.inventoryApplication.applied_cost_amount,
           application_date: schema.inventoryApplication.application_date,
@@ -1187,6 +1192,7 @@ export class InventoryLedgerService {
     const applications = await this.db
       .select({
         application_id: schema.inventoryApplication.application_id,
+        application_no: schema.inventoryApplication.application_no,
         inbound_ledger_id: schema.inventoryApplication.inbound_ledger_id,
         outbound_ledger_id: schema.inventoryApplication.outbound_ledger_id,
         inbound_entry_no: schema.inventoryApplication.inbound_entry_no,

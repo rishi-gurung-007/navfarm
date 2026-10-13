@@ -1345,6 +1345,13 @@
       "when": 1792000000060,
       "tag": "0192_cost_centre_spelling",
       "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "5",
+      "when": 1792000000061,
+      "tag": "0193_inventory_application_no",
+      "breakpoints": true
     }
   ]
 }

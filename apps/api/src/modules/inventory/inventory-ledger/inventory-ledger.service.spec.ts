@@ -177,6 +177,14 @@ describe('Inventory costing — by the item\'s costing method', () => {
     expect(Number(costs.reduce((n, c) => n + c, 0).toFixed(4))).toBe(10);
   });
 
+  it('each application is keyed by a UUID and carries its readable APP code separately (0193, 13 Oct)', async () => {
+    const { db, applications, service } = make({ layers: two() });
+    await service.applyFifo({ ...base, quantity: 150 }, db);
+    expect(applications.every((a) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(a.application_id))).toBe(true);
+    expect(applications.every((a) => typeof a.application_no === 'string' && a.application_no.length > 0)).toBe(true);
+    expect(new Set(applications.map((a) => a.application_id)).size).toBe(2);
+  });
+
   it('the lot chosen does not move the cost: stock issued from the newer lot is still costed from the oldest receipt', async () => {
     const layers = [
       { ledger_id: 'old', quantity: '20', remaining_quantity: '20', rate: '120', amount: '2400', warehouse_id: 'w', lot_no: 'LOT-OLD' },

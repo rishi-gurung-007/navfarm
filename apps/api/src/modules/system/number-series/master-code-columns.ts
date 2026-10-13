@@ -19,6 +19,6 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   // A document, not a master: listed so the Number Series screen offers it and the
   // common requisition draws its number from it (decision 2026-10-01). It has no
   // MASTER_TABLES entry on purpose — that map also drives master-scope guards.
-  ITEM_APPLICATION: 'application_id', APPLICATION: 'application_id',
+  ITEM_APPLICATION: 'application_no', APPLICATION: 'application_no',
   REQUISITION: 'req_no',
 };

@@ -1187,7 +1187,10 @@ export default function InventoryLedgerDetail({
                       >
                         <div className="flex items-center gap-1">
                           <span>
-                            {app.application_id
+                            {/* The readable code from the company's number series; the id is a UUID (0193). */}
+                            {app.application_no
+                              ? app.application_no
+                              : app.application_id
                               ? app.application_id.length > 20
                                 ? `${app.application_id.slice(0, 12)}…`
                                 : app.application_id
@@ -1198,7 +1201,7 @@ export default function InventoryLedgerDetail({
                               type="button"
                               onClick={() =>
                                 copyToClipboard(
-                                  app.application_id,
+                                  app.application_no ?? app.application_id,
                                   app.application_id,
                                 )
                               }
