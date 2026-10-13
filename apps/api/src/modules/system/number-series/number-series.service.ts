@@ -611,7 +611,16 @@ export class NumberSeriesService {
         record.location_type = explicitPrefix || query.type || 'FARM';
       }
     }
-    return { ...settings, preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code };
+    // The form fields the code is built from (`dob` for PIG-<birth year>-0001), so
+    // the form can send their values back and ask again when one changes. Without
+    // them the preview was composed with those segments empty — PIG-0005 on screen
+    // while the save, which has the date of birth, issued PIG-2026-0003.
+    const segmentFieldNames = [...new Set(segmentFields(series).map((entry) => parseSegment(entry).field))];
+    return {
+      ...settings,
+      preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code,
+      segmentFields: segmentFieldNames,
+    };
   }
 
   /** Validate an explicit manual identity without consuming the series. */
@@ -1792,6 +1801,7 @@ export class NumberSeriesService {
             next_number: codeRes.preview,
             allowManual: codeRes.allowManual,
             manual_nos: codeRes.allowManual,
+            segment_fields: codeRes.segmentFields ?? [],
           };
         }
       } catch {
@@ -1821,6 +1831,7 @@ export class NumberSeriesService {
               next_number: codeRes.preview,
               allowManual: codeRes.allowManual,
               manual_nos: codeRes.allowManual,
+              segment_fields: codeRes.segmentFields ?? [],
             };
           }
         } catch {

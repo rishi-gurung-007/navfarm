@@ -76,7 +76,7 @@ describe('AnimalService', () => {
         { provide: NobLobResolutionService, useValue: nobLobResolution },
         // Checklist 6: transitionStage records a STAGE_CHANGE row.
         { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) } },
-        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

@@ -101,6 +101,35 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
 }
 
+const blank = (v: unknown) => v === "" || v === null || v === undefined;
+const numberOrNull = (v: unknown) => (blank(v) ? null : Number(v));
+
+/**
+ * A line as the API takes it: numbers as numbers and an unset field as null. The line
+ * editor holds "" for an empty box, and lines copied from another scheduler were sent
+ * with those "" still in them — an empty End Day reached the API as "" and
+ * `"" < 1` is true, so every copy failed with "End Day () cannot be earlier than Start
+ * Day (1)". Lines added by hand were already cleaned; now every line goes through here.
+ */
+function toLinePayload(line: Row): Row {
+  const dayField = line.occurrence === "WEEKLY" || line.occurrence === "MONTHLY";
+  const customDays = Array.isArray(line.custom_days)
+    ? line.custom_days.map(Number)
+    : String(line.custom_days ?? "").split(",").filter((d) => d.trim() !== "").map((d) => Number(d.trim()));
+  return {
+    ...line,
+    start_day: Number(line.start_day) || 1,
+    end_day: blank(line.end_day) || Number(line.end_day) === 0 ? null : Number(line.end_day),
+    day_of_week: dayField ? numberOrNull(line.day_of_week) : null,
+    custom_days: line.occurrence === "CUSTOM" ? customDays.filter((n) => !Number.isNaN(n)) : null,
+    standard_qty: numberOrNull(line.standard_qty),
+    std_value: numberOrNull(line.std_value),
+    lower_alert_limit: numberOrNull(line.lower_alert_limit),
+    upper_alert_limit: numberOrNull(line.upper_alert_limit),
+    estimated_cost: numberOrNull(line.estimated_cost),
+  };
+}
+
 const emptyLineForm = (seq = 1) => ({
   line_seq: seq,
   line_type: "CONSUMPTION",
@@ -446,20 +475,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       return;
     }
 
-    const cleanedLine: Row = {
-      ...lineForm,
-      start_day: Number(lineForm.start_day) || 1,
-      end_day: lineForm.end_day ? Number(lineForm.end_day) : null,
-      day_of_week: (lineForm.occurrence === "WEEKLY" || lineForm.occurrence === "MONTHLY") && lineForm.day_of_week ? Number(lineForm.day_of_week) : null,
-      custom_days: lineForm.occurrence === "CUSTOM" && lineForm.custom_days
-        ? String(lineForm.custom_days).split(",").map((s: string) => Number(s.trim())).filter((n: number) => !Number.isNaN(n))
-        : null,
-      standard_qty: lineForm.standard_qty !== "" ? Number(lineForm.standard_qty) : null,
-      std_value: lineForm.std_value !== "" ? Number(lineForm.std_value) : null,
-      lower_alert_limit: lineForm.lower_alert_limit !== "" ? Number(lineForm.lower_alert_limit) : null,
-      upper_alert_limit: lineForm.upper_alert_limit !== "" ? Number(lineForm.upper_alert_limit) : null,
-      estimated_cost: lineForm.estimated_cost !== "" ? Number(lineForm.estimated_cost) : null,
-    };
+    const cleanedLine: Row = toLinePayload(lineForm);
 
     // Prevent duplicate items, resources, or activities with overlapping time periods
     const otherLines = editingLineIndex !== null
@@ -516,7 +532,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         animal_count: animalCount !== "" ? Number(animalCount) : undefined,
         scheduler_status: status,
         notes: notes || undefined,
-        lines: lines.length > 0 ? lines : undefined,
+        lines: lines.length > 0 ? lines.map(toLinePayload) : undefined,
         system_scheduler_id: lines.length > 0 && copiedSystemSchedulerId ? copiedSystemSchedulerId : undefined,
       };
 

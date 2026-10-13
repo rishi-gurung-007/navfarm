@@ -886,6 +886,8 @@ export class ItemService {
     if (dto.inventory_gl_account !== undefined) updates.inventory_gl_account = dto.inventory_gl_account;
     if (dto.cogs_gl_account !== undefined) updates.cogs_gl_account = dto.cogs_gl_account;
     if (dto.status !== undefined) updates.status = dto.status;
+    // Status is the lifecycle: an item saved as ACTIVE is active, whatever flag the form carried over from its draft.
+    if (updates.status === 'ACTIVE') updates.is_active = true;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
 
     const willBeActive = updates.status === 'ACTIVE' || (item.status === 'DRAFT' && dto.status === 'ACTIVE');
@@ -1004,8 +1006,14 @@ export class ItemService {
       throw new NotFoundException(`Item with ID '${id}' not found.`);
     }
 
-    if (!item.deleted_at) {
+    // Already usable: nothing to restore. Checking deleted_at alone missed an item that is inactive
+    // without being deleted - the toggle then reported "Activated" and changed nothing.
+    if (!item.deleted_at && item.is_active) {
       return item;
+    }
+    // A draft has no name or UoM yet; it is completed and saved, not switched on.
+    if (item.status === 'DRAFT') {
+      throw new BadRequestException('This item is still a draft — open it, complete the required fields and save to activate it.');
     }
 
     await this.db

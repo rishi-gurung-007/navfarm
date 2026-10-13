@@ -116,7 +116,7 @@ describe('InventoryLedgerService reverseEntry — closed period guard (r32)', ()
  * reads are told apart by what they select. It reads, in order, the item, the receipt layers (`.orderBy().for()`),
  * the lots' balances (`.groupBy()`, entries then lines) and, for a layer drawn empty, what was already applied to it.
  */
-const costingDb = (opts: { item?: object; layers: any[]; lotBalanceRows?: any[]; book?: { quantity: string; value: string }; onWhere?: (condition: any) => void }) => {
+const costingDb = (opts: { item?: object; layers: any[]; laterStock?: string; lotBalanceRows?: any[]; book?: { quantity: string; value: string }; onWhere?: (condition: any) => void }) => {
   const applications: any[] = [];
   const db: any = { current: '' };
   const chain = (result: any, cols?: any) => {
@@ -139,6 +139,8 @@ const costingDb = (opts: { item?: object; layers: any[]; lotBalanceRows?: any[];
         if (cols && 'value' in cols) return chain([opts.book ?? { quantity: String(opts.layers.reduce((n, l) => n + Number(l.remaining_quantity), 0)), value: String(opts.layers.reduce((n, l) => n + Number(l.remaining_quantity) * Number(l.rate), 0)) }]);
         if (cols && 'lot_no' in cols) return chain(opts.lotBalanceRows ?? [], cols);
         if (cols && 'code' in cols) return chain([]);
+        // Stock received under a later posting date (the shortage message's hint).
+        if (cols && 'later' in cols) return chain([{ later: opts.laterStock ?? '0' }]);
         return chain(opts.layers);
       },
     }),
@@ -375,6 +377,36 @@ describe('Inventory FIFO', () => {
     const service = new InventoryLedgerService({ get: () => db } as any);
     await expect(service.applyFifo({ ...params, quantity: 10, sourceLedgerId: 'named' }, db)).rejects.toThrow(/Insufficient stock/);
     expect(applications).toHaveLength(0);
+  });
+
+  it('draws only receipts posted on or before the issue date, so a future-dated GRN is not usable in the past', async () => {
+    let layerQuery: any;
+    const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await service.applyFifo({ ...params, applicationDate: '2026-10-12' }, db).catch(() => undefined);
+    expect(layerQuery.sql).toContain('`posting_date` <= ?');
+    expect(layerQuery.params).toContain('2026-10-12');
+  });
+
+  it('does not date-cap a named source receipt - the caller chose that exact layer', async () => {
+    let layerQuery: any;
+    const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await service.applyFifo({ ...params, sourceLedgerId: 'named' }, db).catch(() => undefined);
+    expect(layerQuery.sql).not.toContain('`posting_date` <= ?');
+  });
+
+  it('says so when the shortage is stock received under a later posting date', async () => {
+    const { db } = costingDb({ layers: [], laterStock: '8' });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo({ ...params, quantity: 5, applicationDate: '2026-10-12' }, db))
+      .rejects.toThrow(/8 more is received but dated after 2026-10-12, so it cannot be used yet/);
+  });
+
+  it('keeps the plain shortage message when nothing is dated later', async () => {
+    const { db } = costingDb({ layers: [] });
+    const service = new InventoryLedgerService({ get: () => db } as any);
+    await expect(service.applyFifo({ ...params, quantity: 5 }, db)).rejects.not.toThrow(/dated after/);
   });
 
   it('restricts source layers to the issuing company', async () => {

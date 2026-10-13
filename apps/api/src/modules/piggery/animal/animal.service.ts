@@ -1661,6 +1661,10 @@ export class AnimalService {
       userId: userPayload?.userId,
     });
 
+    // The stage's scheduler, if it was set up before anyone arrived, starts on the day they moved
+    // in. Run after the movement above, which is what records that day.
+    await this.batchService.alignSchedulerToStageEntry(animal.current_batch_id, dto.to_stage_id);
+
     await this.auditService.log({
       tenantId,
       companyId: animal.company_id,

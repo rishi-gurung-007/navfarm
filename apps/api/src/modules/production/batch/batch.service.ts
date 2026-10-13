@@ -1718,6 +1718,9 @@ export class BatchService {
         userPayload,
         { source: dto.scheduler_source },
       );
+      // An animal-wise stage's scheduler, created now or earlier, starts on the day of this move
+      // (createForStage dates every header from the batch start). A no-op for batch-wise batches.
+      await this.schedulerHeaderService.alignToStageEntry(id, matchedStage.stage_id);
     }
 
     // The stages just changed hands: each open scheduler counts the animals now at its stage.
@@ -2227,6 +2230,11 @@ export class BatchService {
   /** Recounts an animal-wise batch's stage headcounts from the register (no-op for a batch-wise batch). */
   async syncSchedulerCounts(batchId: string): Promise<void> {
     await this.schedulerHeaderService.syncAnimalWiseCounts(batchId);
+  }
+
+  /** See SchedulerHeaderService.alignToStageEntry: a stage's unused scheduler starts when its animals entered it. */
+  async alignSchedulerToStageEntry(batchId: string, stageId: string): Promise<string | null> {
+    return this.schedulerHeaderService.alignToStageEntry(batchId, stageId);
   }
 
   /**
@@ -3589,6 +3597,14 @@ export class BatchService {
         const activeStageIds = new Set(
           liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
         );
+        // A stage is owed a day's entry only from the day its animals entered it. Counting
+        // from the batch start, sows moved into Farrowing on 13 Sep made 9 Sep the next
+        // pending date — a day they had already been posted on, under Insemination.
+        const stageStart = new Map<string, string>();
+        for (const sId of activeStageIds) {
+          const entered = await this.schedulerHeaderService.stageEntryDate(batch.batch_id, sId as string);
+          stageStart.set(sId as string, entered && entered > startDate ? entered : startDate);
+        }
 
         let cursor = startDate;
         let count = 0;
@@ -3602,9 +3618,9 @@ export class BatchService {
                 .filter((l: any) => l.entry_date === cursor)
                 .map((l: any) => l.stage_id),
             );
-            isComplete = Array.from(activeStageIds).every((sId) =>
-              lockedStages.has(sId!),
-            );
+            isComplete = Array.from(activeStageIds)
+              .filter((sId) => (stageStart.get(sId as string) ?? startDate) <= cursor)
+              .every((sId) => lockedStages.has(sId!));
           }
 
           if (!isComplete) {

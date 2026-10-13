@@ -118,6 +118,11 @@ export class QueryStockBalanceDto {
   @Type(() => Boolean)
   @IsBoolean()
   belowReorderOnly?: boolean;
+
+  @ApiProperty({ description: 'Count only receipts posted on or before this date (YYYY-MM-DD) - what an issue on that date can use. Omit for everything received.', required: false })
+  @IsOptional()
+  @IsDateString()
+  asOfDate?: string;
 }
 
 export class QueryAvailableLotsDto {

@@ -39,10 +39,24 @@ const PARENT_FIELDS: Record<string, string> = {
   location: "parent_location_id", "item-category": "parent_category_id",
   "gl-account": "parent_account_id", "cost-center": "parent_cost_center_id",
 };
-interface Settings { generated: boolean; allowManual: boolean; preview?: string }
+interface Settings {
+  generated: boolean;
+  allowManual: boolean;
+  preview?: string;
+  /** Form fields the series builds the code from (e.g. `dob` for PIG-<birth year>-0001). */
+  segmentFields?: string[];
+}
 
 // Module-level cache so reopening a form or switching between records preserves the preview instantly
 const PREVIEW_CACHE = new Map<string, Settings>();
+// Which form fields each series composes its code from, remembered across forms so the
+// first preview of a reopened form already carries their values.
+const SEGMENT_FIELDS = new Map<string, string[]>();
+
+function segmentFieldsOf(data: any): string[] | undefined {
+  const list = data?.segment_fields ?? data?.segmentFields;
+  return Array.isArray(list) ? list.map(String) : undefined;
+}
 
 export function useCodeSeries(key: string, form: Record<string, unknown>, enabled = true) {
   const [revision, setRevision] = useState(0);
@@ -53,7 +67,21 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
   const lobId = key === "animal" ? String(form.lob_id || "") : "";
 
   const scopeKey = `${getActiveWorkspaceScope()}:${getActiveCompanyId()}:${getActiveOperationalAreaId()}`;
-  const cacheKey = `${scopeKey}:${key}:${type}:${parentId}:${lobId}`;
+  const seriesKey = `${scopeKey}:${key}:${type}:${parentId}:${lobId}`;
+  // The values of the fields the code is built from. A series with a date-of-birth
+  // segment issues PIG-2026-0003 for a 2026 birth and PIG-0005 with no date at all,
+  // so the preview has to be asked with the same values the save will send, and
+  // asked again whenever one of them changes.
+  const recordJson = (() => {
+    const fields = SEGMENT_FIELDS.get(seriesKey) ?? [];
+    const record: Record<string, unknown> = {};
+    for (const field of [...fields].sort()) {
+      const value = form[field];
+      if (value !== undefined && value !== null && value !== "") record[field] = value;
+    }
+    return Object.keys(record).length ? JSON.stringify(record) : "";
+  })();
+  const cacheKey = `${seriesKey}:${recordJson}`;
   const requestKey = `${cacheKey}:${revision}`;
 
   const cached = PREVIEW_CACHE.get(cacheKey);
@@ -70,7 +98,20 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
     const compId = getActiveCompanyId();
     const typeParam = type ? `&type=${encodeURIComponent(type)}` : '';
     const parentParam = parentId ? `&parentId=${encodeURIComponent(parentId)}` : '';
-    const previewUrl = `/no-series/preview-by-master?masterType=${masterType}${typeParam}${parentParam}${compId ? `&companyId=${compId}` : ''}`;
+    const recordParam = recordJson ? `&record=${encodeURIComponent(recordJson)}` : '';
+    const previewUrl = `/no-series/preview-by-master?masterType=${masterType}${typeParam}${parentParam}${recordParam}${compId ? `&companyId=${compId}` : ''}`;
+    // Learning the segment fields changes recordJson, and so the cache key, which asks
+    // again with their values — once, the first time a series is previewed in a session.
+    const learnSegments = (data: any) => {
+      const fields = segmentFieldsOf(data);
+      if (!fields) return;
+      const known = SEGMENT_FIELDS.get(seriesKey);
+      if (known && known.join() === fields.join()) return;
+      SEGMENT_FIELDS.set(seriesKey, fields);
+      if (!cancelled && fields.some((field) => form[field] !== undefined && form[field] !== null && form[field] !== "")) {
+        setRevision((value) => value + 1);
+      }
+    };
 
     api.get(previewUrl)
       .then((modernRes: any) => {
@@ -80,7 +121,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
             generated: true,
             allowManual: modernData.allowManual !== false,
             preview: modernData.preview || modernData.next_number || "",
+            segmentFields: segmentFieldsOf(modernData),
           };
+          learnSegments(modernData);
           PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) {
             setResult({
@@ -94,6 +137,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
         if (type) params.set("type", type);
         if (parentId) params.set("parentId", parentId);
         if (lobId) params.set("lobId", lobId);
+        if (recordJson) params.set("record", recordJson);
 
         return api.get(`/number-series/preview?${params}`).then((res) => {
           const data = res?.data || res;
@@ -101,7 +145,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
             generated: data.generated === true,
             allowManual: data.allowManual !== false,
             preview: data.preview || "",
+            segmentFields: segmentFieldsOf(data),
           };
+          learnSegments(data);
           PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) setResult({ key: requestKey, settings });
         });
@@ -111,6 +157,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
         if (type) params.set("type", type);
         if (parentId) params.set("parentId", parentId);
         if (lobId) params.set("lobId", lobId);
+        if (recordJson) params.set("record", recordJson);
 
         return api.get(`/number-series/preview?${params}`).then((res) => {
           const data = res?.data || res;
@@ -118,7 +165,9 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
             generated: data.generated === true,
             allowManual: data.allowManual !== false,
             preview: data.preview || "",
+            segmentFields: segmentFieldsOf(data),
           };
+          learnSegments(data);
           PREVIEW_CACHE.set(cacheKey, settings);
           if (!cancelled) setResult({ key: requestKey, settings });
         }).catch((err: Error) => {
@@ -130,7 +179,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
       });
 
     return () => { cancelled = true; };
-  }, [key, type, parentId, lobId, scopeKey, enabled, canGenerate, requestKey, cacheKey]);
+  }, [key, type, parentId, lobId, recordJson, scopeKey, enabled, canGenerate, requestKey, cacheKey]);
 
   // Always use the most accurate settings available: exact request match, current state result, or module cache
   const activeSettings = (result?.key === requestKey ? result?.settings : undefined) || result?.settings || cached;

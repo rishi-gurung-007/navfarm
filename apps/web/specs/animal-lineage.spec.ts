@@ -51,3 +51,16 @@ describe("D42 — Sire and Dam: pick a registered parent, or type what the paper
     expect(keys).toEqual(["sire_animal_id", "sire_serial_no", "dam_animal_id", "dam_serial_no"]);
   });
 });
+
+describe("Animal form tab order", () => {
+  it("opens on Identification, then Acquisition, then Lineage, then the rest", () => {
+    // The form draws one tab per section, in the order a section's first field appears.
+    const order: string[] = [];
+    for (const f of animalConfig.fields) {
+      if (f.hideInForm || f.subDialog) continue;
+      const s = f.section || "Identification";
+      if (!order.includes(s)) order.push(s);
+    }
+    expect(order.slice(0, 3)).toEqual(["Identification", "Acquisition", "Lineage"]);
+  });
+});

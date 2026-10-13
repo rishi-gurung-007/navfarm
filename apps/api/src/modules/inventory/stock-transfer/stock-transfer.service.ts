@@ -1783,10 +1783,11 @@ export class StockTransferService {
         throw new BadRequestException('All quantities on this Transfer Order have already been shipped.');
       }
 
-      // Check on-hand stock for all items being shipped
+      // Check on-hand stock for all items being shipped - only receipts posted by the shipment date count
+      const shipmentPostingDate = dto.posting_date || transfer.posting_date || new Date().toISOString().slice(0, 10);
       for (const item of itemsToShip) {
         const balances = await this.ledgerService.getStockBalance(
-          { companyId: transfer.company_id, warehouseId: transfer.from_warehouse_id, itemId: item.line.item_id } as any,
+          { companyId: transfer.company_id, warehouseId: transfer.from_warehouse_id, itemId: item.line.item_id, asOfDate: shipmentPostingDate } as any,
           tenantId,
         );
         let onHand = 0;
@@ -1819,8 +1820,6 @@ export class StockTransferService {
           );
         }
       }
-
-      const shipmentPostingDate = dto.posting_date || transfer.posting_date || new Date().toISOString().slice(0, 10);
 
       // Append logistics tracking details to remarks if provided
       const logisticsParts: string[] = [];

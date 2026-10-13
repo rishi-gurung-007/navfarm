@@ -192,6 +192,22 @@ describe('NumberSeriesService', () => {
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
+    it('composes the code from the record the form sends, and names the fields it needs', async () => {
+      // The Animal form showed PIG-0005 while the save, which had the date of birth,
+      // issued PIG-2026-0003: the preview was asked without the record.
+      const animalSeries = { ...series, series_code: 'ANIMAL', document_type: 'ANIMAL', prefix: 'PIG', prefix_position: 'START', seq_length: 4, code_segments: ['dob:YEAR'] };
+      const taken = [{ code: 'PIG-0004' }, { code: 'PIG-2026-0001' }, { code: 'PIG-2026-0002' }];
+      jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'ANIMAL' } as any);
+
+      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken));
+      await expect(service.previewCode({ master: 'ANIMAL' } as any, 'tenant', 'company'))
+        .resolves.toMatchObject({ preview: 'PIG-0005', segmentFields: ['dob'] });
+
+      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken));
+      await expect(service.previewCode({ master: 'ANIMAL', record: JSON.stringify({ dob: '2026-07-30' }) } as any, 'tenant', 'company'))
+        .resolves.toMatchObject({ preview: 'PIG-2026-0003', segmentFields: ['dob'] });
+    });
+
     it('uses the BREED field series, matching create — Breed has no farm/parent to preview under', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'BREED' } as any);
       mockDbSelect.mockReturnValueOnce(returning([{

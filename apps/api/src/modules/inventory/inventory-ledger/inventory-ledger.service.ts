@@ -442,6 +442,9 @@ export class InventoryLedgerService {
     ];
     if (warehouseId) layerConditions.push(eq(schema.inventoryLedger.warehouse_id, warehouseId));
     if (params.sourceLedgerId) layerConditions.push(eq(schema.inventoryLedger.ledger_id, params.sourceLedgerId));
+    // A receipt is usable only from its posting date: an issue dated 12 Oct cannot draw a GRN or transfer
+    // receipt posted 20 Oct. A named source receipt is the exception - the caller chose that exact layer.
+    else layerConditions.push(lte(schema.inventoryLedger.posting_date, params.applicationDate));
     // Oldest first: posting date, then Entry No. - created_at is only second-precise, so two receipts
     // posted together tied on it and the newer one could be drawn first.
     const availableLayers = await executor
@@ -580,7 +583,7 @@ export class InventoryLedgerService {
    * must never fail because a name could not be read.
    */
   private async shortageMessage(
-    params: { itemId: string; quantity: number; lotNo?: string; warehouseId?: string },
+    params: { tenantId?: string; companyId?: string; itemId: string; quantity: number; lotNo?: string; warehouseId?: string; applicationDate?: string },
     available: number,
     short: number,
     executor: MySql2Database<typeof schema>,
@@ -606,7 +609,30 @@ export class InventoryLedgerService {
       // keep the ids
     }
     const lot = params.lotNo ? ` (lot ${params.lotNo})` : '';
-    return `Insufficient stock of ${item}${lot}${where}: ${roundMoney(available)} available, ${params.quantity} needed — short by ${roundMoney(short)}. Receive more stock or lower the quantity.`;
+    // Stock received under a later posting date is not usable yet - say so, or the shortage looks like a bug.
+    let later = 0;
+    if (params.applicationDate && params.tenantId && params.companyId) {
+      try {
+        const conditions = [
+          eq(schema.inventoryLedger.tenant_id, params.tenantId),
+          eq(schema.inventoryLedger.company_id, params.companyId),
+          eq(schema.inventoryLedger.item_id, params.itemId),
+          inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
+          sql`${schema.inventoryLedger.posting_date} > ${params.applicationDate}`,
+        ];
+        if (params.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, params.warehouseId));
+        const [row] = await executor
+          .select({ later: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+          .from(schema.inventoryLedger)
+          .where(and(...conditions));
+        const n = Number(row?.later);
+        later = Number.isFinite(n) ? n : 0;
+      } catch {
+        // best effort
+      }
+    }
+    const dated = later > 0.00005 ? ` ${roundMoney(later)} more is received but dated after ${params.applicationDate}, so it cannot be used yet.` : '';
+    return `Insufficient stock of ${item}${lot}${where}: ${roundMoney(available)} available, ${params.quantity} needed — short by ${roundMoney(short)}.${dated} Receive more stock or lower the quantity.`;
   }
 
   /**
@@ -1416,6 +1442,7 @@ export class InventoryLedgerService {
     if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
     if (query.nobId) conditions.push(eq(schema.itemMaster.nob_id, query.nobId));
     if (query.lobId) conditions.push(eq(schema.itemMaster.lob_id, query.lobId));
+    if (query.asOfDate) conditions.push(lte(schema.inventoryLedger.posting_date, query.asOfDate));
 
     const rows = await this.db
       .select({

@@ -524,28 +524,6 @@ const animal: MasterDataConfig = {
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
     { key: "rfid_tag", label: "RFID", type: "text", maxLength: 50, helpText: "The only tag an animal carries. Each animal needs its own RFID; a tag already used by another animal is refused.", section: "Identification" },
     { key: "ear_tag_image_url", label: "Ear Tag Image", type: "image", uploadEndpoint: "/animal/upload-image", section: "Identification" },
-    // D42 (Rishi, 29 Sep): a parent is either a registered animal here — picked,
-    // and the list is narrowed to the right sex so a boar is never offered as a
-    // dam — or it is not, in which case the papers' serial number is typed
-    // beside it. Rishi's addendum: both serial fields are available for EVERY
-    // animal, whatever its entry type and whether or not a parent is picked, so
-    // neither carries a visibleWhen, a requiredWhen or a dependsOn.
-    {
-      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "sire_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
-      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here."
-    },
-    {
-      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "sire_animal_id", section: "Lineage",
-      helpText: "Filled in automatically when a Sire is selected. Type it only when the sire is not registered here, using the number on its papers."
-    },
-    {
-      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "dam_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
-      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here."
-    },
-    {
-      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "dam_animal_id", section: "Lineage",
-      helpText: "Filled in automatically when a Dam is selected. Type it only when the dam is not registered here, using the number on its papers."
-    },
     {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
@@ -556,7 +534,9 @@ const animal: MasterDataConfig = {
     // two dates it is computed from are the ones either side of it here.
     // readOnly: the API computes it on every write and discards anything sent
     // alongside a DOB, so an editable box would take input it then throws away.
-    { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", min: 0, readOnly: true, helpText: "Computed from Date of Birth and Entry Date.", section: "Acquisition" },
+    { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", min: 0, readOnly: true, ageFromDates: { from: "dob", to: "entry_date", unit: "weeksAndDays" }, helpText: "The animal's age on the Entry Date, in weeks and days. Calculated from Date of Birth and Entry Date.", section: "Acquisition" },
+    // The same age as a single count of days (3 weeks 2 days reads as 23). Shown only; the API stores whole weeks.
+    { key: "age_at_entry_days", label: "Age at Entry (Days)", type: "number", min: 0, readOnly: true, hideInTable: true, ageFromDates: { from: "dob", to: "entry_date", unit: "totalDays" }, helpText: "The animal's age on the Entry Date, in total days. Calculated; not typed.", section: "Acquisition" },
     // Shown only for the entry types they belong to. The API has always
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
@@ -599,6 +579,31 @@ const animal: MasterDataConfig = {
     // amortisation schedule are built from. Read-only: the service recomputes it
     // on every write, so an entered figure would be overwritten.
     { key: "total_opening_asset_value", label: "Total Opening Asset Value", type: "number", step: "0.01", min: 0, readOnly: true, createOnly: true, helpText: "Equal to the Acquisition Cost. Calculated on save.", section: "Acquisition" },
+    // Lineage sits after Acquisition on purpose: the form's tabs follow the order of
+    // these fields, and the tabs were asked for as Identification, Acquisition,
+    // Lineage, then the rest (13 Oct 2026).
+    // D42 (Rishi, 29 Sep): a parent is either a registered animal here — picked,
+    // and the list is narrowed to the right sex so a boar is never offered as a
+    // dam — or it is not, in which case the papers' serial number is typed
+    // beside it. Rishi's addendum: both serial fields are available for EVERY
+    // animal, whatever its entry type and whether or not a parent is picked, so
+    // neither carries a visibleWhen, a requiredWhen or a dependsOn.
+    {
+      key: "sire_animal_id", label: "Sire (Father)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=M", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "sire_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
+      helpText: "A registered boar on this farm. Leave empty and use the serial number beside it when the sire is not registered here."
+    },
+    {
+      key: "sire_serial_no", label: "Sire Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "sire_animal_id", section: "Lineage",
+      helpText: "Filled in automatically when a Sire is selected. Type it only when the sire is not registered here, using the number on its papers."
+    },
+    {
+      key: "dam_animal_id", label: "Dam (Mother)", type: "select-entity", searchable: true, entityEndpoint: "/animal?gender=F", entityValueKey: "animal_id", entityLabelKeys: ["animal_code", "rfid_tag"], fills: [{ key: "dam_serial_no", rowKeys: ["rfid_tag", "animal_code"] }], section: "Lineage",
+      helpText: "A registered sow or gilt on this farm. Leave empty and use the serial number beside it when the dam is not registered here."
+    },
+    {
+      key: "dam_serial_no", label: "Dam Serial No.", type: "text", maxLength: 100, readOnlyWhenSet: "dam_animal_id", section: "Lineage",
+      helpText: "Filled in automatically when a Dam is selected. Type it only when the dam is not registered here, using the number on its papers."
+    },
     // Bio-Asset shows for males too (Rishi, 2026-09-15, reversing the
     // female-only call of 2026-09-08). Book value, amortisation and residual
     // value are IAS 41 figures that apply to any biological asset — a boar
