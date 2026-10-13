@@ -525,17 +525,31 @@ export default function StockAdjustmentPanel() {
           <p className="mt-0.5 text-xs" style={S.sub}>{t("sapDescription")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="nf-input-sm px-2"
-            style={S.input}
-          >
-            <option value="">{t("sapAllStatuses")}</option>
-            <option value="DRAFT">{t("sapStatusDraft")}</option>
-            <option value="POSTED">{t("sapStatusPosted")}</option>
-            <option value="CANCELLED">{t("sapStatusCancelled")}</option>
-          </select>
+          <div className="relative min-w-[9rem]">
+            <SearchableSelect
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val)}
+              options={[
+                { value: "", label: t("sapAllStatuses") },
+                { value: "DRAFT", label: t("sapStatusDraft") },
+                { value: "POSTED", label: t("sapStatusPosted") },
+                { value: "CANCELLED", label: t("sapStatusCancelled") },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[9rem] h-9"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+            >
+              <option value="">{t("sapAllStatuses")}</option>
+              <option value="DRAFT">{t("sapStatusDraft")}</option>
+              <option value="POSTED">{t("sapStatusPosted")}</option>
+              <option value="CANCELLED">{t("sapStatusCancelled")}</option>
+            </select>
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
             <input
@@ -693,23 +707,35 @@ export default function StockAdjustmentPanel() {
                 <label className="nf-text-label" style={S.sub}>
                   Transaction Ref. <span className="text-(--danger)">*</span>
                 </label>
-                <select
-                  value={header.transaction_type}
-                  onChange={(e) => {
-                    const val = e.target.value as "POSITIVE" | "NEGATIVE";
-                    setHeader((h) => ({ ...h, transaction_type: val }));
-                    setDraftLine((prev) => ({ ...prev, type: val }));
-                  }}
-                  className={`${inputCls} nf-select font-medium ${
-                    header.transaction_type === "POSITIVE"
-                      ? "text-emerald-500 font-semibold"
-                      : "text-amber-500 font-semibold"
-                  }`}
-                  style={S.input}
-                >
-                  <option value="POSITIVE">Positive Adjustment (+)</option>
-                  <option value="NEGATIVE">Negative Adjustment (-)</option>
-                </select>
+                <div className="relative">
+                  <SearchableSelect
+                    value={header.transaction_type}
+                    onChange={(val) => {
+                      const v = val as "POSITIVE" | "NEGATIVE";
+                      setHeader((h) => ({ ...h, transaction_type: v }));
+                      setDraftLine((prev) => ({ ...prev, type: v }));
+                    }}
+                    options={[
+                      { value: "POSITIVE", label: "Positive Adjustment (+)" },
+                      { value: "NEGATIVE", label: "Negative Adjustment (-)" },
+                    ]}
+                    columnHeaders={false}
+                    triggerClassName="nf-input h-9"
+                  />
+                  <select
+                    value={header.transaction_type}
+                    onChange={(e) => {
+                      const val = e.target.value as "POSITIVE" | "NEGATIVE";
+                      setHeader((h) => ({ ...h, transaction_type: val }));
+                      setDraftLine((prev) => ({ ...prev, type: val }));
+                    }}
+                    className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                    tabIndex={-1}
+                  >
+                    <option value="POSITIVE">Positive Adjustment (+)</option>
+                    <option value="NEGATIVE">Negative Adjustment (-)</option>
+                  </select>
+                </div>
               </div>
 
               {/* Location * */}

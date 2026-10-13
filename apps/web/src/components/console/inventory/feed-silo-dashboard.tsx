@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { FORECAST_VIEWS, FORECAST_VIEW_LABEL, type ForecastView } from "./feed-forecast-query";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   FeedForecastProvider,
   useFeedForecastContext,
@@ -187,24 +188,88 @@ function FeedSiloDashboardContent() {
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9">
         <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmChosen ? farmId : null} fixedLabel={fixedLabel} allLabel={t("fsdSelectFarm")} onChange={chooseFarm} />
         <Field label={t("fsdShed")} htmlFor="sd-shed">
-          <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!farmChosen || !sheds.length}>
-            {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
-            {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
-          </select>
+          <div className="relative min-w-44">
+            <SearchableSelect
+              value={selection.shedId ?? ""}
+              onChange={(val) => chooseShed(val)}
+              disabled={!farmChosen || !sheds.length}
+              options={sheds.map((option) => ({
+                value: option.id,
+                code: option.code,
+                name: option.name,
+                label: `${option.code} — ${option.name}`,
+              }))}
+              placeholder={t("fsdSelectShed")}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-44 h-9"
+            />
+            <select
+              id="sd-shed"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={selection.shedId ?? ""}
+              onChange={(event) => chooseShed(event.target.value)}
+              disabled={!farmChosen || !sheds.length}
+            >
+              {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
+              {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+            </select>
+          </div>
         </Field>
         <Field label={t("fsdSilo")} htmlFor="sd-silo">
-          <select id="sd-silo" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.siloId ?? ""} onChange={(event) => chooseSilo(event.target.value)} disabled={!selection.shedId || !silos.length}>
-            {!selection.siloId && <option value="">{t("fsdSelectSilo")}</option>}
-            {silos.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
-          </select>
+          <div className="relative min-w-44">
+            <SearchableSelect
+              value={selection.siloId ?? ""}
+              onChange={(val) => chooseSilo(val)}
+              disabled={!selection.shedId || !silos.length}
+              options={silos.map((option) => ({
+                value: option.id,
+                code: option.code,
+                name: option.name,
+                label: `${option.code} — ${option.name}`,
+              }))}
+              placeholder={t("fsdSelectSilo")}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-44 h-9"
+            />
+            <select
+              id="sd-silo"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={selection.siloId ?? ""}
+              onChange={(event) => chooseSilo(event.target.value)}
+              disabled={!selection.shedId || !silos.length}
+            >
+              {!selection.siloId && <option value="">{t("fsdSelectSilo")}</option>}
+              {silos.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+            </select>
+          </div>
         </Field>
         <Field label={t("fsdPlanningDate")} htmlFor="sd-planning-date">
           <input id="sd-planning-date" type="date" className="nf-input-sm" style={inputStyle} value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} />
         </Field>
         <Field label={t("ffView")} htmlFor="sd-view">
-          <select id="sd-view" className="nf-input-sm nf-select" style={inputStyle} value={view} onChange={(event) => changeView(event.target.value as ForecastView)}>
-            {FORECAST_VIEWS.map((option) => <option key={option} value={option}>{t(FORECAST_VIEW_LABEL[option])}</option>)}
-          </select>
+          <div className="relative min-w-[8rem]">
+            <SearchableSelect
+              value={view}
+              onChange={(val) => changeView(val as ForecastView)}
+              options={FORECAST_VIEWS.map((option) => ({
+                value: option,
+                label: t(FORECAST_VIEW_LABEL[option]),
+              }))}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[8rem] h-9"
+            />
+            <select
+              id="sd-view"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={view}
+              onChange={(event) => changeView(event.target.value as ForecastView)}
+            >
+              {FORECAST_VIEWS.map((option) => <option key={option} value={option}>{t(FORECAST_VIEW_LABEL[option])}</option>)}
+            </select>
+          </div>
         </Field>
         {view !== "PERIOD" && (
           <Field label={t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")} htmlFor="sd-from">

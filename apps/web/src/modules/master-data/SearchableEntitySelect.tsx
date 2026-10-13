@@ -402,6 +402,11 @@ export function SearchableEntitySelect({
           aria-required={ariaRequired}
           aria-busy={loading || undefined}
           disabled={unavailable}
+          value={value}
+          onChange={(e: any) => {
+            const v = e?.target?.value ?? e;
+            if (v !== undefined) onChange(String(v));
+          }}
           className={`nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
           style={{
             backgroundColor: "var(--input-bg)",

@@ -1252,31 +1252,61 @@ export default function StockTransferPanel() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <select
-                value={directionFilter}
-                onChange={(e) => setDirectionFilter(e.target.value)}
-                className="nf-input-sm px-2 text-xs"
-                style={S.input}
-                title="Filter transfer flow direction"
-              >
-                <option value="ALL">All Flows</option>
-                <option value="OUTBOUND">Outbound (Ship)</option>
-                <option value="INBOUND">Inbound (Receive)</option>
-              </select>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="nf-input-sm px-2"
-                style={S.input}
-              >
-                <option value="">{t("stpAllStatuses") || "All Statuses"}</option>
-                <option value="DRAFT">{STATUS_LABEL.DRAFT}</option>
-                <option value="IN_TRANSIT">{STATUS_LABEL.IN_TRANSIT}</option>
-                <option value="PARTIALLY_RECEIVED">{STATUS_LABEL.PARTIALLY_RECEIVED}</option>
-                <option value="RECEIVED">{STATUS_LABEL.RECEIVED}</option>
-                <option value="POSTED">{STATUS_LABEL.POSTED}</option>
-                <option value="CANCELLED">{STATUS_LABEL.CANCELLED}</option>
-              </select>
+              <div className="relative min-w-[9rem]">
+                <SearchableSelect
+                  value={directionFilter}
+                  onChange={(val) => setDirectionFilter(val)}
+                  options={[
+                    { value: "ALL", label: "All Flows" },
+                    { value: "OUTBOUND", label: "Outbound (Ship)" },
+                    { value: "INBOUND", label: "Inbound (Receive)" },
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName="nf-input-sm min-w-[9rem] h-9"
+                />
+                <select
+                  value={directionFilter}
+                  onChange={(e) => setDirectionFilter(e.target.value)}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                  title="Filter transfer flow direction"
+                >
+                  <option value="ALL">All Flows</option>
+                  <option value="OUTBOUND">Outbound (Ship)</option>
+                  <option value="INBOUND">Inbound (Receive)</option>
+                </select>
+              </div>
+              <div className="relative min-w-[10rem]">
+                <SearchableSelect
+                  value={statusFilter}
+                  onChange={(val) => setStatusFilter(val)}
+                  options={[
+                    { value: "", label: t("stpAllStatuses") || "All Statuses" },
+                    { value: "DRAFT", label: STATUS_LABEL.DRAFT },
+                    { value: "IN_TRANSIT", label: STATUS_LABEL.IN_TRANSIT },
+                    { value: "PARTIALLY_RECEIVED", label: STATUS_LABEL.PARTIALLY_RECEIVED },
+                    { value: "RECEIVED", label: STATUS_LABEL.RECEIVED },
+                    { value: "POSTED", label: STATUS_LABEL.POSTED },
+                    { value: "CANCELLED", label: STATUS_LABEL.CANCELLED },
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName="nf-input-sm min-w-[10rem] h-9"
+                />
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                >
+                  <option value="">{t("stpAllStatuses") || "All Statuses"}</option>
+                  <option value="DRAFT">{STATUS_LABEL.DRAFT}</option>
+                  <option value="IN_TRANSIT">{STATUS_LABEL.IN_TRANSIT}</option>
+                  <option value="PARTIALLY_RECEIVED">{STATUS_LABEL.PARTIALLY_RECEIVED}</option>
+                  <option value="RECEIVED">{STATUS_LABEL.RECEIVED}</option>
+                  <option value="POSTED">{STATUS_LABEL.POSTED}</option>
+                  <option value="CANCELLED">{STATUS_LABEL.CANCELLED}</option>
+                </select>
+              </div>
               <div className="relative">
                 <Search
                   className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"

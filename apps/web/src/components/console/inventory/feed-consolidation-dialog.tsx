@@ -10,6 +10,7 @@ import { Layers } from "lucide-react";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
 
 type EligibleLine = {
@@ -98,7 +99,30 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   return <Dialog open={open} onClose={onClose} title={t("fcdTitle")} description={t("fcdIntro")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={<><Button variant="outline" onClick={onClose}>{t("fcdCancel")}</Button><Button onClick={create} disabled={busy || !selectedRows.length}>{t("fcdCreate")}</Button></>}>
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9 [&>button]:h-9">
-        <Field label={t("fcdSelectBy")} htmlFor="consolidation-filter"><select id="consolidation-filter" className="nf-input-sm nf-select" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="requisition">{t("fcdByRequisition")}</option><option value="date">{t("fcdByDate")}</option></select></Field>
+        <Field label={t("fcdSelectBy")} htmlFor="consolidation-filter">
+          <div className="relative min-w-[10rem]">
+            <SearchableSelect
+              value={mode}
+              onChange={(val) => setMode(val as typeof mode)}
+              options={[
+                { value: "requisition", label: t("fcdByRequisition") },
+                { value: "date", label: t("fcdByDate") },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[10rem] h-9"
+            />
+            <select
+              id="consolidation-filter"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={mode}
+              onChange={(event) => setMode(event.target.value as typeof mode)}
+            >
+              <option value="requisition">{t("fcdByRequisition")}</option>
+              <option value="date">{t("fcdByDate")}</option>
+            </select>
+          </div>
+        </Field>
         {mode === "requisition" && <Field label={t("fcdByRequisition")} htmlFor="consolidation-search"><input id="consolidation-search" className="nf-input-sm" placeholder={t("fcdSearchPlaceholder")} value={reqSearch} onChange={(event) => setReqSearch(event.target.value)} /></Field>}
         {mode === "date" && <><Field label={t("fcdFromDate")} htmlFor="consolidation-from"><input id="consolidation-from" type="date" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label={t("fcdToDate")} htmlFor="consolidation-to"><input id="consolidation-to" type="date" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
         <Button variant="outline" onClick={load} disabled={busy}>{busy ? t("fcdLoading") : t("fcdFind")}</Button>

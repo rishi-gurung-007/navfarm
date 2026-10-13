@@ -18,6 +18,7 @@ import { Toast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { getActiveCompanyId, getStoredUser } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -51,7 +52,6 @@ function SubjectLink({ subject, t }: { subject: AlertSubject | null; t: (key: Tr
   if (!subject) return <span className="text-[var(--text-secondary)]">{t("alrtNoSubject")}</span>;
   return <RecordLink code={subject.code ?? t(SUBJECT_LABEL[subject.type])} href={SUBJECT_HREF[subject.type](subject.id)} />;
 }
-const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const TH = "h-9 whitespace-nowrap px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]";
 const TD = "whitespace-nowrap px-3 py-1.5 text-xs text-[var(--text-primary)]";
 const SMALL_BADGE = "px-1.5 py-0 text-[10px]";
@@ -155,23 +155,83 @@ export default function AlertPanel() {
     <div data-fill-body>
       <div className="flex shrink-0 flex-wrap items-end gap-3">
         <Field label={t("alrtType")} htmlFor="alrt-type">
-          <select id="alrt-type" className="nf-input-sm nf-select" style={inputStyle} value={type} onChange={(e) => setType(e.target.value as TypeFilter)}>
-            {mayReadBatch && mayReadFeed && <option value="ALL">{t("alrtTypeAll")}</option>}
-            {mayReadBatch && <option value="BATCH">{t("alrtTypeBatch")}</option>}
-            {mayReadFeed && <option value="FEED">{t("alrtTypeFeed")}</option>}
-          </select>
+          <div className="relative min-w-[8rem]">
+            <SearchableSelect
+              value={type}
+              onChange={(val) => setType(val as TypeFilter)}
+              options={[
+                ...(mayReadBatch && mayReadFeed ? [{ value: "ALL", label: t("alrtTypeAll") }] : []),
+                ...(mayReadBatch ? [{ value: "BATCH", label: t("alrtTypeBatch") }] : []),
+                ...(mayReadFeed ? [{ value: "FEED", label: t("alrtTypeFeed") }] : []),
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[8rem] h-9"
+            />
+            <select
+              id="alrt-type"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={type}
+              onChange={(e) => setType(e.target.value as TypeFilter)}
+            >
+              {mayReadBatch && mayReadFeed && <option value="ALL">{t("alrtTypeAll")}</option>}
+              {mayReadBatch && <option value="BATCH">{t("alrtTypeBatch")}</option>}
+              {mayReadFeed && <option value="FEED">{t("alrtTypeFeed")}</option>}
+            </select>
+          </div>
         </Field>
         <Field label={t("alrtFarm")} htmlFor="alrt-farm">
-          <select id="alrt-farm" className="nf-input-sm nf-select" style={inputStyle} value={farmId} onChange={(e) => setFarmId(e.target.value)}>
-            <option value="">{t("alrtFarmAll")}</option>
-            {farms.map((f) => <option key={f.farmId} value={f.farmId}>{f.code} — {f.name}</option>)}
-          </select>
+          <div className="relative min-w-[12rem]">
+            <SearchableSelect
+              value={farmId}
+              onChange={(val) => setFarmId(val)}
+              options={[
+                { value: "", label: t("alrtFarmAll") },
+                ...farms.map((f) => ({
+                  value: f.farmId,
+                  code: f.code,
+                  name: f.name,
+                  label: `${f.code} — ${f.name}`,
+                })),
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[12rem] h-9"
+            />
+            <select
+              id="alrt-farm"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={farmId}
+              onChange={(e) => setFarmId(e.target.value)}
+            >
+              <option value="">{t("alrtFarmAll")}</option>
+              {farms.map((f) => <option key={f.farmId} value={f.farmId}>{f.code} — {f.name}</option>)}
+            </select>
+          </div>
         </Field>
         <Field label={t("alrtShow")} htmlFor="alrt-show">
-          <select id="alrt-show" className="nf-input-sm nf-select" style={inputStyle} value={show} onChange={(e) => setShow(e.target.value as ShowFilter)}>
-            <option value="OPEN">{t("alrtShowOpen")}</option>
-            <option value="ALL">{t("alrtShowAll")}</option>
-          </select>
+          <div className="relative min-w-[8rem]">
+            <SearchableSelect
+              value={show}
+              onChange={(val) => setShow(val as ShowFilter)}
+              options={[
+                { value: "OPEN", label: t("alrtShowOpen") },
+                { value: "ALL", label: t("alrtShowAll") },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[8rem] h-9"
+            />
+            <select
+              id="alrt-show"
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              value={show}
+              onChange={(e) => setShow(e.target.value as ShowFilter)}
+            >
+              <option value="OPEN">{t("alrtShowOpen")}</option>
+              <option value="ALL">{t("alrtShowAll")}</option>
+            </select>
+          </div>
         </Field>
       </div>
 

@@ -507,12 +507,31 @@ export default function GoodsReceiptPanel() {
           <p className="mt-0.5 text-xs" style={S.sub}>{t("grpSubtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="nf-input-sm px-2" style={S.input}>
-            <option value="">{t("grpAllStatuses")}</option>
-            <option value="DRAFT">{t("grpStatusDraft")}</option>
-            <option value="POSTED">{t("grpStatusPosted")}</option>
-            <option value="CANCELLED">{t("grpStatusCancelled")}</option>
-          </select>
+          <div className="relative min-w-[9rem]">
+            <SearchableSelect
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val)}
+              options={[
+                { value: "", label: t("grpAllStatuses") },
+                { value: "DRAFT", label: t("grpStatusDraft") },
+                { value: "POSTED", label: t("grpStatusPosted") },
+                { value: "CANCELLED", label: t("grpStatusCancelled") },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[9rem] h-9"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+            >
+              <option value="">{t("grpAllStatuses")}</option>
+              <option value="DRAFT">{t("grpStatusDraft")}</option>
+              <option value="POSTED">{t("grpStatusPosted")}</option>
+              <option value="CANCELLED">{t("grpStatusCancelled")}</option>
+            </select>
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("grpSearchPlaceholder")} className="nf-input-sm pl-8 pr-3" style={S.input} />

@@ -9,6 +9,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { Dialog } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import ItemLedgerHistoryCard from "./item-ledger-history-card";
 import InventoryLedgerDetail from "./inventory-ledger-detail";
 
@@ -23,8 +24,6 @@ const S = {
   danger: { color: "var(--danger)" },
   input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
 };
-
-const inputCls = "nf-input-sm";
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
@@ -105,18 +104,52 @@ export default function StockBalancePanel() {
       </dl>
 
       <div className="flex flex-wrap items-center gap-2">
-        <select value={itemId} onChange={(e) => setItemId(e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-          <option value="">{t("sbpAllItemsWithCount", { count: items.length })}</option>
-          {items.map((it, idx) => (
-            <option key={it.item_id} value={it.item_id}>
-              {idx + 1}. {it.item_code} — {it.item_name}
-            </option>
-          ))}
-        </select>
-        <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
-          <option value="">{t("sbpAllWarehouses")}</option>
-          {warehouses.map((w) => <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_code} — {w.warehouse_name}</option>)}
-        </select>
+        <div className="min-w-[14rem]">
+          <SearchableSelect
+            ariaLabel={t("sbpColItem")}
+            value={itemId}
+            onChange={setItemId}
+            options={[
+              { value: "", code: "ALL", name: t("sbpAllItemsWithCount", { count: items.length }), label: t("sbpAllItemsWithCount", { count: items.length }) },
+              ...items.map((it) => ({
+                value: it.item_id,
+                code: it.item_code,
+                name: it.item_name,
+                label: `${it.item_code} — ${it.item_name}`,
+              })),
+            ]}
+            columnHeaders={["Code", "Item Name"]}
+            columns={[
+              { key: "code", label: "Code" },
+              { key: "name", label: "Item Name" },
+            ]}
+            placeholder={t("sbpAllItemsWithCount", { count: items.length })}
+            triggerClassName="nf-input-sm min-w-[14rem] h-9"
+          />
+        </div>
+        <div className="min-w-[14rem]">
+          <SearchableSelect
+            ariaLabel={t("sbpColWarehouse")}
+            value={warehouseId}
+            onChange={setWarehouseId}
+            options={[
+              { value: "", code: "ALL", name: t("sbpAllWarehouses"), label: t("sbpAllWarehouses") },
+              ...warehouses.map((w) => ({
+                value: w.warehouse_id,
+                code: w.warehouse_code,
+                name: w.warehouse_name,
+                label: `${w.warehouse_code} — ${w.warehouse_name}`,
+              })),
+            ]}
+            columnHeaders={["Code", "Warehouse Name"]}
+            columns={[
+              { key: "code", label: "Code" },
+              { key: "name", label: "Warehouse Name" },
+            ]}
+            placeholder={t("sbpAllWarehouses")}
+            triggerClassName="nf-input-sm min-w-[14rem] h-9"
+          />
+        </div>
         <label className="flex items-center gap-1.5 text-xs font-medium" style={S.sub}>
           <input type="checkbox" checked={belowReorderOnly} onChange={(e) => setBelowReorderOnly(e.target.checked)} />
           {t("sbpAtBelowReorderLevelOnly")}
