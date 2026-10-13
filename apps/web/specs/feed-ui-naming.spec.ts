@@ -38,7 +38,10 @@ describe("feed forecasting terminology", () => {
     // The lifecycle's feed is Feed Consumption lines (13 Oct): the same names, one row per feed.
     const lines = lifecycle.fields.find((field) => field.key === "feed_lines")!;
     expect(lines.label).toBe("Feed Consumption");
-    expect(lines.subDialog).toBe("Feed Consumption");
+    // In the form itself, just before Resource Requirements (Rishi, 13 Oct), not a header dialog.
+    expect(lines.subDialog).toBeUndefined();
+    const keys = lifecycle.fields.map((field) => field.key);
+    expect(keys.indexOf("feed_lines")).toBe(keys.indexOf("resource_requirements") - 1);
     const rowLabel = (key: string) => lines.jsonRow!.find((c) => c.key === key)?.label;
     expect(rowLabel("feed_item_id")).toBe("Feed Item");
     expect(lines.jsonRow!.map((c) => c.key)[0]).toBe("feed_item_id"); // Feed Item first (Rishi, 13 Oct)
@@ -50,5 +53,15 @@ describe("feed forecasting terminology", () => {
     // Stage days only (Master Setup r35-r38, Rishi 13 Oct): no calendar Effective From / To on a lifecycle stage.
     expect(label(lifecycle.fields, "effective_from")).toBeUndefined();
     expect(label(lifecycle.fields, "effective_to")).toBeUndefined();
+    // The stage-day range carries the name instead (Rishi, 13 Oct). The columns stay
+    // period_from/period_to — only what the user reads changed, so these assert the
+    // label on those keys, not the arrival of an effective_from field above.
+    expect(label(lifecycle.fields, "period_from")).toBe("Effective From");
+    expect(label(lifecycle.fields, "period_to")).toBe("Effective To");
+    expect(rowLabel("period_from")).toBe("Effective From");
+    expect(rowLabel("period_to")).toBe("Effective To");
+    const column = (key: string) => lifecycle.columns.find((c) => c.key === key)?.label;
+    expect(column("period_from")).toBe("Effective From");
+    expect(column("period_to")).toBe("Effective To");
   });
 });

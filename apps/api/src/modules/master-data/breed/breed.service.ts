@@ -890,7 +890,7 @@ export class BreedService {
    * and farm scope. Rows with no feed item never feed, so they are not compared.
    */
   private async assertNoEffectiveOverlap(
-    row: { lifecycle_id?: string; breed_id: string; stage_id: string; feed_item_id?: string | null; calc_unit?: string; period_from?: number; period_to?: number; farm_id?: string | null },
+    row: { lifecycle_id?: string; breed_id: string; stage_id: string; feed_item_id?: string | null; calc_unit?: string; period_from?: number; period_to?: number; farm_id?: string | null; season_type?: string | null; category?: string | null; company_id?: string | null },
     tenantId: string,
     /** The stage record's own rows (its other feed lines), checked against each other by validateFeedLines instead. */
     excludeIds: string[] = [],
@@ -903,6 +903,9 @@ export class BreedService {
         period_from: schema.breedLifecycleStages.period_from,
         period_to: schema.breedLifecycleStages.period_to,
         farm_id: schema.breedLifecycleStages.farm_id,
+        season_type: schema.breedLifecycleStages.season_type,
+        category: schema.breedLifecycleStages.category,
+        company_id: schema.breedLifecycleStages.company_id,
       })
       .from(schema.breedLifecycleStages)
       .where(and(
@@ -913,11 +916,14 @@ export class BreedService {
         isNotNull(schema.breedLifecycleStages.feed_item_id),
       ));
     const clash = findEffectiveOverlap(
-      { lifecycleId: row.lifecycle_id, calcUnit: row.calc_unit, periodFrom: row.period_from, periodTo: row.period_to, farmId: row.farm_id ?? null },
-      (others ?? []).filter((o) => !excludeIds.includes(o.lifecycle_id)).map((o) => ({ lifecycleId: o.lifecycle_id, calcUnit: o.calc_unit, periodFrom: o.period_from, periodTo: o.period_to, farmId: o.farm_id ?? null })),
+      { lifecycleId: row.lifecycle_id, calcUnit: row.calc_unit, periodFrom: row.period_from, periodTo: row.period_to,
+        farmId: row.farm_id ?? null, seasonType: row.season_type ?? null, category: row.category ?? null, companyId: row.company_id ?? null },
+      (others ?? []).filter((o) => !excludeIds.includes(o.lifecycle_id)).map((o) => ({
+        lifecycleId: o.lifecycle_id, calcUnit: o.calc_unit, periodFrom: o.period_from, periodTo: o.period_to,
+        farmId: o.farm_id ?? null, seasonType: o.season_type ?? null, category: o.category ?? null, companyId: o.company_id ?? null })),
     );
     if (clash) {
-      throw new BadRequestException('Another feed row for this breed, stage and farm scope already covers these days. Change Period From / Period To so they do not overlap.');
+      throw new BadRequestException('Another feed row for this breed, stage and farm scope already covers these days. Change Effective From / Effective To so they do not overlap.');
     }
   }
 
@@ -959,6 +965,10 @@ export class BreedService {
       nullSafe(t.farm_id, row.farm_id),
       nullSafe(t.season_type, row.season_type),
       nullSafe(t.category, row.category),
+      // Company is part of the scope for the same reason the overlap rule now uses it:
+      // breed and stage can both be tenant-level rows, and without this one company's
+      // feed lines appeared on another's stage record (Rishi, 13 Oct).
+      nullSafe(t.company_id, row.company_id),
       eq(t.is_active, row.is_active ?? true),
     )).orderBy(asc(t.period_from));
   }
@@ -1012,11 +1022,11 @@ export class BreedService {
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
     if (dto.period_from != null && dto.period_to != null && dto.period_from > dto.period_to) {
-      throw new BadRequestException('Period From cannot be greater than Period To.');
+      throw new BadRequestException('Effective From cannot be greater than Effective To.');
     }
     await this.assertFarmOverride(dto.farm_id, breed.company_id, tenantId);
     await this.assertLifecycleRows(dto, tenantId);
-    await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: dto.feed_item_id, calc_unit: dto.calc_unit, period_from: dto.period_from, period_to: dto.period_to, farm_id: dto.farm_id || null }, tenantId);
+    await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: dto.feed_item_id, calc_unit: dto.calc_unit, period_from: dto.period_from, period_to: dto.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId);
 
     // The row carries company_id (0084) — a request may not choose its value:
     // it is stamped FROM THE BREED, so a row created under a company breed is
@@ -1074,7 +1084,7 @@ export class BreedService {
     await this.db.insert(schema.breedLifecycleStages).values(newLifecycleStage);
     // The further feed lines: copies of this row with their own days and feed (no code of their own).
     for (const line of feedLines?.slice(1) ?? []) {
-      await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null }, tenantId, [lifecycleId]);
+      await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId, [lifecycleId]);
       await this.db.insert(schema.breedLifecycleStages).values({ ...newLifecycleStage, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null });
     }
     await this.refreshStageSchedulers([{ breed_id: dto.breed_id, stage_id: dto.stage_id }], tenantId, userPayload);
@@ -1291,7 +1301,7 @@ export class BreedService {
     const effectiveFrom = dto.period_from !== undefined ? dto.period_from : lifecycleStage.period_from;
     const effectiveTo = dto.period_to !== undefined ? dto.period_to : lifecycleStage.period_to;
     if (effectiveFrom != null && effectiveTo != null && effectiveFrom > effectiveTo) {
-      throw new BadRequestException('Period From cannot be greater than Period To.');
+      throw new BadRequestException('Effective From cannot be greater than Effective To.');
     }
     await this.assertFarmOverride(dto.farm_id, breed.company_id, tenantId);
     await this.assertLifecycleRows(dto, tenantId);
@@ -1305,6 +1315,9 @@ export class BreedService {
       period_from: effectiveFrom,
       period_to: effectiveTo,
       farm_id: pick(dto.farm_id, lifecycleStage.farm_id) || null,
+      season_type: pick(dto.season_type, lifecycleStage.season_type) ?? null,
+      category: pick(dto.category, lifecycleStage.category) ?? null,
+      company_id: lifecycleStage.company_id ?? null,
     }, tenantId, otherRows.map((r) => r.lifecycle_id));
 
     const updates: any = {};
@@ -1369,6 +1382,7 @@ export class BreedService {
         await this.assertNoEffectiveOverlap({
           breed_id: updated.breed_id, stage_id: updated.stage_id, feed_item_id: line.feed_item_id, calc_unit: updated.calc_unit,
           period_from: line.period_from, period_to: line.period_to, farm_id: updated.farm_id,
+          season_type: updated.season_type ?? null, category: updated.category ?? null, company_id: updated.company_id ?? null,
         }, tenantId, [id, ...otherRows.map((r) => r.lifecycle_id)]);
         if (otherRows[i]) {
           await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(line)).where(eq(schema.breedLifecycleStages.lifecycle_id, otherRows[i].lifecycle_id));

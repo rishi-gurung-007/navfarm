@@ -319,13 +319,17 @@ export default function MasterDataImportModal({
           }
 
           // Periods
-          const pFromRaw = getRawValue(raw, "period_from", "Period From", ["from", "periodfrom"]) || "0";
-          const pToRaw = getRawValue(raw, "period_to", "Period To", ["to", "periodto"]) || "0";
+          // The form calls these Effective From / Effective To (stage day numbers, 13 Oct).
+          // The "periodfrom"/"periodto" aliases keep a CSV written against the previous
+          // labels importing — getRawValue's normalised pass strips case and spaces, so
+          // they also cover the "Period From" / "Period To" headers themselves.
+          const pFromRaw = getRawValue(raw, "period_from", "Effective From", ["from", "periodfrom"]) || "0";
+          const pToRaw = getRawValue(raw, "period_to", "Effective To", ["to", "periodto"]) || "0";
           const pFrom = parseInt(pFromRaw, 10);
           const pTo = parseInt(pToRaw, 10);
-          if (isNaN(pFrom) || pFrom < 0) errors.push("Period From must be a non-negative integer.");
-          if (isNaN(pTo) || pTo < 0) errors.push("Period To must be a non-negative integer.");
-          if (pFrom > pTo) errors.push(`Period From (${pFrom}) cannot be greater than Period To (${pTo}).`);
+          if (isNaN(pFrom) || pFrom < 0) errors.push("Effective From must be a non-negative integer.");
+          if (isNaN(pTo) || pTo < 0) errors.push("Effective To must be a non-negative integer.");
+          if (pFrom > pTo) errors.push(`Effective From (${pFrom}) cannot be greater than Effective To (${pTo}).`);
 
           payload.period_from = pFrom;
           payload.period_to = pTo;
