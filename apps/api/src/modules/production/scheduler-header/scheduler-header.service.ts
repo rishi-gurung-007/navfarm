@@ -1104,10 +1104,14 @@ export class SchedulerHeaderService {
    * all of them, so the first row that has one speaks for the stage.
    */
   private async loadLifecycleKpis(header: { tenant_id: string; company_id: string | null; breed_id: string | null; stage_id: string }) {
-    if (!header.breed_id) return [];
+    if (!header.breed_id) return { kpis: [], feed: [] };
     const t = schema.breedLifecycleStages;
     const rows = await this.db
-      .select({ kpi_thresholds: t.kpi_thresholds, kpi_alert_period: t.kpi_alert_period })
+      .select({
+        kpi_thresholds: t.kpi_thresholds, kpi_alert_period: t.kpi_alert_period,
+        calc_unit: t.calc_unit, period_from: t.period_from, period_to: t.period_to,
+        feed_item_id: t.feed_item_id, feed_qty_uom: t.feed_qty_uom, feed_wastage_pct: t.feed_wastage_pct,
+      })
       .from(t)
       .where(and(
         eq(t.tenant_id, header.tenant_id),
@@ -1118,11 +1122,20 @@ export class SchedulerHeaderService {
       ))
       .orderBy(asc(t.period_from));
 
+    // The stage's feed rows, for the scheduler's feed editor to show the UOM a rate was entered
+    // in and the wastage, neither of which a scheduler_line has a column for. Read-only there.
+    const feed = rows
+      .filter((r) => r.feed_item_id)
+      .map((r) => {
+        const { fromDay, toDay } = stageDayRange(r.calc_unit, r.period_from, r.period_to);
+        return { from_day: fromDay, to_day: toDay, feed_item_id: r.feed_item_id, feed_qty_uom: r.feed_qty_uom ?? 'KG', feed_wastage_pct: r.feed_wastage_pct ?? null };
+      });
+
     const row = rows.find((r) => Array.isArray(r.kpi_thresholds) && r.kpi_thresholds.length);
-    if (!row) return [];
+    if (!row) return { kpis: [], feed };
     // A line's period is always the stage's KPI period (Rishi, 12 Oct) — the line only carries
     // its own when an older row set one, so the header wins and the line is the fallback.
-    return (row.kpi_thresholds as Array<Record<string, unknown>>).map((line) => ({
+    const kpis = (row.kpi_thresholds as Array<Record<string, unknown>>).map((line) => ({
       metric: line.metric ?? null,
       uom: line.uom ?? null,
       kpi_period: row.kpi_alert_period ?? line.kpi_period ?? null,
@@ -1133,6 +1146,7 @@ export class SchedulerHeaderService {
       tolerance_type: line.tolerance_type ?? null,
       severity: line.severity ?? null,
     }));
+    return { kpis, feed };
   }
 
   /**
@@ -1207,6 +1221,7 @@ export class SchedulerHeaderService {
       ? await this.db.select().from(schema.schedulerLineCustomDays).where(inArray(schema.schedulerLineCustomDays.line_id, lineIds))
       : [];
     const siloStock = await this.loadSiloStock(header.location_id);
+    const lifecycleStage = await this.loadLifecycleKpis(header);
 
     const [batch] = await this.db.select({ batch_no: schema.batchHeader.batch_no })
       .from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, header.batch_id)).limit(1);
@@ -1256,7 +1271,8 @@ export class SchedulerHeaderService {
       location_name: location?.location_name ?? null,
       system_scheduler_name: systemScheduler?.scheduler_name ?? null,
       silo_stock: siloStock,
-      lifecycle_kpis: await this.loadLifecycleKpis(header),
+      lifecycle_kpis: lifecycleStage.kpis,
+      lifecycle_feed: lifecycleStage.feed,
       lines: lines.map((line) => {
         const itemInfo = line.item_id ? itemMap.get(line.item_id) : null;
         return {

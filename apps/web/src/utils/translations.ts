@@ -4388,6 +4388,19 @@ export const translations = {
     // match the lifecycle's KPI dialog, which kept those names when the feed lines became
     // Effective From / Effective To.
     scLifecycleKpisTitle: "KPIs & Alerts (from the lifecycle stage)",
+    // The scheduler's own Feed Consumption editor (Rishi, 14 Oct). The column names match the
+    // breed lifecycle stage's feed lines, which is the screen this one is meant to read like.
+    scFeedLinesTitle: "Feed Consumption",
+    // Its own label: the dialog already has an Update button for the header.
+    scFeedLinesSave: "Save Feed Lines",
+    scFeedLinesAdd: "Add Feed Line",
+    scFeedLinesHint: "One feed per run of stage days, following one another with no gap or overlap. Days already entered keep the feed they were posted against: that line is cut back to its last entered day and the new feed starts the day after.",
+    lcFeedItem: "Feed Item",
+    lcEffectiveFrom: "Effective From",
+    lcEffectiveTo: "Effective To",
+    lcDailyFeedPerHead: "Daily Feed per Head",
+    lcFeedWastage: "Feed Wastage (%)",
+    lcStageEntersIn: "stage enters {{uom}}",
     scLifecycleKpisHint: "Set on the breed lifecycle stage. Alerts are raised from the stage, not from this scheduler.",
     scColKpiItem: "KPI Item",
     scColKpiUom: "UOM",
