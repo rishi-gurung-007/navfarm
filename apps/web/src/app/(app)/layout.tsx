@@ -23,7 +23,6 @@ import {
   AlertTriangle,
   Package,
   CalendarClock,
-  TrendingUp,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -299,20 +298,12 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
   }));
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
+    // Feed Forecast is an Inventory & Stock page again; its views are tabs on that page (Rishi, 14 Oct).
+    { label: t("invFeedForecast"), href: "/inventory/feed-forecast" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
     { label: t("invTransfers"), href: "/inventory/transfers" },
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
     { label: t("invLedger"), href: "/inventory/ledger" },
-  ];
-  const feedForecastChildren = [
-    { label: t("fftTabDashboard"), href: "/inventory/feed-forecast?tab=dashboard" },
-    { label: t("fftTabForecast"), href: "/inventory/feed-forecast?tab=forecast" },
-    { label: t("fftTabFeedPlan"), href: "/inventory/feed-forecast?tab=feed-plan" },
-    { label: t("fftTabCompareReport"), href: "/inventory/feed-forecast?tab=compare-report" },
-    { label: t("fftTabFeedRequisition"), href: "/inventory/feed-forecast?tab=feed-requisition" },
-    { label: t("invFeedConsolidations"), href: "/inventory/feed-forecast?tab=mill-consolidation" },
-    { label: t("invFeedLoading"), href: "/inventory/feed-forecast?tab=loading-instructions" },
-    { label: t("fftTabPhysicalCount"), href: "/inventory/feed-forecast?tab=physical-count" },
   ];
   // Same list master-data-page-shell.tsx used to render as its own docked
   // column — folded into the primary nav's hover flyout instead, in the
@@ -357,7 +348,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
       { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren },
-      { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
@@ -431,7 +421,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         children: livestockChildren,
       },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren },
-      { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },

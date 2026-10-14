@@ -114,9 +114,13 @@ describe('FeedForecastTabs', () => {
     mockCountMounts = 0;
   });
 
-  it('does not render horizontal in-page tabs: view switching is driven by the sidebar flyout', () => {
+  it('shows all seven tabs and marks the selected one', () => {
     render(<FeedForecastTabs tab="forecast" onTabChange={() => undefined} />);
-    expect(screen.queryByRole('tablist')).toBeNull();
+    const list = screen.getByRole('tablist');
+    expect(Array.from(list.querySelectorAll('[role="tab"]')).map((node) => node.textContent))
+      .toEqual(['fftTabDashboard', 'fftTabForecast', 'fftTabFeedPlan', 'fftTabCompareReport', 'fftTabFeedRequisition', 'invFeedConsolidations', 'invFeedLoading', 'fftTabPhysicalCount']);
+    expect(screen.getByRole('tab', { name: 'fftTabForecast' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }).getAttribute('aria-selected')).toBe('false');
   });
 
   it('asks for the requested tab and shows only that panel', () => {
@@ -124,6 +128,13 @@ describe('FeedForecastTabs', () => {
     expect(screen.getByTestId('panel-count')).toBeTruthy();
     expect(screen.queryByTestId('panel-forecast')).toBeNull();
     expect(displayOf('physical-count')).not.toBe('none');
+  });
+
+  it('hands a tab click to the owner so the URL, not this component, holds it', () => {
+    const onTabChange = jest.fn();
+    render(<FeedForecastTabs tab="forecast" onTabChange={onTabChange} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'fftTabPhysicalCount' }));
+    expect(onTabChange).toHaveBeenCalledWith('physical-count');
   });
 
   it('keeps a panel mounted once so its state survives switching away and back', () => {

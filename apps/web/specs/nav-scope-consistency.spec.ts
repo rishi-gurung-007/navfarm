@@ -147,11 +147,11 @@ describe('Sidebar consistency across workspace scopes', () => {
     }
   });
 
-  it('lists Feed Forecast as a top-level item in the company and operational workspaces', () => {
+  // Rishi, 14 Oct: Feed Forecast is an Inventory & Stock page (its views are tabs on it), not a top-level item.
+  it('does not list Feed Forecast as a top-level item', () => {
     const scopes = navByScope();
     for (const scope of ['COMPANY', 'OPERATIONAL']) {
-      expect([...scopes[scope].keys()]).toContain('/inventory/feed-forecast');
-      expect(scopes[scope].get('/inventory/feed-forecast')).toBe('navFeedForecast');
+      expect([...scopes[scope].keys()]).not.toContain('/inventory/feed-forecast');
     }
   });
 

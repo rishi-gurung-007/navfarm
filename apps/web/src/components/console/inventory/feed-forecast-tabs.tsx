@@ -16,6 +16,8 @@
  * so switching tabs cannot make the two views disagree about their context.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { Tabs } from "@/components/ui/tabs";
+import { useLanguage } from "@/hooks/useLanguage";
 import type { TranslationKeys } from "@/utils/translations";
 import FeedSiloDashboard from "./feed-silo-dashboard";
 import FeedForecastPanel from "./feed-forecast-panel";
@@ -30,7 +32,7 @@ import { FeedLoadingPanel } from "./feed-loading-panel";
 export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
-export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
+const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   dashboard: "fftTabDashboard",
   forecast: "fftTabForecast",
   "feed-plan": "fftTabFeedPlan",
@@ -53,13 +55,17 @@ export function feedForecastTabQuery(tab: FeedForecastTab): string {
   return `tab=${encodeURIComponent(tab)}`;
 }
 
-/**
- * Previously rendered horizontal in-page tabs; now removed from the page since
- * all feed forecast tabs (Dashboard, Calculation, Feed Plan, Compare Report, etc.)
- * are navigated directly via the primary sidebar flyout (Farm Master pattern).
- */
-export function FeedForecastSubTabs(_props: FeedForecastTabsProps) {
-  return null;
+/** Shared navigation used by the main page and its legacy deep-link routes. */
+export function FeedForecastSubTabs({ tab, onTabChange }: FeedForecastTabsProps) {
+  const { t } = useLanguage();
+  return (
+    <Tabs
+      items={FEED_FORECAST_TABS.map((key) => ({ value: key, label: t(TAB_LABEL[key]) }))}
+      value={tab}
+      onChange={(value) => onTabChange(value as FeedForecastTab)}
+      className="w-full max-w-full min-w-0 overflow-x-auto"
+    />
+  );
 }
 
 const PANELS: Partial<Record<FeedForecastTab, () => ReactNode>> = {
@@ -89,11 +95,12 @@ function FeedForecastTabsContent({ tab, onTabChange }: FeedForecastTabsProps) {
 
   return (
     <div data-fill-body className="w-full min-w-0">
+      <FeedForecastSubTabs tab={tab} onTabChange={onTabChange} />
       {FEED_FORECAST_TABS.filter((key) => visited.includes(key) && PANELS[key]).map((key) => (
         <div
           key={key}
           data-feed-tab={key}
-          className="flex w-full min-w-0 min-h-0 flex-1 flex-col"
+          className="mt-4 flex w-full min-w-0 min-h-0 flex-1 flex-col"
           // Inline, not the `hidden` attribute: Tailwind's `.flex` would win
           // over the UA `[hidden]` rule and the inactive panel would show.
           style={{ display: key === tab ? undefined : "none" }}
