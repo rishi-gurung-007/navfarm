@@ -381,7 +381,7 @@ export default function MasterDataImportModal({
 
           // Numeric standards
           const stageStandards: { key: string; label: string; aliases?: string[] }[] = [
-            { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", aliases: ["Feed Qty", "Daily Feed", "feed_qty"] },
+            { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head", aliases: ["Daily Feed per Head (kg)", "Feed Qty", "Daily Feed", "feed_qty"] },
             { key: "feed_wastage_pct", label: "Feed Wastage (%)", aliases: ["Feed Wastage %", "wastage", "feed_wastage"] },
             { key: "std_body_weight_kg", label: "Std Body Weight (KG)", aliases: ["Body Weight", "Std Body Weight (kg)", "body_weight"] },
             { key: "std_adg_gpd", label: "Std ADG (g/day)", aliases: ["ADG", "std_adg", "Std ADG"] },
@@ -396,6 +396,20 @@ export default function MasterDataImportModal({
               if (isNaN(val) || val < 0) errors.push(`${label} must be a non-negative number.`);
               else payload[key] = val;
             }
+          }
+
+          // A row's feed is one Feed Consumption line (14 Oct): sent as feed_lines so the API converts its UOM to kg and
+          // rows of one stage with following days join that stage as further lines.
+          if (payload.feed_item_id) {
+            const feedForm = (getRawValue(raw, "feed_form", "Feed Form", ["feedform"]) || "").trim().toUpperCase();
+            const feedUom = (getRawValue(raw, "feed_qty_uom", "Feed UOM", ["feeduom"]) || "").trim().toUpperCase();
+            payload.feed_lines = [{
+              period_from: payload.period_from, period_to: payload.period_to, feed_item_id: payload.feed_item_id,
+              ...(["BULK", "BAGGED"].includes(feedForm) ? { feed_form: feedForm } : {}),
+              feed_qty_per_head_per_day_kg: payload.feed_qty_per_head_per_day_kg ?? 0,
+              ...(feedUom ? { feed_qty_uom: feedUom } : {}),
+              ...(payload.feed_wastage_pct !== undefined ? { feed_wastage_pct: payload.feed_wastage_pct } : {}),
+            }];
           }
 
           const outputUom = getRawValue(raw, "output_uom", "Output UOM", ["uom", "outputuom"]);
@@ -434,7 +448,25 @@ export default function MasterDataImportModal({
 
   const handleCommitImport = async () => {
     const validRows = stagedRows.filter((r) => r.isValid);
-    const validItems = validRows.map((r) => r.payload);
+    let validItems = validRows.map((r) => r.payload);
+    // An exported stage with several Feed Consumption lines is several rows with one code: they import as one stage
+    // with those lines (14 Oct), not as a second stage refused for a duplicate code.
+    if (config.key === "breed-lifecycle-stage") {
+      const byCode = new Map<string, any>();
+      const merged: any[] = [];
+      for (const item of validItems) {
+        const code = String(item.lifecycle_code ?? "").trim();
+        const first = code ? byCode.get(code) : undefined;
+        if (first && Array.isArray(item.feed_lines)) {
+          first.feed_lines = [...(first.feed_lines ?? []), ...item.feed_lines];
+          continue;
+        }
+        const copy = { ...item, ...(Array.isArray(item.feed_lines) ? { feed_lines: [...item.feed_lines] } : {}) };
+        if (code) byCode.set(code, copy);
+        merged.push(copy);
+      }
+      validItems = merged;
+    }
     if (validItems.length === 0) return;
 
     setSubmitting(true);

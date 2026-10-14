@@ -1665,7 +1665,8 @@ export function MasterDataTable({
     api.get(`${config.apiBase}/${encodeURIComponent(recordId)}`)
       .then((response) => {
         const row = unwrap<Row>(response);
-        if (row && String(row[config.idKey]) === recordId) openEdit(row);
+        // A lifecycle link to a later feed line's row comes back as its stage's first row (14 Oct): open that.
+        if (row && (String(row[config.idKey]) === recordId || config.key === "breed-lifecycle-stage")) openEdit(row);
       })
       .catch(() => {
         deepLinkOpenedRef.current = false;

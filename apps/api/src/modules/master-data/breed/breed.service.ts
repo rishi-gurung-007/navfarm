@@ -1175,7 +1175,12 @@ export class BreedService {
     if (!lifecycleStage) {
       throw new NotFoundException(`Breed lifecycle stage with ID '${id}' not found.`);
     }
-    return this.withFeedLines(lifecycleStage, await this.stageRows(lifecycleStage));
+    const rows = await this.stageRows(lifecycleStage);
+    // Any row of a stage stands for the stage, which is its first row (the one the list shows, holding the code): a
+    // link to a later feed line's row (a requisition or scheduler line keeps one) opens and saves the stage itself.
+    const first = [...rows].sort((a, b) => Number(a.period_from) - Number(b.period_from) || String(a.lifecycle_id).localeCompare(String(b.lifecycle_id)))[0];
+    if (first && first.lifecycle_id !== id) return this.findOneLifecycleStage(first.lifecycle_id);
+    return this.withFeedLines(lifecycleStage, rows);
   }
 
   async findAllLifecycleStages(query: QueryBreedLifecycleStageDto, tenantId: string) {
@@ -1284,6 +1289,8 @@ export class BreedService {
 
   async updateLifecycleStage(id: string, dto: UpdateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const lifecycleStage = await this.findOneLifecycleStage(id);
+    // Saved through a later feed line's row: the stage is edited through its first row (see findOneLifecycleStage).
+    id = lifecycleStage.lifecycle_id;
     // The stage's other rows (its other feed lines), read before anything changes: they follow this row's shared
     // fields, and with feed_lines they are reassigned, added to or removed (13 Oct).
     const otherRows = (await this.stageRows(lifecycleStage)).filter((r) => r.lifecycle_id !== id);
