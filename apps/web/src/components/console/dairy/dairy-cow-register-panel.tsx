@@ -5,7 +5,7 @@ import { Plus, Search } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
@@ -187,7 +187,7 @@ export default function DairyCowRegisterPanel() {
 
   return (
     <div className="space-y-6 text-[var(--text-primary)]">
-      {notice && <InlineAlert variant="success">{notice}</InlineAlert>}
+      <Toast variant="success" message={notice} onClose={() => setNotice("")} />
 
       <StatRow columns={4}>
         <StatCard
@@ -339,7 +339,7 @@ export default function DairyCowRegisterPanel() {
         }
       >
         <form onSubmit={submit} className="space-y-4">
-          {formError && <InlineAlert variant="danger">{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             {/* animal_code is issued by the number series on the server — the

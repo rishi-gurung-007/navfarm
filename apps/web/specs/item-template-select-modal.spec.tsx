@@ -2,6 +2,7 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ItemTemplateSelectModal } from "@/modules/master-data/ItemTemplateSelectModal";
 import { api } from "@/services/api-client";
+import { toast } from "react-toastify";
 
 jest.mock("@/services/api-client", () => ({
   api: {
@@ -10,6 +11,7 @@ jest.mock("@/services/api-client", () => ({
   },
 }));
 
+jest.mock('react-toastify', () => ({ toast: { error: jest.fn(), success: jest.fn(), info: jest.fn(), warn: jest.fn() } }));
 jest.mock("@/hooks/useLanguage", () => ({
   useLanguage: () => ({
     t: (key: string) => key,
@@ -169,7 +171,7 @@ describe("ItemTemplateSelectModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/No. Series \[FEED\] is blocked/i)).toBeTruthy();
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/No. Series \[FEED\] is blocked/i), expect.anything());
     });
   });
 });

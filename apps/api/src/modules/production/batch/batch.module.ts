@@ -5,7 +5,6 @@ import { BatchTransferService } from './batch-transfer.service';
 import { BatchTransferController } from './batch-transfer.controller';
 import { BatchDayReversalService } from './batch-day-reversal.service';
 import { PigletLotService } from './piglet-lot.service';
-import { BatchMortalityReversalService } from './batch-mortality-reversal.service';
 import { InventoryLedgerModule } from '../../inventory/inventory-ledger/inventory-ledger.module';
 import { JournalModule } from '../../finance/journal/journal.module';
 import { NumberSeriesModule } from '../../system/number-series/number-series.module';
@@ -23,7 +22,7 @@ import { BatchDailyDataModule } from '../batch-daily-data/batch-daily-data.modul
     forwardRef(() => BatchDailyDataModule),
   ],
   controllers: [BatchController, BatchTransferController],
-  providers: [BatchService, BatchTransferService, BatchDayReversalService, PigletLotService, BatchMortalityReversalService],
+  providers: [BatchService, BatchTransferService, BatchDayReversalService, PigletLotService],
   exports: [BatchService, BatchTransferService, PigletLotService],
 })
 export class BatchModule {}

@@ -5,8 +5,9 @@ import { ageBetween, formatAge } from "./utils/age";
 import { X, Loader2, ChevronRight } from "lucide-react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { ReadField } from "@/components/ui/field";
+import { formatAmount, formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -35,6 +36,9 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 const fmt = (v: any) => (v === null || v === undefined || v === "" ? "" : String(v));
+// Decimal columns arrive as "28000.0000": quantities show at most 2 decimals, money always 2.
+const fmtQty = (v: any) => (v === null || v === undefined || v === "" ? "" : formatQuantity(v));
+const fmtAmount = (v: any) => (v === null || v === undefined || v === "" ? "" : formatAmount(v));
 const asObject = (value: any): Row => {
   if (!value) return {};
   if (typeof value !== "string") return value;
@@ -81,7 +85,7 @@ function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
     detail: [
       ["Mating type", fmt(m.mating_type)], [sire ? "Sow" : "Boar", partner],
       ["Batch", fmt(m.batch_no)], ["Second mating", fmt(m.second_mating_date)],
-      ["Semen doses", fmt(m.semen_dose_qty)], ["Sow parity", fmt(m.parity_number)],
+      ["Semen doses", fmtQty(m.semen_dose_qty)], ["Sow parity", fmt(m.parity_number)],
       ["Boar parity", fmt(m.boar_parity_number)], ["Expected farrowing", fmt(m.expected_farrowing_date)],
     ],
   };
@@ -124,8 +128,8 @@ function farrowingTimelineEvent(f: Row, isMale: boolean): TimelineEvent {
     detail: [
       ["Farrowing date", fmt(f.farrowing_date)], ["Born total", total],
       ["Born live", live], ["Stillborn", fmt(f.piglets_stillborn)],
-      ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmt(f.avg_birth_weight_kg)],
-      ["Litter weight", fmt(f.total_litter_weight_kg)], ["Status", fmt(f.farrowing_status)],
+      ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmtQty(f.avg_birth_weight_kg)],
+      ["Litter weight", fmtQty(f.total_litter_weight_kg)], ["Status", fmt(f.farrowing_status)],
       ["Parity", fmt(f.parity_number)],
     ],
   };
@@ -142,10 +146,10 @@ function weaningTimelineEvent(f: Row, isMale: boolean): TimelineEvent | null {
     id: `wean-${f.farrow_id}`,
     date: fmt(f.weaning_date),
     title: isMale ? `Litter weaned — ${f.piglets_weaned}` : `Weaned ${f.piglets_weaned}`,
-    summary: fmt(f.avg_weaning_weight_kg) ? `avg ${f.avg_weaning_weight_kg} kg` : "",
+    summary: fmtQty(f.avg_weaning_weight_kg) ? `avg ${fmtQty(f.avg_weaning_weight_kg)} kg` : "",
     detail: [
       ["Weaning date", fmt(f.weaning_date)], ["Piglets weaned", fmt(f.piglets_weaned)],
-      ["Avg weaning weight", fmt(f.avg_weaning_weight_kg)], ["Cost per piglet", fmt(f.cost_per_piglet)],
+      ["Avg weaning weight", fmtQty(f.avg_weaning_weight_kg)], ["Cost per piglet", fmtAmount(f.cost_per_piglet)],
     ],
   };
 }
@@ -315,7 +319,7 @@ function BreedingRecordTable({
                         <td colSpan={headers.length} className="p-3" style={S.raised}>
                           <div className="flex flex-col gap-3">
                             <DetailGrid rows={[
-                              ["Second mating", fmt(m.second_mating_date)], ["Semen doses", fmt(m.semen_dose_qty)],
+                              ["Second mating", fmt(m.second_mating_date)], ["Semen doses", fmtQty(m.semen_dose_qty)],
                               ["Check method", fmt(m.preg_check_method)], ["Pregnancy check date", fmt(m.preg_check_date)],
                               ["Expected farrowing", fmt(m.expected_farrowing_date)], ["Boar parity", fmt(m.boar_parity_number)],
                               ["Notes", fmt(m.notes)],
@@ -324,9 +328,9 @@ function BreedingRecordTable({
                               <DetailGrid rows={[
                                 ["Farrowing date", fmt(f.farrowing_date)], ["Farrowing status", fmt(f.farrowing_status)],
                                 ["Born live", fmt(f.piglets_born_live)], ["Stillborn", fmt(f.piglets_stillborn)],
-                                ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmt(f.avg_birth_weight_kg)],
+                                ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmtQty(f.avg_birth_weight_kg)],
                                 [Number(f.piglets_weaned) > 0 ? "Weaning date" : "Planned weaning", fmt(f.weaning_date)],
-                                ["Avg weaning weight", fmt(f.avg_weaning_weight_kg)],
+                                ["Avg weaning weight", fmtQty(f.avg_weaning_weight_kg)],
                                 ["Litter mass weaned", Number(f.piglets_weaned) > 0 && Number(f.avg_weaning_weight_kg) > 0 ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg` : ""],
                               ]} />
                             )}
@@ -504,7 +508,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           // source_receipt_id, not source_grn_id: the column is named after
           // this codebase's goods_receipt table rather than the spec's "GRN".
           ["Source receipt", fmt(row.source_receipt_id)], ["Born from batch", fmt(row.source_batch_id)],
-          ["Acquisition cost", fmt(row.acquisition_cost)],
+          ["Acquisition cost", fmtAmount(row.acquisition_cost)],
         ],
       });
     }
@@ -572,7 +576,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
         summary: "Left the herd",
         detail: [
           ["Disposal date", fmt(row.disposal_date)], ["Disposal type", fmt(row.disposal_type)],
-          ["Disposal value", fmt(row.disposal_value)], ["Gain / loss", fmt(row.gain_loss_on_disposal)],
+          ["Disposal value", fmtAmount(row.disposal_value)], ["Gain / loss", fmt(row.gain_loss_on_disposal)],
         ],
       });
     }
@@ -623,7 +627,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {error && <InlineAlert>{error}</InlineAlert>}
+        <Toast variant="danger" message={error} onClose={() => setError("")} />
 
         {tab === "details" && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -703,7 +707,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
                 value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || "—")}
               />
             )}
-            <ReadField label="Book value" value={fmt(row.book_value)} />
+            <ReadField label="Book value" value={fmtAmount(row.book_value)} />
             <ReadField label="Expected cull date" value={fmt(row.expected_cull_date)} />
             {/* Disposal is set by the Dispose action, which checks withdrawal
                 periods and posts the gain or loss — never by a form field.

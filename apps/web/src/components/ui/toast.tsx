@@ -8,7 +8,7 @@ export type ToastVariant = 'success' | 'danger' | 'info' | 'warning';
 export interface ToastProps {
   variant?: ToastVariant;
   title?: string;
-  message: string;
+  message: string | null | undefined;
   onClose?: () => void;
   duration?: number;
   className?: string;
@@ -23,7 +23,7 @@ export function Toast({
   variant = 'info',
   message,
   onClose,
-  duration = 4500,
+  duration = 1000,
 }: ToastProps) {
   const lastFiredRef = useRef<string | null>(null);
 
@@ -39,10 +39,10 @@ export function Toast({
       variant === 'danger'
         ? rtToast.error
         : variant === 'success'
-        ? rtToast.success
-        : variant === 'warning'
-        ? rtToast.warn
-        : rtToast.info;
+          ? rtToast.success
+          : variant === 'warning'
+            ? rtToast.warn
+            : rtToast.info;
 
     fn(message, {
       toastId: message,
@@ -60,9 +60,15 @@ export function Toast({
 /** Programmatic notification API powered by react-toastify with NavFarm theme */
 export const showToast = {
   success: (message: string, options?: ToastOptions) =>
-    rtToast.success(message, { toastId: options?.toastId || message, ...options }),
+    rtToast.success(message, {
+      toastId: options?.toastId || message,
+      ...options,
+    }),
   error: (message: string, options?: ToastOptions) =>
-    rtToast.error(message, { toastId: options?.toastId || message, ...options }),
+    rtToast.error(message, {
+      toastId: options?.toastId || message,
+      ...options,
+    }),
   info: (message: string, options?: ToastOptions) =>
     rtToast.info(message, { toastId: options?.toastId || message, ...options }),
   warn: (message: string, options?: ToastOptions) =>

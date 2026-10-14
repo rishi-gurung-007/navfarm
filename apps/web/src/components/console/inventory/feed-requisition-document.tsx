@@ -454,10 +454,27 @@ export function FeedRequisitionDocument({
           status: <Badge variant={variantOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view))}>{labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}</Badge>,
           priority: editable && onPriorityChange && view.priority && (view.priority_options?.length ?? 0) > 1
             ? (
-              <select aria-label={t("rqdPriority")} className="nf-input w-full px-2 py-1" style={inputStyle}
-                value={priority ?? view.priority} onChange={(e) => onPriorityChange(e.target.value)}>
-                {(view.priority_options ?? []).map((p) => <option key={p} value={p}>{labelOf(PRIORITY_LABEL, p, t)}</option>)}
-              </select>
+              <div className="relative w-full">
+                <SearchableSelect
+                  value={priority ?? view.priority}
+                  onChange={(val) => onPriorityChange(val)}
+                  options={(view.priority_options ?? []).map((p) => ({
+                    value: p,
+                    label: labelOf(PRIORITY_LABEL, p, t),
+                  }))}
+                  columnHeaders={false}
+                  triggerClassName="nf-input w-full h-8 px-2 py-1"
+                />
+                <select
+                  aria-label={t("rqdPriority")}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                  value={priority ?? view.priority}
+                  onChange={(e) => onPriorityChange(e.target.value)}
+                >
+                  {(view.priority_options ?? []).map((p) => <option key={p} value={p}>{labelOf(PRIORITY_LABEL, p, t)}</option>)}
+                </select>
+              </div>
             )
             : view.priority ? <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>{labelOf(PRIORITY_LABEL, view.priority, t)}</Badge> : null,
           deadline: view.submission_deadline ? formatDateShort(view.submission_deadline) : null,

@@ -41,6 +41,7 @@ const NAV: AppShellNavItem[] = [
   // Deep-links into its module. Every other page of the module is a sibling of
   // the href, not a descendant of it.
   { label: 'Inventory & Stock', href: '/inventory/balance', icon: Layers, activePrefix: '/inventory' },
+  { label: 'Feed Forecast', href: '/inventory/feed-forecast', icon: Layers, activePrefix: '/inventory/feed-forecast' },
 ];
 
 const ACTIVE_BG = 'bg-[var(--sidebar-active-bg)]';
@@ -98,5 +99,13 @@ describe('AppShell primary navigation', () => {
     renderShell('/schedulers');
     const links = screen.getAllByRole('link', { name: /Schedulers/ });
     expect(links.some((a) => a.className.includes(ACTIVE_BG))).toBe(true);
+  });
+
+  it('highlights a more specific sibling nav item without activating the broader prefix', () => {
+    renderShell('/inventory/feed-forecast');
+    const feedLinks = screen.getAllByRole('link', { name: /Feed Forecast/ });
+    expect(feedLinks.some((a) => a.className.includes(ACTIVE_BG))).toBe(true);
+    const invLinks = screen.getAllByRole('link', { name: /Inventory & Stock/ });
+    expect(invLinks.some((a) => a.className.includes(ACTIVE_BG))).toBe(false);
   });
 });

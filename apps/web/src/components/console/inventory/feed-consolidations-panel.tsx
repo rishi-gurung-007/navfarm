@@ -6,6 +6,7 @@ import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EmptyState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
@@ -73,11 +74,19 @@ export function FeedConsolidationsPanel() {
           <p className="mt-0.5 text-sm text-(--text-secondary)">{t("fcsIntro")}</p>
         </div>
         <Field label={t("fcsStatusFilter")} htmlFor="consolidation-status">
-          <select id="consolidation-status" aria-label={t("fcsStatusFilter")} className="nf-input-sm nf-select" value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="">{t("fcsAllStatuses")}</option>
-            <option value="DRAFT">{t("fcsStatusDraft")}</option>
-            <option value="CONSOLIDATED">{t("fcsStatusConsolidated")}</option>
-          </select>
+          <SearchableSelect
+            id="consolidation-status"
+            ariaLabel={t("fcsStatusFilter")}
+            value={status}
+            onChange={setStatus}
+            options={[
+              { value: "", label: t("fcsAllStatuses") },
+              { value: "DRAFT", label: t("fcsStatusDraft") },
+              { value: "CONSOLIDATED", label: t("fcsStatusConsolidated") },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[10rem] h-9"
+          />
         </Field>
       </div>
       {sheets.length === 0 ? (

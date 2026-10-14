@@ -5,7 +5,7 @@ import { CalendarClock, Loader2, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Field } from "@/components/ui/field";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -170,7 +170,7 @@ export default function SystemSchedulerListPanel() {
         </Button>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {!loading && rows.length === 0 ? (
         <EmptyState icon={CalendarClock} title={t("sysSchNoResults")} description={t("sysSchNoResultsHint")} />
@@ -223,7 +223,7 @@ export default function SystemSchedulerListPanel() {
         footer={<Button onClick={create} disabled={saving}>{saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}{t("sysSchCreateAction")}</Button>}
       >
         <div className="flex flex-col gap-4">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
           <Field label={t("sysSchFieldStage")} htmlFor="sys-sch-stage" required>
             <SearchableSelect
               ariaLabel={t("sysSchFieldStage")}

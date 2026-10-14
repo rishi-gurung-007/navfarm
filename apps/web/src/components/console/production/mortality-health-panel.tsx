@@ -18,6 +18,7 @@ import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { ReasonSelect } from "@/components/ui/reason-select";
+import { formatQuantity } from "@/lib/utils";
 
 type MortalityRecord = {
   id: string;
@@ -338,7 +339,7 @@ export default function MortalityHealthPanel() {
                     medicine_name: t.item_name || t.item_code || legacy.medicine || "—",
                     dosage: legacy.dosage || (t.item_name && t.remarks?.startsWith(`${t.item_name} — `)
                       ? t.remarks.slice(`${t.item_name} — `.length)
-                      : `${t.quantity} ${t.uom || ""}`.trim()),
+                      : `${formatQuantity(t.quantity, t.uom)} ${t.uom || ""}`.trim()),
                     route: t.route || legacy.route || "—",
                     withdrawal_days: withdrawalDays ?? null,
                     status: withdrawalDays == null ? "UNDER_OBSERVATION" : stillWithdrawing ? "ACTIVE" : "RECOVERED",
@@ -451,31 +452,6 @@ export default function MortalityHealthPanel() {
     setMortalityReasonId("");
     setMortalityDialogOpen(false);
     // Read the recorded deaths back from the batch instead of showing a local copy.
-    setReloadKey((k) => k + 1);
-  };
-
-  // C7: a death recorded in error is reversed — never edited. The API puts back everything the death posted.
-  const [reverseTarget, setReverseTarget] = useState<MortalityRecord | null>(null);
-  const [reverseReason, setReverseReason] = useState("");
-  const [reverseError, setReverseError] = useState("");
-  const [reversing, setReversing] = useState(false);
-  const handleReverseMortality = async () => {
-    if (!reverseTarget?.batch_id || reversing) return;
-    if (!reverseReason.trim()) {
-      setReverseError(t("mhReverseReason"));
-      return;
-    }
-    setReversing(true);
-    setReverseError("");
-    try {
-      await api.post(`/batch/${reverseTarget.batch_id}/mortality/${reverseTarget.id}/reverse`, { reason: reverseReason.trim() });
-    } catch (err) {
-      setReverseError(err instanceof Error ? err.message : "The death could not be reversed.");
-      setReversing(false);
-      return;
-    }
-    setReversing(false);
-    setReverseTarget(null);
     setReloadKey((k) => k + 1);
   };
 
@@ -709,7 +685,6 @@ export default function MortalityHealthPanel() {
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhPostMortemFindings")}</TableHead>
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhDisposalMethod")}</TableHead>
                   <TableHead className="py-2.5 px-3 font-semibold">{t("mhRecordedBy")}</TableHead>
-                  <TableHead className="py-2.5 px-3 font-semibold">{t("mhActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -739,23 +714,6 @@ export default function MortalityHealthPanel() {
                       </span>
                     </TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)]">{m.recorded_by}</TableCell>
-                    <TableCell className="py-2.5 px-3">
-                      {m.batch_id && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            setReverseTarget(m);
-                            setReverseReason("");
-                            setReverseError("");
-                          }}
-                        >
-                          {t("mhReverse")}
-                        </Button>
-                      )}
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -876,37 +834,6 @@ export default function MortalityHealthPanel() {
       )}
 
       {/* ── MODAL: LOG MORTALITY ── */}
-      <Dialog
-        open={!!reverseTarget}
-        onClose={() => setReverseTarget(null)}
-        title={t("mhReverseTitle")}
-        footer={
-          <Button onClick={handleReverseMortality} disabled={reversing} className="nf-btn-primary">
-            {reversing ? t("mhReversing") : t("mhReverseConfirm")}
-          </Button>
-        }
-      >
-        <div className="space-y-3 text-xs pt-2">
-          <p className="text-[var(--text-secondary)]">
-            {t("mhReverseBody", {
-              subject: reverseTarget?.rfid_tag
-                ? reverseTarget.rfid_tag
-                : `${reverseTarget?.head_count ?? ""} head of ${reverseTarget?.batch_no ?? ""}`,
-            })}
-          </p>
-          <Field label={t("mhReverseReason")} htmlFor="reverse-mortality-reason" required>
-            <input
-              id="reverse-mortality-reason"
-              type="text"
-              value={reverseReason}
-              onChange={(e) => setReverseReason(e.target.value)}
-              className="nf-input w-full"
-            />
-          </Field>
-          {reverseError && <p className="text-[var(--danger)]">{reverseError}</p>}
-        </div>
-      </Dialog>
-
       <Dialog
         open={mortalityDialogOpen}
         onClose={() => setMortalityDialogOpen(false)}

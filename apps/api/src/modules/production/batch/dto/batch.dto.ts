@@ -653,13 +653,6 @@ export class AddBatchTransactionDto {
  * One death event: either the animals that died (animal-wise batch) or a head
  * count (batch-wise). Posted atomically — every animal or none.
  */
-export class ReverseMortalityDto {
-  @ApiProperty({ description: 'Why the death is being reversed — kept on the audit trail and the animal\'s movement log', example: 'Recorded against the wrong sow' })
-  @IsString()
-  @IsNotEmpty()
-  reason: string;
-}
-
 export class RecordMortalityDto {
   @ApiProperty({ description: 'Date of death', example: '2026-10-09' })
   @IsDateString()

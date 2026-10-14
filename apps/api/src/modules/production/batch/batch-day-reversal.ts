@@ -36,7 +36,7 @@ export function classifyPostedRow(row: PostedRowFacts, costingMethod?: string | 
       return { reversible: false, reason: 'it moved animals — use "Reverse transfer" on the transfer' };
     case 'DESCRIPTIVE':
       return row.kpi_metric === 'MORTALITY_COUNT' && Number(row.entered_value ?? 0) > 0
-        ? { reversible: false, reason: 'it recorded a death (one recorded in error is reversed on the Mortality & Health panel)' }
+        ? { reversible: false, reason: 'it recorded a death, which is final' }
         : { reversible: true, kind: 'OBSERVATION' };
     default:
       return { reversible: false, reason: `unknown line type '${row.line_type}'` };

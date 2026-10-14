@@ -25,6 +25,7 @@ import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
 import { cn } from "@/lib/utils";
@@ -82,7 +83,6 @@ const kg = (v: string | number | null | undefined, unavailable: string) => {
   const n = num(v);
   return n === null || !Number.isFinite(n) ? unavailable : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
-const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
 const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
 const TD = "whitespace-nowrap border-b border-(--border) px-3 py-2 align-top text-sm text-(--text-primary)";
 const NUM = "text-right tabular-nums";
@@ -231,10 +231,35 @@ export function FeedRequisitionPanel() {
           <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={listFarmId} fixedLabel={fixedLabel} allLabel={t("rhAllFarms")}
             onChange={(id) => { setListFarmId(id); if (id) farm.setFarmId(id); show(null); }} />
           <Field label={t("rqShow")} htmlFor="rq-status">
-            <select id="rq-status" className="nf-input-sm nf-select" style={inputStyle} value={status} onChange={(e) => { setStatus(e.target.value); show(null); }}>
-              <option value="">{t("rqShowAll")}</option>
-              {STATUS_FILTER.map((s) => <option key={s} value={s}>{labelOf(REQ_STATUS_LABEL, s, t)}</option>)}
-            </select>
+            <div className="relative min-w-[10rem]">
+              <SearchableSelect
+                value={status}
+                onChange={(val) => { setStatus(val); show(null); }}
+                options={[
+                  { value: "", label: t("rqShowAll") },
+                  ...STATUS_FILTER.map((s) => ({
+                    value: s,
+                    label: labelOf(REQ_STATUS_LABEL, s, t),
+                  })),
+                ]}
+                columnHeaders={false}
+                triggerClassName="nf-input-sm min-w-[10rem] h-9"
+              />
+              <select
+                id="rq-status"
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                tabIndex={-1}
+                value={status}
+                onChange={(e) => { setStatus(e.target.value); show(null); }}
+              >
+                <option value="">{t("rqShowAll")}</option>
+                {STATUS_FILTER.map((s) => (
+                  <option key={s} value={s}>
+                    {labelOf(REQ_STATUS_LABEL, s, t)}
+                  </option>
+                ))}
+              </select>
+            </div>
           </Field>
         </div>
         <div className="flex flex-wrap gap-2">

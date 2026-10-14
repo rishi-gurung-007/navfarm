@@ -13,8 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { apiDownload } from "@/lib/api-client";
-import { showToast } from "@/components/ui/toast";
-import { InlineAlert } from "@/components/ui/alert";
+import { showToast, Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -22,6 +21,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType, isInboundEntry } from "./inventory-ledger-detail";
 
@@ -178,14 +178,8 @@ export default function InventoryLedgerPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Title & Stats */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold" style={S.primary}>{t("ilpTitle")}</h2>
-          <p className="mt-0.5 text-xs" style={S.sub}>
-            {t("ilpSubtitle")}
-          </p>
-        </div>
+      {/* Stats & export — no heading of its own: the page title already names the ledger. */}
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           <Badge variant="neutral" className="text-xs font-mono">
             {rows.length} {rows.length === 1 ? "entry" : "entries"}
@@ -239,82 +233,114 @@ export default function InventoryLedgerPanel() {
         </div>
 
         {/* Location Code Filter */}
-        <select 
-          value={warehouseId} 
-          onChange={(e) => setWarehouseId(e.target.value)} 
-          className={`${inputCls} nf-select max-w-[190px]`} 
-          style={S.input}
-        >
-          <option value="">All Locations (Location Code)</option>
-          {warehouses.map((wh) => (
-            <option key={wh.warehouse_id} value={wh.warehouse_id}>
-              {wh.warehouse_code || wh.warehouse_name}
-            </option>
-          ))}
-        </select>
+        <div className="min-w-[12rem] max-w-[190px]">
+          <SearchableSelect
+            ariaLabel="Location Code"
+            value={warehouseId}
+            onChange={setWarehouseId}
+            options={[
+              { value: "", code: "ALL", name: "All Locations", label: "All Locations (Location Code)" },
+              ...warehouses.map((wh) => ({
+                value: wh.warehouse_id,
+                code: wh.warehouse_code,
+                name: wh.warehouse_name,
+                label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
+              })),
+            ]}
+            columnHeaders={["Code", "Location Name"]}
+            columns={[
+              { key: "code", label: "Code" },
+              { key: "name", label: "Location Name" },
+            ]}
+            placeholder="All Locations"
+            triggerClassName="nf-input-sm w-full h-9"
+          />
+        </div>
 
         {/* Item Filter */}
-        <select 
-          value={itemId} 
-          onChange={(e) => setItemId(e.target.value)} 
-          className={`${inputCls} nf-select max-w-[200px]`} 
-          style={S.input}
-        >
-          <option value="">{t("ilpAllItemsOptions", { count: items.length })}</option>
-          {items.map((it, idx) => (
-            <option key={it.item_id} value={it.item_id}>
-              {idx + 1}. {it.item_name || it.item_code}
-            </option>
-          ))}
-        </select>
+        <div className="min-w-[13rem] max-w-[200px]">
+          <SearchableSelect
+            ariaLabel="Item"
+            value={itemId}
+            onChange={setItemId}
+            options={[
+              { value: "", code: "ALL", name: t("ilpAllItemsOptions", { count: items.length }), label: t("ilpAllItemsOptions", { count: items.length }) },
+              ...items.map((it) => ({
+                value: it.item_id,
+                code: it.item_code,
+                name: it.item_name,
+                label: `${it.item_code} — ${it.item_name}`,
+              })),
+            ]}
+            columnHeaders={["Code", "Item Name"]}
+            columns={[
+              { key: "code", label: "Code" },
+              { key: "name", label: "Item Name" },
+            ]}
+            placeholder={t("ilpAllItemsOptions", { count: items.length })}
+            triggerClassName="nf-input-sm w-full h-9"
+          />
+        </div>
 
         {/* Entry Type Filter (Transaction Ledger Structure Row 11) */}
-        <select
-          value={entryType}
-          onChange={(e) => setEntryType(e.target.value)}
-          className={`${inputCls} nf-select`}
-          style={S.input}
-        >
-          <option value="">All Entry Types</option>
-          <option value="POSITIVE">Positive (+)</option>
-          <option value="NEGATIVE">Negative (-)</option>
-          <option value="TRANSFER">Transfer</option>
-          <option value="OVERHEAD">Overhead</option>
-          <option value="DESCRIPTIVE">Descriptive</option>
-        </select>
+        <div className="min-w-[9rem]">
+          <SearchableSelect
+            ariaLabel="Entry Type"
+            value={entryType}
+            onChange={setEntryType}
+            options={[
+              { value: "", label: "All Entry Types" },
+              { value: "POSITIVE", label: "Positive (+)" },
+              { value: "NEGATIVE", label: "Negative (-)" },
+              { value: "TRANSFER", label: "Transfer" },
+              { value: "OVERHEAD", label: "Overhead" },
+              { value: "DESCRIPTIVE", label: "Descriptive" },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[9rem] h-9"
+          />
+        </div>
 
         {/* Transaction Type Filter (Transaction Ledger Structure Row 12) */}
-        <select 
-          value={transactionType} 
-          onChange={(e) => setTransactionType(e.target.value)} 
-          className={`${inputCls} nf-select`} 
-          style={S.input}
-        >
-          <option value="">{t("ilpAllTransactionTypes")}</option>
-          <option value="PURCHASE">Purchase</option>
-          <option value="CONSUMPTION">Consumption</option>
-          <option value="OUTPUT">Output</option>
-          <option value="TRANSFER_SHIPMENT">Transfer_Shipment</option>
-          <option value="TRANSFER_RECEIPT">Transfer_Receipt</option>
-          <option value="SALES">Sales</option>
-          <option value="VARIANCE_POSITIVE">Variance_Positive</option>
-          <option value="VARIANCE_NEGATIVE">Variance_Negative</option>
-          <option value="OVERHEAD">Overhead</option>
-          <option value="DESCRIPTIVE">Descriptive</option>
-          <option value="BIO_HARVEST">Harvest (bio-asset slaughter)</option>
-          <option value="REVERSAL">Reversal</option>
-        </select>
+        <div className="min-w-[11rem]">
+          <SearchableSelect
+            ariaLabel="Transaction Type"
+            value={transactionType}
+            onChange={setTransactionType}
+            options={[
+              { value: "", label: t("ilpAllTransactionTypes") },
+              { value: "PURCHASE", label: "Purchase" },
+              { value: "CONSUMPTION", label: "Consumption" },
+              { value: "OUTPUT", label: "Output" },
+              { value: "TRANSFER_SHIPMENT", label: "Transfer_Shipment" },
+              { value: "TRANSFER_RECEIPT", label: "Transfer_Receipt" },
+              { value: "SALES", label: "Sales" },
+              { value: "VARIANCE_POSITIVE", label: "Variance_Positive" },
+              { value: "VARIANCE_NEGATIVE", label: "Variance_Negative" },
+              { value: "OVERHEAD", label: "Overhead" },
+              { value: "DESCRIPTIVE", label: "Descriptive" },
+              { value: "BIO_HARVEST", label: "Harvest (bio-asset slaughter)" },
+              { value: "REVERSAL", label: "Reversal" },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[11rem] h-9"
+          />
+        </div>
 
         {/* Sort By */}
-        <select 
-          value={sortBy} 
-          onChange={(e) => setSortBy(e.target.value as "created_at" | "posting_date")} 
-          className={`${inputCls} nf-select`} 
-          style={S.input}
-        >
-          <option value="created_at">Recently Posted First</option>
-          <option value="posting_date">Posting Date</option>
-        </select>
+        <div className="min-w-[10rem]">
+          <SearchableSelect
+            ariaLabel="Sort By"
+            value={sortBy}
+            onChange={(val) => setSortBy(val as "created_at" | "posting_date")}
+            options={[
+              { value: "created_at", label: "Recently Posted First" },
+              { value: "posting_date", label: "Posting Date" },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[10rem] h-9"
+          />
+        </div>
 
         {/* Date Range */}
         <div className="flex items-center gap-1.5">
@@ -327,7 +353,7 @@ export default function InventoryLedgerPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Main Inventory Ledger Entries Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>

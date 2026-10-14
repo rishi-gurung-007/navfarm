@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { LotSerialPicker, type LotOption, type LotSerialPickerProps } from "@/components/ui/lot-serial-picker";
 import { lotsToCover, planLotSplit } from "./lot-split";
+import { formatAmount, formatQuantity, formatRate } from "@/lib/utils";
 
 interface ConsumptionSource {
   warehouse_id: string | null;
@@ -97,7 +98,7 @@ export function ConsumptionLotPicker({
             {plan.parts.map((p) => (
               <div key={p.lot_no} className="flex justify-between gap-2 font-mono">
                 <span>{p.lot_no}</span>
-                <span>{p.quantity}{p.unit_cost != null ? ` × ${p.unit_cost.toFixed(2)} = ${(p.cost ?? 0).toFixed(2)}` : ""}</span>
+                <span>{formatQuantity(p.quantity)}{p.unit_cost != null ? ` × ${formatRate(p.unit_cost)} = ${formatAmount(p.cost ?? 0)}` : ""}</span>
               </div>
             ))}
             {plan.totalCost != null && <div className="mt-0.5 flex justify-between font-mono font-semibold"><span>Total</span><span>{plan.totalCost.toFixed(2)}</span></div>}

@@ -45,6 +45,7 @@ import { useSystemSchedulerPrompt } from './system-scheduler-prompt';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { InlineAlert } from '@/components/ui/alert';
+import { Toast } from "@/components/ui/toast";
 import { ConsumptionLotPicker } from './entry/consumption-lot-picker';
 import { asStageTotalLine, isTotalBatch, round4, splitTotal } from './entry/stage-total';
 import {
@@ -3173,7 +3174,7 @@ export default function OperationalBatchDataEntry() {
                 </div>
               )}
 
-              {dataEntryError && <InlineAlert>{dataEntryError}</InlineAlert>}
+              <Toast variant="danger" message={dataEntryError} onClose={() => setDataEntryError('')} />
 
               {!dataEntryLoading && !selectedStageId ? (
                 <InlineAlert variant="info">
@@ -3195,24 +3196,18 @@ export default function OperationalBatchDataEntry() {
                     </span>
                   </div>
 
-                  {stageActionError && (
-                    <div className="mb-2">
-                      <InlineAlert>{stageActionError}</InlineAlert>
-                    </div>
-                  )}
+                  <Toast variant="danger" message={stageActionError} onClose={() => setStageActionError('')} />
 
-                  {reopenNotice && (
-                    <div className="mb-2">
-                      <InlineAlert variant={reopenNotice.kept.length ? 'warning' : 'success'}>
-                        {reopenNotice.unposted} entr{reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.
-                        {reopenNotice.kept.length > 0 && (
-                          <>
-                            {' '}Left posted: {reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.
-                          </>
-                        )}
-                      </InlineAlert>
-                    </div>
-                  )}
+                  <Toast
+                    variant={reopenNotice?.kept.length ? 'warning' : 'success'}
+                    message={reopenNotice
+                      ? `${reopenNotice.unposted} entr${reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.`
+                        + (reopenNotice.kept.length > 0
+                          ? ` Left posted: ${reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.`
+                          : '')
+                      : ''}
+                    onClose={() => setReopenNotice(null)}
+                  />
 
                   <div
                     className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2"
@@ -3705,9 +3700,7 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-3 text-xs pt-1">
-            {bulkStageTransitionError && (
-              <InlineAlert>{bulkStageTransitionError}</InlineAlert>
-            )}
+            <Toast variant="danger" message={bulkStageTransitionError} onClose={() => setBulkStageTransitionError('')} />
             <div>
               <label className="font-semibold block mb-1">
                 Destination Stage
@@ -3807,7 +3800,7 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-3.5 text-xs pt-1">
-            {changeStageError && <InlineAlert>{changeStageError}</InlineAlert>}
+            <Toast variant="danger" message={changeStageError} onClose={() => setChangeStageError('')} />
 
             {/* Current Stage & Rule Context Box */}
             <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-subtle,#f8fafc)] dark:bg-[var(--surface-subtle,#0f172a)] space-y-2">
@@ -3986,9 +3979,7 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-4 text-xs pt-1">
-            {autoTransitionError && (
-              <InlineAlert>{autoTransitionError}</InlineAlert>
-            )}
+            <Toast variant="danger" message={autoTransitionError} onClose={() => setAutoTransitionError('')} />
 
             <div className="p-3.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 flex items-start gap-3">
               <Sparkles className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

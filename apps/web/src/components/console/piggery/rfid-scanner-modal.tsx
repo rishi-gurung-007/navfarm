@@ -9,7 +9,7 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 
@@ -191,8 +191,8 @@ export default function RfidScannerModal({
           </Button>
         </form>
 
-        {error && <InlineAlert variant="danger">{error}</InlineAlert>}
-        {actionSuccess && <InlineAlert variant="success">{actionSuccess}</InlineAlert>}
+        <Toast variant="danger" message={error} onClose={() => setError("")} />
+        <Toast variant="success" message={actionSuccess} onClose={() => setActionSuccess("")} />
 
         {/* ── Animal Resolved Profile ── */}
         {animal && (

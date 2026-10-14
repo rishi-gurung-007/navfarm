@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStoredUser, hasPermission, NavUser, getActiveWorkspaceScope, getActiveLob } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
-import { Tabs } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { ShieldAlert } from "lucide-react";
@@ -63,9 +62,8 @@ function useInventoryPageState() {
 }
 
 export function InventoryPageShell({ activeKey, fill = false, children }: { activeKey: InventoryTabKey; fill?: boolean; children: React.ReactNode }) {
-  const { t, tLob } = useLanguage();
-  const router = useRouter();
-  const { ready, scope, activeLob, mayView } = useInventoryPageState();
+  const { t } = useLanguage();
+  const { ready, mayView } = useInventoryPageState();
 
   if (!ready) return null;
 
@@ -90,33 +88,14 @@ export function InventoryPageShell({ activeKey, fill = false, children }: { acti
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "stock-adjustment" ? t("invStockAdjustmentTitle") :
     activeKey === "ledger" ? t("invLedgerTitle") :
-    scope === "OPERATIONAL" ? t("invUnitBalanceTitle", { lob: tLob(activeLob) }) : t("invCompanyBalanceTitle");
-
-  const description =
-    activeKey === "transfers" ? (t("invTransfersDesc") || "Manage inter-location transfer orders, dispatch shipments, and in-transit receipts.") :
-    activeKey === "feed-forecast" ? t("invFeedForecastDesc") :
-    scope === "OPERATIONAL" ? t("invOperationalDesc", { lob: tLob(activeLob) }) : t("invCompanyDesc");
-
-  const tabsNode = (
-    <Tabs
-      items={INVENTORY_SECTIONS.map((s) => ({
-        value: s.key,
-        label: t(s.labelKey as any),
-      }))}
-      value={activeKey}
-      onChange={(key) => {
-        const target = INVENTORY_SECTIONS.find((s) => s.key === key);
-        if (target) router.push(target.href);
-      }}
-      className="mb-4"
-    />
-  );
+    // Stock Balance, as the sidebar names it — not "Piggery Unit Stock Balance" or "Company Inventory & Stock Balance".
+    t("invStockBalance");
 
   return (
     // Plan S: a feed screen holds its header and filters still; only its table scrolls.
     <ConsolePage fill={fill}>
-      <PageHeader title={title} description={description} sticky={!fill} />
-      {tabsNode}
+      {/* No tab row: the Inventory & Stock menu in the sidebar opens each of these pages directly. */}
+      <PageHeader title={title} sticky={!fill} />
       {children}
     </ConsolePage>
   );

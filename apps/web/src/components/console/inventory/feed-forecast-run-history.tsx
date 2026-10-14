@@ -9,7 +9,7 @@ import { formatDateShort, unwrap } from "./feed-format";
 import { FORECAST_VIEW_LABEL, type ForecastView } from "./feed-forecast-query";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
 import { FeedForecastGrid, type ReportRow, type SourceBalancePoint } from "./feed-forecast-grid";
 import { FeedForecastNotes } from "./feed-forecast-notes";
 
@@ -161,7 +161,7 @@ export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, o
           )}
         >
           <p className="text-sm text-[var(--text-primary)]">{t("ffRunDeleteConfirm", { code: deleting.run.run_code })}</p>
-          {deleting.error && <InlineAlert>{deleting.error}</InlineAlert>}
+          <Toast variant="danger" message={deleting.error} onClose={() => setDeleting((d) => (d ? { ...d, error: "" } : d))} />
         </Dialog>
       )}
     </>

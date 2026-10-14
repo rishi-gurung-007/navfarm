@@ -22,7 +22,6 @@ import { getStoredUser, getActiveCompanyId, setActiveCompanyId } from "@/hooks/u
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
 import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/states";
@@ -784,7 +783,7 @@ export default function InventorySetupPage() {
           }
         >
           <div className="space-y-3.5 py-2">
-            {modalError && <InlineAlert variant="danger">{modalError}</InlineAlert>}
+            <Toast variant="danger" message={modalError} onClose={() => setModalError(null)} />
 
             <div>
               <label className="block text-xs font-medium text-[var(--text-primary)] mb-1">

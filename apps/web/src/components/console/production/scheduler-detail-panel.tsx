@@ -5,11 +5,12 @@ import { Plus, Loader2, Trash2, Pencil, ChevronDown, ChevronUp, Copy } from "luc
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
-import { formatQuantity } from "@/lib/utils";
+import { formatDecimal, formatQuantity, toInputNumber } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DAYS_OF_WEEK_OPTIONS, DAYS_OF_MONTH_OPTIONS } from "./create-scheduler-modal";
 import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
@@ -203,7 +204,12 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       custom_days: (line.custom_days || []).map((d: Row) => d.day_number).join(", "),
       end_day: line.end_day ?? "",
       day_of_week: line.day_of_week ?? "",
-      std_value: line.std_value ?? "",
+      // Edit boxes get the stored number without its padding zeros ("2.500000" -> 2.5), never rounded.
+      std_value: toInputNumber(line.std_value),
+      standard_qty: toInputNumber(line.standard_qty),
+      lower_alert_limit: toInputNumber(line.lower_alert_limit),
+      upper_alert_limit: toInputNumber(line.upper_alert_limit),
+      estimated_cost: toInputNumber(line.estimated_cost),
       allow_qty_edit: line.allow_qty_edit !== false,
       output_lot_auto: line.output_lot_auto !== false,
     });
@@ -368,7 +374,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   return (
     <div className="flex flex-col gap-4 text-xs">
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {isSystem && (
         <div className="rounded-[var(--radius-md)] border shadow-2xs p-3.5" style={S.raised}>
@@ -470,7 +476,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                 {header.silo_stock.map((s: Row) => (
                   <TableRow key={s.item_id}>
                     <TableCell className="px-3 py-2 font-medium" style={S.primary}>{s.item_description || s.item_code}</TableCell>
-                    <TableCell className="px-3 py-2" style={S.primary}>{s.on_hand_qty} {s.uom}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{formatQuantity(s.on_hand_qty, s.uom)} {s.uom}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -572,7 +578,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                         </TableCell>
                         <TableCell className="px-3 py-2 font-semibold" style={S.primary}>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span>{line.standard_qty ?? line.std_value ?? "—"}</span>
+                            <span>{line.standard_qty != null ? formatDecimal(line.standard_qty) : line.std_value != null ? formatDecimal(line.std_value) : "—"}</span>
                             {lineUom && (
                               <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
                                 {lineUom}
@@ -605,7 +611,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       {addingLine && (
         <div className="rounded-[var(--radius-md)] border p-3.5" style={S.raised}>
           <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{editingLineId ? t("scEditLineTitle") : t("scAddLineTitle")}</p>
-          {lineError && <div className="mb-2"><InlineAlert>{lineError}</InlineAlert></div>}
+          <Toast variant="danger" message={lineError} onClose={() => setLineError("")} />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>

@@ -1,13 +1,14 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, Plus, Search } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -45,25 +46,15 @@ export default function SchedulerListPanel() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const viewingRow = rows.find((r) => r.scheduler_id === viewingId) || null;
 
-  // One group per batch, its stages in the order they ran; batches with a
-  // running (ACTIVE) scheduler first, then by their latest stage start.
-  const groups = useMemo(() => {
-    const byBatch = new Map<string, Row[]>();
-    for (const r of rows) byBatch.set(r.batch_id, [...(byBatch.get(r.batch_id) || []), r]);
-    return [...byBatch.values()]
-      .map((stages) => {
-        const sorted = [...stages].sort((a, b) => String(a.effective_from || "").localeCompare(String(b.effective_from || "")));
-        return {
-          batchId: sorted[0].batch_id as string,
-          batchNo: sorted[0].batch_no as string | null,
-          breedName: sorted[0].breed_name as string | null,
-          stages: sorted,
-          running: sorted.filter((r) => r.scheduler_status === "ACTIVE").length,
-          latest: String(sorted[sorted.length - 1].effective_from || ""),
-        };
-      })
-      .sort((a, b) => Number(b.running > 0) - Number(a.running > 0) || b.latest.localeCompare(a.latest));
-  }, [rows]);
+  // One plain list, newest scheduler first, paged like every other list screen.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => String(b.scheduler_no || "").localeCompare(String(a.scheduler_no || ""))),
+    [rows],
+  );
+  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize]);
+  const pagedRows = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   const load = () => {
     if (!companyId) return;
@@ -122,74 +113,71 @@ export default function SchedulerListPanel() {
         </Button>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {!loading && rows.length === 0 ? (
         <EmptyState icon={CalendarClock} title={t("schNoResults")} />
       ) : loading && rows.length === 0 ? (
         <LoadingState label={t("schLoading")} />
       ) : (
-        <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
-          <table className="w-full border-collapse text-left text-xs">
-            <TableHeader><tr className="border-b border-[var(--row-border)]">
-              <TableHead className="h-auto px-3 py-2">{t("schColStage")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColStatus")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColEffectiveFrom")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColEffectiveTo")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColAnimalCount")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColLines")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColLocation")}</TableHead>
-              <TableHead className="h-auto px-3 py-2">{t("schColSchedulerId")}</TableHead>
-              <TableHead className="h-auto px-3 py-2"></TableHead>
-            </tr></TableHeader>
-            <TableBody>
-              {groups.map((g) => (
-                <Fragment key={g.batchId}>
-                  <tr className="border-b border-[var(--row-border)]" style={{ backgroundColor: "var(--surface-raised)" }}>
-                    <td colSpan={9} className="px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="text-[13px] font-semibold" style={S.primary}>{g.batchNo || "—"}</span>
-                        {g.breedName && <span style={S.sub}>{g.breedName}</span>}
-                        <span style={S.muted}>{t("schStageCount", { n: g.stages.length })}</span>
-                        {g.running > 0 && <StatusBadge status="ACTIVE" label={t("schRunningCount", { n: g.running })} />}
-                      </div>
-                    </td>
-                  </tr>
-                  {g.stages.map((r) => (
-                    <TableRow key={r.scheduler_id} className="cursor-pointer" onClick={() => setViewingId(r.scheduler_id)}>
-                      <TableCell className="px-3 py-2 pl-6" style={S.primary}>
-                        <span className="font-medium">{r.stage_name || "—"}</span>
-                        {r.system_scheduler_name && (
-                          <span className="block text-[11px]" style={S.muted}>{t("schFromSystem", { name: r.system_scheduler_name })}</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-3 py-2"><StatusBadge status={r.scheduler_status} /></TableCell>
-                      <TableCell className="px-3 py-2" style={S.sub}>{r.effective_from || "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.sub}>{r.effective_to || "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.sub}>{r.line_count ?? 0}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.sub}>{r.location_name || "—"}</TableCell>
-                      <TableCell className="px-3 py-2 font-mono text-[11px] font-semibold text-[var(--accent)]" title={r.scheduler_id}>
-                        <span className="block max-w-[130px] truncate">{r.scheduler_id}</span>
-                      </TableCell>
-                      <TableCell className="px-3 py-2">
-                        <button onClick={(e) => { e.stopPropagation(); setViewingId(r.scheduler_id); }} className="text-xs font-semibold" style={{ color: "var(--accent)" }}>
-                          {t("schViewDetail")}
-                        </button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </Fragment>
-              ))}
-            </TableBody>
-          </table>
+        <div className="flex flex-col gap-2">
+            <Table className="text-xs">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="whitespace-nowrap">{t("schColSchedulerId")}</TableHead>
+                  <TableHead>{t("schColBatch")}</TableHead>
+                  <TableHead>{t("schColStage")}</TableHead>
+                  <TableHead>{t("schColStatus")}</TableHead>
+                  <TableHead className="whitespace-nowrap">{t("schColEffectiveFrom")}</TableHead>
+                  <TableHead className="whitespace-nowrap">{t("schColEffectiveTo")}</TableHead>
+                  <TableHead className="text-right">{t("schColAnimalCount")}</TableHead>
+                  <TableHead className="text-right">{t("schColLines")}</TableHead>
+                  <TableHead>{t("schColLocation")}</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedRows.map((r) => (
+                  <TableRow key={r.scheduler_id} className="cursor-pointer" onClick={() => setViewingId(r.scheduler_id)}>
+                    <TableCell className="whitespace-nowrap font-mono font-semibold text-[var(--accent)]">{r.scheduler_no || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.primary}>
+                      <span className="font-medium">{r.batch_no || "—"}</span>
+                      {r.breed_name && <span className="block text-[11px]" style={S.muted}>{r.breed_name}</span>}
+                    </TableCell>
+                    <TableCell style={S.primary}>
+                      <span className="font-medium">{r.stage_name || "—"}</span>
+                      {r.system_scheduler_name && (
+                        <span className="block text-[11px]" style={S.muted}>{t("schFromSystem", { name: r.system_scheduler_name })}</span>
+                      )}
+                    </TableCell>
+                    <TableCell><StatusBadge status={r.scheduler_status} /></TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_from || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_to || "—"}</TableCell>
+                    <TableCell className="text-right" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
+                    <TableCell className="text-right" style={S.sub}>{r.line_count ?? 0}</TableCell>
+                    <TableCell style={S.sub}>{r.location_name || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); setViewingId(r.scheduler_id); }}
+                        className="h-7 text-xs font-semibold text-[var(--accent)]"
+                      >
+                        {t("schViewDetail")}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          <Pagination page={page} pageSize={pageSize} total={sorted.length} onPageChange={setPage} onPageSizeChange={setPageSize} />
         </div>
       )}
 
       <Dialog
         open={!!viewingId}
         onClose={() => setViewingId(null)}
-        title={viewingRow ? t("schDetailTitle", { batchNo: viewingRow.batch_no || "" }) : t("schTitle")}
+        title={viewingRow ? t("schDetailTitle", { schedulerNo: viewingRow.scheduler_no || "", batchNo: viewingRow.batch_no || "" }) : t("schTitle")}
         maxWidth="xl"
       >
         {viewingId && (

@@ -25,7 +25,7 @@ import { getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalArea, 
 import { useLanguage } from "@/hooks/useLanguage";
 import { singularLabel } from "./labels";
 import { formatColumnValue } from "./column-format";
-import { cn } from "@/lib/utils";
+import { cn, formatDecimal, toInputNumber } from "@/lib/utils";
 import type { MasterDataConfig, MasterDataField, RequiredCondition } from "./types";
 import AnimalDetailPanel from "./AnimalDetailPanel";
 import { MASTER_DATA_CONFIGS } from "./configs";
@@ -35,6 +35,7 @@ import { MasterRecordView } from "./MasterRecordView";
 import { BcOwnershipNotice } from "./BcOwnershipNotice";
 import { EntityLookupDialog, EntityLookupField } from "./EntityLookupField";
 import { SearchableEntitySelect } from "./SearchableEntitySelect";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ItemTemplateSelectModal } from "./ItemTemplateSelectModal";
 import { exportMasterRowsToCsv } from "./utils/master-csv";
 import MasterDataImportModal from "./MasterDataImportModal";
@@ -241,6 +242,8 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
     const places = fromSibling !== undefined && !isNaN(fromSibling) && fromSibling > 0 ? fromSibling : col.decimals;
     return Number(v).toFixed(places);
   }
+  // A DECIMAL column arrives as "150.000000": show the number, not the stored padding.
+  if (typeof v === "string" && /^-?\d+\.\d+$/.test(v.trim())) return formatDecimal(v);
   return String(v);
 }
 
@@ -556,7 +559,6 @@ export function MasterDataTable({
   const deepLinkOpenedRef = useRef(false);
 
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
-  const [duplicateCodeMessage, setDuplicateCodeMessage] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -943,29 +945,52 @@ export function MasterDataTable({
         >
           <Field label={t("mdFilterFarm")} htmlFor={`master-${config.key}-filter-farm`} className="sm:col-span-6">
             <div className="relative flex items-center">
-              <select
-                id={`master-${config.key}-filter-farm`}
-                className={`${inputCls} nf-select pr-8`}
-                style={S.input}
-                value={filterDraft.__farm ?? ""}
-                onChange={(e) => {
-                  const nextFarm = e.target.value;
-                  setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
-                    delete out.__shed; // a new farm invalidates whatever shed/pen was picked under the old one
-                    delete out.__pen;
-                    return out;
-                  });
-                }}
-              >
-                <option value="">{t("mdFilterAll")}</option>
-                {locationFarmOptions.map((f) => (
-                  <option key={String(f.location_id)} value={String(f.location_id)}>
-                    {String(f.location_code ?? f.location_name ?? f.location_id)}
-                  </option>
-                ))}
-              </select>
+              <div className="relative w-full">
+                <SearchableSelect
+                  value={filterDraft.__farm ?? ""}
+                  onChange={(val) => {
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (!val) delete out.__farm; else out.__farm = val;
+                      delete out.__shed;
+                      delete out.__pen;
+                      return out;
+                    });
+                  }}
+                  options={[
+                    { value: "", label: t("mdFilterAll") },
+                    ...locationFarmOptions.map((f) => ({
+                      value: String(f.location_id),
+                      label: String(f.location_code ?? f.location_name ?? f.location_id),
+                    })),
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName={`${inputCls} h-9 w-full pr-8`}
+                />
+                <select
+                  id={`master-${config.key}-filter-farm`}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                  value={filterDraft.__farm ?? ""}
+                  onChange={(e) => {
+                    const nextFarm = e.target.value;
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
+                      delete out.__shed;
+                      delete out.__pen;
+                      return out;
+                    });
+                  }}
+                >
+                  <option value="">{t("mdFilterAll")}</option>
+                  {locationFarmOptions.map((f) => (
+                    <option key={String(f.location_id)} value={String(f.location_id)}>
+                      {String(f.location_code ?? f.location_name ?? f.location_id)}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {filterDraft.__farm && (
                 <button
                   type="button"
@@ -975,7 +1000,7 @@ export function MasterDataTable({
                     delete out.__farm; delete out.__shed; delete out.__pen;
                     return out;
                   })}
-                  className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -984,29 +1009,52 @@ export function MasterDataTable({
           </Field>
           <Field label={t("mdFilterShed")} htmlFor={`master-${config.key}-filter-shed`} className="sm:col-span-6">
             <div className="relative flex items-center">
-              <select
-                id={`master-${config.key}-filter-shed`}
-                className={`${inputCls} nf-select pr-8`}
-                style={S.input}
-                value={filterDraft.__shed ?? ""}
-                disabled={!filterDraft.__farm}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    if (next === "") delete out.__shed; else out.__shed = next;
-                    delete out.__pen; // a new shed invalidates whatever pen was picked under the old one
-                    return out;
-                  });
-                }}
-              >
-                <option value="">{t("mdFilterAll")}</option>
-                {locationShedOptions.map((s) => (
-                  <option key={String(s.location_id)} value={String(s.location_id)}>
-                    {String(s.location_code ?? s.location_name ?? s.location_id)}
-                  </option>
-                ))}
-              </select>
+              <div className="relative w-full">
+                <SearchableSelect
+                  value={filterDraft.__shed ?? ""}
+                  disabled={!filterDraft.__farm}
+                  onChange={(val) => {
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (!val) delete out.__shed; else out.__shed = val;
+                      delete out.__pen;
+                      return out;
+                    });
+                  }}
+                  options={[
+                    { value: "", label: t("mdFilterAll") },
+                    ...locationShedOptions.map((s) => ({
+                      value: String(s.location_id),
+                      label: String(s.location_code ?? s.location_name ?? s.location_id),
+                    })),
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName={`${inputCls} h-9 w-full pr-8`}
+                />
+                <select
+                  id={`master-${config.key}-filter-shed`}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                  value={filterDraft.__shed ?? ""}
+                  disabled={!filterDraft.__farm}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (next === "") delete out.__shed; else out.__shed = next;
+                      delete out.__pen;
+                      return out;
+                    });
+                  }}
+                >
+                  <option value="">{t("mdFilterAll")}</option>
+                  {locationShedOptions.map((s) => (
+                    <option key={String(s.location_id)} value={String(s.location_id)}>
+                      {String(s.location_code ?? s.location_name ?? s.location_id)}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {filterDraft.__shed && (
                 <button
                   type="button"
@@ -1016,7 +1064,7 @@ export function MasterDataTable({
                     delete out.__shed; delete out.__pen;
                     return out;
                   })}
-                  className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -1025,28 +1073,50 @@ export function MasterDataTable({
           </Field>
           <Field label={t("mdFilterPen")} htmlFor={`master-${config.key}-filter-pen`} className="sm:col-span-6">
             <div className="relative flex items-center">
-              <select
-                id={`master-${config.key}-filter-pen`}
-                className={`${inputCls} nf-select pr-8`}
-                style={S.input}
-                value={filterDraft.__pen ?? ""}
-                disabled={!filterDraft.__shed}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    if (next === "") delete out.__pen; else out.__pen = next;
-                    return out;
-                  });
-                }}
-              >
-                <option value="">{t("mdFilterAll")}</option>
-                {locationPenOptions.map((p) => (
-                  <option key={String(p.location_id)} value={String(p.location_id)}>
-                    {String(p.location_code ?? p.location_name ?? p.location_id)}
-                  </option>
-                ))}
-              </select>
+              <div className="relative w-full">
+                <SearchableSelect
+                  value={filterDraft.__pen ?? ""}
+                  disabled={!filterDraft.__shed}
+                  onChange={(val) => {
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (!val) delete out.__pen; else out.__pen = val;
+                      return out;
+                    });
+                  }}
+                  options={[
+                    { value: "", label: t("mdFilterAll") },
+                    ...locationPenOptions.map((p) => ({
+                      value: String(p.location_id),
+                      label: String(p.location_code ?? p.location_name ?? p.location_id),
+                    })),
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName={`${inputCls} h-9 w-full pr-8`}
+                />
+                <select
+                  id={`master-${config.key}-filter-pen`}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  tabIndex={-1}
+                  value={filterDraft.__pen ?? ""}
+                  disabled={!filterDraft.__shed}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      if (next === "") delete out.__pen; else out.__pen = next;
+                      return out;
+                    });
+                  }}
+                >
+                  <option value="">{t("mdFilterAll")}</option>
+                  {locationPenOptions.map((p) => (
+                    <option key={String(p.location_id)} value={String(p.location_id)}>
+                      {String(p.location_code ?? p.location_name ?? p.location_id)}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {filterDraft.__pen && (
                 <button
                   type="button"
@@ -1080,17 +1150,29 @@ export function MasterDataTable({
           <Field key={c.key} label={filterLabelFor(c.key, c.label)} htmlFor={fieldId}>
             {choices ? (
               <div className="relative flex items-center">
-                <select id={fieldId} className={`${inputCls} nf-select pr-8`} style={S.input}
-                  value={value} onChange={(e) => set(e.target.value)}>
-                  <option value="">{t("mdFilterAll")}</option>
-                  {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
+                <div className="relative w-full">
+                  <SearchableSelect
+                    value={value}
+                    onChange={(val) => set(val)}
+                    options={[
+                      { value: "", label: t("mdFilterAll") },
+                      ...choices.map((o) => ({ value: o.value, label: o.label })),
+                    ]}
+                    columnHeaders={false}
+                    triggerClassName={`${inputCls} h-9 w-full pr-8`}
+                  />
+                  <select id={fieldId} className="absolute inset-0 h-full w-full opacity-0 pointer-events-none" tabIndex={-1}
+                    value={value} onChange={(e) => set(e.target.value)}>
+                    <option value="">{t("mdFilterAll")}</option>
+                    {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
                 {value && (
                   <button
                     type="button"
                     aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
                     onClick={() => set("")}
-                    className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -1363,7 +1445,6 @@ export function MasterDataTable({
 
   const openCreate = () => {
     if (readOnly) return;
-    setDuplicateCodeMessage(null);
     setEditing(null);
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
@@ -1503,7 +1584,6 @@ export function MasterDataTable({
       return;
     }
     if (action === "none") return;
-    setDuplicateCodeMessage(null);
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
@@ -1551,6 +1631,9 @@ export function MasterDataTable({
         }
         v = JSON.stringify(v, null, 2);
       }
+      // A number box starts with the stored number without its padding zeros ("150.000000" -> 150); never rounded,
+      // so saving the form leaves the value as it was.
+      if (f.type === "number" && v !== null && v !== undefined && v !== "") v = toInputNumber(v);
       initial[f.key] = v ?? (f.type === "boolean" ? false : "");
     });
     // storage_type is hidden from the form (see configs.ts) and derived from
@@ -1953,19 +2036,10 @@ export function MasterDataTable({
         }
       }
     } catch (err: any) {
-      const msg = err?.message || t("mdFailedToSave");
-      const manuallyEnteredCode = !!numbering.codeKey
-        && codeFieldTouchedRef.current
-        && String(form[numbering.codeKey] ?? "").trim() !== "";
-      if (!editing && err?.status === 409 && manuallyEnteredCode) {
-        // ApiError.message is extracted from the server's response payload by
-        // api-client. Some masters include the existing record's name/details
-        // in that message; preserve it verbatim rather than inventing fields
-        // the API did not return.
-        setDuplicateCodeMessage(msg);
-      } else {
-        showToast.error(msg);
-      }
+      // Every refusal is a toast carrying the API's own message. A 409 on a typed code
+      // used to open a "Code already exists" dialog whatever the 409 was about — a
+      // location refused for exceeding its parent's area was announced as a duplicate code.
+      showToast.error(err?.message || t("mdFailedToSave"));
       if (!editing) numbering.refresh();
     } finally {
       setSaving(false);
@@ -3815,19 +3889,6 @@ export function MasterDataTable({
             className="w-full rounded-md border px-3 py-2 text-sm"
             style={S.input}
           />
-        </div>
-      </Dialog>
-
-      <Dialog
-        open={!!duplicateCodeMessage}
-        onClose={() => setDuplicateCodeMessage(null)}
-        title="Code already exists"
-        presentation="compact"
-        maxWidth="sm"
-      >
-        <div className="space-y-2 text-sm">
-          <p style={S.primary}>{duplicateCodeMessage}</p>
-          <p style={S.sub}>This code is already in use. Change the code in the creation form and try again.</p>
         </div>
       </Dialog>
 

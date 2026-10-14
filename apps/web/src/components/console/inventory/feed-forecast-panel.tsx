@@ -24,6 +24,7 @@ import { FeedForecastGrid, ReportRow, SourceBalancePoint } from "./feed-forecast
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
 import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, FORECAST_VIEW_LABEL, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
@@ -402,22 +403,64 @@ function FeedForecastPanelContent() {
           <input id="ff-planning" type="date" value={shownPlanning} onChange={(e) => setPlanningDate(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle}
             title={data ? (data.timeZone ? t("ffTimeZone", { zone: data.timeZone }) : t("ffServerDay")) : undefined} />
         </div>
-        <div>
+        <div className="w-36 shrink-0">
           <label className={labelCls} htmlFor="ff-view">{t("ffView")}</label>
-          <select id="ff-view" value={view} onChange={(e) => changeView(e.target.value as ForecastView)} className="nf-input-sm nf-select mt-1.5" style={inputStyle}>
-            {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(FORECAST_VIEW_LABEL[v])}</option>)}
-          </select>
+          <div className="relative mt-1.5">
+            <SearchableSelect
+              value={view}
+              onChange={(val) => changeView(val as ForecastView)}
+              options={FORECAST_VIEWS.map((v) => ({ value: v, label: t(FORECAST_VIEW_LABEL[v]) }))}
+              columnHeaders={false}
+              searchPlaceholder="Search view…"
+              triggerClassName="nf-input-sm w-full h-9"
+            />
+            <select
+              id="ff-view"
+              value={view}
+              onChange={(e) => changeView(e.target.value as ForecastView)}
+              tabIndex={-1}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+            >
+              {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(FORECAST_VIEW_LABEL[v])}</option>)}
+            </select>
+          </div>
         </div>
         <div className="flex shrink-0 items-end gap-3">
         {view === "PERIOD" ? (
-          <div>
+          <div className="w-56 shrink-0">
             <label className={labelCls} htmlFor="ff-period">{t("ffReportingPeriod")}</label>
-            <select id="ff-period" value={periodId} onChange={(e) => setPeriodId(e.target.value)} className="nf-input-sm nf-select mt-1.5" style={inputStyle}>
-              <option value="">{t("ffPeriodCovering")}</option>
-              {periodList.map((p) => (
-                <option key={p.periodId} value={p.periodId}>{t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) })}</option>
-              ))}
-            </select>
+            <div className="relative mt-1.5">
+              <SearchableSelect
+                value={periodId}
+                onChange={setPeriodId}
+                options={periodList.map((p) => ({
+                  value: p.periodId,
+                  code: p.periodCode,
+                  name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
+                  label: t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) }),
+                }))}
+                columnHeaders={["Period", "Dates"]}
+                columns={[
+                  { key: "code", label: "Period" },
+                  { key: "name", label: "Dates" },
+                ]}
+                placeholder={t("ffPeriodCovering")}
+                searchPlaceholder="Search period…"
+                triggerClassName="nf-input-sm w-full h-9"
+              />
+              <select
+                id="ff-period"
+                value={periodId}
+                onChange={(e) => setPeriodId(e.target.value)}
+                tabIndex={-1}
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              >
+                <option value="">{t("ffPeriodCovering")}</option>
+                {periodList.map((p) => (
+                  <option key={p.periodId} value={p.periodId}>{t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) })}</option>
+                ))}
+              </select>
+            </div>
           </div>
         ) : (
           <div>

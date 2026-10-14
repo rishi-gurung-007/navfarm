@@ -5,7 +5,7 @@ import { Check, Loader2, Save } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
 
 type OverrideKey = "truckTargetKg" | "bulkMultipleKg";
@@ -102,7 +102,7 @@ export function FeedFarmOverrides({ companyId }: { companyId: string }) {
         <h3 className="text-sm font-semibold text-[var(--text-primary)]">{t("fsetFarmOverrides")}</h3>
         <p className="text-xs text-[var(--text-secondary)]">{t("fsetFarmOverridesHint")}</p>
       </div>
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
       {farms.length === 0 && <p className="text-xs text-[var(--text-secondary)]">{t("fpNoFarms")}</p>}
       {farms.map((farm) => {
         const draft = drafts[farm.farmId];

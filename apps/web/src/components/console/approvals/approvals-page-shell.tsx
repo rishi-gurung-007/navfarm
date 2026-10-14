@@ -28,6 +28,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { useCompanyCurrency, formatMoney, type CompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { FeedRequisitionApprovalDetail } from "./feed-requisition-approval-detail";
 import { RequisitionApprovalDetail } from "./requisition-approval-detail";
+import { formatAmount } from "@/lib/utils";
 
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -439,7 +440,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
                     <span className="block text-[10px] text-[var(--text-secondary)]">{item.requestor_role}</span>
                   </TableCell>
                   <TableCell className="py-3 px-3">
-                    <span className="font-bold text-[var(--text-primary)]">{item.details.cost_impact}</span>
+                    <span className="font-bold text-[var(--text-primary)]">{formatAmount(item.details.cost_impact)}</span>
                     <span className="block text-[10px] text-[var(--text-secondary)]">{item.details.requested_qty}</span>
                   </TableCell>
                   <TableCell className="py-3 px-3 text-[var(--text-secondary)] font-mono text-[11px]">
@@ -532,7 +533,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
               <div className="p-3 rounded-[var(--radius-xs)] bg-[var(--surface-raised)] space-y-1.5">
                 <p><span className="font-medium text-[var(--text-secondary)]">{t("apItemAction")}</span> <span className="font-semibold text-[var(--text-primary)]">{viewingItem.details.item_or_stage}</span></p>
                 <p><span className="font-medium text-[var(--text-secondary)]">{t("apRequestedQty")}</span> <span className="font-mono">{viewingItem.details.requested_qty}</span></p>
-                <p><span className="font-medium text-[var(--text-secondary)]">{t("apCostImpact")}</span> <span className="font-bold text-[var(--accent)]">{viewingItem.details.cost_impact}</span></p>
+                <p><span className="font-medium text-[var(--text-secondary)]">{t("apCostImpact")}</span> <span className="font-bold text-[var(--accent)]">{formatAmount(viewingItem.details.cost_impact)}</span></p>
                 <p className="pt-1 text-[var(--text-secondary)]"><span className="font-medium text-[var(--text-primary)]">{t("apReasonLabel")}</span> {viewingItem.details.justification}</p>
               </div>
             </div>

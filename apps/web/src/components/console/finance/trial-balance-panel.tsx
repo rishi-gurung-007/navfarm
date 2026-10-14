@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -67,9 +67,7 @@ export default function TrialBalancePanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">

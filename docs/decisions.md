@@ -4061,3 +4061,33 @@ conversion path (or a rebuild), not a plain re-run; back it up first.
 Two further cross-branch settlements: a pooled-semen link (`semen_batch_boar`, composite key) is left out of the
 `--with-operational` company clone, which can only re-key single-id tables; and a master-data row command that asks for
 a reason now asks in a dialog, because the app allows no browser prompts.
+
+## 13 Oct 2026 — A recorded death is final: mortality Reverse removed (Arun's instruction, awaiting Rishi)
+
+Replaces **C7** of 9 Oct ("a death recorded in error is reversed, never edited"), which was also Arun's instruction.
+A dead animal is not brought back: the Reverse action is gone from both sides.
+
+- **Removed:** `POST /batch/:id/mortality/:transactionId/reverse`, `BatchMortalityReversalService` and its spec,
+  `ReverseMortalityDto`; on the Mortality & Health panel the Reverse button, its dialog, the Actions column it was the
+  only occupant of, and the `mhReverse*` / `mhActions` strings.
+- **Changed:** reopening a posted data-entry day already kept a death posted; its reason no longer sends the user to a
+  Reverse button that does not exist ("it recorded a death, which is final"). Lowering a posted
+  mortality count in data entry still corrects the stage count only and revives no one.
+- **Kept, deliberately:** the code that *reads* a reversal — `reversed_at` on MORTALITY transactions in the batch head
+  count, and `MORTALITY_REVERSED` in the animal's movement history. `nf_devco` holds none, but a database where C7 was
+  used may, and dropping the readers would count those deaths twice.
+- **Open, for Rishi:** with no reversal, a death recorded against the wrong animal or batch has no correction path in
+  the app. Whether one is wanted (and who may use it) is his call.
+
+## 13 Oct 2026 — Feed Forecast promoted to dedicated top-level sidebar tab with Farm Master flyout
+
+Feed Forecast was previously nested as a sub-tab under "Inventory & Stock" (`inventoryChildren`).
+It is now elevated to a first-class, top-level item in the primary sidebar navigation (`navFeedForecast`,
+icon `TrendingUp`, route `/inventory/feed-forecast`, `flyout: true`) across both COMPANY and OPERATIONAL workspaces,
+positioned between Inventory & Stock and Requisition. It is removed from `inventoryChildren` so that
+it is not duplicated as a child item. Its horizontal page tabs (Dashboard, Calculation, Feed Plan,
+Compare Report, Requisition, Feed Mill Consolidation, Feed Loading Instructions, Physical Stock Count)
+are wired into the flyout popover menu as per Farm Master, linking directly to the corresponding `?tab=` view.
+`AppShell` active-prefix and query-param matching were also refined so that the default tab (`forecast`)
+and deeper sibling nav routes highlight accurately.
+

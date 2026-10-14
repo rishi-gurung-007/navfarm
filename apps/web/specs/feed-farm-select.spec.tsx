@@ -39,3 +39,4 @@ describe('FeedFarmSelect (A5, S3)', () => {
     expect(screen.queryByText('—')).toBeNull();
   });
 });
+

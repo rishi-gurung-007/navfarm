@@ -28,6 +28,7 @@ import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, ReadField } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -432,35 +433,67 @@ export default function FeedStockCountPanel() {
           {farmPicker}
           {mills.length > 0 && (
             <Field label={t("fscCountAt")} htmlFor="sc-place">
-              <select
-                id="sc-place"
-                className="nf-input-sm nf-select"
-                style={inputStyle}
-                value={millId}
-                onChange={(e) => { setMillId(e.target.value); setSelected(null); setEntry(null); }}
-              >
-                <option value="">{t("fscCountAtFarm")}</option>
-                {mills.map((m) => (
-                  <option key={m.location_id} value={m.location_id}>{m.location_name || m.location_code}</option>
-                ))}
-              </select>
+              <div className="relative min-w-[12rem]">
+                <SearchableSelect
+                  value={millId}
+                  onChange={(val) => { setMillId(val); setSelected(null); setEntry(null); }}
+                  options={[
+                    { value: "", label: t("fscCountAtFarm") },
+                    ...mills.map((m) => ({
+                      value: m.location_id,
+                      code: m.location_code,
+                      name: m.location_name || "",
+                      label: `${m.location_code}${m.location_name ? ` — ${m.location_name}` : ""}`,
+                    })),
+                  ]}
+                  columnHeaders={["Code", "Mill Name"]}
+                  triggerClassName="nf-input-sm min-w-[12rem] h-9"
+                />
+                <select
+                  id="sc-place"
+                  value={millId}
+                  onChange={(e) => { setMillId(e.target.value); setSelected(null); setEntry(null); }}
+                  tabIndex={-1}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                >
+                  <option value="">{t("fscCountAtFarm")}</option>
+                  {mills.map((m) => (
+                    <option key={m.location_id} value={m.location_id}>{m.location_name || m.location_code}</option>
+                  ))}
+                </select>
+              </div>
             </Field>
           )}
           <Field label={t("fscShow")} htmlFor="sc-status">
-            <select
-              id="sc-status"
-              className="nf-input-sm nf-select"
-              style={inputStyle}
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            >
-              <option value="">{t("rqShowAll")}</option>
-              {STATUS_FILTER.map((value) => (
-                <option key={value} value={value}>
-                  {labelOf(REQ_STATUS_LABEL, value, t)}
-                </option>
-              ))}
-            </select>
+            <div className="relative min-w-[10rem]">
+              <SearchableSelect
+                value={status}
+                onChange={setStatus}
+                options={[
+                  { value: "", label: t("rqShowAll") },
+                  ...STATUS_FILTER.map((value) => ({
+                    value,
+                    label: labelOf(REQ_STATUS_LABEL, value, t),
+                  })),
+                ]}
+                columnHeaders={false}
+                triggerClassName="nf-input-sm min-w-[10rem] h-9"
+              />
+              <select
+                id="sc-status"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                tabIndex={-1}
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              >
+                <option value="">{t("rqShowAll")}</option>
+                {STATUS_FILTER.map((value) => (
+                  <option key={value} value={value}>
+                    {labelOf(REQ_STATUS_LABEL, value, t)}
+                  </option>
+                ))}
+              </select>
+            </div>
           </Field>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -554,45 +587,50 @@ export default function FeedStockCountPanel() {
                   />
                 </Field>
                 <Field label={t("fscCountType")} htmlFor="sc-count-type">
-                  <select
+                  <SearchableSelect
                     id="sc-count-type"
-                    className="nf-input-sm nf-select"
-                    style={inputStyle}
+                    ariaLabel={t("fscCountType")}
                     value={effCountType}
                     disabled={isMill}
-                    onChange={(e) => setCountType(e.target.value === "MONTHLY" ? "MONTHLY" : "WEEKLY")}
-                  >
-                    <option value="WEEKLY">{t("fscCountTypeWeekly")}</option>
-                    <option value="MONTHLY">{t("fscCountTypeMonthly")}</option>
-                  </select>
+                    onChange={(val) => setCountType(val === "MONTHLY" ? "MONTHLY" : "WEEKLY")}
+                    options={[
+                      { value: "WEEKLY", label: t("fscCountTypeWeekly") },
+                      { value: "MONTHLY", label: t("fscCountTypeMonthly") },
+                    ]}
+                    columnHeaders={false}
+                    triggerClassName="nf-input-sm min-w-[9rem] h-9"
+                  />
                 </Field>
                 {effCountType === "MONTHLY" && (
                   <Field label={t("fscReportingPeriod")} htmlFor="sc-period">
-                    <select
+                    <SearchableSelect
                       id="sc-period"
-                      className="nf-input-sm nf-select"
-                      style={inputStyle}
+                      ariaLabel={t("fscReportingPeriod")}
                       value={periodId}
-                      onChange={(e) => setPeriodId(e.target.value)}
-                    >
-                      <option value="">{t("fscReportingPeriodPick")}</option>
-                      {periods.map((p) => (
-                        <option key={p.period_id} value={p.period_id}>{`${p.period_code} (${String(p.stock_take_date).slice(0, 10)})`}</option>
-                      ))}
-                    </select>
+                      onChange={setPeriodId}
+                      options={periods.map((p) => ({
+                        value: p.period_id,
+                        label: `${p.period_code} (${String(p.stock_take_date).slice(0, 10)})`,
+                      }))}
+                      placeholder={t("fscReportingPeriodPick")}
+                      columnHeaders={false}
+                      triggerClassName="nf-input-sm min-w-[12rem] h-9"
+                    />
                   </Field>
                 )}
                 <Field label={t("fscSource")} htmlFor="sc-source">
-                  <select
+                  <SearchableSelect
                     id="sc-source"
-                    className="nf-input-sm nf-select"
-                    style={inputStyle}
+                    ariaLabel={t("fscSource")}
                     value={entryScheduled ? "SCHEDULED" : "ON_DEMAND"}
-                    onChange={(e) => setEntryScheduled(e.target.value === "SCHEDULED")}
-                  >
-                    <option value="ON_DEMAND">{t("fscSourceOnDemand")}</option>
-                    <option value="SCHEDULED">{t("fscSourceScheduled")}</option>
-                  </select>
+                    onChange={(val) => setEntryScheduled(val === "SCHEDULED")}
+                    options={[
+                      { value: "ON_DEMAND", label: t("fscSourceOnDemand") },
+                      { value: "SCHEDULED", label: t("fscSourceScheduled") },
+                    ]}
+                    columnHeaders={false}
+                    triggerClassName="nf-input-sm min-w-[9rem] h-9"
+                  />
                 </Field>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">

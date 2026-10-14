@@ -5,6 +5,7 @@ import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
 import type { MasterDataField } from "./types";
 import { entityDisplayText, nameOrCode } from "@/utils/code-name";
+import { formatDecimal } from "@/lib/utils";
 
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
@@ -21,7 +22,8 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
     }
     const isInt = field?.step === "1" || (!field?.step && Number.isInteger(num));
     if (isInt) return String(num);
-    return Number.isInteger(num) ? String(num) : num.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    // At most 2 decimals, but a small fraction (a 0.001 conversion factor) keeps its digits instead of reading 0.
+    return formatDecimal(num);
   }
   // TDD row 102 asks for DD/MM/YYYY. Read the parts off the raw string rather
   // than through Date's local timezone, which shifts a bare "2026-09-08" back a

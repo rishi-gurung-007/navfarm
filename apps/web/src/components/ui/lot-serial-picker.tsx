@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Check, Sparkles, RotateCcw, ChevronDown, Layers, Hash } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Popover, usePopoverSurface } from "@/components/ui/popover";
+import { formatQuantity } from "@/lib/utils";
 
 export interface LotOption {
   [key: string]: any;
@@ -352,7 +353,7 @@ function LotSerialPanel({
                 {isLot ? (
                   <>
                     <span className="text-right font-mono" style={{ color: "var(--text-secondary)" }}>
-                      {row.remaining_quantity ?? "0"}
+                      {formatQuantity(row.remaining_quantity ?? 0)}
                     </span>
                     <span
                       className={`text-right font-mono text-[11px] ${row.expiry_date ? "font-semibold" : ""}`}

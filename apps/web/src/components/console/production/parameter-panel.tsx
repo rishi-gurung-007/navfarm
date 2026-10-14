@@ -5,11 +5,12 @@ import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { formatQuantity, formatRate } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -182,9 +183,7 @@ export default function ParameterPanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
@@ -213,7 +212,7 @@ export default function ParameterPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.item_id ? itemLabel(row.item_id) : row.resource_id ? resourceLabel(row.resource_id) : "—"}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.qty_method}</TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>
-                      {row.default_qty_per_unit ? `${row.default_qty_per_unit}/unit` : row.default_qty_per_batch ? `${row.default_qty_per_batch}/batch` : "—"} {row.default_uom || ""}
+                      {row.default_qty_per_unit ? `${formatRate(row.default_qty_per_unit)}/unit` : row.default_qty_per_batch ? `${formatQuantity(row.default_qty_per_batch)}/batch` : "—"} {row.default_uom || ""}
                     </TableCell>
                   </TableRow>
                 ))
@@ -239,9 +238,7 @@ export default function ParameterPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && (
-            <InlineAlert>{formError}</InlineAlert>
-          )}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("paramFieldCode")} <span style={{ color: "var(--danger)" }}>*</span></label>

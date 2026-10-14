@@ -6,7 +6,7 @@ import {
   Activity, ShieldCheck,
 } from "lucide-react";
 import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -96,7 +96,7 @@ export default function HerdAnalyticsPanel() {
         )}
       </div>
 
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {loading && (
         <div className="py-16 text-center">

@@ -5,11 +5,12 @@ import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -169,9 +170,7 @@ export default function QcParameterPanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
@@ -198,7 +197,7 @@ export default function QcParameterPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.param_type}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.param_type === "NUMERIC"
-                        ? `${row.min_value ?? "—"} – ${row.max_value ?? "—"} ${row.uom || ""}`
+                        ? `${row.min_value != null ? formatQuantity(row.min_value) : "—"} – ${row.max_value != null ? formatQuantity(row.max_value) : "—"} ${row.uom || ""}`
                         : row.param_type === "GRADE"
                         ? (row.grade_scale ? Object.keys(row.grade_scale).join(", ") : "—")
                         : t("qcpTrueFalse")}
@@ -228,9 +227,7 @@ export default function QcParameterPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && (
-            <InlineAlert>{formError}</InlineAlert>
-          )}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpNatureOfBusiness")} <span className="text-(--danger)">*</span></label>

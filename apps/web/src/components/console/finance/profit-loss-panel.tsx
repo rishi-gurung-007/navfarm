@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableBody, TableFooter, TableRow, TableCell } from "@/components/ui/table";
@@ -107,9 +107,7 @@ export default function ProfitLossPanel() {
         </div>
       </div>
 
-      {error && (
-        <InlineAlert>{error}</InlineAlert>
-      )}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin" style={S.accent} /></div>

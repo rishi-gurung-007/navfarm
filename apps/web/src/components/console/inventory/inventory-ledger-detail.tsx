@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Button } from '@/components/ui/button';
 import { InlineAlert } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import {
   TableHeader,
@@ -37,6 +38,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { CostingCalculation } from './costing-calculation';
+import { formatExact, formatQuantity } from "@/lib/utils";
 
 type Row = Record<string, any>;
 
@@ -376,7 +378,7 @@ export default function InventoryLedgerDetail({
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError('')} />
 
       {/* Hero Metric Cards (Business Central Key Metrics) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -648,7 +650,7 @@ export default function InventoryLedgerDetail({
                     Alternate Quantity
                   </p>
                   <p className="mt-0.5 font-mono" style={S.primary}>
-                    {entry.alternate_quantity}
+                    {formatQuantity(entry.alternate_quantity)}
                   </p>
                 </div>
                 <div>
@@ -659,7 +661,7 @@ export default function InventoryLedgerDetail({
                     Qty. per Unit of Measure
                   </p>
                   <p className="mt-0.5 font-mono" style={S.primary}>
-                    {entry.uom_conversion_factor || '1.000000'}
+                    {formatExact(entry.uom_conversion_factor || 1)}
                   </p>
                 </div>
               </>

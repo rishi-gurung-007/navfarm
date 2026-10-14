@@ -6,6 +6,7 @@ import { getConfig } from "@/modules/master-data/configs";
 import { LanguageProvider } from "@/hooks/useLanguage";
 import { ApiError } from "@/lib/api-client";
 import { api } from "@/services/api-client";
+import { showToast } from "@/components/ui/toast";
 
 const mockHasPermission = jest.fn(() => true);
 
@@ -307,7 +308,8 @@ describe("master-data edit fields", () => {
     expect((screen.getByRole("textbox", { name: "Auto-Move On Day" }) as HTMLInputElement).value).toBe("42");
   });
 
-  it("keeps creation open and shows a corrective dialog when a manually entered code conflicts", async () => {
+  it("keeps creation open and shows the API's refusal as a toast when a manually entered code conflicts", async () => {
+    const toastError = jest.spyOn(showToast, "error");
     const config: MasterDataConfig = {
       key: "breed",
       label: "Test Breeds",
@@ -341,10 +343,10 @@ describe("master-data edit fields", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "New breed" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    expect((await screen.findByRole("dialog", { name: "Code already exists" })).textContent).toContain(
-      "Breed code 'BREED-EXISTING' already exists for Large White.",
-    );
-    expect(screen.queryByRole("button", { name: "Change code" })).toBeNull();
+    // A toast, like every other refusal, with the API's own words. The dialog this replaced
+    // was titled "Code already exists" for any 409, whatever it was about.
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Breed code 'BREED-EXISTING' already exists for Large White."));
+    expect(screen.queryByRole("dialog", { name: "Code already exists" })).toBeNull();
     expect((screen.getByRole("textbox", { name: "Code" }) as HTMLInputElement).value).toBe("BREED-EXISTING");
   });
 

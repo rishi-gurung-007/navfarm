@@ -13,6 +13,7 @@ import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { StatCard, StatRow } from "@/components/ui/stat-row";
 import { EmptyState, LoadingState } from "@/components/ui/states";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -117,16 +118,41 @@ export default function MillComparePanel() {
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9 [&>button]:h-9">
         {(result?.mills.length ?? 0) > 0 && (
           <Field label={t("mcrMill")} htmlFor="mill-compare-mill">
-            <select id="mill-compare-mill" className="nf-input-sm nf-select" value={millId} onChange={(event) => setMillId(event.target.value)}>
-              {result!.mills.map((mill) => <option key={mill.millId} value={mill.millId}>{mill.millName || mill.millCode}</option>)}
-            </select>
+            <SearchableSelect
+              id="mill-compare-mill"
+              ariaLabel={t("mcrMill")}
+              value={millId}
+              onChange={setMillId}
+              options={result!.mills.map((mill) => ({
+                value: mill.millId,
+                code: mill.millCode,
+                name: mill.millName,
+                label: `${mill.millCode} — ${mill.millName}`,
+              }))}
+              columnHeaders={["Code", "Mill Name"]}
+              columns={[
+                { key: "code", label: "Code" },
+                { key: "name", label: "Mill Name" },
+              ]}
+              placeholder="Select mill…"
+              searchPlaceholder="Search mill…"
+              triggerClassName="nf-input-sm min-w-[12rem] h-9"
+            />
           </Field>
         )}
         <Field label={t("mcrPeriod")} htmlFor="mill-compare-period">
-          <select id="mill-compare-period" className="nf-input-sm nf-select" value={period} onChange={(event) => setPeriod(event.target.value as "DAY" | "WEEK")}>
-            <option value="DAY">{t("mcrPeriodDay")}</option>
-            <option value="WEEK">{t("mcrPeriodWeek")}</option>
-          </select>
+          <SearchableSelect
+            id="mill-compare-period"
+            ariaLabel={t("mcrPeriod")}
+            value={period}
+            onChange={(val) => setPeriod(val as "DAY" | "WEEK")}
+            options={[
+              { value: "DAY", label: t("mcrPeriodDay") },
+              { value: "WEEK", label: t("mcrPeriodWeek") },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[8rem] h-9"
+          />
         </Field>
         <Field label={t("mcrDate")} htmlFor="mill-compare-date">
           <input id="mill-compare-date" type="date" className="nf-input-sm" value={date} onChange={(event) => setDate(event.target.value)} />

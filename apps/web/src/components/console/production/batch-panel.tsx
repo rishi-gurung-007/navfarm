@@ -23,7 +23,7 @@ import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { InlineAlert } from '@/components/ui/alert';
-import { showToast } from '@/components/ui/toast';
+import { showToast, Toast } from '@/components/ui/toast';
 import { Pagination } from '@/components/ui/pagination';
 import {
   getActiveCompanyId,
@@ -46,7 +46,7 @@ import { Badge } from '@/components/ui/badge';
 import BatchPerformanceCurvesPanel from '@/components/console/production/batch-performance-curves-panel';
 import { BatchShedField } from '@/components/console/production/batch-shed-field';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
-import { formatQuantity } from '@/lib/utils';
+import { formatAmount, formatQuantity, formatRate, toInputNumber } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
@@ -517,7 +517,7 @@ export default function BatchPanel() {
       shed_id: batch.shed_id || '',
       start_date: batch.start_date || '',
       expected_end_date: batch.expected_end_date || '',
-      opening_quantity: batch.opening_quantity || '',
+      opening_quantity: toInputNumber(batch.opening_quantity),
       uom: batch.uom || '',
       remarks: batch.remarks || '',
     });
@@ -533,9 +533,9 @@ export default function BatchPanel() {
         ? batch.input_lines.map((l: Row) => ({
             item_id: l.item_id || '',
             source_batch_id: l.source_batch_id || '',
-            quantity: l.quantity || '',
+            quantity: toInputNumber(l.quantity),
             uom: l.uom || '',
-            rate: l.rate || '',
+            rate: toInputNumber(l.rate),
             lot_no: l.lot_no || '',
             serial_no: l.serial_no || '',
           }))
@@ -551,8 +551,8 @@ export default function BatchPanel() {
       batch.standard?.consumption_lines?.length
         ? batch.standard.consumption_lines.map((l: Row) => ({
             item_id: l.item_id || '',
-            std_qty_per_unit_per_day: l.std_qty_per_unit_per_day || '',
-            std_rate: l.std_rate || '',
+            std_qty_per_unit_per_day: toInputNumber(l.std_qty_per_unit_per_day),
+            std_rate: toInputNumber(l.std_rate),
           }))
         : [emptyStdConsumptionLine()],
     );
@@ -1487,11 +1487,11 @@ export default function BatchPanel() {
     setRenewForm({
       start_date: new Date().toISOString().slice(0, 10),
       expected_end_date: '',
-      opening_quantity: viewing.opening_quantity ?? '',
+      opening_quantity: toInputNumber(viewing.opening_quantity),
       uom: viewing.uom || '',
       remarks: '',
       item_id: viewing.input_lines?.[0]?.item_id || '',
-      quantity: viewing.opening_quantity ?? '',
+      quantity: toInputNumber(viewing.opening_quantity),
       line_uom: viewing.input_lines?.[0]?.uom || '',
       rate: '',
       lot_no: viewing.input_lines?.[0]?.lot_no || '',
@@ -1697,7 +1697,7 @@ export default function BatchPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError('')} />
 
       <div
         className="overflow-hidden rounded-[var(--radius-md)] border"
@@ -1787,7 +1787,7 @@ export default function BatchPanel() {
                       className="whitespace-nowrap text-right"
                       style={S.primary}
                     >
-                      {row.unit_cost ?? '—'}
+                      {row.unit_cost != null ? formatRate(row.unit_cost) : '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <StatusBadge status={row.status} />
@@ -1854,7 +1854,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError('')} />
 
           {isOperationalScope && activeArea && (
             <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-xs flex items-center justify-between">
@@ -3201,7 +3201,7 @@ export default function BatchPanel() {
                               {l.lot_no || l.serial_no || '—'}
                             </TableCell>
                             <TableCell className="px-3 py-2" style={S.primary}>
-                              {l.quantity} {l.uom}
+                              {formatQuantity(l.quantity, l.uom)} {l.uom}
                             </TableCell>
                             <TableCell className="px-3 py-2" style={S.primary}>
                               {l.rate
@@ -3265,7 +3265,7 @@ export default function BatchPanel() {
                               {t('blLabelNcaBookValue')}
                             </p>
                             <p style={S.primary}>
-                              {viewing.bio_asset_state.nca_book_value}
+                              {formatAmount(viewing.bio_asset_state.nca_book_value)}
                             </p>
                           </div>
                           <div>
@@ -3395,7 +3395,7 @@ export default function BatchPanel() {
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {e.quantity ?? '—'}
+                                  {e.quantity != null ? formatQuantity(e.quantity) : '—'}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2 font-semibold"
@@ -3405,7 +3405,7 @@ export default function BatchPanel() {
                                       : { color: 'var(--danger)' }
                                   }
                                 >
-                                  {e.cost_amount}
+                                  {formatAmount(e.cost_amount)}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -3489,13 +3489,13 @@ export default function BatchPanel() {
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {l.quantity} {l.uom}
+                                  {formatQuantity(l.quantity, l.uom)} {l.uom}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {l.computed_cost} / {l.unit_cost}
+                                  {formatAmount(l.computed_cost)} / {formatRate(l.unit_cost)}
                                 </TableCell>
                                 <TableCell className="px-3 py-2 text-right">
                                   <div className="flex justify-end gap-1">
@@ -3595,7 +3595,7 @@ export default function BatchPanel() {
                                       : { color: 'var(--danger)' }
                                   }
                                 >
-                                  {v.variance_amount}
+                                  {formatAmount(v.variance_amount)}
                                 </TableCell>
                                 <TableCell className="px-3 py-2">
                                   <Badge
@@ -3670,7 +3670,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {stageError && <InlineAlert>{stageError}</InlineAlert>}
+          <Toast variant="danger" message={stageError} onClose={() => setStageError('')} />
           <p className="text-xs" style={S.sub}>
             {t('blCurrentStagePrefix')}{' '}
             <span className="font-semibold" style={S.primary}>
@@ -3813,7 +3813,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {renewError && <InlineAlert>{renewError}</InlineAlert>}
+          <Toast variant="danger" message={renewError} onClose={() => setRenewError('')} />
           <div
             className="rounded-lg border px-3 py-2 text-xs"
             style={S.surface}
@@ -4052,7 +4052,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {closeError && <InlineAlert>{closeError}</InlineAlert>}
+          <Toast variant="danger" message={closeError} onClose={() => setCloseError('')} />
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
@@ -4274,7 +4274,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {bioError && <InlineAlert>{bioError}</InlineAlert>}
+          <Toast variant="danger" message={bioError} onClose={() => setBioError('')} />
 
           {bioActionOpen === 'mature' && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -4574,7 +4574,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {qcError && <InlineAlert>{qcError}</InlineAlert>}
+          <Toast variant="danger" message={qcError} onClose={() => setQcError('')} />
 
           {qcSubmitted ? (
             <div className="flex flex-col items-center gap-3 py-6">
@@ -4630,7 +4630,7 @@ export default function BatchPanel() {
                             {param?.param_name || r.param_id}
                           </TableCell>
                           <TableCell className="px-3 py-2" style={S.sub}>
-                            {r.actual_value}
+                            {formatQuantity(r.actual_value)}
                             {r.grade_assigned ? ` (${r.grade_assigned})` : ''}
                           </TableCell>
                           <TableCell
@@ -4798,7 +4798,7 @@ export default function BatchPanel() {
                           </p>
                           <p className="text-[10px]" style={S.muted}>
                             {p.param_type === 'NUMERIC'
-                              ? `${p.min_value ?? '—'}–${p.max_value ?? '—'} ${p.uom || ''}`
+                              ? `${p.min_value != null ? formatQuantity(p.min_value) : '—'}–${p.max_value != null ? formatQuantity(p.max_value) : '—'} ${p.uom || ''}`
                               : p.param_type}
                           </p>
                         </div>
@@ -4923,7 +4923,7 @@ export default function BatchPanel() {
         }
       >
         <div className="flex flex-col gap-4">
-          {packError && <InlineAlert>{packError}</InlineAlert>}
+          <Toast variant="danger" message={packError} onClose={() => setPackError('')} />
 
           {!generatedPack && packQcRequired && (
             <InlineAlert variant="warning">
@@ -4943,7 +4943,7 @@ export default function BatchPanel() {
                 />
               </div>
               <p className="text-xs" style={S.sub}>
-                {generatedPack.net_weight} {generatedPack.pack_uom} —{' '}
+                {formatQuantity(generatedPack.net_weight)} {generatedPack.pack_uom} —{' '}
                 {generatedPack.production_date}
                 {generatedPack.expiry_date
                   ? ` → ${generatedPack.expiry_date}`

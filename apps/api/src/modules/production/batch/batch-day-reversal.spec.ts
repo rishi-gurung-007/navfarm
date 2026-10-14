@@ -21,7 +21,7 @@ describe('which postings of a reopened day can be reversed', () => {
 
   it('leaves transfers and recorded deaths posted, and says why', () => {
     expect(classifyPostedRow({ line_type: 'TRANSFER' })).toEqual({ reversible: false, reason: 'it moved animals — use "Reverse transfer" on the transfer' });
-    expect(classifyPostedRow({ line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT', entered_value: '1' })).toEqual({ reversible: false, reason: 'it recorded a death (one recorded in error is reversed on the Mortality & Health panel)' });
+    expect(classifyPostedRow({ line_type: 'DESCRIPTIVE', kpi_metric: 'MORTALITY_COUNT', entered_value: '1' })).toEqual({ reversible: false, reason: 'it recorded a death, which is final' });
   });
 
   it('treats a mortality count of nought as an observation — nothing died, nothing to undo', () => {

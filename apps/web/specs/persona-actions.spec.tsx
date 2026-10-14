@@ -176,9 +176,12 @@ describe('FeedForecastTabs navigation copy', () => {
   // WP1d (Rishi 5 Oct): the tab is "Requisition"; "Internal Feed Transfer" stays
   // only as the document's Purpose value (Requisition sheet §1 row 31).
   it('displays the Feed Requisition tab as Requisition', () => {
+    const { translations } = jest.requireActual('../src/utils/translations');
+    expect(translations.en.fftTabFeedRequisition).toBe('Requisition');
+  });
+
+  it('renders no horizontal in-page tablist since navigation is driven by the sidebar flyout', () => {
     render(<FeedForecastTabs tab="feed-requisition" onTabChange={() => undefined} />);
-    const tabList = screen.getByRole('tablist');
-    const tabTexts = Array.from(tabList.querySelectorAll('[role="tab"]')).map((t) => t.textContent);
-    expect(tabTexts).toEqual(['Dashboard', 'Calculation', 'Feed Plan', 'Compare Report', 'Requisition', 'Feed Mill Consolidation', 'Feed Loading Instructions', 'Physical Stock Count']);
+    expect(screen.queryByRole('tablist')).toBeNull();
   });
 });

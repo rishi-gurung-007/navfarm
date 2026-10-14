@@ -20,11 +20,13 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { Pagination } from "@/components/ui/pagination";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 type Row = Record<string, any>;
@@ -196,41 +198,81 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={originFilter}
-            onChange={(e) => {
-              setOriginFilter(e.target.value);
-              setPage(1);
-            }}
-            className="nf-input-sm px-2 text-xs"
-            style={S.input}
-            title="Filter by Origin"
-          >
-            <option value="">All Origins</option>
-            {warehouses.map((w) => (
-              <option key={w.warehouse_id} value={w.warehouse_id}>
-                From: {w.warehouse_name || w.warehouse_code}
-              </option>
-            ))}
-          </select>
+          <div className="relative min-w-[12rem]">
+            <SearchableSelect
+              value={originFilter}
+              onChange={(val) => {
+                setOriginFilter(val);
+                setPage(1);
+              }}
+              options={[
+                { value: "", label: "All Origins" },
+                ...warehouses.map((w) => ({
+                  value: w.warehouse_id,
+                  code: w.warehouse_code,
+                  name: w.warehouse_name,
+                  label: `From: ${w.warehouse_name || w.warehouse_code}`,
+                })),
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[12rem] h-9"
+            />
+            <select
+              value={originFilter}
+              onChange={(e) => {
+                setOriginFilter(e.target.value);
+                setPage(1);
+              }}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              title="Filter by Origin"
+            >
+              <option value="">All Origins</option>
+              {warehouses.map((w) => (
+                <option key={w.warehouse_id} value={w.warehouse_id}>
+                  From: {w.warehouse_name || w.warehouse_code}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <select
-            value={destinationFilter}
-            onChange={(e) => {
-              setDestinationFilter(e.target.value);
-              setPage(1);
-            }}
-            className="nf-input-sm px-2 text-xs"
-            style={S.input}
-            title="Filter by Destination"
-          >
-            <option value="">All Destinations</option>
-            {warehouses.map((w) => (
-              <option key={w.warehouse_id} value={w.warehouse_id}>
-                To: {w.warehouse_name || w.warehouse_code}
-              </option>
-            ))}
-          </select>
+          <div className="relative min-w-[12rem]">
+            <SearchableSelect
+              value={destinationFilter}
+              onChange={(val) => {
+                setDestinationFilter(val);
+                setPage(1);
+              }}
+              options={[
+                { value: "", label: "All Destinations" },
+                ...warehouses.map((w) => ({
+                  value: w.warehouse_id,
+                  code: w.warehouse_code,
+                  name: w.warehouse_name,
+                  label: `To: ${w.warehouse_name || w.warehouse_code}`,
+                })),
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[12rem] h-9"
+            />
+            <select
+              value={destinationFilter}
+              onChange={(e) => {
+                setDestinationFilter(e.target.value);
+                setPage(1);
+              }}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+              title="Filter by Destination"
+            >
+              <option value="">All Destinations</option>
+              {warehouses.map((w) => (
+                <option key={w.warehouse_id} value={w.warehouse_id}>
+                  To: {w.warehouse_name || w.warehouse_code}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
@@ -249,7 +291,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
         </div>
       </div>
 
-      {error && <InlineAlert variant="danger">{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Receipts History Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
@@ -584,7 +626,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                 </span>
               </div>
               <p className="mt-1 text-[11px]" style={S.sub}>
-                Entry No.: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.entry_no}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{viewingReceipt.quantity} {viewingReceipt.uom}).
+                Entry No.: <span className="font-mono font-semibold" style={S.primary}>{viewingReceipt.entry_no}</span> | Transaction: <strong style={S.primary}>TRANSFER_RECEIPT</strong> (+{formatQuantity(viewingReceipt.quantity)} {viewingReceipt.uom}).
               </p>
             </div>
           </div>

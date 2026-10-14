@@ -23,6 +23,7 @@ import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useLanguage } from "@/hooks/useLanguage";
 import { todayIso, unwrap } from "./feed-format";
 import {
@@ -294,10 +295,31 @@ export function FeedRequisitionDetail({
 
   const transferField = (
     <Field className="w-48" label={t("rqTransfer")} htmlFor={`feed-${panel}-transfer`}>
-      <select id={`feed-${panel}-transfer`} className="nf-input-sm nf-select" value={transferId} onChange={(event) => chooseTransfer(event.target.value)}>
-        <option value="">{t("crqChoose")}</option>
-        {transfers.map((transfer) => <option key={transfer.transfer_id} value={transfer.transfer_id}>{transfer.transfer_no}</option>)}
-      </select>
+      <div className="relative w-48">
+        <SearchableSelect
+          value={transferId}
+          onChange={(val) => chooseTransfer(val)}
+          options={[
+            { value: "", label: t("crqChoose") },
+            ...transfers.map((transfer) => ({
+              value: transfer.transfer_id,
+              label: transfer.transfer_no,
+            })),
+          ]}
+          columnHeaders={false}
+          triggerClassName="nf-input-sm w-48 h-9"
+        />
+        <select
+          id={`feed-${panel}-transfer`}
+          className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+          tabIndex={-1}
+          value={transferId}
+          onChange={(event) => chooseTransfer(event.target.value)}
+        >
+          <option value="">{t("crqChoose")}</option>
+          {transfers.map((transfer) => <option key={transfer.transfer_id} value={transfer.transfer_id}>{transfer.transfer_no}</option>)}
+        </select>
+      </div>
     </Field>
   );
 
@@ -360,13 +382,35 @@ export function FeedRequisitionDetail({
           {dateField}
           {transferField}
           <Field className="w-48" label={t("crqShipment")} htmlFor="feed-shipment">
-            <select id="feed-shipment" className="nf-input-sm nf-select" value={shipmentId}
-              onChange={(event) => { setShipmentId(event.target.value); resetReceiptInputs(); }} disabled={!chosenTransfer}>
-              <option value="">{t("crqChoose")}</option>
-              {(chosenTransfer?.open_shipments ?? []).map((shipment) => (
-                <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>
-              ))}
-            </select>
+            <div className="relative w-48">
+              <SearchableSelect
+                value={shipmentId}
+                onChange={(val) => { setShipmentId(val); resetReceiptInputs(); }}
+                disabled={!chosenTransfer}
+                options={[
+                  { value: "", label: t("crqChoose") },
+                  ...((chosenTransfer?.open_shipments ?? []).map((shipment) => ({
+                    value: shipment.shipment_id,
+                    label: shipment.shipment_no,
+                  }))),
+                ]}
+                columnHeaders={false}
+                triggerClassName="nf-input-sm w-48 h-9"
+              />
+              <select
+                id="feed-shipment"
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                tabIndex={-1}
+                value={shipmentId}
+                onChange={(event) => { setShipmentId(event.target.value); resetReceiptInputs(); }}
+                disabled={!chosenTransfer}
+              >
+                <option value="">{t("crqChoose")}</option>
+                {(chosenTransfer?.open_shipments ?? []).map((shipment) => (
+                  <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>
+                ))}
+              </select>
+            </div>
           </Field>
           {chosenTransfer && (
             <a className="pb-1.5 text-xs font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>

@@ -23,6 +23,7 @@ import { API_ORIGIN } from "@/lib/api-client";
 import { FeedFarmOverrides } from "@/components/console/company/feed-farm-overrides";
 import MasterDataTable from "@/modules/master-data/MasterDataTable";
 import { departmentMaster } from "@/modules/master-data/configs";
+import { formatExact } from "@/lib/utils";
 
 interface CompanyTabProps {
   activeCompany: any;
@@ -1088,7 +1089,7 @@ export default function CompanyTab({
                         <ReadField label={t("ctStateProvince")} value={setupDetails?.address?.state_id} />
                         <ReadField mono label={t("ctCountryCode")} value={setupDetails?.address?.country_id} />
                         <ReadField mono label={t("ctPincodePostal")} value={setupDetails?.address?.pincode} />
-                        <ReadField mono className="sm:col-span-2" label={t("ctGpsCoordinates")} value={setupDetails?.address?.gps_latitude && setupDetails?.address?.gps_longitude ? `${setupDetails.address.gps_latitude}, ${setupDetails.address.gps_longitude}` : "—"} />
+                        <ReadField mono className="sm:col-span-2" label={t("ctGpsCoordinates")} value={setupDetails?.address?.gps_latitude && setupDetails?.address?.gps_longitude ? `${formatExact(setupDetails.address.gps_latitude)}, ${formatExact(setupDetails.address.gps_longitude)}` : "—"} />
                       </div>
                     ) : (
                       <form onSubmit={handleSaveTab} className="flex flex-col gap-8">

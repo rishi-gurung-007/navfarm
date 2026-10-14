@@ -35,6 +35,7 @@ import type { AnimalOption } from "../production/animal-multi-select";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { confirmAction } from "@/components/ui/confirm-dialog";
+import { formatQuantity } from "@/lib/utils";
 
 interface BatchProfile {
   id: string;
@@ -357,7 +358,7 @@ function buildStageProfile(
   const observationLogs = obsTxs.map((t: any) => ({
     date: t.transaction_date || "",
     type: t.uom === "°C" ? "Temperature" : t.uom === "L" ? "Water Intake" : t.uom === "%" ? "Humidity" : "Daily Observation",
-    value: `${t.quantity ?? ""} ${t.uom || ""}`.trim(),
+    value: `${t.quantity != null ? formatQuantity(t.quantity, t.uom) : ""} ${t.uom || ""}`.trim(),
     notes: t.remarks || "Observation Logged",
   }));
 
@@ -1776,7 +1777,7 @@ export default function StageWiseConsumptionOutputPanel() {
                           <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{o.item}</td>
                           <td className="px-3 py-2 text-[var(--text-secondary)]">{o.basis}</td>
                           <td className="px-3 py-2 text-right font-mono">{formatMoney(o.rate.toFixed(2))}</td>
-                          <td className="px-3 py-2 text-right font-mono font-bold">{o.qty}</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold">{formatQuantity(o.qty)}</td>
                           <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">
                             {formatMoney(o.cost)}
                           </td>

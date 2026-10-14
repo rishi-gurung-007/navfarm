@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/alert";
+import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
 import AnimalStageTransitionModal from "./animal-stage-transition-modal";
 import AnimalDetailsModal from "./animal-details-modal";
@@ -859,7 +860,7 @@ export default function BatchAnimalAssignmentPanel() {
               </h3>
             </div>
 
-            {regError && <InlineAlert variant="danger">{regError}</InlineAlert>}
+            <Toast variant="danger" message={regError} onClose={() => setRegError("")} />
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 text-xs">
               <div>
@@ -1031,7 +1032,7 @@ export default function BatchAnimalAssignmentPanel() {
             {t("baapRemovalsDesc")}
           </p>
 
-          {removeError && <InlineAlert variant="danger">{removeError}</InlineAlert>}
+          <Toast variant="danger" message={removeError} onClose={() => setRemoveError("")} />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
             {animals.map((a) => (
@@ -1069,7 +1070,7 @@ export default function BatchAnimalAssignmentPanel() {
           }
         >
           <div className="space-y-3 text-xs pt-1">
-            {transferError && <InlineAlert variant="danger">{transferError}</InlineAlert>}
+            <Toast variant="danger" message={transferError} onClose={() => setTransferError("")} />
 
             <p className="text-[var(--text-secondary)]">
               {t("baapCurrentLocationLabel")} <strong className="text-[var(--text-primary)]">{selectedAnimalForTransfer.penLocation}</strong>

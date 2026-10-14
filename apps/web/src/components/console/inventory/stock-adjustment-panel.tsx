@@ -18,7 +18,6 @@ import {
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -27,7 +26,8 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { LotSerialPicker } from "@/components/ui/lot-serial-picker";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { showToast } from "@/components/ui/toast";
+import { showToast, Toast } from "@/components/ui/toast";
+import { formatQuantity } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -524,17 +524,31 @@ export default function StockAdjustmentPanel() {
           <p className="mt-0.5 text-xs" style={S.sub}>{t("sapDescription")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="nf-input-sm px-2"
-            style={S.input}
-          >
-            <option value="">{t("sapAllStatuses")}</option>
-            <option value="DRAFT">{t("sapStatusDraft")}</option>
-            <option value="POSTED">{t("sapStatusPosted")}</option>
-            <option value="CANCELLED">{t("sapStatusCancelled")}</option>
-          </select>
+          <div className="relative min-w-[9rem]">
+            <SearchableSelect
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val)}
+              options={[
+                { value: "", label: t("sapAllStatuses") },
+                { value: "DRAFT", label: t("sapStatusDraft") },
+                { value: "POSTED", label: t("sapStatusPosted") },
+                { value: "CANCELLED", label: t("sapStatusCancelled") },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[9rem] h-9"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              tabIndex={-1}
+            >
+              <option value="">{t("sapAllStatuses")}</option>
+              <option value="DRAFT">{t("sapStatusDraft")}</option>
+              <option value="POSTED">{t("sapStatusPosted")}</option>
+              <option value="CANCELLED">{t("sapStatusCancelled")}</option>
+            </select>
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
             <input
@@ -551,7 +565,7 @@ export default function StockAdjustmentPanel() {
         </div>
       </div>
 
-      {error && <InlineAlert>{error}</InlineAlert>}
+      <Toast variant="danger" message={error} onClose={() => setError("")} />
 
       {/* Adjustment Voucher Grid */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
@@ -664,7 +678,7 @@ export default function StockAdjustmentPanel() {
         }
       >
         <div className="flex flex-col gap-5">
-          {formError && <InlineAlert>{formError}</InlineAlert>}
+          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           {/* SECTION 1: HEADER (Gray bar title matching screenshot) */}
           <div className="rounded-[var(--radius-md)] border overflow-hidden" style={S.surface}>
@@ -692,23 +706,35 @@ export default function StockAdjustmentPanel() {
                 <label className="nf-text-label" style={S.sub}>
                   Transaction Ref. <span className="text-(--danger)">*</span>
                 </label>
-                <select
-                  value={header.transaction_type}
-                  onChange={(e) => {
-                    const val = e.target.value as "POSITIVE" | "NEGATIVE";
-                    setHeader((h) => ({ ...h, transaction_type: val }));
-                    setDraftLine((prev) => ({ ...prev, type: val }));
-                  }}
-                  className={`${inputCls} nf-select font-medium ${
-                    header.transaction_type === "POSITIVE"
-                      ? "text-emerald-500 font-semibold"
-                      : "text-amber-500 font-semibold"
-                  }`}
-                  style={S.input}
-                >
-                  <option value="POSITIVE">Positive Adjustment (+)</option>
-                  <option value="NEGATIVE">Negative Adjustment (-)</option>
-                </select>
+                <div className="relative">
+                  <SearchableSelect
+                    value={header.transaction_type}
+                    onChange={(val) => {
+                      const v = val as "POSITIVE" | "NEGATIVE";
+                      setHeader((h) => ({ ...h, transaction_type: v }));
+                      setDraftLine((prev) => ({ ...prev, type: v }));
+                    }}
+                    options={[
+                      { value: "POSITIVE", label: "Positive Adjustment (+)" },
+                      { value: "NEGATIVE", label: "Negative Adjustment (-)" },
+                    ]}
+                    columnHeaders={false}
+                    triggerClassName="nf-input h-9"
+                  />
+                  <select
+                    value={header.transaction_type}
+                    onChange={(e) => {
+                      const val = e.target.value as "POSITIVE" | "NEGATIVE";
+                      setHeader((h) => ({ ...h, transaction_type: val }));
+                      setDraftLine((prev) => ({ ...prev, type: val }));
+                    }}
+                    className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                    tabIndex={-1}
+                  >
+                    <option value="POSITIVE">Positive Adjustment (+)</option>
+                    <option value="NEGATIVE">Negative Adjustment (-)</option>
+                  </select>
+                </div>
               </div>
 
               {/* Location * */}
@@ -1075,7 +1101,7 @@ export default function StockAdjustmentPanel() {
               <div>
                 <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Adjustment Qty</span>
                 <span className="font-semibold font-mono text-(--text-primary)">
-                  {activeTrackingLine.quantity || 0} {activeTrackingLine.uom}
+                  {formatQuantity(activeTrackingLine.quantity || 0, activeTrackingLine.uom)} {activeTrackingLine.uom}
                 </span>
               </div>
               <div>
@@ -1278,7 +1304,7 @@ export default function StockAdjustmentPanel() {
                         className="px-3 py-2 font-semibold font-mono"
                         style={Number(l.quantity) >= 0 ? { color: "var(--success)" } : { color: "var(--danger)" }}
                       >
-                        {Number(l.quantity) > 0 ? `+${l.quantity}` : l.quantity}
+                        {Number(l.quantity) > 0 ? `+${formatQuantity(l.quantity)}` : formatQuantity(l.quantity)}
                       </TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>
                         {l.uom}
