@@ -61,7 +61,12 @@ function useInventoryPageState() {
   return { ready, scope, activeLob, mayView };
 }
 
-export function InventoryPageShell({ activeKey, fill = false, children }: { activeKey: InventoryTabKey; fill?: boolean; children: React.ReactNode }) {
+export function InventoryPageShell({ activeKey, fill = false, title: titleOverride, children }: {
+  activeKey: InventoryTabKey; fill?: boolean;
+  /** The page's own heading, e.g. the Feed Forecast view it shows (Rishi, 14 Oct); defaults to the section's title. */
+  title?: string;
+  children: React.ReactNode;
+}) {
   const { t } = useLanguage();
   const { ready, mayView } = useInventoryPageState();
 
@@ -82,7 +87,7 @@ export function InventoryPageShell({ activeKey, fill = false, children }: { acti
     );
   }
 
-  const title =
+  const title = titleOverride ? titleOverride :
     activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :

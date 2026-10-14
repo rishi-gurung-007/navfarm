@@ -147,11 +147,12 @@ describe('Sidebar consistency across workspace scopes', () => {
     }
   });
 
-  // Rishi, 14 Oct: Feed Forecast is an Inventory & Stock page (its views are tabs on it), not a top-level item.
-  it('does not list Feed Forecast as a top-level item', () => {
+  // Rishi, 14 Oct (final): Feed Forecast is its own sidebar item, its views in its flyout like Farm Master's.
+  it('lists Feed Forecast as a top-level item in the company and operational workspaces', () => {
     const scopes = navByScope();
     for (const scope of ['COMPANY', 'OPERATIONAL']) {
-      expect([...scopes[scope].keys()]).not.toContain('/inventory/feed-forecast');
+      expect([...scopes[scope].keys()]).toContain('/inventory/feed-forecast');
+      expect(scopes[scope].get('/inventory/feed-forecast')).toBe('navFeedForecast');
     }
   });
 
