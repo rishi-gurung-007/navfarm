@@ -275,7 +275,7 @@ export default function ParameterPanel() {
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldResourceOptional")}</label>
                 <select value={form.resource_id} onChange={(e) => setForm((f: Row) => ({ ...f, resource_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramNone")}</option>
-                  {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_code}</option>)}
+                  {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_name || r.resource_code}</option>)}
                 </select>
               </div>
             )}

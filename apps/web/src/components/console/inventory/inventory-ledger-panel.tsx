@@ -364,7 +364,9 @@ export default function InventoryLedgerPanel() {
                 <TableHead className="whitespace-nowrap w-20">Entry No.</TableHead>
                 <TableHead className="whitespace-nowrap w-28 min-w-[105px]">{t("ilpPostingDate")}</TableHead>
                 <TableHead className="whitespace-nowrap w-36 min-w-[130px]">{t("ilpDocument")}</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[210px]">{t("ilpItem")}</TableHead>
+                {/* Code and name are two columns (Rishi, 14 Oct). */}
+                <TableHead className="whitespace-nowrap">Item No.</TableHead>
+                <TableHead className="whitespace-nowrap min-w-[210px]">Item Description</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[150px]">{t("ilpLocation")}</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[135px]">Transaction Type</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
@@ -380,14 +382,14 @@ export default function InventoryLedgerPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> 
                     {t("ilpLoading")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> 
                     {hasActiveFilters ? "No inventory ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
                   </TableCell>
@@ -431,17 +433,8 @@ export default function InventoryLedgerPanel() {
                         </div>
                       </TableCell>
 
-                      {/* Item No. & Description */}
-                      <TableCell className="whitespace-nowrap">
-                        <div className="flex flex-col max-w-[260px]">
-                          <span className="font-mono text-xs font-semibold" style={S.primary}>
-                            {row.item_code}
-                          </span>
-                          <span className="truncate text-xs" style={S.sub} title={row.item_description}>
-                            {row.item_description}
-                          </span>
-                        </div>
-                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs font-semibold" style={S.primary}>{row.item_code}</TableCell>
+                      <TableCell className="max-w-[260px] truncate text-xs" style={S.sub} title={row.item_description}>{row.item_description}</TableCell>
 
                       {/* Location Code */}
                       <TableCell className="whitespace-nowrap" style={S.sub}>
