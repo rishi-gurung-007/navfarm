@@ -2915,7 +2915,8 @@ export function MasterDataTable({
           valueKey={f.entityValueKey || "id"}
           getLabel={(o) => entityLabel(o, f)}
           getLabelParts={(o) => entityLabelPartsOf(o, f)}
-          columnHeaders={f.entityLabelKeys && f.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
+          getSelectedLabel={f.selectedLabelKey ? (o) => String(o[f.selectedLabelKey!] ?? "") || entityLabel(o, f) : undefined}
+          columnHeaders={f.entityColumnHeaders ?? (f.entityLabelKeys && f.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined)}
           disabled={disabled || fieldDisabled}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}

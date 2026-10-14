@@ -344,6 +344,10 @@ export interface MasterDataField {
    * one wins. An animal's Sire fills Sire Serial No. from the sire's RFID tag this way.
    */
   fills?: Array<{ key: string; rowKeys: string[] }>;
+  /** searchable select-entity: the row key the closed box shows once picked (Source GRN shows its GRN No.). */
+  selectedLabelKey?: string;
+  /** searchable select-entity: the open list's column headings, instead of Code / Name. */
+  entityColumnHeaders?: string[];
   /** Read-only while the named field holds a value: the value is supplied by that field's `fills`. */
   readOnlyWhenSet?: string;
   /**

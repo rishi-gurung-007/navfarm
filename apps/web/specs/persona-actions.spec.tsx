@@ -173,11 +173,11 @@ describe('InventoryPageShell persona visibility', () => {
 });
 
 describe('FeedForecastTabs navigation copy', () => {
-  // WP1d (Rishi 5 Oct): the tab is "Requisition"; "Internal Feed Transfer" stays
-  // only as the document's Purpose value (Requisition sheet §1 row 31).
-  it('displays the Feed Requisition tab as Requisition', () => {
+  // WP1d (Rishi 5 Oct) named the tab "Requisition"; on 14 Oct he renamed it "Feed Requisition". "Internal Feed
+  // Transfer" stays only as the document's Purpose value (Requisition sheet §1 row 31).
+  it('displays the Feed Requisition tab as Feed Requisition', () => {
     const { translations } = jest.requireActual('../src/utils/translations');
-    expect(translations.en.fftTabFeedRequisition).toBe('Requisition');
+    expect(translations.en.fftTabFeedRequisition).toBe('Feed Requisition');
   });
 
   // Rishi, 14 Oct (final): no in-page tabs; the views are reached from the Feed Forecast sidebar flyout.

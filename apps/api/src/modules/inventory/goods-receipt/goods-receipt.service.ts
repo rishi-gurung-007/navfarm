@@ -380,12 +380,11 @@ export class GoodsReceiptService {
 
     if (query.animalItemId) {
       // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose own stock of the animal's
-      // item still holds an animal — each registration takes one out — with how many are left.
+      // item still holds an animal — each registration takes one out — with how many are left and the unit cost the
+      // next animal is registered at (the first line of the item that still holds one, as registration picks it).
       const L = schema.inventoryLedger;
-      const left = sql<string>`SUM(${L.remaining_quantity})`;
-      const received = sql<string>`SUM(${L.quantity})`;
-      const rows = await this.db
-        .select({ receipt: schema.goodsReceipt, left, received })
+      const lines = await this.db
+        .select({ receipt: schema.goodsReceipt, line_no: schema.goodsReceiptLine.line_no, rate: schema.goodsReceiptLine.rate, left: L.remaining_quantity, received: L.quantity })
         .from(schema.goodsReceipt)
         .innerJoin(schema.goodsReceiptLine, and(
           eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
@@ -393,15 +392,24 @@ export class GoodsReceiptService {
         ))
         .innerJoin(L, and(eq(L.document_line_id, schema.goodsReceiptLine.line_id), eq(L.document_type, 'GOODS_RECEIPT'), eq(L.entry_type, 'POSITIVE')))
         .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
-        .groupBy(schema.goodsReceipt.receipt_id)
-        .having(sql`${left} >= 1`)
-        .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no))
-        .limit(limit)
-        .offset(offset);
-      return rows.map((r) => {
-        const n = Math.floor(Number(r.left));
-        return { ...r.receipt, animals_left: n, animals_left_label: `${n} of ${Math.floor(Number(r.received))} left` };
-      });
+        .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no), schema.goodsReceiptLine.line_no);
+      const byReceipt = new Map<string, { receipt: typeof lines[number]['receipt']; left: number; received: number; unitCost: number | null }>();
+      for (const l of lines) {
+        const r = byReceipt.get(l.receipt.receipt_id) ?? { receipt: l.receipt, left: 0, received: 0, unitCost: null };
+        r.left += Number(l.left ?? 0);
+        r.received += Number(l.received ?? 0);
+        if (r.unitCost === null && Number(l.left ?? 0) >= 1 && l.rate != null) r.unitCost = Number(l.rate);
+        byReceipt.set(l.receipt.receipt_id, r);
+      }
+      return [...byReceipt.values()]
+        .filter((r) => r.left >= 1)
+        .slice(offset, offset + limit)
+        .map((r) => ({
+          ...r.receipt,
+          animals_left: Math.floor(r.left),
+          animals_left_label: `${Math.floor(r.left)} of ${Math.floor(r.received)} left`,
+          unit_cost: r.unitCost,
+        }));
     }
 
     return this.db

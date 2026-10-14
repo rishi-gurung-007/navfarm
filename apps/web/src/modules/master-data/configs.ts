@@ -549,7 +549,7 @@ const animal: MasterDataConfig = {
     // goods receipt it could never legally carry.
     // 14 Oct (Rishi): only posted GRNs that still hold an animal of the chosen item, with how many are left; registering
     // takes one out of that GRN's stock and the animal's cost is the GRN's rate.
-    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no", "animals_left_label"], dependsOn: "item_id", dependsOnMode: "query", queryParams: { item_id: "animalItemId" }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on: choose the Item first, then a GRN that still has one of it in stock. Registering takes one animal out of that GRN's stock. Leave empty if N/A for local purchase.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no", "animals_left_label"], selectedLabelKey: "receipt_no", entityColumnHeaders: ["GRN No.", "Animals Left"], fills: [{ key: "acquisition_cost", rowKeys: ["unit_cost"] }, { key: "total_opening_asset_value", rowKeys: ["unit_cost"] }], dependsOn: "item_id", dependsOnMode: "query", queryParams: { item_id: "animalItemId" }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on: choose the Item first, then a GRN that still has one of it in stock. Registering takes one animal out of that GRN's stock. Leave empty if N/A for local purchase.", section: "Acquisition" },
     { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // An imported animal's cost is read off its goods receipt by the API and anything
     // typed is discarded, so it stays readOnly. A local purchase without a GRN requires manual cost entry.
@@ -576,7 +576,9 @@ const animal: MasterDataConfig = {
           { key: "entry_type", equals: ["PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"] },
         ],
       },
-      helpText: "Purchase price or production cost per animal. Required if no Source GRN is selected.",
+      // With a Source GRN the cost is that GRN's unit cost, filled in when the GRN is picked (14 Oct).
+      readOnlyWhenSet: "source_receipt_id",
+      helpText: "Purchase price or production cost per animal. Required if no Source GRN is selected; with one, it is the GRN's unit cost.",
       section: "Acquisition",
     },
     // Equal to the Acquisition Cost, set by the service on save. Shown rather than
