@@ -235,9 +235,21 @@ export class RequisitionService {
     // A department is a Cost Centre Master row of type DEPARTMENT, never free
     // text (decisions, 1 Oct) — both identities are checked before any write.
     if (requesterDepartmentId) {
-      await assertDepartmentIdentity(this.db, {
-        tenantId, companyId: dto.company_id, departmentId: requesterDepartmentId, label: 'Requester department',
-      });
+      try {
+        await assertDepartmentIdentity(this.db, {
+          tenantId, companyId: dto.company_id, departmentId: requesterDepartmentId, label: 'Requester department',
+        });
+      } catch (err) {
+        // A department chosen on the document must be this company's, and so must the user's own one when it is a
+        // department of this company (a deactivated one is still refused, so User Setup gets fixed). But a user's own
+        // department of ANOTHER company (a user working across companies) is left blank rather than refusing every
+        // Item / Fixed Asset / Service requisition they raise here (14 Oct).
+        if (dto.requester_department_id) throw err;
+        const [own] = await this.db.select({ company_id: schema.costCenterMaster.company_id }).from(schema.costCenterMaster)
+          .where(eq(schema.costCenterMaster.cost_center_id, requesterDepartmentId)).limit(1);
+        if (!own?.company_id || own.company_id === dto.company_id) throw err;
+        requesterDepartmentId = null;
+      }
     }
     // Sender Department is not chosen (Rishi, 12 Oct): it is the department of the user who posts the
     // Transfer Shipment, recorded by ship(). A value sent on create or update is ignored.
@@ -548,12 +560,15 @@ export class RequisitionService {
         .limit(1);
       mayDirectTransfer = Boolean(caller?.direct_transfer_allowed);
       if (caller) {
+        // Offered only when it is one of this company's departments (14 Oct): a user set up in another company would
+        // otherwise send that company's department back on create and be refused.
+        const ownDepartment = departments.find((d) => d.cost_center_id === caller.department_id);
         requester = {
           user_id: userPayload.userId,
           login: caller.email ?? null,
           name: caller.full_name ?? null,
-          department_id: caller.department_id ?? null,
-          department_name: departments.find((d) => d.cost_center_id === caller.department_id)?.cost_center_name ?? null,
+          department_id: ownDepartment ? caller.department_id ?? null : null,
+          department_name: ownDepartment?.cost_center_name ?? null,
         };
       }
     }
