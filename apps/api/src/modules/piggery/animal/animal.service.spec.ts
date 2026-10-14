@@ -1,8 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AnimalService, resolveAgeAtEntryWeeks } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
-import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
-import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -32,20 +30,17 @@ describe('AnimalService', () => {
   };
 
   const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []), for: jest.fn().mockResolvedValue(row ? [row] : []) }) }) });
-  // The GRN line an animal is registered from, joined to that line's stock in the inventory ledger (14 Oct).
-  // Also answers the plain from().where().limit() read, for a test whose one row serves both paths.
-  const grnStock = (over: any = {}) => {
-    const rows = over === null ? [] : [{
-      rate: '1500.0000', amount: '1500.0000', receipt_no: 'GR-000001', status: 'POSTED', ledger_id: 'led-grn',
-      remaining: '6.0000', uom: 'HEAD', warehouse_id: 'wh-1', lot_no: 'LOT-1', serial_no: null, ...over,
-    }];
+  // A read of any shape that resolves to `rows` (14 Oct): an animal registered from a GRN reads the GRN (locked), its
+  // lines of the animal's item and how many animals are already registered from it.
+  const rowsOf = (rows: any[]) => {
     const chain: any = {};
-    for (const k of ['from', 'innerJoin', 'leftJoin', 'where']) chain[k] = jest.fn(() => chain);
-    chain.orderBy = jest.fn().mockResolvedValue(rows);
-    chain.limit = jest.fn().mockResolvedValue(rows);
-    chain.for = jest.fn().mockResolvedValue(rows);
+    for (const k of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit', 'for', 'groupBy']) chain[k] = jest.fn(() => chain);
+    chain.then = (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject);
     return chain;
   };
+  const grnReceipt = (over: any = {}) => rowsOf([{ receipt_id: 'grn-1', receipt_no: 'GR-000001', status: 'POSTED', batch_id: 'batch-1', ...over }]);
+  const grnLines = (...lines: Array<{ rate: string | null; quantity: string }>) => rowsOf(lines.map((l) => ({ ...l, uom: 'HEAD' })));
+  const registered = (n: number) => rowsOf([{ n }]);
   const joinedTreatmentRows = (rows: any[]) => ({ from: () => ({
     innerJoin: jest.fn().mockReturnThis(), where: jest.fn().mockResolvedValue(rows),
   }) });
@@ -93,8 +88,6 @@ describe('AnimalService', () => {
         // Checklist 6: transitionStage records a STAGE_CHANGE row.
         { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
-        { provide: InventoryLedgerService, useValue: { writeNegativeEntry: jest.fn().mockResolvedValue({ ledger_id: 'led-1', amount: '-100' }) } },
-        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -181,10 +174,12 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        // the purchased path reads the receipt, then its line for the rate;
-        // the born-on-farm path reads the source batch. One row answers both.
-        .mockReturnValueOnce(found({ receipt_id: 'grn-1', batch_id: 'batch-1' }))
-        .mockReturnValueOnce(grnStock({ receipt_id: 'grn-1', item_id: 'item-1', rate: '2857.57' }))
+        // the purchased path reads the receipt, its lines and the animals already registered from it;
+        // the born-on-farm path reads the source batch (the receipt row answers it too).
+        .mockReturnValueOnce(grnReceipt())
+        .mockReturnValueOnce(grnLines({ rate: '2857.57', quantity: '6' }));
+      if (entryType === 'PURCHASED_IMPORTED') mockDbSelect.mockReturnValueOnce(registered(0));
+      mockDbSelect
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
       const inserted: any[] = [];
@@ -543,7 +538,8 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValue({ from: () => ({ where: (condition: any) => {
           captured = condition;
-          return { limit: async () => [] };
+          // The source receipt is read FOR UPDATE (14 Oct): limit(1).for('update').
+          return { limit: () => Object.assign(Promise.resolve([]), { for: async () => [] }) };
         } }) });
 
       await expect(service.create({ ...baseDto, company_id: 'co-1', current_location_id: 'pen-g', ...reference } as any, 'tenant-1'))
@@ -620,8 +616,6 @@ describe('AnimalService', () => {
       acquisition_cost: 999,
     };
 
-    const receiptFound = () => found({ receipt_id: 'grn-1' });
-    const line = (rate: string | null) => grnStock(rate === null ? null : { rate, amount: rate });
 
     it('takes the cost from the receipt line, ignoring what the caller sent', async () => {
       mockDbSelect
@@ -630,8 +624,9 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(receiptFound())
-        .mockReturnValueOnce(line('1500.0000'))
+        .mockReturnValueOnce(grnReceipt())
+        .mockReturnValueOnce(grnLines({ rate: '1500.0000', quantity: '6' }))
+        .mockReturnValueOnce(registered(0))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
@@ -650,8 +645,8 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(receiptFound())
-        .mockReturnValueOnce(line(null));
+        .mockReturnValueOnce(grnReceipt())
+        .mockReturnValueOnce(grnLines());
 
       await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/receipt/i);
     });
@@ -667,8 +662,9 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(receiptFound())
-        .mockReturnValueOnce(line('1500.0000'))
+        .mockReturnValueOnce(grnReceipt())
+        .mockReturnValueOnce(grnLines({ rate: '1500.0000', quantity: '6' }))
+        .mockReturnValueOnce(registered(0))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
@@ -711,59 +707,52 @@ describe('AnimalService', () => {
       expect(inserted[0].acquisition_cost).toBe('2857.57');
     });
 
-    // 14 Oct (Rishi): the GRN put the animals in stock; registering one takes it out of that GRN's own stock.
-    const registerFrom = (stock: any) => mockDbSelect
+    // 14 Oct (Rishi): a biological asset is not stock. A GRN of 6 registers 6 animals; each is the Bio Asset
+    // Ledger's +1, at the cost of the GRN line it comes from, and nothing touches the inventory ledger.
+    const registerFrom = (receipt: any, lines: any, alreadyRegistered: number) => mockDbSelect
       .mockReturnValueOnce(found({ company_id: 'comp-1' }))
       .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
       .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
       .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
       .mockReturnValueOnce(found({ item_id: 'item-1' }))
-      .mockReturnValueOnce(receiptFound())
-      .mockReturnValueOnce(stock)
+      .mockReturnValueOnce(receipt)
+      .mockReturnValueOnce(lines)
+      .mockReturnValueOnce(registered(alreadyRegistered))
       .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
       .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-0001' }));
 
-    it('takes one animal out of that GRN\'s own stock and posts it as ANIMAL_REGISTRATION', async () => {
-      registerFrom(grnStock());
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      const ledger = module.get(InventoryLedgerService) as any;
-      const gl = module.get(GlPostingService) as any;
+    it('writes the animal\'s +1 to the Bio Asset Ledger as its registration, at the GRN cost, with the GRN locked', async () => {
+      const receipt = grnReceipt();
+      registerFrom(receipt, grnLines({ rate: '1500.0000', quantity: '6' }), 2);
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
 
       await service.create(purchased as any, 'tenant-123');
 
-      expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({
-        documentType: 'ANIMAL_REGISTRATION', transactionType: 'ANIMAL_REGISTRATION', quantity: 1, uom: 'HEAD',
-        sourceLedgerId: 'led-grn', warehouseId: 'wh-1', lotNo: 'LOT-1', itemId: 'item-1', postingDate: baseDto.entry_date,
-      }));
-      expect(gl.postInventoryLedgerEntry).toHaveBeenCalledWith({ ledger_id: 'led-1', amount: '-100' }, undefined);
+      expect(receipt.for).toHaveBeenCalledWith('update');
+      const bio = inserted.find((v) => v.entry_type === 'ACQUISITION');
+      expect(bio).toMatchObject({ document_type: 'ANIMAL_REGISTRATION', quantity: '1.0000', cost_amount: '1500', uom: 'HEAD' });
     });
 
-    it('refuses when every animal the GRN brought in is already registered', async () => {
-      registerFrom(grnStock({ remaining: '0.0000' }));
+    it('takes the next line\'s cost once every animal of the first line is registered', async () => {
+      registerFrom(grnReceipt(), grnLines({ rate: '1000.0000', quantity: '2' }, { rate: '1200.0000', quantity: '3' }), 2);
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+
+      await service.create(purchased as any, 'tenant-123');
+
+      expect(inserted[0].acquisition_cost).toBe('1200');
+    });
+
+    it('refuses when every animal the GRN received is already registered', async () => {
+      registerFrom(grnReceipt(), grnLines({ rate: '1500.0000', quantity: '6' }), 6);
       await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 has no animals of this item left/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
-    it('refuses a GRN that is not posted, whose animals are not in stock yet', async () => {
-      registerFrom(grnStock({ status: 'DRAFT', ledger_id: null, remaining: null }));
-      await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 is not posted/);
-    });
-
-    it('writes no stock-out for an animal registered without a GRN', async () => {
-      const { source_receipt_id, ...noGrn } = purchased;
-      mockDbSelect
-        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
-        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
-        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
-        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
-        .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-0001' }));
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-      const ledger = module.get(InventoryLedgerService) as any;
-
-      await service.create(noGrn as any, 'tenant-123');
-
-      expect(ledger.writeNegativeEntry).not.toHaveBeenCalled();
+    it('refuses a GRN that is not posted yet', async () => {
+      registerFrom(grnReceipt({ status: 'DRAFT' }), grnLines({ rate: '1500.0000', quantity: '6' }), 0);
+      await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 is not posted yet/);
     });
   });
 

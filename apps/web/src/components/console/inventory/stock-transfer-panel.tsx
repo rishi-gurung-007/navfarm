@@ -279,7 +279,8 @@ export default function StockTransferPanel() {
     api.get(`/location?locationType=FARM&rootOnly=true&isActive=true`).then((r) => setFarms(unwrap<Row[]>(r) || [])).catch(() => {
       // ignore
     });
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {
+    // Biological assets are not stock (14 Oct): they cannot be transferred.
+    api.get(`/item?${qs}`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_biological_asset))).catch(() => {
       // ignore
     });
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {

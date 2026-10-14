@@ -303,6 +303,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     { label: t("invTransfers"), href: "/inventory/transfers" },
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
     { label: t("invLedger"), href: "/inventory/ledger" },
+    { label: t("invBioAssetLedger"), href: "/inventory/bio-asset-ledger" },
   ];
   // Feed Forecast is its own sidebar item, its views listed in its flyout like Farm Master's masters (Rishi, 14 Oct);
   // the same views stay as tabs on the page.

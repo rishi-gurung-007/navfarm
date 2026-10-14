@@ -2,8 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { AnimalService } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
-import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
-import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
@@ -63,8 +61,6 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
         { provide: NobLobResolutionService, useValue: { resolve: jest.fn(async () => ({ nob_id: 'nob-1', lob_id: 'lob-pig' })) } },
         { provide: AnimalMovementLogService, useValue: movementLog },
         { provide: BatchService, useValue: { addTransaction: jest.fn(), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
-        { provide: InventoryLedgerService, useValue: { writeNegativeEntry: jest.fn().mockResolvedValue({ ledger_id: 'led-1', amount: '-100' }) } },
-        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = module.get<AnimalService>(AnimalService);

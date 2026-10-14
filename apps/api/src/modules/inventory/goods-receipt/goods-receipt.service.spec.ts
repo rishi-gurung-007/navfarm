@@ -63,6 +63,8 @@ describe('GoodsReceiptService', () => {
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
+    // Posting looks up which lines are biological assets (14 Oct); unless a test says otherwise, none are.
+    mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
     mockDbUpdate.mockReset();
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockWritePositiveEntry.mockReset().mockResolvedValue({ entry_no: 1 });
@@ -132,7 +134,7 @@ describe('GoodsReceiptService', () => {
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).toHaveBeenCalledTimes(2); // warehouse-active + silo-destination reads — no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(3); // warehouse-active + silo-destination + biological-asset reads — no supplier lookup needed
       expect(result.status).toBe('POSTED');
     });
 
@@ -255,6 +257,8 @@ describe('GoodsReceiptService', () => {
       const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
       await build(feedAlerts, cls);
       postedReceipt();
+      // The biological-asset lookup of the post itself (14 Oct): no line is one.
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
       // The hook's own read of the receipt warehouse fails: the receipt is already posted and must stay posted.
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({

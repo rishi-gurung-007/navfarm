@@ -1387,6 +1387,13 @@
       "when": 1792000000066,
       "tag": "0198_animal_registration_gl",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "5",
+      "when": 1792000000067,
+      "tag": "0199_bio_asset_ledger",
+      "breakpoints": true
     }
   ]
 }

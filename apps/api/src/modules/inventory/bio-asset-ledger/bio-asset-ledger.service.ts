@@ -1,10 +1,11 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, isNotNull, or, SQL } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, or, SQL, gte, lte, gt, lt, like, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateBioAssetLedgerDto, QueryBioAssetLedgerDto } from './dto/bio-asset-ledger.dto';
+import { CreateBioAssetLedgerDto, QueryBioAssetLedgerDto, QueryBioAssetLedgerEntriesDto } from './dto/bio-asset-ledger.dto';
+import { LEDGER_EXPORT_MAX_ROWS } from '../inventory-ledger/inventory-ledger-export';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import {
   animalOnFarm,
@@ -130,5 +131,85 @@ export class BioAssetLedgerService {
       .orderBy(desc(schema.bioAssetLedger.posting_date), desc(schema.bioAssetLedger.created_at))
       .limit(limit)
       .offset(offset);
+  }
+
+  /**
+   * The Bio Asset Ledger page (Rishi, 14 Oct): each animal's registration (+1) and each death (-1), read like the
+   * Inventory Ledger — entry no., document, item, location, quantity, cost — with the GRN a registered animal came
+   * from. Other bio-asset movements (a batch's feed, a transformation) stay off this page.
+   */
+  async entries(query: QueryBioAssetLedgerEntriesDto, tenantId: string, max = query.limit || 250) {
+    const B = schema.bioAssetLedger;
+    const loc = schema.locationMaster;
+    const conditions: SQL[] = [
+      eq(B.tenant_id, tenantId),
+      ...this.scopeConditions(),
+      or(and(eq(B.entry_type, 'ACQUISITION'), isNotNull(B.animal_id)), eq(B.entry_type, 'MORTALITY'))!,
+    ];
+    if (query.companyId) conditions.push(eq(B.company_id, query.companyId));
+    if (query.itemId) conditions.push(eq(B.bio_asset_item_id, query.itemId));
+    if (query.warehouseId) conditions.push(eq(B.warehouse_id, query.warehouseId));
+    if (query.entryType === 'POSITIVE') conditions.push(gt(B.quantity, '0'));
+    if (query.entryType === 'NEGATIVE') conditions.push(lt(B.quantity, '0'));
+    if (query.transactionType === 'ANIMAL_REGISTRATION') conditions.push(eq(B.entry_type, 'ACQUISITION'));
+    if (query.transactionType === 'MORTALITY') conditions.push(eq(B.entry_type, 'MORTALITY'));
+    if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
+    if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
+    if (query.documentNo?.trim()) {
+      const q = `%${query.documentNo.trim()}%`;
+      conditions.push(or(
+        like(B.document_no, q), like(B.batch_no, q), like(schema.itemMaster.item_code, q), like(schema.itemMaster.item_name, q),
+        like(schema.animalRegister.animal_code, q), like(schema.goodsReceipt.receipt_no, q),
+      )!);
+    }
+
+    const rows = await this.db
+      .select({
+        entry_id: B.entry_id,
+        entry_no: B.entry_no,
+        posting_date: B.posting_date,
+        document_type: B.document_type,
+        document_no: B.document_no,
+        entry_type: B.entry_type,
+        item_id: B.bio_asset_item_id,
+        item_code: schema.itemMaster.item_code,
+        item_description: schema.itemMaster.item_name,
+        warehouse_id: B.warehouse_id,
+        warehouse_code: loc.location_code,
+        warehouse_name: loc.location_name,
+        quantity: B.quantity,
+        uom: sql<string | null>`COALESCE(${B.uom}, ${schema.itemMaster.uom_primary})`,
+        rate: B.cost_amount_each_unit,
+        amount: B.cost_amount,
+        lot_no: B.lot_no,
+        batch_no: B.batch_no,
+        animal_id: B.animal_id,
+        animal_code: schema.animalRegister.animal_code,
+        source_receipt_id: schema.animalRegister.source_receipt_id,
+        source_grn_no: schema.goodsReceipt.receipt_no,
+        status: B.status,
+        created_by: B.created_by,
+        created_at: B.created_at,
+      })
+      .from(B)
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, B.bio_asset_item_id))
+      .leftJoin(loc, eq(loc.location_id, B.warehouse_id))
+      .leftJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, B.animal_id))
+      .leftJoin(schema.goodsReceipt, and(eq(schema.goodsReceipt.receipt_id, schema.animalRegister.source_receipt_id), eq(B.entry_type, 'ACQUISITION')))
+      .where(and(...conditions))
+      .orderBy(...(query.sortBy === 'posting_date' ? [desc(B.posting_date), desc(B.entry_no)] : [desc(B.entry_no)]))
+      .limit(max);
+
+    return rows.map((r) => ({
+      ...r,
+      transaction_type: r.entry_type === 'MORTALITY' ? 'MORTALITY' : 'ANIMAL_REGISTRATION',
+      document_type: r.document_type ?? (r.entry_type === 'MORTALITY' ? 'MORTALITY' : 'ANIMAL_REGISTRATION'),
+    }));
+  }
+
+  async entriesForExport(query: QueryBioAssetLedgerEntriesDto, tenantId: string) {
+    const rows = await this.entries(query, tenantId, LEDGER_EXPORT_MAX_ROWS + 1);
+    const truncated = rows.length > LEDGER_EXPORT_MAX_ROWS;
+    return { rows: truncated ? rows.slice(0, LEDGER_EXPORT_MAX_ROWS) : rows, truncated };
   }
 }

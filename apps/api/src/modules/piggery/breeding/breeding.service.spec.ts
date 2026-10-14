@@ -4,8 +4,6 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { PigletLotService } from '../../production/batch/piglet-lot.service';
 import { BatchService } from '../../production/batch/batch.service';
-import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
-import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { BatchTransferService } from '../../production/batch/batch-transfer.service';
 import { SemenLotService } from './semen-lot.service';
 import { AnimalService } from '../animal/animal.service';
@@ -98,8 +96,6 @@ describe('BreedingService', () => {
         { provide: ClsService, useValue: cls },
         { provide: PigletLotService, useValue: pigletLots },
         { provide: BatchService, useValue: batchService },
-        { provide: InventoryLedgerService, useValue: { writeNegativeEntry: jest.fn().mockResolvedValue({ ledger_id: 'led-1', amount: '-100' }) } },
-        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue(undefined) } },
         { provide: BatchTransferService, useValue: batchTransfers },
         { provide: SemenLotService, useValue: semenLots },
         { provide: AnimalService, useValue: animals },

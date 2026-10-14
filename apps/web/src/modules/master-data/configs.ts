@@ -2042,7 +2042,6 @@ const glMapping: MasterDataConfig = {
         { value: "OVERHEAD_VARIANCE", label: "Batch — Overhead Variance (Standard Costing)" },
         // Batch — Bio-Asset (IAS 41) costing lifecycle
         { value: "BIO_ACQUISITION", label: "Bio-Asset — Acquisition" },
-        { value: "ANIMAL_REGISTRATION", label: "Bio-Asset — Animal Registered from a GRN" },
         { value: "BIO_CONSUMPTION_PREMATURE", label: "Bio-Asset — Consumption (Pre-mature, Capitalized)" },
         { value: "BIO_CONSUMPTION_MATURE", label: "Bio-Asset — Consumption (Mature, Expensed)" },
         { value: "BIO_OUTPUT", label: "Bio-Asset — Output" },

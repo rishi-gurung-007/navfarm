@@ -548,14 +548,6 @@
           "cwd": "apps/api"
         }
       },
-      "db-backfill-animal-grn-stock": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "command": "node --env-file-if-exists=.env ../../node_modules/ts-node/dist/bin.js --transpile-only --project tsconfig.scripts.json src/scripts/backfill-animal-grn-stock.ts",
-          "cwd": "apps/api"
-        }
-      },
       "db-repair-demo-schedulers": {
         "executor": "nx:run-commands",
         "cache": false,

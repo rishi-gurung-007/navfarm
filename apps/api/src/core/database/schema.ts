@@ -3946,6 +3946,12 @@ export const inventoryLedgerLine = mysqlTable('inventory_ledger_line', {
 // IAS41 batch accounting); batch_id links each row back to its batch_header.
 export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   entry_id: varchar('entry_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  // 0199 (Rishi, 14 Oct): the Bio Asset Ledger reads like the Inventory Ledger — an entry number, the document behind
+  // the entry (ANIMAL_REGISTRATION, MORTALITY), where the animal was, and its UOM.
+  entry_no: int('entry_no').autoincrement().notNull().unique(),
+  document_type: varchar('document_type', { length: 30 }),
+  warehouse_id: varchar('warehouse_id', { length: 36 }),
+  uom: varchar('uom', { length: 20 }),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   bio_asset_item_id: varchar('bio_asset_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
