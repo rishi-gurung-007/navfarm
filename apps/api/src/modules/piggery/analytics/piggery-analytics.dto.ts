@@ -1,79 +1,93 @@
+export interface QueryPiggeryGmDashboardDto {
+  companyId?: string;
+  periodId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  businessYear?: string;
+}
+
 export interface PiggeryGmDashboardData {
   metadata: {
     tenantName: string;
     companyName: string;
     nobCode: string;
     periodCode: string;
+    businessYear: string;
     periodStartDate: string;
     periodEndDate: string;
     isPeriodActive: boolean;
+    availablePeriods: Array<{
+      periodId: string;
+      periodCode: string;
+      businessYear: string;
+      startDate: string;
+      endDate: string;
+      isActive: boolean;
+    }>;
   };
-  impactSummary: {
-    pigletsWeanedPerSowPerYear: number;
-    divisionLiveBirths: number;
-    preWeanLossCount: number;
-    preWeanLossPct: number;
-    mortalitySavingsExtraPigs: number;
-    cycleIndexGapExtraPigs: number;
-    activeBreedingFemales: number;
-  };
-  coreKpis: {
-    avgSowsPresent: { value: number; delta: string; target: number; sparkline: number[] };
-    avgGiltsPresent: { value: number; delta: string; totalBreeding: number; sparkline: number[] };
-    cycleIndex: { value: number; delta: string; target: number; sparkline: number[] };
-    bornAlivePerLitter: { value: number; delta: string; benchmark: number; sparkline: number[] };
-    farrowingRatePct: { value: number; delta: string; target: number; sparkline: number[] };
-    preWeanMortalityPct: { value: number; delta: string; target: number; sparkline: number[] };
-    femaleMortalityPct: { value: number; delta: string; target: number; sparkline: number[] };
-    avgCycleLengthDays: { value: number; delta: string; gestationDays: number; sparkline: number[] };
-  };
-  cycleAnatomy: {
-    gestationDays: number;
-    lactationDays: number;
-    weanToServiceDays: number;
-    emptyDays: number;
-    totalCycleDays: number;
-    metrics: {
-      weanToService: { value: number; target: number; status: 'GOOD' | 'WARN' | 'ALERT' };
-      lactationDays: { value: number; target: number; status: 'GOOD' | 'WARN' | 'ALERT' };
-      cullRatePct: { value: number; target: number; status: 'GOOD' | 'WARN' | 'ALERT' };
-      firstLittersPct: { value: number; target: number; status: 'GOOD' | 'WARN' | 'ALERT' };
+  activeHerdSummary: {
+    totalHeadcount: number;
+    sowsCount: number;
+    giltsCount: number;
+    boarsCount: number;
+    parityDistribution: {
+      p0Gilts: { count: number; pct: number };
+      p1: { count: number; pct: number };
+      p2: { count: number; pct: number };
+      p3: { count: number; pct: number };
+      p4Plus: { count: number; pct: number };
     };
+    stagesDistribution: Array<{
+      stageName: string;
+      count: number;
+    }>;
   };
-  parityDistribution: {
-    p1: { count: number; pct: number };
-    p2: { count: number; pct: number };
-    p3: { count: number; pct: number };
-    p4: { count: number; pct: number };
-    p5: { count: number; pct: number };
-    p6: { count: number; pct: number };
-    p7Plus: { count: number; pct: number };
-    firstLitterPct: number;
+  reproductiveIntelligence: {
+    totalLittersRecorded: number;
+    totalPigletsBornLive: number;
+    avgBornAlivePerLitter: number;
+    totalPigletsWeaned: number;
+    weaningSurvivalRatePct: number;
+    preWeanMortalityPct: number;
+    conceptionPipeline: {
+      totalMatings: number;
+      confirmedPregnant: number;
+      repeatFailed: number;
+      completedWeaned: number;
+      aiInseminationCount: number;
+      naturalMatingCount: number;
+    };
+    recentLitters: Array<{
+      farrowId: string;
+      sowCode: string;
+      farrowingDate: string;
+      pigletsBornLive: number;
+      pigletsStillborn: number;
+      pigletsWeaned: number;
+      weaningDate: string | null;
+      avgBirthWeightKg: number | null;
+      avgWeaningWeightKg: number | null;
+    }>;
   };
-  farmScorecard: Array<{
-    farmId: string;
-    farmCode: string;
-    farmName: string;
+  productionBatchesSummary: {
+    activeBatchesCount: number;
+    totalBatchHeadcount: number;
+    totalBatchWipValuation: number;
+    batchesByStage: Array<{
+      stageName: string;
+      count: number;
+      totalHeads: number;
+    }>;
+  };
+  facilityLocations: Array<{
+    locationId: string;
+    locationCode: string;
+    locationName: string;
+    headcount: number;
     sowsCount: number;
     giltsCount: number;
-    cycleIndex: number;
-    bornAlivePerLitter: number;
-    farrowingRatePct: number;
-    weanToServiceDays: number;
-    preWeanMortalityPct: number;
-    femaleMortalityPct: number;
-    aiStatus: 'Active' | 'Partial' | 'Inactive';
-    status: 'On Track' | 'Watch' | 'Critical';
+    batchesCount: number;
+    wipValuation: number;
+    status: 'Active Operations' | 'Standby';
   }>;
-  divisionTotals: {
-    sowsCount: number;
-    giltsCount: number;
-    cycleIndex: number;
-    bornAlivePerLitter: number;
-    farrowingRatePct: number;
-    weanToServiceDays: number;
-    preWeanMortalityPct: number;
-    femaleMortalityPct: number;
-    status: string;
-  };
 }

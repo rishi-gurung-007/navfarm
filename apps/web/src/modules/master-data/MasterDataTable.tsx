@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { ageBetween, formatAge } from "./utils/age";
 import {
   Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
@@ -3422,27 +3422,32 @@ export function MasterDataTable({
                     className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
                   />
                 </TableHead>
-                {columns.map((c) => {
+                {columns.map((c, idx) => {
                   const active = sortKey === c.key;
                   return (
-                    <TableHead key={c.key} className="whitespace-nowrap">
-                      {/* Sorting is done in SQL over the whole table, so it
-                          reorders every page, not the page in view. */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (active) { setSortDir(sortDir === "asc" ? "desc" : "asc"); return; }
-                          setSortKey(c.key);
-                          setSortDir("asc");
-                        }}
-                        aria-label={t("mdSortBy", { name: tLabel(c.label) })}
-                        className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
-                        style={active ? { color: "var(--accent)" } : undefined}
-                      >
-                        {tLabel(c.label)}
-                        <ArrowUpDown className="h-3 w-3 shrink-0" aria-hidden style={{ opacity: active ? 1 : 0.35 }} />
-                      </button>
-                    </TableHead>
+                    <Fragment key={c.key}>
+                      <TableHead className="whitespace-nowrap">
+                        {/* Sorting is done in SQL over the whole table, so it
+                            reorders every page, not the page in view. */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (active) { setSortDir(sortDir === "asc" ? "desc" : "asc"); return; }
+                            setSortKey(c.key);
+                            setSortDir("asc");
+                          }}
+                          aria-label={t("mdSortBy", { name: tLabel(c.label) })}
+                          className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                          style={active ? { color: "var(--accent)" } : undefined}
+                        >
+                          {tLabel(c.label)}
+                          <ArrowUpDown className="h-3 w-3 shrink-0" aria-hidden style={{ opacity: active ? 1 : 0.35 }} />
+                        </button>
+                      </TableHead>
+                      {idx === 0 && (
+                        <TableHead className="w-10 px-1 text-center"><span className="sr-only">Actions</span></TableHead>
+                      )}
+                    </Fragment>
                   );
                 })}
                 {/* The record's own active/deactivated flag — the switch below
@@ -3460,7 +3465,6 @@ export function MasterDataTable({
                     sale/slaughter/death". An active flag beside that says
                     nothing the Status column has not already said. */}
                 {!ownsStatusColumn && <TableHead className="text-right">{t("activeColumn")}</TableHead>}
-                <TableHead className="w-10 text-right"><span className="sr-only">Actions</span></TableHead>
               </tr>
             </TableHeader>
             <TableBody>
@@ -3507,29 +3511,104 @@ export function MasterDataTable({
                           className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
                         />
                       </TableCell>
-                      {columns.map((c) => (
-                        c.key === "status" && row.status ? (
-                          // A chip, in the same shape as the Active badge below,
-                          // so the two status-shaped things on a row read as one
-                          // family. Colour carries whether the record is still
-                          // in play — for an animal, still in the herd — rather
-                          // than a colour per value, which would turn a
-                          // ten-value column into a paint chart.
-                          <TableCell key={c.key} className="whitespace-nowrap">
-                            <span
-                              className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
-                              style={statusActiveValues && !statusActiveValues.includes(String(row.status))
-                                ? { color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--surface-raised)" }
-                                : { color: "var(--success)", borderColor: "var(--success)", backgroundColor: "var(--success-muted)" }}
-                            >
-                              {String(row.status)}
-                            </span>
-                          </TableCell>
-                        ) : (
-                          <TableCell key={c.key} className="whitespace-nowrap" style={S.primary}>
-                            {displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}
-                          </TableCell>
-                        )
+                      {columns.map((c, idx) => (
+                        <Fragment key={c.key}>
+                          {c.key === "status" && row.status ? (
+                            // A chip, in the same shape as the Active badge below,
+                            // so the two status-shaped things on a row read as one
+                            // family. Colour carries whether the record is still
+                            // in play — for an animal, still in the herd — rather
+                            // than a colour per value, which would turn a
+                            // ten-value column into a paint chart.
+                            <TableCell className="whitespace-nowrap">
+                              <span
+                                className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+                                style={statusActiveValues && !statusActiveValues.includes(String(row.status))
+                                  ? { color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--surface-raised)" }
+                                  : { color: "var(--success)", borderColor: "var(--success)", backgroundColor: "var(--success-muted)" }}
+                              >
+                                {String(row.status)}
+                              </span>
+                            </TableCell>
+                          ) : (
+                            <TableCell className="whitespace-nowrap" style={S.primary}>
+                              {displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}
+                            </TableCell>
+                          )}
+                          {idx === 0 && (
+                            <TableCell className="w-10 px-1 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                              <Popover
+                                open={actionMenuRowId === String(row[config.idKey])}
+                                onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
+                                align="start"
+                                floating
+                                haspopup="menu"
+                                trigger={(props) => (
+                                  <button
+                                    {...props}
+                                    type="button"
+                                    aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
+                                    title="Actions"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onClick();
+                                    }}
+                                    className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </button>
+                                )}
+                              >
+                                <Menu label="Row Actions">
+                                  <MenuItem
+                                    onSelect={() => setViewingId(String(row[config.idKey]))}
+                                    leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
+                                  >
+                                    {t("roleColView") ?? "View Details"}
+                                  </MenuItem>
+                                  {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
+                                    <MenuItem
+                                      onSelect={() => openEdit(row)}
+                                      leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
+                                    >
+                                      {t("edit")}
+                                    </MenuItem>
+                                  )}
+                                  {!readOnly && (config.supportsRestore ?? true)
+                                    && (!inactive || !config.draftLifecycle || canApproveDraft) && (
+                                    <MenuItem
+                                      onSelect={() => handleToggleActive(row)}
+                                      disabled={togglingId === row[config.idKey]}
+                                      leading={
+                                        inactive ? (
+                                          <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                                        ) : (
+                                          <Power className="h-4 w-4 text-[var(--warning)]" />
+                                        )
+                                      }
+                                    >
+                                      {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
+                                    </MenuItem>
+                                  )}
+                                  {!readOnly && (config.rowCommands ?? []).filter((c) => !c.visibleWhen || c.visibleWhen(row)).map((c) => (
+                                    <MenuItem key={c.key} onSelect={() => handleRowCommand(row, c)}>
+                                      {c.label}
+                                    </MenuItem>
+                                  ))}
+                                  {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
+                                    <MenuItem
+                                      onSelect={() => setConfirmDelete(row)}
+                                      tone="danger"
+                                      leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
+                                    >
+                                      {t("deactivate")}
+                                    </MenuItem>
+                                  )}
+                                </Menu>
+                              </Popover>
+                            </TableCell>
+                          )}
+                        </Fragment>
                       ))}
                       {!ownsStatusColumn && <TableCell className="text-right">
                         {!readOnly && (config.supportsRestore ?? true)
@@ -3568,77 +3647,6 @@ export function MasterDataTable({
                           </span>
                         )}
                       </TableCell>}
-                      <TableCell className="w-10 text-right whitespace-nowrap">
-                        <Popover
-                          open={actionMenuRowId === String(row[config.idKey])}
-                          onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
-                          align="end"
-                          floating
-                          haspopup="menu"
-                          trigger={(props) => (
-                            <button
-                              {...props}
-                              type="button"
-                              aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
-                              title="Actions"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                props.onClick();
-                              }}
-                              className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </button>
-                          )}
-                        >
-                          <Menu label="Row Actions">
-                            <MenuItem
-                              onSelect={() => setViewingId(String(row[config.idKey]))}
-                              leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
-                            >
-                              {t("roleColView") ?? "View Details"}
-                            </MenuItem>
-                            {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
-                              <MenuItem
-                                onSelect={() => openEdit(row)}
-                                leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
-                              >
-                                {t("edit")}
-                              </MenuItem>
-                            )}
-                            {!readOnly && (config.supportsRestore ?? true)
-                              && (!inactive || !config.draftLifecycle || canApproveDraft) && (
-                              <MenuItem
-                                onSelect={() => handleToggleActive(row)}
-                                disabled={togglingId === row[config.idKey]}
-                                leading={
-                                  inactive ? (
-                                    <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                                  ) : (
-                                    <Power className="h-4 w-4 text-[var(--warning)]" />
-                                  )
-                                }
-                              >
-                                {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
-                              </MenuItem>
-                            )}
-                            {!readOnly && (config.rowCommands ?? []).filter((c) => !c.visibleWhen || c.visibleWhen(row)).map((c) => (
-                              <MenuItem key={c.key} onSelect={() => handleRowCommand(row, c)}>
-                                {c.label}
-                              </MenuItem>
-                            ))}
-                            {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
-                              <MenuItem
-                                onSelect={() => setConfirmDelete(row)}
-                                tone="danger"
-                                leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
-                              >
-                                {t("deactivate")}
-                              </MenuItem>
-                            )}
-                          </Menu>
-                        </Popover>
-                      </TableCell>
                     </TableRow>
                   );
                 })

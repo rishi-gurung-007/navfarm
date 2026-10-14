@@ -1,106 +1,135 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, Calendar, RefreshCw, ShieldAlert, Layers, HeartPulse, Building2, CheckCircle2 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
+import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { StatRow, StatCard } from "@/components/ui/stat-row";
 
-interface DashboardData {
+interface PeriodOption {
+  periodId: string;
+  periodCode: string;
+  businessYear: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+}
+
+interface LiveDashboardData {
   metadata: {
     tenantName: string;
     companyName: string;
     nobCode: string;
     periodCode: string;
+    businessYear: string;
     periodStartDate: string;
     periodEndDate: string;
     isPeriodActive: boolean;
+    availablePeriods: PeriodOption[];
   };
-  impactSummary: {
-    pigletsWeanedPerSowPerYear: number;
-    divisionLiveBirths: number;
-    preWeanLossCount: number;
-    preWeanLossPct: number;
-    mortalitySavingsExtraPigs: number;
-    cycleIndexGapExtraPigs: number;
-    activeBreedingFemales: number;
-  };
-  coreKpis: {
-    avgSowsPresent: { value: number; delta: string; target: number; sparkline: number[] };
-    avgGiltsPresent: { value: number; delta: string; totalBreeding: number; sparkline: number[] };
-    cycleIndex: { value: number; delta: string; target: number; sparkline: number[] };
-    bornAlivePerLitter: { value: number; delta: string; benchmark: number; sparkline: number[] };
-    farrowingRatePct: { value: number; delta: string; target: number; sparkline: number[] };
-    preWeanMortalityPct: { value: number; delta: string; target: number; sparkline: number[] };
-    femaleMortalityPct: { value: number; delta: string; target: number; sparkline: number[] };
-    avgCycleLengthDays: { value: number; delta: string; gestationDays: number; sparkline: number[] };
-  };
-  cycleAnatomy: {
-    gestationDays: number;
-    lactationDays: number;
-    weanToServiceDays: number;
-    emptyDays: number;
-    totalCycleDays: number;
-    metrics: {
-      weanToService: { value: number; target: number; status: string };
-      lactationDays: { value: number; target: number; status: string };
-      cullRatePct: { value: number; target: number; status: string };
-      firstLittersPct: { value: number; target: number; status: string };
+  activeHerdSummary: {
+    totalHeadcount: number;
+    sowsCount: number;
+    giltsCount: number;
+    boarsCount: number;
+    parityDistribution: {
+      p0Gilts: { count: number; pct: number };
+      p1: { count: number; pct: number };
+      p2: { count: number; pct: number };
+      p3: { count: number; pct: number };
+      p4Plus: { count: number; pct: number };
     };
+    stagesDistribution: Array<{
+      stageName: string;
+      count: number;
+    }>;
   };
-  parityDistribution: {
-    p1: { count: number; pct: number };
-    p2: { count: number; pct: number };
-    p3: { count: number; pct: number };
-    p4: { count: number; pct: number };
-    p5: { count: number; pct: number };
-    p6: { count: number; pct: number };
-    p7Plus: { count: number; pct: number };
-    firstLitterPct: number;
+  reproductiveIntelligence: {
+    totalLittersRecorded: number;
+    totalPigletsBornLive: number;
+    avgBornAlivePerLitter: number;
+    totalPigletsWeaned: number;
+    weaningSurvivalRatePct: number;
+    preWeanMortalityPct: number;
+    conceptionPipeline: {
+      totalMatings: number;
+      confirmedPregnant: number;
+      repeatFailed: number;
+      completedWeaned: number;
+      aiInseminationCount: number;
+      naturalMatingCount: number;
+    };
+    recentLitters: Array<{
+      farrowId: string;
+      sowCode: string;
+      farrowingDate: string;
+      pigletsBornLive: number;
+      pigletsStillborn: number;
+      pigletsWeaned: number;
+      weaningDate: string | null;
+      avgBirthWeightKg: number | null;
+      avgWeaningWeightKg: number | null;
+    }>;
   };
-  farmScorecard: Array<{
-    farmId: string;
-    farmCode: string;
-    farmName: string;
+  productionBatchesSummary: {
+    activeBatchesCount: number;
+    totalBatchHeadcount: number;
+    totalBatchWipValuation: number;
+    batchesByStage: Array<{
+      stageName: string;
+      count: number;
+      totalHeads: number;
+    }>;
+  };
+  facilityLocations: Array<{
+    locationId: string;
+    locationCode: string;
+    locationName: string;
+    headcount: number;
     sowsCount: number;
     giltsCount: number;
-    cycleIndex: number;
-    bornAlivePerLitter: number;
-    farrowingRatePct: number;
-    weanToServiceDays: number;
-    preWeanMortalityPct: number;
-    femaleMortalityPct: number;
-    aiStatus: "Active" | "Partial" | "Inactive";
-    status: "On Track" | "Watch" | "Critical";
+    batchesCount: number;
+    wipValuation: number;
+    status: "Active Operations" | "Standby";
   }>;
-  divisionTotals: {
-    sowsCount: number;
-    giltsCount: number;
-    cycleIndex: number;
-    bornAlivePerLitter: number;
-    farrowingRatePct: number;
-    weanToServiceDays: number;
-    preWeanMortalityPct: number;
-    femaleMortalityPct: number;
-    status: string;
-  };
 }
 
 export default function PiggeryGmDashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { formatMoney } = useCompanyCurrency();
   const companyId = getActiveCompanyId();
 
-  const loadData = async () => {
+  const [data, setData] = useState<LiveDashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  // Filter States
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const [isCustomRange, setIsCustomRange] = useState(false);
+
+  const loadData = async (opts?: { periodId?: string; from?: string; to?: string }) => {
     setLoading(true);
     setError("");
     try {
-      const qs = companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+      const params = new URLSearchParams();
+      if (companyId) params.set("companyId", companyId);
+      if (opts?.periodId) params.set("periodId", opts.periodId);
+      if (opts?.from) params.set("dateFrom", opts.from);
+      if (opts?.to) params.set("dateTo", opts.to);
+
+      const qs = params.toString() ? `?${params.toString()}` : "";
       const res = await api.get(`/piggery/analytics/gm-dashboard${qs}`);
-      const payload = res?.data ?? res;
+      const payload: LiveDashboardData = res?.data ?? res;
       setData(payload);
+
+      if (!isCustomRange && payload?.metadata) {
+        setDateFrom(payload.metadata.periodStartDate);
+        setDateTo(payload.metadata.periodEndDate);
+      }
     } catch (err: any) {
-      setError(err?.message || "Failed to load Piggery GM Dashboard data");
+      setError(err?.message || "Failed to load live dashboard telemetry.");
     } finally {
       setLoading(false);
     }
@@ -110,24 +139,39 @@ export default function PiggeryGmDashboard() {
     loadData();
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading) {
+
+  const handleApplyCustomDates = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dateFrom || !dateTo) return;
+    setIsCustomRange(true);
+    loadData({ from: dateFrom, to: dateTo });
+  };
+
+  const handleResetToPeriod = () => {
+    setIsCustomRange(false);
+    setSelectedPeriodId("");
+    loadData();
+  };
+
+  if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center py-24">
         <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
-        <p className="mt-3 text-xs text-[var(--text-secondary)]">Loading Piggery GM Telemetry...</p>
+        <p className="mt-3 text-xs text-[var(--text-secondary)]">Querying live farm database telemetry...</p>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="rounded-[var(--radius-lg)] border border-red-500/20 bg-red-500/10 p-6 text-center text-xs text-red-600">
-        <AlertTriangle className="mx-auto h-6 w-6 text-red-500" />
-        <p className="mt-2 font-semibold">Unable to display GM Dashboard</p>
+      <div className="rounded-[var(--radius-lg)] border p-6 text-center text-xs" style={{ borderColor: "var(--danger)", backgroundColor: "var(--surface)" }}>
+        <ShieldAlert className="mx-auto h-6 w-6 text-[var(--danger)]" />
+        <p className="mt-2 font-semibold text-[var(--text-primary)]">Telemetry Service Offline</p>
         <p className="mt-1 text-[var(--text-secondary)]">{error}</p>
         <button
-          onClick={loadData}
-          className="mt-4 rounded-[var(--radius-pill)] bg-[var(--accent)] px-4 py-1.5 font-semibold text-white shadow-sm hover:opacity-90"
+          onClick={() => loadData()}
+          className="nf-press mt-4 rounded-[var(--radius-pill)] px-4 py-1.5 font-semibold text-white transition-opacity hover:opacity-90"
+          style={{ backgroundColor: "var(--accent)" }}
         >
           Retry
         </button>
@@ -135,353 +179,278 @@ export default function PiggeryGmDashboard() {
     );
   }
 
-  const { impactSummary, coreKpis, cycleAnatomy, parityDistribution, farmScorecard, divisionTotals, metadata } = data;
+  const activeHerdSummary = data?.activeHerdSummary ?? {
+    totalHeadcount: 0,
+    sowsCount: 0,
+    giltsCount: 0,
+    boarsCount: 0,
+    parityDistribution: {
+      p0Gilts: { count: 0, pct: 0 },
+      p1: { count: 0, pct: 0 },
+      p2: { count: 0, pct: 0 },
+      p3: { count: 0, pct: 0 },
+      p4Plus: { count: 0, pct: 0 },
+    },
+    stagesDistribution: [],
+  };
+  const reproductiveIntelligence = data?.reproductiveIntelligence ?? {
+    totalLittersRecorded: 0,
+    totalPigletsBornLive: 0,
+    avgBornAlivePerLitter: 0,
+    totalPigletsWeaned: 0,
+    weaningSurvivalRatePct: 0,
+    preWeanMortalityPct: 0,
+    conceptionPipeline: {
+      totalMatings: 0,
+      confirmedPregnant: 0,
+      repeatFailed: 0,
+      completedWeaned: 0,
+      aiInseminationCount: 0,
+      naturalMatingCount: 0,
+    },
+    recentLitters: [],
+  };
+  const productionBatchesSummary = data?.productionBatchesSummary ?? {
+    activeBatchesCount: 0,
+    totalBatchHeadcount: 0,
+    totalBatchWipValuation: 0,
+    batchesByStage: [],
+  };
+  const facilityLocations = data?.facilityLocations ?? [];
 
   return (
     <div className="space-y-6">
-      {/* ── Executive Header Banner ── */}
-      <div className="rounded-[var(--radius-lg)] bg-[#0f172a] p-5 text-white shadow-sm">
-        <div className="flex flex-wrap items-end justify-between gap-4">
+      {/* ── Filter Bar: Period, Year & Date Range (From / To) ── */}
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius-lg)] border p-4 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="flex flex-wrap items-center gap-3">
+
+          {/* Date Range Inputs: From / To */}
+          <form onSubmit={handleApplyCustomDates} className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+              <span>From:</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
+                style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+              <span>To:</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
+                style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)", color: "var(--text-primary)" }}
+              />
+            </div>
+            <button
+              type="submit"
+              className="nf-press inline-flex items-center gap-1.5 rounded-[var(--radius-pill)] px-3 py-1 text-xs font-semibold text-white shadow-xs"
+              style={{ backgroundColor: "var(--accent)" }}
+            >
+              <Calendar className="h-3 w-3" />
+              <span>Filter</span>
+            </button>
+            {isCustomRange && (
+              <button
+                type="button"
+                onClick={handleResetToPeriod}
+                className="nf-press rounded-[var(--radius-pill)] border px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                style={{ borderColor: "var(--border)" }}
+              >
+                Reset
+              </button>
+            )}
+          </form>
+        </div>
+
+        {/* Live Status Indicator */}
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-[var(--radius-pill)] border px-2.5 py-1 text-xs font-medium" style={{ backgroundColor: "var(--success-muted)", borderColor: "var(--success)", color: "var(--success)" }}>
+            <span className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse" />
+            <span>100% Live Database Telemetry</span>
+          </span>
+          <button
+            onClick={() => loadData({ from: dateFrom, to: dateTo, periodId: selectedPeriodId })}
+            className="nf-press p-1.5 rounded-full border text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+            style={{ borderColor: "var(--border)" }}
+            title="Refresh Live Data"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Top Core Stat Cards (4 Cards) ── */}
+      <StatRow>
+        <StatCard
+          icon={Building2}
+          label="Active Registered Herd"
+          value={activeHerdSummary.totalHeadcount}
+          unit="Head"
+          sub={`${activeHerdSummary.sowsCount} Sows · ${activeHerdSummary.giltsCount} Gilts · ${activeHerdSummary.boarsCount} Boar`}
+        />
+        <StatCard
+          icon={Layers}
+          label="Active Batches"
+          value={productionBatchesSummary.activeBatchesCount}
+          unit="Batches"
+          sub={`${productionBatchesSummary.totalBatchHeadcount} Total Livestock Heads in Batch`}
+        />
+        <StatCard
+          icon={Calendar}
+          label="Live Batch WIP Asset"
+          value={formatMoney(productionBatchesSummary.totalBatchWipValuation)}
+          unit="WIP"
+          sub="Direct Cost Accumulation from Live Ledger"
+        />
+        <StatCard
+          icon={HeartPulse}
+          label="Litter Weaning Efficiency"
+          value={`${reproductiveIntelligence.weaningSurvivalRatePct}%`}
+          unit="Survival"
+          sub={`${reproductiveIntelligence.totalPigletsWeaned} Weaned of ${reproductiveIntelligence.totalPigletsBornLive} Live Born (${reproductiveIntelligence.preWeanMortalityPct}% Loss)`}
+        />
+      </StatRow>
+
+      {/* ── Reproductive & Breeding Intelligence (3 Cards Grid) ── */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Card 1: Farrowing & Litters */}
+        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Farrowing & Litters</h3>
+              <p className="text-xs text-[var(--text-secondary)]">Recorded litters in selected date range</p>
+            </div>
+            <span className="rounded-[var(--radius-pill)] px-2.5 py-0.5 text-xs font-semibold border" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              {reproductiveIntelligence.totalLittersRecorded} Litters
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="rounded-[var(--radius-sm)] border p-3" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Born Live</span>
+              <p className="mt-1 font-mono text-xl font-bold" style={{ color: "var(--success)" }}>
+                {reproductiveIntelligence.totalPigletsBornLive}
+              </p>
+              <span className="text-[10px] text-[var(--text-secondary)]">{reproductiveIntelligence.avgBornAlivePerLitter} avg/litter</span>
+            </div>
+            <div className="rounded-[var(--radius-sm)] border p-3" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Weaned</span>
+              <p className="mt-1 font-mono text-xl font-bold text-[var(--accent)]">
+                {reproductiveIntelligence.totalPigletsWeaned}
+              </p>
+              <span className="text-[10px] text-[var(--text-secondary)]">{reproductiveIntelligence.weaningSurvivalRatePct}% survival</span>
+            </div>
+          </div>
+
+          {/* Recent Litters Mini Table */}
           <div>
-            <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-              {metadata.tenantName} · {metadata.companyName} · NOB: {metadata.nobCode} · Zimbabwe
-            </div>
-            <h2 className="mt-1 font-serif text-xl font-bold tracking-tight text-white md:text-2xl">
-              Piggery GM Dashboard — Period {metadata.periodCode}
-            </h2>
-            <p className="mt-1 text-xs text-slate-400">
-              Rolling Operational Period: {metadata.periodStartDate} → {metadata.periodEndDate} · NAVFarm In-House Telemetry
-            </p>
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">Recent Farrowing Records:</span>
+            {reproductiveIntelligence.recentLitters.length === 0 ? (
+              <p className="mt-2 text-xs text-[var(--text-muted)] italic">No litters recorded in this date range.</p>
+            ) : (
+              <div className="mt-2 divide-y text-xs border rounded-[var(--radius-sm)] overflow-hidden" style={{ borderColor: "var(--border)" }}>
+                {reproductiveIntelligence.recentLitters.map((l) => (
+                  <div key={l.farrowId} className="flex items-center justify-between p-2.5 hover:bg-[var(--surface-raised)]">
+                    <div>
+                      <span className="font-semibold text-[var(--text-primary)]">{l.sowCode}</span>
+                      <span className="ml-2 font-mono text-[10px] text-[var(--text-muted)]">{l.farrowingDate}</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono">
+                      <span className="text-[var(--success)] font-semibold">{l.pigletsBornLive} live</span>
+                      <span className="text-[var(--text-muted)]">/</span>
+                      <span className="text-[var(--accent)] font-semibold">{l.pigletsWeaned} weaned</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
-              3 Critical Actions
+        </div>
+
+        {/* Card 2: Breeding Pipeline */}
+        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Mating & Insemination</h3>
+              <p className="text-xs text-[var(--text-secondary)]">Conception status & service methods</p>
+            </div>
+            <span className="rounded-[var(--radius-pill)] px-2.5 py-0.5 text-xs font-semibold border" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              {reproductiveIntelligence.conceptionPipeline.totalMatings} Services
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-300">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Born Alive {coreKpis.bornAlivePerLitter.value} — Best Period
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/40 bg-blue-500/20 px-3 py-1 text-xs font-semibold text-blue-300">
-              NAVFarm Core Synced
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Business Impact Summary Strip ── */}
-      <div>
-        <div className="mb-2 text-[10px] font-bold tracking-wider text-[var(--text-muted)] uppercase">
-          Business Impact Summary · Period {metadata.periodCode}
-        </div>
-        <div className="grid grid-cols-1 divide-y divide-white/10 rounded-[var(--radius-lg)] bg-gradient-to-br from-[#0f172a] to-[#1e3a8a] p-5 text-white sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4">
-          <div className="px-4 py-2 first:pl-0">
-            <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-              Piglets Weaned / Sow / Year
-            </div>
-            <div className="mt-1 font-mono text-3xl font-bold tracking-tight">
-              {impactSummary.pigletsWeanedPerSowPerYear}
-            </div>
-            <p className="mt-1 text-[11px] text-slate-300">
-              {coreKpis.bornAlivePerLitter.value} born alive × {Number(100 - impactSummary.preWeanLossPct).toFixed(1)}% survival ·{" "}
-              <strong className="text-white">+7 above avg</strong>
-            </p>
           </div>
 
-          <div className="px-4 py-2">
-            <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-              Division Live Births / Period
+          <div className="space-y-2.5 pt-1">
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="font-medium text-[var(--text-secondary)]">Confirmed Pregnant</span>
+              <span className="font-mono font-bold" style={{ color: "var(--success)" }}>
+                {reproductiveIntelligence.conceptionPipeline.confirmedPregnant} Sows
+              </span>
             </div>
-            <div className="mt-1 font-mono text-3xl font-bold tracking-tight">
-              {impactSummary.divisionLiveBirths.toLocaleString()}
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="font-medium text-[var(--text-secondary)]">Completed / Weaned</span>
+              <span className="font-mono font-bold text-[var(--accent)]">
+                {reproductiveIntelligence.conceptionPipeline.completedWeaned} Sows
+              </span>
             </div>
-            <p className="mt-1 text-[11px] text-slate-300">
-              Across active sow herd · Pre-wean losses: <strong className="text-amber-300">{impactSummary.preWeanLossCount.toLocaleString()} ({impactSummary.preWeanLossPct}%)</strong>
-            </p>
-          </div>
-
-          <div className="px-4 py-2">
-            <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-              Mortality Savings at 7.5% Tgt
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="font-medium text-[var(--text-secondary)]">Failed / Repeat</span>
+              <span className="font-mono font-bold" style={{ color: "var(--danger)" }}>
+                {reproductiveIntelligence.conceptionPipeline.repeatFailed} Sows
+              </span>
             </div>
-            <div className="mt-1 font-mono text-3xl font-bold tracking-tight text-emerald-400">
-              +{impactSummary.mortalitySavingsExtraPigs}
-            </div>
-            <p className="mt-1 text-[11px] text-slate-300">
-              extra pigs per period · <strong className="text-white">+1,812/yr</strong> recoverable
-            </p>
-          </div>
-
-          <div className="px-4 py-2 last:pr-0">
-            <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
-              CI Gap Opportunity (→ 2.50)
-            </div>
-            <div className="mt-1 font-mono text-3xl font-bold tracking-tight text-amber-300">
-              +{impactSummary.cycleIndexGapExtraPigs}
-            </div>
-            <p className="mt-1 text-[11px] text-slate-300">
-              extra pigs/year · Unlocked by optimizing service protocols
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 8 Core KPI Tiles ── */}
-      <div>
-        <div className="mb-2 text-[10px] font-bold tracking-wider text-[var(--text-muted)] uppercase">
-          Core KPIs · Period {metadata.periodCode} vs Baseline · Benchmarked
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-          {/* 1. Avg Sows */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Avg Sows</div>
-            <div className="mt-1 font-mono text-2xl font-bold">{coreKpis.avgSowsPresent.value.toLocaleString()}</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.avgSowsPresent.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-blue-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "var(--accent)" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-emerald-600">{coreKpis.avgSowsPresent.delta}</span>
-              <span className="text-[var(--text-muted)]">Tgt {coreKpis.avgSowsPresent.target}</span>
-            </div>
-          </div>
-
-          {/* 2. Avg Gilts */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-purple-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Avg Gilts</div>
-            <div className="mt-1 font-mono text-2xl font-bold">{coreKpis.avgGiltsPresent.value.toLocaleString()}</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.avgGiltsPresent.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-purple-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#7c3aed" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-emerald-600">{coreKpis.avgGiltsPresent.delta}</span>
-              <span className="text-[var(--text-muted)]">Tot {coreKpis.avgGiltsPresent.totalBreeding}</span>
-            </div>
-          </div>
-
-          {/* 3. Cycle Index */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Cycle Index</div>
-            <div className="mt-1 font-mono text-2xl font-bold">{coreKpis.cycleIndex.value}</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.cycleIndex.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-amber-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#f59e0b" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-amber-600">{coreKpis.cycleIndex.delta}</span>
-              <span className="text-[var(--text-muted)]">Tgt {coreKpis.cycleIndex.target}</span>
-            </div>
-          </div>
-
-          {/* 4. Born Alive */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Born Alive</div>
-            <div className="mt-1 font-mono text-2xl font-bold text-emerald-600">{coreKpis.bornAlivePerLitter.value}</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.bornAlivePerLitter.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-emerald-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#10b981" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-emerald-600">{coreKpis.bornAlivePerLitter.delta}</span>
-              <span className="text-[var(--text-muted)]">Ind. {coreKpis.bornAlivePerLitter.benchmark}</span>
-            </div>
-          </div>
-
-          {/* 5. Farrowing Rate */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Farr Rate</div>
-            <div className="mt-1 font-mono text-2xl font-bold text-emerald-600">{coreKpis.farrowingRatePct.value}%</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.farrowingRatePct.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-emerald-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#10b981" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-slate-500">{coreKpis.farrowingRatePct.delta}</span>
-              <span className="text-[var(--text-muted)]">Tgt {coreKpis.farrowingRatePct.target}%</span>
-            </div>
-          </div>
-
-          {/* 6. Pre-Wean Mortality */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Pre-Wn Mort</div>
-            <div className="mt-1 font-mono text-2xl font-bold text-amber-600">{coreKpis.preWeanMortalityPct.value}%</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.preWeanMortalityPct.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-amber-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#f59e0b" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-emerald-600">{coreKpis.preWeanMortalityPct.delta}</span>
-              <span className="text-[var(--text-muted)]">&lt;{coreKpis.preWeanMortalityPct.target}%</span>
-            </div>
-          </div>
-
-          {/* 7. Female Mortality */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-rose-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">F. Mortality</div>
-            <div className="mt-1 font-mono text-2xl font-bold text-rose-600">{coreKpis.femaleMortalityPct.value}%</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.femaleMortalityPct.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-rose-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "#ef4444" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-emerald-600">{coreKpis.femaleMortalityPct.delta}</span>
-              <span className="text-[var(--text-muted)]">&lt;{coreKpis.femaleMortalityPct.target}%</span>
-            </div>
-          </div>
-
-          {/* 8. Avg Cycle Length */}
-          <div className="relative overflow-hidden rounded-[var(--radius-md)] border p-3.5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500" />
-            <div className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Cycle Days</div>
-            <div className="mt-1 font-mono text-2xl font-bold">{coreKpis.avgCycleLengthDays.value}d</div>
-            <div className="mt-2 flex items-end gap-1 h-6">
-              {coreKpis.avgCycleLengthDays.sparkline.map((h, i) => (
-                <div key={i} className="flex-1 rounded-t-xs bg-blue-500/30" style={{ height: `${h}%`, backgroundColor: i === 4 ? "var(--accent)" : undefined }} />
-              ))}
-            </div>
-            <div className="mt-2 flex justify-between text-[10px]">
-              <span className="font-semibold text-slate-500">{coreKpis.avgCycleLengthDays.delta}</span>
-              <span className="text-[var(--text-muted)]">Gest {coreKpis.avgCycleLengthDays.gestationDays}d</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Cycle Anatomy & Parity Profile Section ── */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Left: Cycle Anatomy */}
-        <div className="rounded-[var(--radius-lg)] border p-5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-          <h3 className="text-sm font-semibold">Sow Reproductive Cycle Anatomy — Period {metadata.periodCode}</h3>
-          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-            Avg {cycleAnatomy.totalCycleDays} days per cycle · Target ≤148d · Wean-to-service is the prime lever
-          </p>
-
-          {/* Stacked bar */}
-          <div className="mt-4 flex h-8 w-full overflow-hidden rounded-md text-[10px] font-bold text-white shadow-xs">
-            <div style={{ width: "77.5%" }} className="flex items-center justify-center bg-blue-600 px-1">
-              Gestation · {cycleAnatomy.gestationDays}d
-            </div>
-            <div style={{ width: "17.8%" }} className="flex items-center justify-center bg-cyan-600 px-1">
-              Lact. {cycleAnatomy.lactationDays}d
-            </div>
-            <div style={{ width: "2.9%" }} className="flex items-center justify-center bg-amber-500 px-1">
-              W→S
-            </div>
-            <div style={{ width: "1.8%" }} className="flex items-center justify-center bg-rose-600 px-1">
-              ∅
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-3 text-[10px] text-[var(--text-secondary)]">
-            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-xs bg-blue-600" />Gestation {cycleAnatomy.gestationDays}d</span>
-            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-xs bg-cyan-600" />Lactation {cycleAnatomy.lactationDays}d</span>
-            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-xs bg-amber-500" />Wean→Svc {cycleAnatomy.weanToServiceDays}d</span>
-            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-xs bg-rose-600" />Empty ~{cycleAnatomy.emptyDays}d</span>
-          </div>
-
-          <div className="mt-4 space-y-2.5 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center justify-between text-xs">
-              <span className="w-32 text-[var(--text-secondary)]">Wean → Service</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <div className="h-full rounded-full bg-amber-500" style={{ width: "86%" }} />
-              </div>
-              <span className="w-14 text-right font-mono font-bold text-amber-600">{cycleAnatomy.metrics.weanToService.value}d</span>
-              <span className="w-12 text-right text-[10px] text-[var(--text-muted)]">Tgt {cycleAnatomy.metrics.weanToService.target}</span>
-            </div>
-
-            <div className="flex items-center justify-between text-xs">
-              <span className="w-32 text-[var(--text-secondary)]">Lactation Days</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <div className="h-full rounded-full bg-blue-500" style={{ width: "100%" }} />
-              </div>
-              <span className="w-14 text-right font-mono font-bold text-blue-600">{cycleAnatomy.metrics.lactationDays.value}d</span>
-              <span className="w-12 text-right text-[10px] text-[var(--text-muted)]">Tgt {cycleAnatomy.metrics.lactationDays.target}</span>
-            </div>
-
-            <div className="flex items-center justify-between text-xs">
-              <span className="w-32 text-[var(--text-secondary)]">% Culled / Year</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <div className="h-full rounded-full bg-amber-500" style={{ width: "95%" }} />
-              </div>
-              <span className="w-14 text-right font-mono font-bold text-amber-600">{cycleAnatomy.metrics.cullRatePct.value}%</span>
-              <span className="w-12 text-right text-[10px] text-[var(--text-muted)]">Tgt {cycleAnatomy.metrics.cullRatePct.target}%</span>
-            </div>
-
-            <div className="flex items-center justify-between text-xs">
-              <span className="w-32 text-[var(--text-secondary)]">% First Litters</span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <div className="h-full rounded-full bg-purple-500" style={{ width: "65%" }} />
-              </div>
-              <span className="w-14 text-right font-mono font-bold text-purple-600">{cycleAnatomy.metrics.firstLittersPct.value}%</span>
-              <span className="w-12 text-right text-[10px] text-[var(--text-muted)]">Tgt {cycleAnatomy.metrics.firstLittersPct.target}%</span>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+              <span className="font-medium text-[var(--text-secondary)]">AI vs Natural Mating</span>
+              <span className="font-mono font-semibold text-[var(--text-primary)]">
+                {reproductiveIntelligence.conceptionPipeline.aiInseminationCount} AI · {reproductiveIntelligence.conceptionPipeline.naturalMatingCount} Natural
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Right: Parity Distribution & Herd Structure */}
-        <div className="rounded-[var(--radius-lg)] border p-5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-          <h3 className="text-sm font-semibold">Herd Composition & Parity Structure</h3>
-          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-            Parity profile drives lifetime productivity · High 1st-litter % indicates replacement intensity
-          </p>
+        {/* Card 3: Herd Parity & Stage Structure */}
+        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Herd Parity & Stage Structure</h3>
+            <p className="text-xs text-[var(--text-secondary)]">Actual parity distribution across registered herd</p>
+          </div>
 
-          <div className="mt-4 flex items-end gap-2 h-24 border-b pb-2" style={{ borderColor: "var(--border)" }}>
+          {/* Parity Breakdown Bars */}
+          <div className="space-y-2 pt-1">
             {[
-              { label: "P1", pct: parityDistribution.p1.pct, color: "bg-purple-600" },
-              { label: "P2", pct: parityDistribution.p2.pct, color: "bg-blue-600" },
-              { label: "P3", pct: parityDistribution.p3.pct, color: "bg-emerald-600" },
-              { label: "P4", pct: parityDistribution.p4.pct, color: "bg-emerald-600" },
-              { label: "P5", pct: parityDistribution.p5.pct, color: "bg-emerald-600" },
-              { label: "P6", pct: parityDistribution.p6.pct, color: "bg-amber-500" },
-              { label: "P7+", pct: parityDistribution.p7Plus.pct, color: "bg-rose-500" },
+              { label: "Parity 0 (Gilts)", count: activeHerdSummary.parityDistribution.p0Gilts.count, pct: activeHerdSummary.parityDistribution.p0Gilts.pct },
+              { label: "Parity 1", count: activeHerdSummary.parityDistribution.p1.count, pct: activeHerdSummary.parityDistribution.p1.pct },
+              { label: "Parity 2", count: activeHerdSummary.parityDistribution.p2.count, pct: activeHerdSummary.parityDistribution.p2.pct },
+              { label: "Parity 3", count: activeHerdSummary.parityDistribution.p3.count, pct: activeHerdSummary.parityDistribution.p3.pct },
+              { label: "Parity 4+", count: activeHerdSummary.parityDistribution.p4Plus.count, pct: activeHerdSummary.parityDistribution.p4Plus.pct },
             ].map((p) => (
-              <div key={p.label} className="flex flex-1 flex-col items-center gap-1 h-full justify-end">
-                <span className="text-[10px] font-mono text-[var(--text-muted)]">{p.pct}%</span>
-                <div className={`w-full rounded-t-sm ${p.color}`} style={{ height: `${Math.max(p.pct * 3.5, 6)}%` }} />
-                <span className="text-[10px] font-semibold">{p.label}</span>
+              <div key={p.label} className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="font-medium text-[var(--text-secondary)]">{p.label}</span>
+                  <span className="font-mono font-semibold text-[var(--text-primary)]">{p.count} Head ({p.pct}%)</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(p.pct, p.count > 0 ? 5 : 0)}%`, backgroundColor: "var(--accent)" }} />
+                </div>
               </div>
             ))}
           </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-md border p-3" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
-              <div className="text-[9px] font-bold text-[var(--text-muted)] uppercase">Multiplier Supply Output</div>
-              <div className="mt-1 font-mono text-lg font-bold text-blue-600">2 / wk</div>
-              <div className="text-[10px] text-[var(--text-secondary)]">From Multiplier Farm = 104 gilts/yr</div>
-            </div>
-            <div className="rounded-md border border-rose-500/20 bg-rose-500/10 p-3">
-              <div className="text-[9px] font-bold text-rose-600 uppercase">Annual Replacement Demand</div>
-              <div className="mt-1 font-mono text-lg font-bold text-rose-600">~48%</div>
-              <div className="text-[10px] text-rose-700 dark:text-rose-300">~1,033 replacements required/yr</div>
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* ── Farm Scorecard Table ── */}
-      <div className="rounded-[var(--radius-lg)] border p-5 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-        <div className="flex items-center justify-between mb-4">
+      {/* ── Facility Locations & Farm Table (100% Live) ── */}
+      <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold">Full Farm Performance Scorecard — Period {metadata.periodCode}</h3>
-            <p className="text-xs text-[var(--text-secondary)]">All Colcom Group Production Sites · Telemetry Sourced</p>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Live Triple C Facility & Production Sites</h3>
+            <p className="text-xs text-[var(--text-secondary)]">Actual stock allocations & operational batch status across company locations</p>
           </div>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            {farmScorecard.length} Farms Operational
+          <span className="rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-semibold" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)", color: "var(--text-secondary)" }}>
+            {facilityLocations.length} Registered Sites
           </span>
         </div>
 
@@ -489,77 +458,38 @@ export default function PiggeryGmDashboard() {
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b text-[11px] font-semibold uppercase text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
-                <th className="py-2.5 px-3">Farm Name</th>
+                <th className="py-2.5 px-3">Farm Location</th>
+                <th className="py-2.5 px-3 text-right">Registered Herd</th>
                 <th className="py-2.5 px-3 text-right">Sows</th>
                 <th className="py-2.5 px-3 text-right">Gilts</th>
-                <th className="py-2.5 px-3 text-right">CI</th>
-                <th className="py-2.5 px-3 text-right">Born Alive</th>
-                <th className="py-2.5 px-3 text-right">Farr %</th>
-                <th className="py-2.5 px-3 text-right">W→Svc</th>
-                <th className="py-2.5 px-3 text-right">Pre-Wn Mort</th>
-                <th className="py-2.5 px-3 text-right">F.Mort %</th>
-                <th className="py-2.5 px-3 text-center">AI Station</th>
-                <th className="py-2.5 px-3 text-right">Status</th>
+                <th className="py-2.5 px-3 text-right">Active Batches</th>
+                <th className="py-2.5 px-3 text-right">Live WIP Asset</th>
+                <th className="py-2.5 px-3 text-right">Operational Status</th>
               </tr>
             </thead>
             <tbody className="divide-y font-mono" style={{ borderColor: "var(--border)" }}>
-              {farmScorecard.map((f) => (
-                <tr key={f.farmId} className="hover:bg-[var(--surface-raised)] transition-colors">
-                  <td className="py-2.5 px-3 font-sans font-semibold text-[var(--text-primary)]">
-                    {f.farmName} <span className="text-[10px] font-mono text-[var(--text-muted)]">({f.farmCode})</span>
+              {facilityLocations.map((f) => (
+                <tr key={f.locationId} className="hover:bg-[var(--surface-raised)] transition-colors">
+                  <td className="py-3 px-3 font-sans font-semibold text-[var(--text-primary)]">
+                    {f.locationName} <span className="text-[10px] font-mono text-[var(--text-muted)]">({f.locationCode})</span>
                   </td>
-                  <td className="py-2.5 px-3 text-right">{f.sowsCount}</td>
-                  <td className="py-2.5 px-3 text-right text-[var(--text-secondary)]">{f.giltsCount}</td>
-                  <td className={`py-2.5 px-3 text-right font-bold ${f.cycleIndex >= 2.45 ? "text-emerald-600" : f.cycleIndex >= 2.40 ? "text-blue-600" : "text-rose-600"}`}>
-                    {f.cycleIndex}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-bold text-emerald-600">{f.bornAlivePerLitter}</td>
-                  <td className="py-2.5 px-3 text-right">{f.farrowingRatePct}%</td>
-                  <td className={`py-2.5 px-3 text-right ${f.weanToServiceDays > 4.5 ? "text-rose-600" : "text-[var(--text-secondary)]"}`}>
-                    {f.weanToServiceDays}d
-                  </td>
-                  <td className={`py-2.5 px-3 text-right ${f.preWeanMortalityPct > 9.0 ? "text-rose-600 font-bold" : f.preWeanMortalityPct > 8.0 ? "text-amber-600" : "text-emerald-600"}`}>
-                    {f.preWeanMortalityPct}%
-                  </td>
-                  <td className="py-2.5 px-3 text-right text-[var(--text-secondary)]">{f.femaleMortalityPct}%</td>
-                  <td className="py-2.5 px-3 text-center font-sans">
-                    <span className={`inline-block rounded-xs px-1.5 py-0.5 text-[10px] font-semibold ${
-                      f.aiStatus === "Active" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" :
-                      f.aiStatus === "Partial" ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" :
-                      "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                  <td className="py-3 px-3 text-right font-bold">{f.headcount} Head</td>
+                  <td className="py-3 px-3 text-right text-[var(--text-secondary)]">{f.sowsCount}</td>
+                  <td className="py-3 px-3 text-right text-[var(--text-secondary)]">{f.giltsCount}</td>
+                  <td className="py-3 px-3 text-right font-semibold">{f.batchesCount}</td>
+                  <td className="py-3 px-3 text-right font-semibold">{formatMoney(f.wipValuation)}</td>
+                  <td className="py-3 px-3 text-right font-sans">
+                    <span className={`inline-flex items-center gap-1 rounded-[var(--radius-pill)] px-2 py-0.5 text-[10px] font-semibold border ${
+                      f.status === "Active Operations"
+                        ? "bg-[var(--success-muted)] text-[var(--success)] border-[var(--success)]"
+                        : "bg-slate-100 dark:bg-slate-800 text-[var(--text-muted)] border-transparent"
                     }`}>
-                      {f.aiStatus}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-sans">
-                    <span className={`inline-block rounded-xs px-2 py-0.5 text-[10px] font-semibold ${
-                      f.status === "On Track" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" :
-                      f.status === "Watch" ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300" :
-                      "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-                    }`}>
-                      {f.status}
+                      {f.status === "Active Operations" && <CheckCircle2 className="h-3 w-3" />}
+                      <span>{f.status}</span>
                     </span>
                   </td>
                 </tr>
               ))}
-              {/* Division Summary Row */}
-              <tr className="bg-[var(--surface-raised)] font-semibold border-t-2" style={{ borderColor: "var(--border)" }}>
-                <td className="py-3 px-3 font-sans font-bold">Division Total</td>
-                <td className="py-3 px-3 text-right">{divisionTotals.sowsCount.toLocaleString()}</td>
-                <td className="py-3 px-3 text-right">{divisionTotals.giltsCount.toLocaleString()}</td>
-                <td className="py-3 px-3 text-right font-bold text-amber-600">{divisionTotals.cycleIndex}</td>
-                <td className="py-3 px-3 text-right text-emerald-600">{divisionTotals.bornAlivePerLitter}</td>
-                <td className="py-3 px-3 text-right">{divisionTotals.farrowingRatePct}%</td>
-                <td className="py-3 px-3 text-right">{divisionTotals.weanToServiceDays}d</td>
-                <td className="py-3 px-3 text-right text-amber-600">{divisionTotals.preWeanMortalityPct}%</td>
-                <td className="py-3 px-3 text-right">{divisionTotals.femaleMortalityPct}%</td>
-                <td className="py-3 px-3 text-center font-sans">—</td>
-                <td className="py-3 px-3 text-right font-sans">
-                  <span className="rounded-xs bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                    {divisionTotals.status}
-                  </span>
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>

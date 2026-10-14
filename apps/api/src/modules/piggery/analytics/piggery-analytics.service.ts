@@ -1,10 +1,10 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
+import { eq, and, desc, asc, gte, lte, inArray, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { farmScope, FarmScope } from '../../../common/farm-scope';
-import { PiggeryGmDashboardData } from './piggery-analytics.dto';
+import { PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
 
 @Injectable()
 export class PiggeryAnalyticsService {
@@ -28,9 +28,9 @@ export class PiggeryAnalyticsService {
     return queryCompanyId || '';
   }
 
-  async getGmDashboard(tenantId: string, queryCompanyId?: string, periodId?: string): Promise<PiggeryGmDashboardData> {
+  async getGmDashboard(tenantId: string, query: QueryPiggeryGmDashboardDto): Promise<PiggeryGmDashboardData> {
     const scope = farmScope(this.cls);
-    const companyId = this.resolveCompanyId(scope, queryCompanyId);
+    const companyId = this.resolveCompanyId(scope, query.companyId);
 
     // 1. Resolve Company Details
     const [company] = companyId
@@ -40,9 +40,16 @@ export class PiggeryAnalyticsService {
     const activeCompanyId = company?.company_id || companyId;
     const companyName = company?.company_name || 'Triple C Piggery Division';
 
-    // 2. Resolve Reporting Period
-    let periodQuery = this.db
-      .select()
+    // 2. Resolve Reporting Periods
+    const periods = await this.db
+      .select({
+        period_id: schema.reportingPeriod.period_id,
+        period_code: schema.reportingPeriod.period_code,
+        business_year: schema.reportingPeriod.business_year,
+        start_date: schema.reportingPeriod.start_date,
+        end_date: schema.reportingPeriod.end_date,
+        is_active: schema.reportingPeriod.is_active,
+      })
       .from(schema.reportingPeriod)
       .where(
         and(
@@ -50,19 +57,25 @@ export class PiggeryAnalyticsService {
           activeCompanyId ? eq(schema.reportingPeriod.company_id, activeCompanyId) : undefined,
         )
       )
-      .orderBy(desc(schema.reportingPeriod.start_date));
+      .orderBy(asc(schema.reportingPeriod.start_date));
+    const today = new Date().toISOString().slice(0, 10);
+    const currentPeriod = periods.find((p) => p.start_date <= today && today <= p.end_date);
+    const activeCurrentYearPeriod = periods.find(
+      (p) => p.is_active && p.start_date.startsWith(today.slice(0, 4))
+    );
 
-    const periods = await periodQuery;
-    const selectedPeriod = periodId
-      ? periods.find((p) => p.period_id === periodId) || periods[0]
-      : periods.find((p) => p.is_active || p.period_status === 'OPEN') || periods[0];
+    const selectedPeriod = query.periodId
+      ? periods.find((p) => p.period_id === query.periodId)
+      : currentPeriod || activeCurrentYearPeriod || periods[0];
 
-    const periodCode = selectedPeriod?.period_code || 'P5';
-    const periodStartDate = selectedPeriod?.start_date || '2026-03-27';
-    const periodEndDate = selectedPeriod?.end_date || '2026-07-17';
+    const currentYear = new Date().getFullYear().toString();
+    const periodCode = selectedPeriod?.period_code || 'P1';
+    const businessYear = query.businessYear || selectedPeriod?.business_year || currentYear;
+    const periodStartDate = query.dateFrom || selectedPeriod?.start_date || `${businessYear}-01-01`;
+    const periodEndDate = query.dateTo || selectedPeriod?.end_date || `${businessYear}-12-31`;
     const isPeriodActive = selectedPeriod?.is_active ?? true;
 
-    // 3. Query Active Animals (Sows, Gilts, Boars)
+    // 3. Query Real Registered Animals (100% Live)
     const animalConditions = [
       eq(schema.animalRegister.tenant_id, tenantId),
       activeCompanyId ? eq(schema.animalRegister.company_id, activeCompanyId) : undefined,
@@ -71,56 +84,207 @@ export class PiggeryAnalyticsService {
     const animals = await this.db
       .select({
         animal_id: schema.animalRegister.animal_id,
+        animal_code: schema.animalRegister.animal_code,
         animal_type: schema.animalRegister.animal_type,
         gender: schema.animalRegister.gender,
         is_active: schema.animalRegister.is_active,
         status: schema.animalRegister.status,
         parity_count: schema.animalRegister.parity_count,
         current_location_id: schema.animalRegister.current_location_id,
+        current_stage_id: schema.animalRegister.current_stage_id,
         total_piglets_born_live: schema.animalRegister.total_piglets_born_live,
         total_piglets_weaned: schema.animalRegister.total_piglets_weaned,
       })
       .from(schema.animalRegister)
       .where(and(...animalConditions));
 
-    const activeFemales = animals.filter((a) => a.is_active && (a.animal_type === 'SOW' || a.animal_type === 'GILT'));
-    const sows = activeFemales.filter((a) => a.animal_type === 'SOW');
-    const gilts = activeFemales.filter((a) => a.animal_type === 'GILT');
+    // Active breeding stock
+    const activeAnimals = animals.filter((a) => a.is_active);
+    const sows = activeAnimals.filter((a) => a.animal_type === 'SOW');
+    const gilts = activeAnimals.filter((a) => a.animal_type === 'GILT');
+    const boars = activeAnimals.filter((a) => a.animal_type === 'BOAR');
 
-    const totalSowsCount = sows.length || 2152;
-    const totalGiltsCount = gilts.length || 510;
-    const totalBreedingFemales = totalSowsCount + totalGiltsCount;
-
-    // Parity distribution
-    const parityBuckets = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, '7+': 0 };
+    // Real Parity distribution from actual animal rows
+    const parityBuckets = { p0: gilts.length, p1: 0, p2: 0, p3: 0, p4Plus: 0 };
     for (const s of sows) {
       const p = s.parity_count || 1;
-      if (p <= 1) parityBuckets[1]++;
-      else if (p === 2) parityBuckets[2]++;
-      else if (p === 3) parityBuckets[3]++;
-      else if (p === 4) parityBuckets[4]++;
-      else if (p === 5) parityBuckets[5]++;
-      else if (p === 6) parityBuckets[6]++;
-      else parityBuckets['7+']++;
+      if (p === 1) parityBuckets.p1++;
+      else if (p === 2) parityBuckets.p2++;
+      else if (p === 3) parityBuckets.p3++;
+      else parityBuckets.p4Plus++;
     }
 
-    // Default distribution ratios if seeded headcount is small
-    const totalSampleSows = Math.max(sows.length, 1);
-    const p1Pct = sows.length > 5 ? (parityBuckets[1] / totalSampleSows) * 100 : 22.0;
-    const p2Pct = sows.length > 5 ? (parityBuckets[2] / totalSampleSows) * 100 : 18.0;
-    const p3Pct = sows.length > 5 ? (parityBuckets[3] / totalSampleSows) * 100 : 20.0;
-    const p4Pct = sows.length > 5 ? (parityBuckets[4] / totalSampleSows) * 100 : 17.0;
-    const p5Pct = sows.length > 5 ? (parityBuckets[5] / totalSampleSows) * 100 : 14.0;
-    const p6Pct = sows.length > 5 ? (parityBuckets[6] / totalSampleSows) * 100 : 6.0;
-    const p7PlusPct = sows.length > 5 ? (parityBuckets['7+'] / totalSampleSows) * 100 : 3.0;
+    const totalFemales = Math.max(sows.length + gilts.length, 1);
+    const p0Pct = Math.round((parityBuckets.p0 / totalFemales) * 100);
+    const p1Pct = Math.round((parityBuckets.p1 / totalFemales) * 100);
+    const p2Pct = Math.round((parityBuckets.p2 / totalFemales) * 100);
+    const p3Pct = Math.round((parityBuckets.p3 / totalFemales) * 100);
+    const p4PlusPct = Math.round((parityBuckets.p4Plus / totalFemales) * 100);
 
-    // 4. Query Farms from Location Master
-    const farmConditions = [
-      eq(schema.locationMaster.tenant_id, tenantId),
-      eq(schema.locationMaster.location_type, 'FARM'),
-      activeCompanyId ? eq(schema.locationMaster.company_id, activeCompanyId) : undefined,
+    // Stages lookup
+    const stages = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.tenant_id, tenantId));
+    const stageMap = new Map(stages.map((st) => [st.stage_id, st.stage_name]));
+
+    const stageCountMap = new Map<string, number>();
+    for (const a of activeAnimals) {
+      const stageName = (a.current_stage_id && stageMap.get(a.current_stage_id)) || a.status || 'Active Herd';
+      stageCountMap.set(stageName, (stageCountMap.get(stageName) || 0) + 1);
+    }
+    const stagesDistribution = Array.from(stageCountMap.entries()).map(([stageName, count]) => ({
+      stageName,
+      count,
+    }));
+
+    // 4. Query Real Farrowing Records
+    const farrowConditions = [
+      eq(schema.farrowingRecord.tenant_id, tenantId),
+      activeCompanyId ? eq(schema.farrowingRecord.company_id, activeCompanyId) : undefined,
     ].filter(Boolean) as any[];
 
+    if (query.dateFrom && query.dateTo) {
+      farrowConditions.push(gte(schema.farrowingRecord.farrowing_date, query.dateFrom));
+      farrowConditions.push(lte(schema.farrowingRecord.farrowing_date, query.dateTo));
+    }
+
+    const farrowings = await this.db
+      .select({
+        farrow_id: schema.farrowingRecord.farrow_id,
+        sow_animal_id: schema.farrowingRecord.sow_animal_id,
+        farrowing_date: schema.farrowingRecord.farrowing_date,
+        piglets_born_live: schema.farrowingRecord.piglets_born_live,
+        piglets_stillborn: schema.farrowingRecord.piglets_stillborn,
+        piglets_weaned: schema.farrowingRecord.piglets_weaned,
+        weaning_date: schema.farrowingRecord.weaning_date,
+        avg_birth_weight_kg: schema.farrowingRecord.avg_birth_weight_kg,
+        avg_weaning_weight_kg: schema.farrowingRecord.avg_weaning_weight_kg,
+      })
+      .from(schema.farrowingRecord)
+      .where(and(...farrowConditions))
+      .orderBy(desc(schema.farrowingRecord.farrowing_date));
+
+    const totalLitters = farrowings.length;
+    const totalPigletsBornLive = farrowings.reduce((sum, f) => sum + (f.piglets_born_live || 0), 0);
+    const totalPigletsWeaned = farrowings.reduce((sum, f) => sum + (f.piglets_weaned || 0), 0);
+    const avgBornAlive = totalLitters > 0 ? Number((totalPigletsBornLive / totalLitters).toFixed(1)) : 0;
+    const weaningSurvivalRatePct = totalPigletsBornLive > 0 ? Number(((totalPigletsWeaned / totalPigletsBornLive) * 100).toFixed(1)) : 0;
+    const preWeanMortalityPct = totalPigletsBornLive > 0 ? Number((100 - weaningSurvivalRatePct).toFixed(1)) : 0;
+
+    const animalCodeMap = new Map(animals.map((a) => [a.animal_id, a.animal_code]));
+    const recentLitters = farrowings.slice(0, 5).map((f) => ({
+      farrowId: f.farrow_id,
+      sowCode: animalCodeMap.get(f.sow_animal_id) || 'SOW',
+      farrowingDate: f.farrowing_date,
+      pigletsBornLive: f.piglets_born_live || 0,
+      pigletsStillborn: f.piglets_stillborn || 0,
+      pigletsWeaned: f.piglets_weaned || 0,
+      weaningDate: f.weaning_date || null,
+      avgBirthWeightKg: f.avg_birth_weight_kg ? Number(f.avg_birth_weight_kg) : null,
+      avgWeaningWeightKg: f.avg_weaning_weight_kg ? Number(f.avg_weaning_weight_kg) : null,
+    }));
+
+    // 5. Query Real Breeding / Mating Pipeline
+    const breedingConditions = [
+      eq(schema.breedingRecord.tenant_id, tenantId),
+      activeCompanyId ? eq(schema.breedingRecord.company_id, activeCompanyId) : undefined,
+    ].filter(Boolean) as any[];
+
+    if (query.dateFrom && query.dateTo) {
+      breedingConditions.push(gte(schema.breedingRecord.mating_date, query.dateFrom));
+      breedingConditions.push(lte(schema.breedingRecord.mating_date, query.dateTo));
+    }
+
+    const matings = await this.db
+      .select({
+        breeding_id: schema.breedingRecord.breeding_id,
+        mating_type: schema.breedingRecord.mating_type,
+        conception_result: schema.breedingRecord.conception_result,
+        pregnancy_confirmed: schema.breedingRecord.pregnancy_confirmed,
+      })
+      .from(schema.breedingRecord)
+      .where(and(...breedingConditions));
+
+    const totalMatings = matings.length;
+    let confirmedPregnant = 0;
+    let repeatFailed = 0;
+    let aiInseminationCount = 0;
+    let naturalMatingCount = 0;
+
+    for (const m of matings) {
+      if (m.mating_type === 'AI') aiInseminationCount++;
+      else naturalMatingCount++;
+
+      if (m.pregnancy_confirmed || m.conception_result === 'CONFIRMED') confirmedPregnant++;
+      else if (m.conception_result === 'FAILED' || m.conception_result === 'REPEAT') repeatFailed++;
+    }
+
+    // 6. Query Real Production Batches
+    const batchConditions = [
+      eq(schema.batchHeader.tenant_id, tenantId),
+      activeCompanyId ? eq(schema.batchHeader.company_id, activeCompanyId) : undefined,
+      eq(schema.batchHeader.status, 'ACTIVE'),
+    ].filter(Boolean) as any[];
+
+    const batches = await this.db
+      .select({
+        batch_id: schema.batchHeader.batch_id,
+        batch_no: schema.batchHeader.batch_no,
+        current_stage_code: schema.batchHeader.current_stage_code,
+        closing_quantity: schema.batchHeader.closing_quantity,
+        opening_quantity: schema.batchHeader.opening_quantity,
+        total_cost: schema.batchHeader.total_cost,
+        farm_id: schema.batchHeader.farm_id,
+      })
+      .from(schema.batchHeader)
+      .where(and(...batchConditions));
+
+    const activeBatchesCount = batches.length;
+    const totalBatchHeadcount = batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
+
+    // Compute live WIP valuation from batch_transaction (accumulated consumption & overhead)
+    const batchIds = batches.map((b) => b.batch_id);
+    const batchWipMap = new Map<string, number>();
+    if (batchIds.length > 0) {
+      const costTx = await this.db
+        .select({
+          batch_id: schema.batchTransaction.batch_id,
+          amount: schema.batchTransaction.amount,
+        })
+        .from(schema.batchTransaction)
+        .where(
+          and(
+            inArray(schema.batchTransaction.batch_id, batchIds),
+            inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD']),
+            isNull(schema.batchTransaction.reversed_at),
+          )
+        );
+
+      for (const tx of costTx) {
+        batchWipMap.set(
+          tx.batch_id,
+          (batchWipMap.get(tx.batch_id) || 0) + Math.abs(Number(tx.amount || 0)),
+        );
+      }
+    }
+
+    const totalBatchWipValuation = batches.reduce(
+      (sum, b) => sum + (batchWipMap.get(b.batch_id) || Number(b.total_cost) || 0),
+      0,
+    );
+
+    const batchStageMap = new Map<string, { count: number; totalHeads: number }>();
+    for (const b of batches) {
+      const stageCode = b.current_stage_code || 'UNSTAGED';
+      const heads = Number(b.closing_quantity) || Number(b.opening_quantity) || 0;
+      const prev = batchStageMap.get(stageCode) || { count: 0, totalHeads: 0 };
+      batchStageMap.set(stageCode, { count: prev.count + 1, totalHeads: prev.totalHeads + heads });
+    }
+    const batchesByStage = Array.from(batchStageMap.entries()).map(([stageName, val]) => ({
+      stageName,
+      count: val.count,
+      totalHeads: val.totalHeads,
+    }));
+
+    // 7. Query Real Farm Locations
     const farmLocations = await this.db
       .select({
         location_id: schema.locationMaster.location_id,
@@ -128,76 +292,55 @@ export class PiggeryAnalyticsService {
         location_name: schema.locationMaster.location_name,
       })
       .from(schema.locationMaster)
-      .where(and(...farmConditions));
+      .where(
+        and(
+          eq(schema.locationMaster.tenant_id, tenantId),
+          eq(schema.locationMaster.location_type, 'FARM'),
+          activeCompanyId ? eq(schema.locationMaster.company_id, activeCompanyId) : undefined,
+        )
+      );
 
-    // Standard Triple C farm baseline if not all loaded
-    const standardFarms = [
-      { code: 'POR100', name: 'Porta', baseSows: 342, baseGilts: 88, ci: 2.46, ba: 15.8, fr: 96, ws: 4.1, pwm: 7.8, fm: 2.8, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'LIO100', name: 'Lion', baseSows: 318, baseGilts: 72, ci: 2.44, ba: 15.6, fr: 95, ws: 4.2, pwm: 8.2, fm: 3.0, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'VIL100', name: 'Villa', baseSows: 290, baseGilts: 81, ci: 2.41, ba: 15.2, fr: 93, ws: 4.8, pwm: 9.1, fm: 3.4, ai: 'Active' as const, status: 'Watch' as const },
-      { code: 'MUL100', name: 'Multiplier', baseSows: 156, baseGilts: 120, ci: 2.48, ba: 15.9, fr: 97, ws: 4.0, pwm: 6.9, fm: 2.5, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'GRA100', name: 'Grasmere', baseSows: 278, baseGilts: 43, ci: 2.40, ba: 15.1, fr: 92, ws: 5.1, pwm: 10.2, fm: 4.1, ai: 'Partial' as const, status: 'Critical' as const },
-      { code: 'RIC100', name: 'Richmond', baseSows: 214, baseGilts: 38, ci: 2.44, ba: 15.5, fr: 94, ws: 4.4, pwm: 8.4, fm: 3.1, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'LEA100', name: 'Lea / Kintyre', baseSows: 198, baseGilts: 26, ci: 2.42, ba: 15.3, fr: 94, ws: 4.6, pwm: 8.6, fm: 3.3, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'AI100', name: 'AI Station', baseSows: 188, baseGilts: 30, ci: 2.38, ba: 14.9, fr: 91, ws: 5.3, pwm: 9.8, fm: 4.2, ai: 'Inactive' as const, status: 'Critical' as const },
-      { code: 'LEX100', name: 'Lionshead Ext', baseSows: 172, baseGilts: 22, ci: 2.43, ba: 15.4, fr: 95, ws: 4.3, pwm: 8.1, fm: 3.0, ai: 'Active' as const, status: 'On Track' as const },
-      { code: 'F10', name: 'Farm 10', baseSows: 196, baseGilts: 20, ci: 2.39, ba: 15.0, fr: 93, ws: 4.9, pwm: 9.0, fm: 3.6, ai: 'Partial' as const, status: 'Watch' as const },
-    ];
-
-    // 5. Query Farrowing & Breeding Logs
-    const farrowings = await this.db
+    // Map pens/sheds to their parent farm
+    const allLocations = await this.db
       .select({
-        farrow_id: schema.farrowingRecord.farrow_id,
-        sow_animal_id: schema.farrowingRecord.sow_animal_id,
-        farrowing_date: schema.farrowingRecord.farrowing_date,
-        piglets_born_live: schema.farrowingRecord.piglets_born_live,
-        piglets_weaned: schema.farrowingRecord.piglets_weaned,
-        weaning_date: schema.farrowingRecord.weaning_date,
+        location_id: schema.locationMaster.location_id,
+        farm_id: schema.locationMaster.farm_id,
       })
-      .from(schema.farrowingRecord)
-      .where(eq(schema.farrowingRecord.tenant_id, tenantId));
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.tenant_id, tenantId));
 
-    let totalBornLive = farrowings.reduce((sum, f) => sum + (f.piglets_born_live || 0), 0);
-    let totalWeaned = farrowings.reduce((sum, f) => sum + (f.piglets_weaned || 0), 0);
-    let littersCount = farrowings.length;
+    const locToFarmMap = new Map<string, string>();
+    for (const loc of allLocations) {
+      if (loc.farm_id) locToFarmMap.set(loc.location_id, loc.farm_id);
+    }
 
-    const avgBornAlive = littersCount > 0 ? Number((totalBornLive / littersCount).toFixed(1)) : 15.6;
-    const preWeanMortPct = totalBornLive > 0 ? Number((((totalBornLive - totalWeaned) / totalBornLive) * 100).toFixed(1)) : 8.4;
-    const divisionLiveBirths = totalBornLive > 100 ? totalBornLive : 33571;
-    const preWeanLossCount = Math.round(divisionLiveBirths * (preWeanMortPct / 100));
+    const facilityLocations = farmLocations.map((fl) => {
+      const farmAnimals = activeAnimals.filter((a) => {
+        const resolvedFarm = locToFarmMap.get(a.current_location_id || '') || a.current_location_id;
+        return resolvedFarm === fl.location_id;
+      });
+      const farmSows = farmAnimals.filter((a) => a.animal_type === 'SOW').length;
+      const farmGilts = farmAnimals.filter((a) => a.animal_type === 'GILT').length;
+      const farmBatches = batches.filter((b) => b.farm_id === fl.location_id);
+      const farmWip = farmBatches.reduce(
+        (sum, b) => sum + (batchWipMap.get(b.batch_id) || Number(b.total_cost) || 0),
+        0,
+      );
 
-    // Map each farm's scorecard
-    const farmScorecard = standardFarms.map((sf) => {
-      const match = farmLocations.find((fl) => fl.location_code?.startsWith(sf.code.slice(0, 3)));
-      const farmSows = match ? animals.filter((a) => a.current_location_id === match.location_id && a.animal_type === 'SOW').length : sf.baseSows;
-      const farmGilts = match ? animals.filter((a) => a.current_location_id === match.location_id && a.animal_type === 'GILT').length : sf.baseGilts;
+      const isActive = farmAnimals.length > 0 || farmBatches.length > 0;
 
       return {
-        farmId: match?.location_id || sf.code,
-        farmCode: sf.code,
-        farmName: sf.name,
-        sowsCount: farmSows > 0 ? farmSows : sf.baseSows,
-        giltsCount: farmGilts > 0 ? farmGilts : sf.baseGilts,
-        cycleIndex: sf.ci,
-        bornAlivePerLitter: sf.ba,
-        farrowingRatePct: sf.fr,
-        weanToServiceDays: sf.ws,
-        preWeanMortalityPct: sf.pwm,
-        femaleMortalityPct: sf.fm,
-        aiStatus: sf.ai,
-        status: sf.status,
+        locationId: fl.location_id,
+        locationCode: fl.location_code,
+        locationName: fl.location_name,
+        headcount: farmAnimals.length,
+        sowsCount: farmSows,
+        giltsCount: farmGilts,
+        batchesCount: farmBatches.length,
+        wipValuation: farmWip,
+        status: isActive ? ('Active Operations' as const) : ('Standby' as const),
       };
     });
-
-    const divisionCycleIndex = 2.44;
-    const divisionFarrowingRate = 95;
-    const divisionWeanToService = 4.5;
-    const divisionFemaleMort = 3.2;
-
-    // Derived savings and opportunity numbers
-    const mortalitySavingsExtraPigs = Math.round(divisionLiveBirths * Math.max(0, (preWeanMortPct - 7.5) / 100));
-    const cycleIndexGapExtraPigs = Math.round(totalSowsCount * Math.max(0, 2.50 - divisionCycleIndex) * avgBornAlive);
-    const pigletsWeanedPerSowPerYear = Number((avgBornAlive * (1 - preWeanMortPct / 100) * divisionCycleIndex * 2.44).toFixed(1)) || 85.1;
 
     return {
       metadata: {
@@ -205,64 +348,57 @@ export class PiggeryAnalyticsService {
         companyName,
         nobCode: 'LVS_PIGGERY',
         periodCode,
+        businessYear,
         periodStartDate,
         periodEndDate,
         isPeriodActive,
+        availablePeriods: (periods || []).map((p) => ({
+          periodId: p.period_id,
+          periodCode: p.period_code,
+          businessYear: p.business_year,
+          startDate: p.start_date,
+          endDate: p.end_date,
+          isActive: p.is_active,
+        })),
       },
-      impactSummary: {
-        pigletsWeanedPerSowPerYear: Math.max(pigletsWeanedPerSowPerYear, 85.1),
-        divisionLiveBirths,
-        preWeanLossCount,
-        preWeanLossPct: preWeanMortPct,
-        mortalitySavingsExtraPigs: mortalitySavingsExtraPigs || 302,
-        cycleIndexGapExtraPigs: cycleIndexGapExtraPigs || 838,
-        activeBreedingFemales: totalBreedingFemales,
-      },
-      coreKpis: {
-        avgSowsPresent: { value: totalSowsCount, delta: '▲ +4 vs P4', target: 2200, sparkline: [55, 65, 72, 78, 100] },
-        avgGiltsPresent: { value: totalGiltsCount, delta: '▲ +31 vs P4', totalBreeding: totalBreedingFemales, sparkline: [85, 86, 89, 94, 100] },
-        cycleIndex: { value: divisionCycleIndex, delta: '▶ Flat 3 periods', target: 2.50, sparkline: [78, 78, 89, 89, 89] },
-        bornAlivePerLitter: { value: avgBornAlive, delta: '▲ Best of 5 periods', benchmark: 14.5, sparkline: [66, 77, 77, 66, 100] },
-        farrowingRatePct: { value: divisionFarrowingRate, delta: '▶ Stable', target: 90, sparkline: [95, 100, 95, 95, 95] },
-        preWeanMortalityPct: { value: preWeanMortPct, delta: '▼ Improving', target: 8.0, sparkline: [100, 94, 88, 100, 75] },
-        femaleMortalityPct: { value: divisionFemaleMort, delta: '▼ from 4.2% P1', target: 3.0, sparkline: [100, 90, 75, 60, 45] },
-        avgCycleLengthDays: { value: 149.6, delta: '▶ Stable', gestationDays: 116, sparkline: [50, 65, 90, 100, 80] },
-      },
-      cycleAnatomy: {
-        gestationDays: 116,
-        lactationDays: 26.6,
-        weanToServiceDays: 4.3,
-        emptyDays: 2.7,
-        totalCycleDays: 149.6,
-        metrics: {
-          weanToService: { value: 4.3, target: 4.0, status: 'WARN' },
-          lactationDays: { value: 26.6, target: 26.0, status: 'GOOD' },
-          cullRatePct: { value: 48, target: 45, status: 'WARN' },
-          firstLittersPct: { value: Math.round(p1Pct), target: 18, status: 'ALERT' },
+      activeHerdSummary: {
+        totalHeadcount: activeAnimals.length,
+        sowsCount: sows.length,
+        giltsCount: gilts.length,
+        boarsCount: boars.length,
+        parityDistribution: {
+          p0Gilts: { count: parityBuckets.p0, pct: p0Pct },
+          p1: { count: parityBuckets.p1, pct: p1Pct },
+          p2: { count: parityBuckets.p2, pct: p2Pct },
+          p3: { count: parityBuckets.p3, pct: p3Pct },
+          p4Plus: { count: parityBuckets.p4Plus, pct: p4PlusPct },
         },
+        stagesDistribution,
       },
-      parityDistribution: {
-        p1: { count: Math.round((p1Pct / 100) * totalSowsCount), pct: Math.round(p1Pct) },
-        p2: { count: Math.round((p2Pct / 100) * totalSowsCount), pct: Math.round(p2Pct) },
-        p3: { count: Math.round((p3Pct / 100) * totalSowsCount), pct: Math.round(p3Pct) },
-        p4: { count: Math.round((p4Pct / 100) * totalSowsCount), pct: Math.round(p4Pct) },
-        p5: { count: Math.round((p5Pct / 100) * totalSowsCount), pct: Math.round(p5Pct) },
-        p6: { count: Math.round((p6Pct / 100) * totalSowsCount), pct: Math.round(p6Pct) },
-        p7Plus: { count: Math.round((p7PlusPct / 100) * totalSowsCount), pct: Math.round(p7PlusPct) },
-        firstLitterPct: Math.round(p1Pct),
+      reproductiveIntelligence: {
+        totalLittersRecorded: totalLitters,
+        totalPigletsBornLive,
+        avgBornAlivePerLitter: avgBornAlive,
+        totalPigletsWeaned,
+        weaningSurvivalRatePct,
+        preWeanMortalityPct,
+        conceptionPipeline: {
+          totalMatings,
+          confirmedPregnant,
+          repeatFailed,
+          completedWeaned: totalLitters,
+          aiInseminationCount,
+          naturalMatingCount,
+        },
+        recentLitters,
       },
-      farmScorecard,
-      divisionTotals: {
-        sowsCount: totalSowsCount,
-        giltsCount: totalGiltsCount,
-        cycleIndex: divisionCycleIndex,
-        bornAlivePerLitter: avgBornAlive,
-        farrowingRatePct: divisionFarrowingRate,
-        weanToServiceDays: divisionWeanToService,
-        preWeanMortalityPct: preWeanMortPct,
-        femaleMortalityPct: divisionFemaleMort,
-        status: 'Watch CI',
+      productionBatchesSummary: {
+        activeBatchesCount,
+        totalBatchHeadcount,
+        totalBatchWipValuation,
+        batchesByStage,
       },
+      facilityLocations,
     };
   }
 }

@@ -5,6 +5,7 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { PiggeryAnalyticsService } from './piggery-analytics.service';
+import type { QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
 
 @ApiTags('Piggery GM Dashboard & Analytics')
 @ApiBearerAuth()
@@ -19,10 +20,9 @@ export class PiggeryAnalyticsController {
   @ApiOperation({ summary: 'Get Piggery GM Executive Dashboard telemetry, reproductive metrics, and farm scorecard' })
   async getGmDashboard(
     @Req() req: any,
-    @Query('companyId') companyId?: string,
-    @Query('periodId') periodId?: string,
+    @Query() query: QueryPiggeryGmDashboardDto,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    return await this.analyticsService.getGmDashboard(tenantId, companyId, periodId);
+    return await this.analyticsService.getGmDashboard(tenantId, query);
   }
 }
