@@ -548,6 +548,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-backfill-animal-grn-stock": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/backfill-animal-grn-stock.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-repair-demo-schedulers": {
         "executor": "nx:run-commands",
         "cache": false,

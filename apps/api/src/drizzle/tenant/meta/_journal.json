@@ -1380,6 +1380,13 @@
       "when": 1792000000065,
       "tag": "0197_lifecycle_retired_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "5",
+      "when": 1792000000066,
+      "tag": "0198_animal_registration_gl",
+      "breakpoints": true
     }
   ]
 }

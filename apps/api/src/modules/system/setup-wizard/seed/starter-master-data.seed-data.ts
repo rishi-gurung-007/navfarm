@@ -79,6 +79,8 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
   { transaction_type: 'OVERHEAD_VARIANCE', debit_account_code: '5060', credit_account_code: '1020' },
   // Batch — Bio-Asset (IAS 41) costing lifecycle
   { transaction_type: 'BIO_ACQUISITION', debit_account_code: '1050', credit_account_code: '2010' },
+  // An animal registered against a GRN leaves stock for the herd (14 Oct): the GRN already credited payables.
+  { transaction_type: 'ANIMAL_REGISTRATION', debit_account_code: '1050', credit_account_code: '1010' },
   { transaction_type: 'BIO_CONSUMPTION_PREMATURE', debit_account_code: '1050', credit_account_code: '1010' },
   { transaction_type: 'BIO_CONSUMPTION_MATURE', debit_account_code: '5080', credit_account_code: '1010' },
   { transaction_type: 'BIO_OUTPUT', debit_account_code: '1030', credit_account_code: '1060' },

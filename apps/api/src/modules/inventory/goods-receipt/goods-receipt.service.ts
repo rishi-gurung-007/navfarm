@@ -378,6 +378,32 @@ export class GoodsReceiptService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    if (query.animalItemId) {
+      // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose own stock of the animal's
+      // item still holds an animal — each registration takes one out — with how many are left.
+      const L = schema.inventoryLedger;
+      const left = sql<string>`SUM(${L.remaining_quantity})`;
+      const received = sql<string>`SUM(${L.quantity})`;
+      const rows = await this.db
+        .select({ receipt: schema.goodsReceipt, left, received })
+        .from(schema.goodsReceipt)
+        .innerJoin(schema.goodsReceiptLine, and(
+          eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
+          eq(schema.goodsReceiptLine.item_id, query.animalItemId),
+        ))
+        .innerJoin(L, and(eq(L.document_line_id, schema.goodsReceiptLine.line_id), eq(L.document_type, 'GOODS_RECEIPT'), eq(L.entry_type, 'POSITIVE')))
+        .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
+        .groupBy(schema.goodsReceipt.receipt_id)
+        .having(sql`${left} >= 1`)
+        .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no))
+        .limit(limit)
+        .offset(offset);
+      return rows.map((r) => {
+        const n = Math.floor(Number(r.left));
+        return { ...r.receipt, animals_left: n, animals_left_label: `${n} of ${Math.floor(Number(r.received))} left` };
+      });
+    }
+
     return this.db
       .select()
       .from(schema.goodsReceipt)

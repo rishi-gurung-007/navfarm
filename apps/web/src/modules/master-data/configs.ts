@@ -540,15 +540,17 @@ const animal: MasterDataConfig = {
     { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", min: 0, readOnly: true, ageFromDates: { from: "dob", to: "entry_date", unit: "weeksAndDays" }, helpText: "The animal's age on the Entry Date, in weeks and days. Calculated from Date of Birth and Entry Date.", section: "Acquisition" },
     // The same age as a single count of days (3 weeks 2 days reads as 23). Shown only; the API stores whole weeks.
     { key: "age_at_entry_days", label: "Age at Entry (Days)", type: "number", min: 0, readOnly: true, hideInTable: true, ageFromDates: { from: "dob", to: "entry_date", unit: "totalDays" }, helpText: "The animal's age on the Entry Date, in total days. Calculated; not typed.", section: "Acquisition" },
+    // LIVESTOCK is the item type seeded for living biological assets. There is
+    // no LIVING_ASSET item type; using it here left this required picker empty.
+    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
     // Shown only for the entry types they belong to. The API has always
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
-    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on. Leave empty if N/A for local purchase.", section: "Acquisition" },
+    // 14 Oct (Rishi): only posted GRNs that still hold an animal of the chosen item, with how many are left; registering
+    // takes one out of that GRN's stock and the animal's cost is the GRN's rate.
+    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no", "animals_left_label"], dependsOn: "item_id", dependsOnMode: "query", queryParams: { item_id: "animalItemId" }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on: choose the Item first, then a GRN that still has one of it in stock. Registering takes one animal out of that GRN's stock. Leave empty if N/A for local purchase.", section: "Acquisition" },
     { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
-    // LIVESTOCK is the item type seeded for living biological assets. There is
-    // no LIVING_ASSET item type; using it here left this required picker empty.
-    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
     // An imported animal's cost is read off its goods receipt by the API and anything
     // typed is discarded, so it stays readOnly. A local purchase without a GRN requires manual cost entry.
     { key: "acquisition_cost", label: "Acquisition Cost", type: "number", step: "0.01", min: 0, max: 99999999999999, readOnly: true, createOnly: true, visibleWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "Taken from the rate on the source goods receipt.", section: "Acquisition" },
@@ -2038,6 +2040,7 @@ const glMapping: MasterDataConfig = {
         { value: "OVERHEAD_VARIANCE", label: "Batch — Overhead Variance (Standard Costing)" },
         // Batch — Bio-Asset (IAS 41) costing lifecycle
         { value: "BIO_ACQUISITION", label: "Bio-Asset — Acquisition" },
+        { value: "ANIMAL_REGISTRATION", label: "Bio-Asset — Animal Registered from a GRN" },
         { value: "BIO_CONSUMPTION_PREMATURE", label: "Bio-Asset — Consumption (Pre-mature, Capitalized)" },
         { value: "BIO_CONSUMPTION_MATURE", label: "Bio-Asset — Consumption (Mature, Expensed)" },
         { value: "BIO_OUTPUT", label: "Bio-Asset — Output" },

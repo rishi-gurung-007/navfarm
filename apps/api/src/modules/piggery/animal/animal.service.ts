@@ -15,6 +15,8 @@ import { AnimalMovementLogService } from '../animal-movement-log/animal-movement
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { BatchService } from '../../production/batch/batch.service';
+import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { assertStageFitsAnimal } from '../../production/stage/stage-gender';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
@@ -173,6 +175,8 @@ export class AnimalService {
     private readonly nobLobResolution: NobLobResolutionService,
     private readonly movementLog: AnimalMovementLogService,
     private readonly batchService: BatchService,
+    private readonly ledgerService: InventoryLedgerService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -590,6 +594,9 @@ export class AnimalService {
     // If no receipt is provided (allowed for local purchases, on-farm births, transfers), acquisition_cost
     // must be provided by the caller.
     let acquisitionCost = dto.acquisition_cost;
+    // The GRN's stock this animal comes out of (Rishi, 14 Oct): the receipt put the animals in stock; each one
+    // registered against it takes one out of that receipt's own layer, at that receipt's cost.
+    let receiptLayer: { ledger_id: string; uom: string; warehouse_id: string | null; lot_no: string | null; serial_no: string | null } | undefined;
     if (dto.source_receipt_id) {
       // A receipt reaches a farm through the warehouse it was received into.
       await this.assertExists(
@@ -602,14 +609,33 @@ export class AnimalService {
         'Goods receipt', dto.source_receipt_id,
       );
 
-      const [receiptLine] = await this.db
-        .select({ rate: schema.goodsReceiptLine.rate, amount: schema.goodsReceiptLine.amount })
+      const receiptLines = await this.db
+        .select({
+          rate: schema.goodsReceiptLine.rate,
+          amount: schema.goodsReceiptLine.amount,
+          receipt_no: schema.goodsReceipt.receipt_no,
+          status: schema.goodsReceipt.status,
+          ledger_id: schema.inventoryLedger.ledger_id,
+          remaining: schema.inventoryLedger.remaining_quantity,
+          uom: schema.inventoryLedger.uom,
+          warehouse_id: schema.inventoryLedger.warehouse_id,
+          lot_no: schema.inventoryLedger.lot_no,
+          serial_no: schema.inventoryLedger.serial_no,
+        })
         .from(schema.goodsReceiptLine)
+        .innerJoin(schema.goodsReceipt, eq(schema.goodsReceipt.receipt_id, schema.goodsReceiptLine.receipt_id))
+        .leftJoin(schema.inventoryLedger, and(
+          eq(schema.inventoryLedger.document_line_id, schema.goodsReceiptLine.line_id),
+          eq(schema.inventoryLedger.document_type, 'GOODS_RECEIPT'),
+          eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+        ))
         .where(and(
           eq(schema.goodsReceiptLine.receipt_id, dto.source_receipt_id),
           eq(schema.goodsReceiptLine.item_id, dto.item_id),
         ))
-        .limit(1);
+        .orderBy(schema.goodsReceiptLine.line_no);
+      // A GRN can carry the item on more than one line: the first line that still has an animal in stock.
+      const receiptLine = receiptLines.find((l) => l.ledger_id && Number(l.remaining) >= 1) ?? receiptLines[0];
 
       if (!receiptLine) {
         throw new BadRequestException(
@@ -621,6 +647,19 @@ export class AnimalService {
           `The source GRN line for this animal's item carries no rate, so the acquisition cost cannot be derived from it.`,
         );
       }
+      if (receiptLine.status !== 'POSTED' || !receiptLine.ledger_id) {
+        throw new BadRequestException(`GRN ${receiptLine.receipt_no} is not posted, so its animals are not in stock yet. Post the GRN first.`);
+      }
+      if (Number(receiptLine.remaining) < 1) {
+        throw new BadRequestException(`GRN ${receiptLine.receipt_no} has no animals of this item left to register: every one it received is already registered or has left stock.`);
+      }
+      receiptLayer = {
+        ledger_id: receiptLine.ledger_id,
+        uom: receiptLine.uom ?? 'HEAD',
+        warehouse_id: receiptLine.warehouse_id,
+        lot_no: receiptLine.lot_no,
+        serial_no: receiptLine.serial_no,
+      };
       acquisitionCost = Number(receiptLine.rate);
     }
 
@@ -731,6 +770,28 @@ export class AnimalService {
     };
 
     await this.db.insert(schema.animalRegister).values(newAnimal);
+
+    if (receiptLayer) {
+      // One animal leaves the GRN's stock for the herd: Dr Biological Assets / Cr Inventory (ANIMAL_REGISTRATION).
+      const ledgerEntry = await this.ledgerService.writeNegativeEntry({
+        tenantId,
+        companyId: dto.company_id,
+        itemId: dto.item_id,
+        documentType: 'ANIMAL_REGISTRATION',
+        documentNo: animalCode,
+        documentLineId: animalId,
+        postingDate: dto.entry_date,
+        transactionType: 'ANIMAL_REGISTRATION',
+        quantity: 1,
+        uom: receiptLayer.uom,
+        sourceLedgerId: receiptLayer.ledger_id,
+        warehouseId: receiptLayer.warehouse_id ?? undefined,
+        lotNo: receiptLayer.lot_no ?? undefined,
+        serialNo: receiptLayer.serial_no ?? undefined,
+        userId: userPayload?.userId,
+      });
+      await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+    }
 
     // Record IAS 41 Opening Acquisition in bio_asset_ledger for this tagged animal
     await this.db.insert(schema.bioAssetLedger).values({
