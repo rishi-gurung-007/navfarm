@@ -3952,6 +3952,11 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   document_type: varchar('document_type', { length: 30 }),
   warehouse_id: varchar('warehouse_id', { length: 36 }),
   uom: varchar('uom', { length: 20 }),
+  // 0200 (Rishi, 14 Oct): a GRN's entry is a receipt of animals — its remaining is what has not been registered yet,
+  // its GRN line is document_line_id — and an animal's registration names the GRN entry it was taken from.
+  remaining_quantity: decimal('remaining_quantity', { precision: 18, scale: 4 }),
+  document_line_id: varchar('document_line_id', { length: 36 }),
+  source_entry_id: varchar('source_entry_id', { length: 36 }),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   bio_asset_item_id: varchar('bio_asset_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),

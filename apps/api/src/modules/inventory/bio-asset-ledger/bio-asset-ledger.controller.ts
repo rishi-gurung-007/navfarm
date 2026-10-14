@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ledgerRowsToCsv, ledgerRowsToXlsx, type LedgerExportColumn } from '../inventory-ledger/inventory-ledger-export';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -33,6 +33,15 @@ export class BioAssetLedgerController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.bioAssetLedgerService.entries(query, tenantId);
     return { success: true, message: 'Bio Asset Ledger entries retrieved successfully.', data: result };
+  }
+
+  @Get('entries/:id')
+  @RequirePermission('INVENTORY', 'BIO_ASSET_LEDGER', 'view')
+  @ApiOperation({ summary: 'One Bio Asset Ledger entry: a GRN entry with the animals registered from it, or a registration with its GRN' })
+  async entryDetail(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.bioAssetLedgerService.entryDetail(id, tenantId);
+    return { success: true, message: 'Bio Asset Ledger entry retrieved successfully.', data: result };
   }
 
   @Get('export')
@@ -81,6 +90,7 @@ const BIO_EXPORT_COLUMNS: LedgerExportColumn<BioExportRow>[] = [
   { key: 'warehouse_code', header: 'Location Code', kind: 'text', width: 22 },
   { key: 'warehouse_name', header: 'Location', kind: 'text', width: 26 },
   { key: 'quantity', header: 'Quantity', kind: 'number', width: 12 },
+  { key: 'remaining_quantity', header: 'Remaining Quantity', kind: 'number', width: 18 },
   { key: 'uom', header: 'UOM', kind: 'text', width: 8 },
   { key: 'rate', header: 'Unit Cost', kind: 'number', width: 14 },
   { key: 'amount', header: 'Amount', kind: 'number', width: 14 },

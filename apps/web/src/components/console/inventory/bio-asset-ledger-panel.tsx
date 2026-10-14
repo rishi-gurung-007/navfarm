@@ -2,8 +2,9 @@
 
 /**
  * Bio Asset Ledger (Rishi, 14 Oct). Biological assets are not stock: a GRN of one posts nothing to the Inventory
- * Ledger. An animal counts here instead — +1 when it is registered, -1 when it dies — and this page reads like the
- * Inventory Ledger Entries page: the same filters, columns, badges and exports.
+ * Ledger. It is a + entry here instead, with what remains to register; each animal registered from it is taken from
+ * that entry (+1, "from GR-…"), and a death is the only -. The page reads like the Inventory Ledger Entries page: the
+ * same filters, columns, badges, exports and entry view.
  */
 import { useEffect, useState } from "react";
 import { Loader2, Inbox, Eye, RotateCcw, Search, Download, FileSpreadsheet } from "lucide-react";
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import BioAssetLedgerDetail, { BIO_DOCUMENT_LABEL, BIO_TRANSACTION_LABEL } from "./bio-asset-ledger-detail";
 
 const PAGE_SIZE = 25;
 
@@ -35,7 +37,7 @@ const S = {
 
 const inputCls = "nf-input-sm";
 
-const TRANSACTION_LABEL: Record<string, string> = { ANIMAL_REGISTRATION: "Animal Registration", MORTALITY: "Mortality" };
+const TRANSACTION_LABEL = BIO_TRANSACTION_LABEL;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
@@ -255,6 +257,7 @@ export default function BioAssetLedgerPanel() {
             onChange={setTransactionType}
             options={[
               { value: "", label: t("ilpAllTransactionTypes") },
+              { value: "PURCHASE", label: "Purchase" },
               { value: "ANIMAL_REGISTRATION", label: "Animal Registration" },
               { value: "MORTALITY", label: "Mortality" },
             ]}
@@ -303,6 +306,7 @@ export default function BioAssetLedgerPanel() {
                 <TableHead className="whitespace-nowrap min-w-[135px]">Transaction Type</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpQty")}</TableHead>
+                <TableHead className="whitespace-nowrap text-right w-28">{t("ilpRemaining")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">{t("ilpRate")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpAmount")}</TableHead>
                 <TableHead className="whitespace-nowrap w-28">Animal</TableHead>
@@ -313,14 +317,14 @@ export default function BioAssetLedgerPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} />
                     Loading Bio Asset Ledger entries…
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={14} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
                     {hasActiveFilters ? "No Bio Asset Ledger entries match the selected filters." : "No animal has been registered yet."}
                   </TableCell>
@@ -337,7 +341,7 @@ export default function BioAssetLedgerPanel() {
                         <div className="flex flex-col">
                           <span className="font-mono text-xs font-semibold" style={S.primary}>{row.document_no}</span>
                           <span className="text-[10px] uppercase" style={S.muted}>
-                            {TRANSACTION_LABEL[row.transaction_type] ?? row.transaction_type}
+                            {BIO_DOCUMENT_LABEL[row.document_type] ?? row.document_type}
                             {row.source_grn_no ? ` • from ${row.source_grn_no}` : ""}
                           </span>
                         </div>
@@ -356,6 +360,15 @@ export default function BioAssetLedgerPanel() {
                       <TableCell className="whitespace-nowrap text-right font-mono font-semibold" style={{ color: isPos ? "var(--success)" : "var(--danger)" }}>
                         {isPos ? `+${qtyText(qty)}` : qtyText(qty)}
                         <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>
+                      </TableCell>
+                      {/* Remaining: a GRN's animals not registered yet. */}
+                      <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
+                        {row.transaction_type === "PURCHASE" ? (
+                          <span className={Number(row.remaining_quantity) === 0 ? "text-[var(--text-muted)] line-through" : ""}>
+                            {qtyText(Number(row.remaining_quantity ?? 0))}
+                            <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
+                          </span>
+                        ) : <span style={S.muted}>—</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>{formatMoney(Number(row.rate || 0))}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>{formatMoney(Number(row.amount || 0))}</TableCell>
@@ -394,44 +407,11 @@ export default function BioAssetLedgerPanel() {
         open={Boolean(viewingEntry)}
         onClose={() => setViewingEntry(null)}
         title={viewingEntry ? `Bio Asset Ledger Entry — ${viewingEntry.document_no}` : ""}
-        maxWidth="lg"
+        maxWidth="xl"
       >
-        {viewingEntry && <BioAssetLedgerEntryDetail entry={viewingEntry} formatMoney={formatMoney} />}
+        {viewingEntry && <BioAssetLedgerDetail entryId={viewingEntry.entry_id} initialData={viewingEntry} onClose={() => setViewingEntry(null)} />}
       </Dialog>
     </div>
   );
 }
 
-function BioAssetLedgerEntryDetail({ entry, formatMoney }: { entry: Row; formatMoney: (n: number) => string }) {
-  const qty = Number(entry.quantity || 0);
-  const fields: Array<[string, React.ReactNode]> = [
-    ["Entry No.", entry.entry_no],
-    ["Posting Date", entry.posting_date],
-    ["Transaction Type", TRANSACTION_LABEL[entry.transaction_type] ?? entry.transaction_type],
-    ["Entry Type", qty > 0 ? "Positive (+)" : "Negative (-)"],
-    ["Document No.", entry.document_no],
-    ["Animal", entry.animal_id
-      ? <a className="text-(--accent) hover:underline" href={`/master-data/animal?recordId=${encodeURIComponent(entry.animal_id)}`}>{entry.animal_code || entry.document_no}</a>
-      : "—"],
-    ["Source GRN", entry.source_grn_no || "—"],
-    ["Item", `${entry.item_code} — ${entry.item_description}`],
-    ["Location", entry.warehouse_code ? `${entry.warehouse_code}${entry.warehouse_name ? ` — ${entry.warehouse_name}` : ""}` : "—"],
-    ["Quantity", `${qty > 0 ? "+" : ""}${qtyText(qty)} ${entry.uom ?? ""}`],
-    ["Unit Cost", formatMoney(Number(entry.rate || 0))],
-    ["Amount", formatMoney(Number(entry.amount || 0))],
-    ["Batch No.", entry.batch_no || "—"],
-    ["Lot No.", entry.lot_no || "—"],
-    ["Status", entry.status || "—"],
-    ["Created At", entry.created_at ? String(entry.created_at).replace("T", " ").slice(0, 19) : "—"],
-  ];
-  return (
-    <dl className="grid grid-cols-1 gap-4 py-1 sm:grid-cols-2">
-      {fields.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-          <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}

@@ -145,10 +145,10 @@ export class QueryBioAssetLedgerEntriesDto {
   @IsIn(['POSITIVE', 'NEGATIVE'])
   entryType?: 'POSITIVE' | 'NEGATIVE';
 
-  @ApiProperty({ description: 'ANIMAL_REGISTRATION or MORTALITY', required: false, enum: ['ANIMAL_REGISTRATION', 'MORTALITY'] })
+  @ApiProperty({ description: 'PURCHASE (a GRN), ANIMAL_REGISTRATION or MORTALITY', required: false, enum: ['PURCHASE', 'ANIMAL_REGISTRATION', 'MORTALITY'] })
   @IsOptional()
-  @IsIn(['ANIMAL_REGISTRATION', 'MORTALITY'])
-  transactionType?: 'ANIMAL_REGISTRATION' | 'MORTALITY';
+  @IsIn(['PURCHASE', 'ANIMAL_REGISTRATION', 'MORTALITY'])
+  transactionType?: 'PURCHASE' | 'ANIMAL_REGISTRATION' | 'MORTALITY';
 
   @ApiProperty({ description: 'Search document no., item, animal, batch or source GRN', required: false })
   @IsOptional()

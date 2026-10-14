@@ -39,8 +39,16 @@ describe('AnimalService', () => {
     return chain;
   };
   const grnReceipt = (over: any = {}) => rowsOf([{ receipt_id: 'grn-1', receipt_no: 'GR-000001', status: 'POSTED', batch_id: 'batch-1', ...over }]);
-  const grnLines = (...lines: Array<{ rate: string | null; quantity: string }>) => rowsOf(lines.map((l) => ({ ...l, uom: 'HEAD' })));
-  const registered = (n: number) => rowsOf([{ n }]);
+  // The GRN's Bio Asset Ledger entries of the animal's item, one per GRN line (14 Oct): each keeps what remains.
+  const grnEntries = (...entries: Array<{ rate: string | null; remaining: string }>) =>
+    rowsOf(entries.map((e, i) => ({ entry_id: `bio-grn-${i + 1}`, uom: 'HEAD', ...e })));
+  // Taking an animal from a GRN entry is one update of its remaining.
+  const takeFromGrn = () => {
+    const where = jest.fn().mockResolvedValue({});
+    const set = jest.fn().mockReturnValue({ where });
+    mockDbUpdate.mockReturnValue({ set });
+    return set;
+  };
   const joinedTreatmentRows = (rows: any[]) => ({ from: () => ({
     innerJoin: jest.fn().mockReturnThis(), where: jest.fn().mockResolvedValue(rows),
   }) });
@@ -177,8 +185,8 @@ describe('AnimalService', () => {
         // the purchased path reads the receipt, its lines and the animals already registered from it;
         // the born-on-farm path reads the source batch (the receipt row answers it too).
         .mockReturnValueOnce(grnReceipt())
-        .mockReturnValueOnce(grnLines({ rate: '2857.57', quantity: '6' }));
-      if (entryType === 'PURCHASED_IMPORTED') mockDbSelect.mockReturnValueOnce(registered(0));
+        .mockReturnValueOnce(grnEntries({ rate: '2857.57', remaining: '6' }));
+      takeFromGrn();
       mockDbSelect
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
@@ -625,10 +633,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(grnReceipt())
-        .mockReturnValueOnce(grnLines({ rate: '1500.0000', quantity: '6' }))
-        .mockReturnValueOnce(registered(0))
+        .mockReturnValueOnce(grnEntries({ rate: '1500.0000', remaining: '6' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
+      takeFromGrn();
 
       const inserted: any[] = [];
       mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
@@ -646,7 +654,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(grnReceipt())
-        .mockReturnValueOnce(grnLines());
+        .mockReturnValueOnce(grnEntries());
 
       await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/receipt/i);
     });
@@ -663,10 +671,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(grnReceipt())
-        .mockReturnValueOnce(grnLines({ rate: '1500.0000', quantity: '6' }))
-        .mockReturnValueOnce(registered(0))
+        .mockReturnValueOnce(grnEntries({ rate: '1500.0000', remaining: '6' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
+      takeFromGrn();
 
       const inserted: any[] = [];
       mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
@@ -707,51 +715,58 @@ describe('AnimalService', () => {
       expect(inserted[0].acquisition_cost).toBe('2857.57');
     });
 
-    // 14 Oct (Rishi): a biological asset is not stock. A GRN of 6 registers 6 animals; each is the Bio Asset
-    // Ledger's +1, at the cost of the GRN line it comes from, and nothing touches the inventory ledger.
-    const registerFrom = (receipt: any, lines: any, alreadyRegistered: number) => mockDbSelect
+    // 14 Oct (Rishi): a biological asset is not stock. A GRN is a + entry in the Bio Asset Ledger; each animal
+    // registered from it is taken from that entry (its remaining counts down) and is the ledger's +1, at that
+    // GRN line's cost. Nothing touches the inventory ledger.
+    const registerFrom = (receipt: any, entries: any) => mockDbSelect
       .mockReturnValueOnce(found({ company_id: 'comp-1' }))
       .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
       .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
       .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
       .mockReturnValueOnce(found({ item_id: 'item-1' }))
       .mockReturnValueOnce(receipt)
-      .mockReturnValueOnce(lines)
-      .mockReturnValueOnce(registered(alreadyRegistered))
+      .mockReturnValueOnce(entries)
       .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
       .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-0001' }));
 
-    it('writes the animal\'s +1 to the Bio Asset Ledger as its registration, at the GRN cost, with the GRN locked', async () => {
+    it('takes the animal from the GRN entry and writes its +1, naming that entry, with the GRN and its entries locked', async () => {
       const receipt = grnReceipt();
-      registerFrom(receipt, grnLines({ rate: '1500.0000', quantity: '6' }), 2);
+      const entries = grnEntries({ rate: '1500.0000', remaining: '4' });
+      registerFrom(receipt, entries);
+      const set = takeFromGrn();
       const inserted: any[] = [];
       mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
 
       await service.create(purchased as any, 'tenant-123');
 
       expect(receipt.for).toHaveBeenCalledWith('update');
+      expect(entries.for).toHaveBeenCalledWith('update');
+      expect(set).toHaveBeenCalledWith({ remaining_quantity: expect.anything() });
       const bio = inserted.find((v) => v.entry_type === 'ACQUISITION');
-      expect(bio).toMatchObject({ document_type: 'ANIMAL_REGISTRATION', quantity: '1.0000', cost_amount: '1500', uom: 'HEAD' });
+      expect(bio).toMatchObject({ document_type: 'ANIMAL_REGISTRATION', source_entry_id: 'bio-grn-1', quantity: '1.0000', cost_amount: '1500', uom: 'HEAD' });
     });
 
-    it('takes the next line\'s cost once every animal of the first line is registered', async () => {
-      registerFrom(grnReceipt(), grnLines({ rate: '1000.0000', quantity: '2' }, { rate: '1200.0000', quantity: '3' }), 2);
+    it('takes from the next GRN line\'s entry, at its cost, once the first line has none left', async () => {
+      registerFrom(grnReceipt(), grnEntries({ rate: '1000.0000', remaining: '0' }, { rate: '1200.0000', remaining: '3' }));
+      takeFromGrn();
       const inserted: any[] = [];
       mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
 
       await service.create(purchased as any, 'tenant-123');
 
       expect(inserted[0].acquisition_cost).toBe('1200');
+      expect(inserted.find((v) => v.entry_type === 'ACQUISITION').source_entry_id).toBe('bio-grn-2');
     });
 
     it('refuses when every animal the GRN received is already registered', async () => {
-      registerFrom(grnReceipt(), grnLines({ rate: '1500.0000', quantity: '6' }), 6);
+      registerFrom(grnReceipt(), grnEntries({ rate: '1500.0000', remaining: '0' }));
       await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 has no animals of this item left/);
       expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses a GRN that is not posted yet', async () => {
-      registerFrom(grnReceipt({ status: 'DRAFT' }), grnLines({ rate: '1500.0000', quantity: '6' }), 0);
+      registerFrom(grnReceipt({ status: 'DRAFT' }), grnEntries({ rate: '1500.0000', remaining: '6' }));
       await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 is not posted yet/);
     });
   });

@@ -1,5 +1,4 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { receiptLineFor } from '../../../common/grn-animals';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, count, sql, inArray, desc } from 'drizzle-orm';
@@ -380,36 +379,30 @@ export class GoodsReceiptService {
     const offset = query.offset || 0;
 
     if (query.animalItemId) {
-      // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN that still has an animal of this item
-      // to register — what it received less the animals already registered from it — with the unit cost the next one
-      // is registered at. A biological asset is not stock, so this is counted from the GRN and the Animal Register.
-      const lines = await this.db
-        .select({ receipt: schema.goodsReceipt, line_no: schema.goodsReceiptLine.line_no, rate: schema.goodsReceiptLine.rate, quantity: schema.goodsReceiptLine.quantity })
+      // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose Bio Asset Ledger entries for
+      // this item still have an animal remaining — each registration takes one — with the unit cost of the entry the
+      // next animal is taken from (the GRN's first line of the item that still has one).
+      const B = schema.bioAssetLedger;
+      const entries = await this.db
+        .select({ receipt: schema.goodsReceipt, remaining: B.remaining_quantity, quantity: B.quantity, rate: B.cost_amount_each_unit })
         .from(schema.goodsReceipt)
         .innerJoin(schema.goodsReceiptLine, and(
           eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
           eq(schema.goodsReceiptLine.item_id, query.animalItemId),
         ))
+        .innerJoin(B, and(eq(B.document_line_id, schema.goodsReceiptLine.line_id), eq(B.entry_type, 'PURCHASE')))
         .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
         .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no), schema.goodsReceiptLine.line_no);
-      const receiptIds = [...new Set(lines.map((l) => l.receipt.receipt_id))];
-      const registered = new Map((receiptIds.length ? await this.db
-        .select({ receipt_id: schema.animalRegister.source_receipt_id, n: count() })
-        .from(schema.animalRegister)
-        .where(and(inArray(schema.animalRegister.source_receipt_id, receiptIds), eq(schema.animalRegister.item_id, query.animalItemId)))
-        .groupBy(schema.animalRegister.source_receipt_id) : []).map((r) => [r.receipt_id, Number(r.n)]));
-      const byReceipt = new Map<string, { receipt: typeof lines[number]['receipt']; lines: Array<{ quantity: number; rate: number | null }> }>();
-      for (const l of lines) {
-        const r = byReceipt.get(l.receipt.receipt_id) ?? { receipt: l.receipt, lines: [] };
-        r.lines.push({ quantity: Number(l.quantity), rate: l.rate == null ? null : Number(l.rate) });
-        byReceipt.set(l.receipt.receipt_id, r);
+      const byReceipt = new Map<string, { receipt: typeof entries[number]['receipt']; left: number; received: number; unitCost: number | null }>();
+      for (const e of entries) {
+        const r = byReceipt.get(e.receipt.receipt_id) ?? { receipt: e.receipt, left: 0, received: 0, unitCost: null };
+        const left = Math.floor(Number(e.remaining ?? 0));
+        r.left += left;
+        r.received += Math.floor(Number(e.quantity ?? 0));
+        if (r.unitCost === null && left >= 1 && e.rate != null) r.unitCost = Number(e.rate);
+        byReceipt.set(e.receipt.receipt_id, r);
       }
       return [...byReceipt.values()]
-        .map((r) => {
-          const received = Math.floor(r.lines.reduce((n, l) => n + l.quantity, 0));
-          const used = registered.get(r.receipt.receipt_id) ?? 0;
-          return { ...r, received, left: received - used, unitCost: receiptLineFor(r.lines, used)?.rate ?? null };
-        })
         .filter((r) => r.left >= 1)
         .slice(offset, offset + limit)
         .map((r) => ({
@@ -562,16 +555,43 @@ export class GoodsReceiptService {
         throw new BadRequestException('GRN cannot be posted — it was already posted by another request.');
       }
 
-      // A biological asset is not stock (Rishi, 14 Oct): its line posts no inventory entry and no journal. The animals
-      // it brought in are counted by the Bio Asset Ledger as each is registered from this GRN.
+      // A biological asset is not stock (Rishi, 14 Oct): its line posts no inventory entry and no journal. It is a
+      // positive entry in the Bio Asset Ledger instead — the animals it brought in — which each animal registered
+      // from this GRN is taken from (its remaining counts down).
       const lineItemIds = [...new Set(receipt.lines.map((l: { item_id: string }) => l.item_id))] as string[];
-      const bioItemIds = new Set((await this.db
-        .select({ item_id: schema.itemMaster.item_id })
+      const bioItems = new Map((await this.db
+        .select({ item_id: schema.itemMaster.item_id, nob_id: schema.itemMaster.nob_id, lob_id: schema.itemMaster.lob_id })
         .from(schema.itemMaster)
-        .where(and(inArray(schema.itemMaster.item_id, lineItemIds), eq(schema.itemMaster.is_biological_asset, true)))).map((r) => r.item_id));
+        .where(and(inArray(schema.itemMaster.item_id, lineItemIds), eq(schema.itemMaster.is_biological_asset, true)))).map((r) => [r.item_id, r]));
 
       for (const line of receipt.lines) {
-        if (!bioItemIds.has(line.item_id)) {
+        const bioItem = bioItems.get(line.item_id);
+        if (bioItem) {
+          const quantity = Number(line.quantity);
+          const rate = line.rate == null ? null : Number(line.rate);
+          await this.db.insert(schema.bioAssetLedger).values({
+            entry_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: receipt.company_id,
+            bio_asset_item_id: line.item_id,
+            entry_type: 'PURCHASE',
+            document_type: 'GOODS_RECEIPT',
+            document_no: receipt.receipt_no,
+            document_line_id: line.line_id,
+            posting_date: receipt.posting_date,
+            lot_no: line.lot_no || null,
+            warehouse_id: receipt.warehouse_id,
+            uom: line.uom,
+            quantity: quantity.toFixed(4),
+            remaining_quantity: quantity.toFixed(4),
+            cost_amount: (quantity * (rate ?? 0)).toFixed(4),
+            cost_amount_each_unit: rate == null ? null : rate.toFixed(4),
+            costing_method: 'COST_ACCUMULATION',
+            nob_id: bioItem.nob_id ?? null,
+            lob_id: bioItem.lob_id ?? null,
+            created_by: userPayload?.userId || null,
+          });
+        } else {
           const ledgerEntry = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: receipt.company_id,
