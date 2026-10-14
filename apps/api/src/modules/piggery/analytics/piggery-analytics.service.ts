@@ -3,7 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, desc, asc, gte, lte, inArray, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, FarmScope } from '../../../common/farm-scope';
+import { animalScopeConditions, batchScopeConditions, farmScope, FarmScope, locationOnFarm } from '../../../common/farm-scope';
 import { PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
 
 @Injectable()
@@ -38,6 +38,12 @@ export class PiggeryAnalyticsService {
       : await this.db.select().from(schema.companyMaster).where(eq(schema.companyMaster.tenant_id, tenantId)).limit(1);
 
     const activeCompanyId = company?.company_id || companyId;
+    // A user restricted to a farm (or a LOB) sees that farm's herd, batches and litters only, as on the Animal and
+    // Breeding screens (14 Oct). A sow's farm is the farm of her litters and matings.
+    const sowInScope = (column: typeof schema.breedingRecord.sow_animal_id | typeof schema.farrowingRecord.sow_animal_id) =>
+      scope.farmId || (scope.restricted && scope.lobId)
+        ? inArray(column, this.db.select({ id: schema.animalRegister.animal_id }).from(schema.animalRegister).where(and(...animalScopeConditions(scope))))
+        : undefined;
     const companyName = company?.company_name || 'Triple C Piggery Division';
 
     // 2. Resolve Reporting Periods
@@ -79,6 +85,7 @@ export class PiggeryAnalyticsService {
     const animalConditions = [
       eq(schema.animalRegister.tenant_id, tenantId),
       activeCompanyId ? eq(schema.animalRegister.company_id, activeCompanyId) : undefined,
+      ...animalScopeConditions(scope),
     ].filter(Boolean) as any[];
 
     const animals = await this.db
@@ -139,6 +146,7 @@ export class PiggeryAnalyticsService {
     const farrowConditions = [
       eq(schema.farrowingRecord.tenant_id, tenantId),
       activeCompanyId ? eq(schema.farrowingRecord.company_id, activeCompanyId) : undefined,
+      sowInScope(schema.farrowingRecord.sow_animal_id),
     ].filter(Boolean) as any[];
 
     if (query.dateFrom && query.dateTo) {
@@ -186,6 +194,7 @@ export class PiggeryAnalyticsService {
     const breedingConditions = [
       eq(schema.breedingRecord.tenant_id, tenantId),
       activeCompanyId ? eq(schema.breedingRecord.company_id, activeCompanyId) : undefined,
+      sowInScope(schema.breedingRecord.sow_animal_id),
     ].filter(Boolean) as any[];
 
     if (query.dateFrom && query.dateTo) {
@@ -222,6 +231,7 @@ export class PiggeryAnalyticsService {
       eq(schema.batchHeader.tenant_id, tenantId),
       activeCompanyId ? eq(schema.batchHeader.company_id, activeCompanyId) : undefined,
       eq(schema.batchHeader.status, 'ACTIVE'),
+      ...batchScopeConditions(scope),
     ].filter(Boolean) as any[];
 
     const batches = await this.db
@@ -297,6 +307,8 @@ export class PiggeryAnalyticsService {
           eq(schema.locationMaster.tenant_id, tenantId),
           eq(schema.locationMaster.location_type, 'FARM'),
           activeCompanyId ? eq(schema.locationMaster.company_id, activeCompanyId) : undefined,
+          scope.farmId ? locationOnFarm(schema.locationMaster.location_id, scope.farmId) : undefined,
+          scope.restricted && scope.lobId ? eq(schema.locationMaster.lob_id, scope.lobId) : undefined,
         )
       );
 
