@@ -129,7 +129,7 @@ describe("W2D W8: count entry and lines show the silo planning facts", () => {
     const table = await screen.findByRole("table", { name: "fscEntryLabel" });
     const href = (name: string) => within(table).getByRole("link", { name }).getAttribute("href");
     expect(href("GRA100/SILO-001")).toBe("/master-data/location?recordId=silo-1");
-    expect(href("GRA100/SHED-003")).toBe("/master-data/location?recordId=shed-3");
+    expect(href("Third shed")).toBe("/master-data/location?recordId=shed-3");
     expect(href("FEED-001")).toBe("/master-data/item?recordId=item-1");
     expect(href("FEED-002")).toBe("/master-data/item?recordId=item-2");
     for (const text of ["Grower silo", "Grower Feed R1", "12,000", "4,500"]) expect(within(table).getByText(text)).toBeTruthy();
@@ -172,7 +172,7 @@ describe("W2D W8: count entry and lines show the silo planning facts", () => {
     const table = await screen.findByRole("table", { name: "fscLinesLabel" });
     expect(within(table).getByRole("link", { name: "GRA100/SILO-001" }).getAttribute("href")).toBe("/master-data/location?recordId=silo-1");
     expect(within(table).getByRole("link", { name: "FEED-001" }).getAttribute("href")).toBe("/master-data/item?recordId=item-1");
-    expect(within(table).getByRole("link", { name: "GRA100/SHED-003" })).toBeTruthy();
+    expect(within(table).getByRole("link", { name: "Third shed" })).toBeTruthy();
     expect(within(table).getByText("Grower silo")).toBeTruthy();
     expect(within(table).getByTestId("next-diet-in-silo-1").getAttribute("data-warning")).toBe("false");
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toContain("fscColSystemBalance");

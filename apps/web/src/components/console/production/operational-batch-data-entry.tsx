@@ -1802,6 +1802,8 @@ export default function OperationalBatchDataEntry() {
         <TableHead className="h-auto px-3 py-2">
           {t('blColDataEntryType')}
         </TableHead>
+        {/* Code and name are two columns (Rishi, 14 Oct). */}
+        <TableHead className="h-auto px-3 py-2">Item No.</TableHead>
         <TableHead className="h-auto px-3 py-2">{t('blColItem')}</TableHead>
         <TableHead className="h-auto px-3 py-2">{t('blColUom')}</TableHead>
         <TableHead className="h-auto px-3 py-2">
@@ -1812,6 +1814,9 @@ export default function OperationalBatchDataEntry() {
       </tr>
     </TableHeader>
   );
+
+  // The name half of a "CODE — Name" label.
+  const nameOf = (label?: string | null) => (label ? label.split(' — ').slice(1).join(' — ') || label : '—');
 
   const renderDataEntryRow = (
     line: Row,
@@ -1895,6 +1900,12 @@ export default function OperationalBatchDataEntry() {
             </span>
           )}
         </TableCell>
+        <TableCell className="px-3 py-2 whitespace-nowrap" style={S.sub}>
+          {(() => {
+            const chosen = isOutput ? itemChoices.find((o) => o.value === (line.already_entered_item_id || chosenItemId)) : undefined;
+            return (chosen ? chosen.label.split(' — ')[0] : line.item_code) || '—';
+          })()}
+        </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
           {isOutput && !rowLocked && !line.is_entry_posted && !outputForAll ? (
             <div className="min-w-[180px]">
@@ -1910,9 +1921,9 @@ export default function OperationalBatchDataEntry() {
               />
             </div>
           ) : isOutput && line.already_entered_item_id ? (
-            itemChoices.find((o) => o.value === line.already_entered_item_id)?.label || line.item_label || '—'
+            nameOf(itemChoices.find((o) => o.value === line.already_entered_item_id)?.label || line.item_label)
           ) : (
-            line.item_label || '—'
+            nameOf(line.item_label) || line.item_description || '—'
           )}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>

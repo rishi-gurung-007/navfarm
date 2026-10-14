@@ -553,7 +553,9 @@ export class FeedLineRowDto {
   @ApiProperty() @IsUUID() feed_item_id: string;
   @ApiProperty({ required: false, enum: ['BULK', 'BAGGED'] })
   @Transform(({ value }) => (value === '' ? undefined : value)) @IsOptional() @IsIn(['BULK', 'BAGGED']) feed_form?: string;
-  @ApiProperty({ example: 2.5 }) @Type(() => Number) @IsNumber() @Min(0) feed_qty_per_head_per_day_kg: number;
+  @ApiProperty({ example: 2.5, description: 'Daily feed per head, in feed_qty_uom' }) @Type(() => Number) @IsNumber() @Min(0) feed_qty_per_head_per_day_kg: number;
+  @ApiProperty({ required: false, example: 'KG', description: 'A weight UOM code; blank = KG' })
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value))) @IsOptional() @IsString() @MaxLength(20) feed_qty_uom?: string;
   @ApiProperty({ required: false })
   @Transform(({ value }) => (value === '' || value == null ? undefined : Number(value))) @IsOptional() @IsNumber() @Min(0) @Max(100) feed_wastage_pct?: number;
 }

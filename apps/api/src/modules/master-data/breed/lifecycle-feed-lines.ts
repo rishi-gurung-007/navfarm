@@ -13,8 +13,13 @@ export interface FeedLine {
   period_to: number;
   feed_item_id: string;
   feed_form?: string | null;
+  /** The daily feed per head as entered, in feed_qty_uom (the key keeps its old name; 14 Oct). */
   feed_qty_per_head_per_day_kg: number;
+  /** A weight UOM code; blank = KG. */
+  feed_qty_uom?: string | null;
   feed_wastage_pct?: number | null;
+  /** Set by the service: the same amount in kg, which the scheduler, forecast and requisition read. */
+  kg?: number;
 }
 
 /**
@@ -30,6 +35,7 @@ export function validateFeedLines(lines: FeedLine[]): FeedLine[] {
     period_from: Number(l.period_from),
     period_to: Number(l.period_to),
     feed_qty_per_head_per_day_kg: Number(l.feed_qty_per_head_per_day_kg),
+    feed_qty_uom: l.feed_qty_uom ? String(l.feed_qty_uom).trim().toUpperCase() : 'KG',
     feed_wastage_pct: l.feed_wastage_pct == null || (l.feed_wastage_pct as unknown) === '' ? null : Number(l.feed_wastage_pct),
   })).sort((a, b) => a.period_from - b.period_from);
   sorted.forEach((l, i) => {
@@ -77,7 +83,9 @@ export function linesOf(rows: Array<Record<string, any>>): FeedLine[] {
       period_to: Number(r.period_to),
       feed_item_id: r.feed_item_id,
       feed_form: r.feed_form ?? null,
-      feed_qty_per_head_per_day_kg: Number(r.feed_qty_per_head_per_day_kg),
+      // As entered (0195); a row saved before then was entered in kg.
+      feed_qty_per_head_per_day_kg: Number(r.feed_qty_per_head_per_day ?? r.feed_qty_per_head_per_day_kg),
+      feed_qty_uom: r.feed_qty_uom ?? 'KG',
       feed_wastage_pct: r.feed_wastage_pct == null ? null : Number(r.feed_wastage_pct),
     }));
 }

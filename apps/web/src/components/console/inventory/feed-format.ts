@@ -13,7 +13,7 @@ export function unwrap<T = any>(res: any): T {
   return (res?.data ?? res) as T;
 }
 
-/** A silo or store as the screens name it: its code as issued, then its name (Rishi 4 Oct). */
+/** A silo or store in a picker list, which shows code and name (Rishi 4 Oct); a chosen one shows its name. */
 export function locationLabel(code: string, name?: string | null): string {
   return name ? `${code} — ${name}` : code;
 }

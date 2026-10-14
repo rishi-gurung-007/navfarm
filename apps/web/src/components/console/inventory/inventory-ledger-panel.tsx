@@ -248,7 +248,7 @@ export default function InventoryLedgerPanel() {
           <option value="">All Locations (Location Code)</option>
           {warehouses.map((wh) => (
             <option key={wh.warehouse_id} value={wh.warehouse_id}>
-              {wh.warehouse_code} — {wh.warehouse_name}
+              {wh.warehouse_code || wh.warehouse_name}
             </option>
           ))}
         </select>
@@ -263,7 +263,7 @@ export default function InventoryLedgerPanel() {
           <option value="">{t("ilpAllItemsOptions", { count: items.length })}</option>
           {items.map((it, idx) => (
             <option key={it.item_id} value={it.item_id}>
-              {idx + 1}. {it.item_code} — {it.item_name}
+              {idx + 1}. {it.item_name || it.item_code}
             </option>
           ))}
         </select>

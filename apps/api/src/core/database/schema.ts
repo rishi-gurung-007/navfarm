@@ -2422,6 +2422,9 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   feed_item_id: varchar('feed_item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
   feed_form: varchar('feed_form', { length: 10 }), // TDD Master Setup row 37: BULK | BAGGED
   feed_qty_per_head_per_day_kg: decimal('feed_qty_per_head_per_day_kg', { precision: 8, scale: 4 }),
+  // 0195 (14 Oct): the line's amount and weight UOM as entered; the _kg column above is the same in kg.
+  feed_qty_per_head_per_day: decimal('feed_qty_per_head_per_day', { precision: 12, scale: 4 }),
+  feed_qty_uom: varchar('feed_qty_uom', { length: 20 }),
   feed_wastage_pct: decimal('feed_wastage_pct', { precision: 5, scale: 2 }),
   // 0170, Master Setup r30/r38: effective-dated feed rows for advance diet-change planning. NULL = always effective.
   effective_from: date('effective_from', { mode: 'string' }),

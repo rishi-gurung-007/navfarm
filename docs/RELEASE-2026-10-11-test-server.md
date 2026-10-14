@@ -1,10 +1,10 @@
 # Test-server release 2 — feed workbook completion (11 Oct 2026)
 
 Follows `docs/RELEASE-2026-10-10-test-server.md`. That release took every tenant to migration **164**. This release
-takes every tenant to **194** (0165-0179 from main, 0180-0191 from the feat/system-schedulers merge of 13 Oct, 0192 Cost Centre spelling, 0193 application code per company, 0194 lifecycle JSON repair). Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
+takes every tenant to **195** (0165-0179 from main, 0180-0191 from the feat/system-schedulers merge of 13 Oct, 0192 Cost Centre spelling, 0193 application code per company, 0194 lifecycle JSON repair, 0195 feed line UOM). Release commit: GitHub `main` at or after the commit that adds this runbook. **Migrate, never rebuild**: the
 testers' data must survive.
 
-## What changes in the databases (30 migrations, 0165-0194; nothing dropped — 0182, 0189, 0192, 0193 and 0194 also change data, see their rows)
+## What changes in the databases (31 migrations, 0165-0195; nothing dropped — 0182, 0189, 0192, 0193 and 0194 also change data, see their rows)
 | Migration | Adds |
 |---|---|
 | 0165 | Receipt line controls: variance, variance reason, bag count, delivery note, loading sheet ref |
@@ -37,6 +37,7 @@ testers' data must survive.
 | 0192 | Data, text only: the Cost Centre number series renamed "Cost Center Code ..." -> "Cost Centre Code ..." (13 Oct) |
 | 0193 | `inventory_application.application_no`: the readable APP code, unique per company (each company's own ITEM_APPLICATION series); the row key stays a UUID. Existing rows copy their id as their code. Fixes the second company's first FIFO movement failing on a duplicate APP-00001 (13 Oct) |
 | 0194 | Data: breed lifecycle KPI / vaccination / medication / resource lists stored as an encoded string are turned back into JSON; KPI lists whose lines had been emptied ([[]]) are cleared - re-enter those KPIs (13 Oct) |
+| 0195 | Two nullable columns on breed_lifecycle_stages: feed_qty_per_head_per_day and feed_qty_uom — a Feed Consumption line's daily feed and its weight UOM as entered (the _kg column keeps the kg amount). Additive, no data change (14 Oct) |
 
 **Breed lifecycle stages use stage days only (13 Oct, no migration).** Effective From / Effective To (calendar dates,
 0170) are no longer on the form and nothing reads them: a stage's feed is chosen by Period From / To counted from the
@@ -63,8 +64,8 @@ Do not re-run blindly, because MySQL table changes are not transactional.
 3. Update the code: `git pull --ff-only origin main`, then `pnpm install --frozen-lockfile` (adds the `@nestjs/schedule`
    package). Check `git log --oneline -1` shows the commit that adds this runbook or later.
 4. Migrate: `pnpm nx run api:db-bootstrap`, then `pnpm nx run api:db-migrate-all-tenants`. Every tenant must end at
-   **194**. Check:
-   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 194 / 194.
+   **195**. Check:
+   `SELECT COUNT(*), MAX(id) FROM nf_portatestnavfarm.__drizzle_migrations` → 195 / 195.
 5. Data scripts, per tenant. Run read-only first (it prints a plan), then add `-- --apply` only if the plan lists rows:
    ```
    set DEV_TENANT_DATABASE=nf_portatestnavfarm

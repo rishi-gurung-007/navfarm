@@ -7,10 +7,10 @@ jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: st
 const farm = (code: string, company: string) => ({ farmId: `f-${code}`, code, name: `${code} Farm`, companyId: company, companyName: company });
 
 describe('FeedFarmSelect (A5, S3)', () => {
-  it('labels each farm "CODE — Name" in the order given, flat for one company', () => {
+  it('labels each farm by name in the order given, flat for one company', () => {
     render(<FeedFarmSelect id="x" label="Farm" farms={[farm('LEX100', 'Triple C'), farm('VIL100', 'Triple C')]} farmId="f-VIL100" onChange={jest.fn()} />);
     const select = screen.getByLabelText('Farm') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(['LEX100 — LEX100 Farm', 'VIL100 — VIL100 Farm']);
+    expect([...select.options].map((o) => o.textContent)).toEqual(['LEX100 Farm', 'VIL100 Farm']);
     expect(select.querySelectorAll('optgroup')).toHaveLength(0);
     expect(select.value).toBe('f-VIL100');
   });
@@ -29,7 +29,8 @@ describe('FeedFarmSelect (A5, S3)', () => {
     rerender(<FeedFarmSelect id="x" label="Farm" farms={[]} farmId="f-VIL100" onChange={onChange} fixedLabel="VIL100 — Villa Franca" />);
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.getByText('VIL100 — Villa Franca')).toBeTruthy();
-    expect(feedFarmLabel({ code: 'VIL100', name: 'Villa Franca' })).toBe('VIL100 — Villa Franca');
+    expect(feedFarmLabel({ code: 'VIL100', name: 'Villa Franca' })).toBe('Villa Franca');
+    expect(feedFarmLabel({ code: 'VIL100', name: '' })).toBe('VIL100');
   });
 
   it('uses a human unavailable label instead of an em dash', () => {

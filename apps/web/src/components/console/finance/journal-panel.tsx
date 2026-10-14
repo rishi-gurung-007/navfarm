@@ -181,10 +181,9 @@ export default function JournalPanel() {
     }
   };
 
-  const accountLabel = (id: string) => {
-    const acc = glAccounts.find((a) => a.gl_account_id === id);
-    return acc ? `${acc.account_code} — ${acc.account_name}` : "—";
-  };
+  // Code and name are two columns (Rishi, 14 Oct).
+  const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || "—";
+  const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || "—";
 
   return (
     <div className="flex flex-col gap-4">
@@ -321,7 +320,7 @@ export default function JournalPanel() {
                     <TableCell className="px-2 py-1.5">
                       <select value={line.gl_account_id} onChange={(e) => setLineField(idx, "gl_account_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
                         <option value="">{t("jpSelectPlaceholder")}</option>
-                        {glAccounts.map((a) => <option key={a.gl_account_id} value={a.gl_account_id}>{a.account_code} — {a.account_name}</option>)}
+                        {glAccounts.map((a) => <option key={a.gl_account_id} value={a.gl_account_id}>{a.account_name || a.account_code}</option>)}
                       </select>
                     </TableCell>
                     <TableCell className="px-2 py-1.5 w-28"><input type="number" value={line.debit_amount} onChange={(e) => setLineField(idx, "debit_amount", e.target.value)} className={inputCls} style={S.input} /></TableCell>
@@ -377,7 +376,8 @@ export default function JournalPanel() {
               <table className="w-full border-collapse text-left text-xs">
                 <TableHeader>
                   <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
-                    <TableHead className="h-auto px-3 py-2">{t("jpGlAccount")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Account Code</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Account Name</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("jpDebit")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("jpCredit")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("jpDescription")}</TableHead>
@@ -386,7 +386,8 @@ export default function JournalPanel() {
                 <TableBody>
                   {(viewing.lines || []).map((l: Row) => (
                     <TableRow key={l.line_id}>
-                      <TableCell className="px-3 py-2" style={S.primary}>{accountLabel(l.gl_account_id)}</TableCell>
+                      <TableCell className="px-3 py-2 whitespace-nowrap" style={S.primary}>{accountCode(l.gl_account_id)}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{accountName(l.gl_account_id)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{Number(l.debit_amount) > 0 ? l.debit_amount : "—"}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{Number(l.credit_amount) > 0 ? l.credit_amount : "—"}</TableCell>
                       <TableCell className="px-3 py-2" style={S.sub}>{l.description || "—"}</TableCell>

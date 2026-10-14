@@ -118,7 +118,7 @@ export default function MillComparePanel() {
         {(result?.mills.length ?? 0) > 0 && (
           <Field label={t("mcrMill")} htmlFor="mill-compare-mill">
             <select id="mill-compare-mill" className="nf-input-sm nf-select" value={millId} onChange={(event) => setMillId(event.target.value)}>
-              {result!.mills.map((mill) => <option key={mill.millId} value={mill.millId}>{mill.millCode} — {mill.millName}</option>)}
+              {result!.mills.map((mill) => <option key={mill.millId} value={mill.millId}>{mill.millName || mill.millCode}</option>)}
             </select>
           </Field>
         )}

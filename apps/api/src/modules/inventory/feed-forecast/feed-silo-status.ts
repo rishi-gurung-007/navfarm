@@ -59,6 +59,8 @@ export interface SiloStatusRow extends SiloFact {
   siloAvailableForNextDiet: boolean | null;
   nextDietSiloId: string | null;
   nextDietSiloCode: string | null;
+  /** 14 Oct: the dashboard shows the silo's name, not its code. */
+  nextDietSiloName?: string | null;
   projectedShortfallKg: number;
   recommendedOrderKg: number;
   requisitionId: string | null;
@@ -300,6 +302,7 @@ export function buildSiloStatus(args: {
       siloAvailableForNextDiet,
       nextDietSiloId: nextDietSilo?.siloId ?? null,
       nextDietSiloCode: nextDietSilo?.siloCode ?? (change?.nextSourceType === 'SILO' && !nextDietFeedType ? change.nextSourceCode : null),
+      nextDietSiloName: nextDietSilo?.siloName ?? null,
       projectedShortfallKg,
       recommendedOrderKg,
       requisitionId: typeof requisition === 'string' ? null : requisition?.requisitionId ?? null,

@@ -1,5 +1,6 @@
 "use client";
 
+import { nameOrCode } from "@/utils/code-name";
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Search, Shield } from "lucide-react";
 import { api } from "../../../services/api-client";
@@ -341,7 +342,7 @@ export function MemberDialog({
                 label={t("tmFieldCompany")}
                 value={
                   isEdit
-                    ? [member?.company_code, member?.company_name].filter(Boolean).join(" — ")
+                    ? nameOrCode(member?.company_code, member?.company_name)
                     : companies.find((c) => c.company_id === companyId)?.company_name || t("tmCompanyFixed")
                 }
               />
@@ -368,7 +369,7 @@ export function MemberDialog({
                 <ReadField
                   className="sm:col-span-2"
                   label={t("tmFieldFarm")}
-                  value={[member?.farm_code, member?.farm_name].filter(Boolean).join(" — ")}
+                  value={nameOrCode(member?.farm_code, member?.farm_name)}
                 />
               ) : (
                 <Field label={t("tmFieldFarm")} htmlFor="tm-farm" tooltip={t("tmFarmHint")} required className="sm:col-span-2">

@@ -43,6 +43,8 @@ export interface MasterDataField {
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
+  /** With visibleWhen: stay hidden on edit even when the record already holds a value (it is kept, not sent). */
+  hideStoredWhenHidden?: boolean;
   /**
    * Edited in a stacked dialog opened from a button in the record dialog's header, not in the form grid. Still part
    * of the form state and payload. `true` = the "KPIs & Alerts" dialog; a string names another dialog (and button).

@@ -24,7 +24,7 @@ describe('BatchShedField (D21)', () => {
     const onSaved = jest.fn();
     render(<BatchShedField batch={{ batch_id: 'b1', status: 'ACTIVE', shed_id: null, farm_id: 'farm-vil' }} sheds={sheds} onSaved={onSaved} />);
     const select = screen.getByLabelText('blShed') as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(['blNoShed', 'VIL100/SHED-001 — Gilt House', 'VIL100/SHED-002 — Dry Sow House']);
+    expect([...select.options].map((o) => o.textContent)).toEqual(['blNoShed', 'Gilt House', 'Dry Sow House']);
     const save = screen.getByRole('button', { name: 'blSaveShed' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.change(select, { target: { value: 's2' } });
@@ -44,6 +44,6 @@ describe('BatchShedField (D21)', () => {
   it('is read-only on a closed batch', () => {
     render(<BatchShedField batch={{ batch_id: 'b1', status: 'CLOSED', shed_id: 's1', farm_id: 'farm-vil' }} sheds={sheds} onSaved={jest.fn()} />);
     expect(screen.queryByRole('button', { name: 'blSaveShed' })).toBeNull();
-    expect(screen.getByText('VIL100/SHED-001 — Gilt House')).toBeTruthy();
+    expect(screen.getByText('Gilt House')).toBeTruthy();
   });
 });

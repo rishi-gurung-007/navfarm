@@ -473,10 +473,9 @@ export default function StockAdjustmentPanel() {
   };
 
   const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
-  const itemLabel = (id: string) => {
-    const it = items.find((i) => i.item_id === id);
-    return it ? `${it.item_code} — ${it.item_name}` : "—";
-  };
+  // Code and name are two columns (Rishi, 14 Oct).
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
+  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || "—";
 
   // Searchable select options for items
   const itemOptions = useMemo(() => {
@@ -1261,7 +1260,8 @@ export default function StockAdjustmentPanel() {
               <table className="w-full border-collapse text-left text-xs">
                 <TableHeader>
                   <tr className="border-b border-(--row-border)">
-                    <TableHead className="h-auto px-3 py-2">{t("sapItem")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Item Code</TableHead>
+                    <TableHead className="h-auto px-3 py-2">Item Description</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("sapQty")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("sapUom")}</TableHead>
                     <TableHead className="h-auto px-3 py-2">{t("sapRate")}</TableHead>
@@ -1272,9 +1272,8 @@ export default function StockAdjustmentPanel() {
                 <TableBody>
                   {(viewing.lines || []).map((l: Row) => (
                     <TableRow key={l.line_id}>
-                      <TableCell className="px-3 py-2 font-medium" style={S.primary}>
-                        {itemLabel(l.item_id)}
-                      </TableCell>
+                      <TableCell className="px-3 py-2 font-medium whitespace-nowrap" style={S.primary}>{itemCode(l.item_id)}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{itemName(l.item_id)}</TableCell>
                       <TableCell
                         className="px-3 py-2 font-semibold font-mono"
                         style={Number(l.quantity) >= 0 ? { color: "var(--success)" } : { color: "var(--danger)" }}

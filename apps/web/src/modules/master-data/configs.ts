@@ -101,13 +101,14 @@ const location: MasterDataConfig = {
       hideInForm: true, hideInTable: true,
       section: "Identification",
     },
-    // CC (11 Oct): each farm / mill has its own cost centre; inventory journals take it from here.
+    // CC (11 Oct): a mill's cost centre; inventory journals take it from here. Hidden on farms (Rishi, 14 Oct) — a
+    // farm keeps any value it already has (an unshown field is not sent, so an edit leaves it as it is).
     {
       key: "cost_center_id", label: "Cost Centre", type: "select-entity",
       entityEndpoint: "/cost-center?isActive=true", entityValueKey: "cost_center_id",
       entityLabelKeys: ["cost_center_code", "cost_center_name"],
-      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
-      helpText: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["MILL"] }] }, hideStoredWhenHidden: true,
+      helpText: "The cost centre every inventory journal for this mill is posted against. Optional.",
       section: "Identification",
     },
     // Hidden for SILO (2026-09-24, client request) — a silo is a sealed vessel
@@ -1384,10 +1385,12 @@ const breedLifecycleStage: MasterDataConfig = {
         { key: "period_from", label: "Effective From", type: "number", step: "1", min: 0 },
         { key: "period_to", label: "Effective To", type: "number", step: "1", min: 0 },
         { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }] },
-        { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
+        { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head", type: "number", step: "0.01", min: 0 },
+        // 0195 (14 Oct): the amount's own weight UOM; blank = KG. The API keeps the kg equivalent for the forecast.
+        { key: "feed_qty_uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code"] },
         { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
       ],
-      helpText: "One line per feed. Effective From / Effective To are the stage's days in the Period Unit, counted from the day the batch or animal entered the stage; lines must follow one another with no gap or overlap (e.g. 1-8, then 9-20).",
+      helpText: "One line per feed. Daily Feed per Head is in the line's UOM (blank = KG). Effective From / Effective To are the stage's days in the Period Unit, counted from the day the batch or animal entered the stage; lines must follow one another with no gap or overlap (e.g. 1-8, then 9-20).",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a

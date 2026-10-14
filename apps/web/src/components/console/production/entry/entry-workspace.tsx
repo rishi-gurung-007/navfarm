@@ -163,7 +163,7 @@ export default function EntryWorkspace() {
     ? storedUser.farm ?? null
     : farms.find((f) => f.location_id === selectedBatch?.farm_id) ?? null;
   const recordingForLabel = recordingForFarm
-    ? t("deRecordingForFarm", { code: recordingForFarm.location_code, name: recordingForFarm.location_name })
+    ? t("deRecordingForFarm", { code: recordingForFarm.location_code, name: recordingForFarm.location_name || recordingForFarm.location_code })
     : null;
 
   const selectedDay = form?.date ?? dateParam;

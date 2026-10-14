@@ -647,10 +647,9 @@ export default function GoodsReceiptPanel() {
   };
 
   const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
-  const itemLabel = (id: string) => {
-    const it = items.find((i) => i.item_id === id);
-    return it ? `${it.item_code} — ${it.item_name}` : "—";
-  };
+  // Code and name are two columns (Rishi, 14 Oct).
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
+  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || "—";
 
   return (
     <div className="flex flex-col gap-4">
@@ -1128,7 +1127,8 @@ export default function GoodsReceiptPanel() {
               <table className="w-full border-collapse text-left text-xs min-w-[720px]">
                 <TableHeader>
                   <tr className="border-b border-(--row-border)">
-                    <TableHead className="h-auto px-3 py-2 min-w-[240px]">{t("grpColItem")}</TableHead>
+                    <TableHead className="h-auto px-3 py-2 w-32 min-w-[120px]">Item Code</TableHead>
+                    <TableHead className="h-auto px-3 py-2 min-w-[220px]">Item Description</TableHead>
                     <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px]">{t("grpColQty")}</TableHead>
                     <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColUom")}</TableHead>
                     <TableHead className="h-auto px-3 py-2 w-24 min-w-[80px]">{t("grpColRate")}</TableHead>
@@ -1138,7 +1138,8 @@ export default function GoodsReceiptPanel() {
                 <TableBody>
                   {(viewing.lines || []).map((l: Row) => (
                     <TableRow key={l.line_id}>
-                      <TableCell className="px-3 py-2" style={S.primary}>{itemLabel(l.item_id)}</TableCell>
+                      <TableCell className="px-3 py-2 whitespace-nowrap" style={S.primary}>{itemCode(l.item_id)}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{itemName(l.item_id)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.quantity}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.rate ?? "—"}</TableCell>

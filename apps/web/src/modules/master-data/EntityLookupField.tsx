@@ -1,5 +1,6 @@
 "use client";
 
+import { entityDisplayText } from "@/utils/code-name";
 import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, Inbox, Loader2, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -59,8 +60,9 @@ function rowValues(row: LookupRow, labelKeys: string[]): { code: string; name: s
 
 /** What a picked row is called in the field itself: its name, or its code when it has none. */
 function selectedRowLabel(row: LookupRow, labelKeys: string[], valueKey: string): string {
+  // The name; a UOM or currency its code (Rishi, 14 Oct).
   const { code, name } = rowValues(row, labelKeys);
-  return name || code || stringValue(row[valueKey]);
+  return entityDisplayText(row, labelKeys, valueKey) || name || code || stringValue(row[valueKey]);
 }
 
 export function EntityLookupDialog({

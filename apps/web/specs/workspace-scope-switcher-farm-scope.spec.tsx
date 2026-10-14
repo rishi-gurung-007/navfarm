@@ -109,6 +109,6 @@ describe('WorkspaceScopeSwitcher — switching company clears the pinned farm', 
   it('names the pinned farm on the collapsed trigger', async () => {
     render(<WorkspaceScopeSwitcher />);
 
-    await screen.findByText('F1 — Farm One');
+    await screen.findByText('Farm One');
   });
 });

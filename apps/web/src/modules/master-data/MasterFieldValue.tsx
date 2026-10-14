@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
 import type { MasterDataField } from "./types";
+import { entityDisplayText, nameOrCode } from "@/utils/code-name";
 
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
@@ -49,15 +50,16 @@ export function MasterFieldValue({ field, value, record }: {
     // Master r8: a dated link is shown with its dates; an undated one reads as before.
     const day = (d?: string | null) => (d ? String(d).slice(0, 10) : "");
     return <>{details.map((d) => {
-      const label = [d.location_code, d.location_name].filter(Boolean).join(" — ");
+      const label = nameOrCode(d.location_code, d.location_name);
       return d.effective_from || d.effective_to ? `${label} (${day(d.effective_from) || "…"} → ${day(d.effective_to) || "…"})` : label;
     }).join(", ")}</>;
   }
 
   // Master r16: Feed in Silo opens the item record.
   if (field?.key === "silo_feed_item" && typeof value === "string" && value && typeof (record as any)?.silo_feed_item_id === "string") {
+    // The feed's name, linked (14 Oct: a field shows the thing, not code + name).
     const [code, ...rest] = value.split(" — ");
-    return <><a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{code}</a>{rest.length ? ` — ${rest.join(" — ")}` : ""}</>;
+    return <a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{nameOrCode(code, rest.join(" — "))}</a>;
   }
 
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(val);
@@ -89,9 +91,8 @@ export function MasterFieldValue({ field, value, record }: {
 
     const extractLabel = (row: any): string => {
       if (!row || typeof row !== "object") return "";
-      const keys = field?.entityLabelKeys || [];
-      const parts = keys.map((k) => row[k]).filter((p) => p !== null && p !== undefined && p !== "");
-      if (parts.length > 0) return parts.join(" — ");
+      const text = entityDisplayText(row, field?.entityLabelKeys || [], field?.entityValueKey);
+      if (text) return text;
       return row.code || row.name || row.title || row.label || "";
     };
 

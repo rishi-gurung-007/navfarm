@@ -48,9 +48,19 @@ describe('lifecycle Feed Consumption lines (Rishi, 13 Oct)', () => {
       { lifecycle_id: 'c', period_from: 21, period_to: 25, feed_item_id: null },
     ];
     expect(linesOf(rows)).toEqual([
-      { period_from: 1, period_to: 8, feed_item_id: 'f1', feed_form: null, feed_qty_per_head_per_day_kg: 2.5, feed_wastage_pct: 1.5 },
-      { period_from: 9, period_to: 20, feed_item_id: 'f2', feed_form: 'BULK', feed_qty_per_head_per_day_kg: 3, feed_wastage_pct: null },
+      { period_from: 1, period_to: 8, feed_item_id: 'f1', feed_form: null, feed_qty_per_head_per_day_kg: 2.5, feed_qty_uom: 'KG', feed_wastage_pct: 1.5 },
+      { period_from: 9, period_to: 20, feed_item_id: 'f2', feed_form: 'BULK', feed_qty_per_head_per_day_kg: 3, feed_qty_uom: 'KG', feed_wastage_pct: null },
     ]);
+  });
+
+  it('a line reads back its amount and UOM as entered (0195), not the kg equivalent', () => {
+    const [l] = linesOf([{ period_from: 1, period_to: 8, feed_item_id: 'f1', feed_qty_per_head_per_day_kg: '0.8000', feed_qty_per_head_per_day: '800.0000', feed_qty_uom: 'GRAM' }]);
+    expect(l).toMatchObject({ feed_qty_per_head_per_day_kg: 800, feed_qty_uom: 'GRAM' });
+  });
+
+  it('a blank UOM is KG', () => {
+    expect(validateFeedLines([line(1, 8)])[0].feed_qty_uom).toBe('KG');
+    expect(validateFeedLines([line(1, 8, { feed_qty_uom: 'gram' })])[0].feed_qty_uom).toBe('GRAM');
   });
 
   it('treats rows as one stage only when breed, stage, farm, season and category all match', () => {

@@ -209,7 +209,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
             <option value="">All Origins</option>
             {warehouses.map((w) => (
               <option key={w.warehouse_id} value={w.warehouse_id}>
-                From: {w.warehouse_code} — {w.warehouse_name}
+                From: {w.warehouse_name || w.warehouse_code}
               </option>
             ))}
           </select>
@@ -227,7 +227,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
             <option value="">All Destinations</option>
             {warehouses.map((w) => (
               <option key={w.warehouse_id} value={w.warehouse_id}>
-                To: {w.warehouse_code} — {w.warehouse_name}
+                To: {w.warehouse_name || w.warehouse_code}
               </option>
             ))}
           </select>

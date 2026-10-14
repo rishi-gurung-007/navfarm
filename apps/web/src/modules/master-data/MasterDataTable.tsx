@@ -1,5 +1,6 @@
 "use client";
 
+import { entityDisplayText } from "@/utils/code-name";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ageBetween, formatAge } from "./utils/age";
 import {
@@ -713,7 +714,7 @@ export function MasterDataTable({
           .filter((f) => {
             if (config.key === "stage") return true;
             if (isFieldVisible(f, form)) return true;
-            if (f.filterOnly || f.booleanColumns) return false;
+            if (f.filterOnly || f.booleanColumns || f.hideStoredWhenHidden) return false;
             const stored = editing[f.key];
             return stored !== undefined && stored !== null && stored !== "" && stored !== false;
           })
@@ -897,7 +898,7 @@ export function MasterDataTable({
     return loaded
       .map((row) => ({
         value: String(row[valueKey] ?? ""),
-        label: labelKeys.map((k) => row[k]).filter(Boolean).join(" — ") || String(row[valueKey] ?? ""),
+        label: entityDisplayText(row, labelKeys, valueKey) || String(row[valueKey] ?? ""),
       }))
       .filter((o) => o.value !== "");
   };
@@ -2804,7 +2805,7 @@ export function MasterDataTable({
               const shed = options.find((o) => String(o[f.entityValueKey || "id"]) === shedId);
               return (
                 <div key={shedId} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
-                  <span className="min-w-[8rem] flex-1 text-sm">{shed ? entityLabel(shed, f) : shedId}</span>
+                  <span className="min-w-[8rem] flex-1 text-sm">{shed ? entityDisplayText(shed, f.entityLabelKeys, f.entityValueKey) || shedId : shedId}</span>
                   <Field label={t("mdShedEffectiveFrom")} htmlFor={`attached-shed-from-${shedId}`}>
                     <input id={`attached-shed-from-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_from ?? ""} onChange={(e) => setDate(shedId, "effective_from", e.target.value)} />
                   </Field>

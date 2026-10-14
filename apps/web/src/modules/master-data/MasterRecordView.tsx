@@ -1,5 +1,6 @@
 "use client";
 
+import { nameOrCode } from "@/utils/code-name";
 import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -162,7 +163,7 @@ function ShedSilos({ silos }: { silos: unknown }) {
         <ul className="mt-3 space-y-2">
           {rows.map((silo) => (
             <li key={silo.location_id} className="text-sm">
-              <span className="font-medium">{silo.location_code} — {silo.location_name}</span>
+              <span className="font-medium">{nameOrCode(silo.location_code, silo.location_name)}</span>
               <span className="ml-2 text-xs text-[var(--text-muted)]">
                 {silo.current_feed_item_name || silo.current_feed_item_code
                   ? `holding ${silo.current_feed_item_name || silo.current_feed_item_code}`

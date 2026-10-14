@@ -24,8 +24,8 @@ describe('silo record: W5C facts', () => {
     render(<MasterRecordView config={locationConfig} id="silo-1" onClose={jest.fn()} />);
 
     expect(await screen.findByText('First Shortage Date')).toBeDefined();
-    const link = await screen.findByRole('link', { name: 'FEED-R1' });
+    const link = await screen.findByRole('link', { name: 'Weaner R1' });
     expect(link.getAttribute('href')).toBe('/master-data/item?recordId=item-r1');
-    expect(await screen.findByText('F1/SHED-001 — Shed 1 (2026-10-20 → …)')).toBeDefined();
+    expect(await screen.findByText('Shed 1 (2026-10-20 → …)')).toBeDefined();
   });
 });

@@ -236,14 +236,14 @@ export default function QcParameterPanel() {
               <label className="nf-text-label" style={S.sub}>{t("qcpNatureOfBusiness")} <span className="text-(--danger)">*</span></label>
               <select value={nobId} onChange={(e) => { setNobId(e.target.value); setForm((f) => ({ ...f, lob_id: "" })); }} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="">{t("qcpSelectEllipsis")}</option>
-                {nobs.map((n) => <option key={n.nob_id} value={n.nob_id}>{n.nob_code} — {n.nob_name}</option>)}
+                {nobs.map((n) => <option key={n.nob_id} value={n.nob_id}>{n.nob_name || n.nob_code}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpLineOfBusiness")} <span className="text-(--danger)">*</span></label>
               <select value={form.lob_id} onChange={(e) => setForm((f: Row) => ({ ...f, lob_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input} disabled={!nobId}>
                 <option value="">{nobId ? t("qcpSelectEllipsis") : t("qcpSelectNatureOfBusinessFirst")}</option>
-                {lobs.map((l) => <option key={l.lob_id} value={l.lob_id}>{l.lob_code} — {l.lob_name}</option>)}
+                {lobs.map((l) => <option key={l.lob_id} value={l.lob_id}>{l.lob_name || l.lob_code}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">

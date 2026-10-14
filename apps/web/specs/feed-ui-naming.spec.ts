@@ -45,7 +45,8 @@ describe("feed forecasting terminology", () => {
     const rowLabel = (key: string) => lines.jsonRow!.find((c) => c.key === key)?.label;
     expect(rowLabel("feed_item_id")).toBe("Feed Item");
     expect(lines.jsonRow!.map((c) => c.key)[0]).toBe("feed_item_id"); // Feed Item first (Rishi, 13 Oct)
-    expect(rowLabel("feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head (kg)");
+    expect(rowLabel("feed_qty_per_head_per_day_kg")).toBe("Daily Feed per Head");
+    expect(rowLabel("feed_qty_uom")).toBe("UOM");
     expect(rowLabel("feed_form")).toBe("Feed Form");
     expect(label(lifecycle.fields, "feed_item_id")).toBeUndefined();
     expect(label(getConfig("item")!.fields, "diet_no")).toBe("Diet No.");

@@ -985,7 +985,7 @@ export class BreedService {
   }
 
   /** The feed columns a line sets on its row; every other column is shared by the stage's rows. */
-  private static readonly LINE_COLUMNS = ['period_from', 'period_to', 'feed_item_id', 'feed_form', 'feed_qty_per_head_per_day_kg', 'feed_wastage_pct'] as const;
+  private static readonly LINE_COLUMNS = ['period_from', 'period_to', 'feed_item_id', 'feed_form', 'feed_qty_per_head_per_day_kg', 'feed_qty_per_head_per_day', 'feed_qty_uom', 'feed_wastage_pct'] as const;
 
   private lineColumns(line: FeedLine) {
     return {
@@ -993,19 +993,50 @@ export class BreedService {
       period_to: line.period_to,
       feed_item_id: line.feed_item_id,
       feed_form: line.feed_form || null,
-      feed_qty_per_head_per_day_kg: String(line.feed_qty_per_head_per_day_kg),
+      // The _kg column stays in kg for everything that reads it; the line keeps what was entered (0195, 14 Oct).
+      feed_qty_per_head_per_day_kg: String(line.kg ?? line.feed_qty_per_head_per_day_kg),
+      feed_qty_per_head_per_day: String(line.feed_qty_per_head_per_day_kg),
+      feed_qty_uom: line.feed_qty_uom || 'KG',
       feed_wastage_pct: line.feed_wastage_pct == null ? null : String(line.feed_wastage_pct),
     };
+  }
+
+  /** Kilograms in one unit of a weight UOM: the common ones by code, others from UOM Conversion (to KG). */
+  private static readonly KG_PER_UOM: Record<string, number> = { KG: 1, KGS: 1, GRAM: 0.001, GRAMS: 0.001, G: 0.001, GM: 0.001, TONNE: 1000, MT: 1000, TON: 1000, LB: 0.45359237 };
+
+  /** Each feed line with its daily amount in kg (line.kg); a UOM with no known factor to KG is refused by name. */
+  private async withKg(lines: FeedLine[]): Promise<FeedLine[]> {
+    const out: FeedLine[] = [];
+    for (const [i, line] of lines.entries()) {
+      const uom = (line.feed_qty_uom || 'KG').toUpperCase();
+      let factor = BreedService.KG_PER_UOM[uom];
+      if (factor === undefined) {
+        const [conv] = await this.db
+          .select({ f: schema.uomConversionMaster.conversion_factor })
+          .from(schema.uomConversionMaster)
+          .where(and(
+            eq(schema.uomConversionMaster.from_uom, uom), eq(schema.uomConversionMaster.to_uom, 'KG'),
+            isNull(schema.uomConversionMaster.item_id), eq(schema.uomConversionMaster.is_active, true), isNull(schema.uomConversionMaster.deleted_at),
+          ))
+          .limit(1);
+        factor = conv ? Number(conv.f) : undefined as unknown as number;
+      }
+      if (factor === undefined || !Number.isFinite(factor) || factor <= 0) {
+        throw new BadRequestException(`Feed line ${i + 1}: UOM ${uom} has no conversion to KG. Pick a weight UOM, or add a ${uom} to KG conversion in UOM Conversion.`);
+      }
+      out.push({ ...line, feed_qty_uom: uom, kg: Number((line.feed_qty_per_head_per_day_kg * factor).toFixed(4)) });
+    }
+    return out;
   }
 
   async createLifecycleStage(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const breed = await this.findOneBreed(dto.breed_id, tenantId);
     // Feed Consumption lines (13 Oct): the first line is this row; the others become the stage's further rows.
-    const feedLines = dto.feed_lines?.length ? validateFeedLines(dto.feed_lines as FeedLine[]) : null;
+    const feedLines = dto.feed_lines?.length ? await this.withKg(validateFeedLines(dto.feed_lines as FeedLine[])) : null;
     if (feedLines) {
       for (const line of feedLines) await this.assertItemExists(line.feed_item_id);
       Object.assign(dto, this.lineColumns(feedLines[0]), {
-        feed_qty_per_head_per_day_kg: feedLines[0].feed_qty_per_head_per_day_kg,
+        feed_qty_per_head_per_day_kg: feedLines[0].kg,
         feed_wastage_pct: feedLines[0].feed_wastage_pct ?? undefined,
       });
     }
@@ -1082,6 +1113,8 @@ export class BreedService {
     };
 
     await this.db.insert(schema.breedLifecycleStages).values(newLifecycleStage);
+    // The first line's amount and UOM as entered (0195).
+    if (feedLines) await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(feedLines[0])).where(eq(schema.breedLifecycleStages.lifecycle_id, lifecycleId));
     // The further feed lines: copies of this row with their own days and feed (no code of their own).
     for (const line of feedLines?.slice(1) ?? []) {
       await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId, [lifecycleId]);
@@ -1270,13 +1303,13 @@ export class BreedService {
     // The stage's other rows (its other feed lines), read before anything changes: they follow this row's shared
     // fields, and with feed_lines they are reassigned, added to or removed (13 Oct).
     const otherRows = (await this.stageRows(lifecycleStage)).filter((r) => r.lifecycle_id !== id);
-    const feedLines = dto.feed_lines?.length ? validateFeedLines(dto.feed_lines as FeedLine[]) : null;
+    const feedLines = dto.feed_lines?.length ? await this.withKg(validateFeedLines(dto.feed_lines as FeedLine[])) : null;
     if (feedLines) {
       for (const line of feedLines) await this.assertItemExists(line.feed_item_id);
       Object.assign(dto, {
         period_from: feedLines[0].period_from, period_to: feedLines[0].period_to,
         feed_item_id: feedLines[0].feed_item_id, feed_form: feedLines[0].feed_form || null,
-        feed_qty_per_head_per_day_kg: feedLines[0].feed_qty_per_head_per_day_kg,
+        feed_qty_per_head_per_day_kg: feedLines[0].kg,
         feed_wastage_pct: feedLines[0].feed_wastage_pct ?? null,
       });
     }
@@ -1364,6 +1397,12 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set(updates)
       .where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    // The first line's amount and UOM as entered (0195); a kg rate set without lines was entered in kg.
+    if (feedLines) {
+      await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(feedLines[0])).where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    } else if (updates.feed_qty_per_head_per_day_kg !== undefined) {
+      await this.db.update(schema.breedLifecycleStages).set({ feed_qty_per_head_per_day: null, feed_qty_uom: null }).where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    }
 
     // The stage's other rows take the same shared fields (KPIs, mortality, protocols, scope, dates): one stage, one
     // set of standards. Their own days and feed are left alone unless feed_lines reassigns them.

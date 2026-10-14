@@ -189,13 +189,13 @@ function FeedSiloDashboardContent() {
         <Field label={t("fsdShed")} htmlFor="sd-shed">
           <select id="sd-shed" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.shedId ?? ""} onChange={(event) => chooseShed(event.target.value)} disabled={!farmChosen || !sheds.length}>
             {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
-            {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+            {sheds.map((option) => <option key={option.id} value={option.id}>{option.name || option.code}</option>)}
           </select>
         </Field>
         <Field label={t("fsdSilo")} htmlFor="sd-silo">
           <select id="sd-silo" className="nf-input-sm nf-select min-w-44" style={inputStyle} value={selection.siloId ?? ""} onChange={(event) => chooseSilo(event.target.value)} disabled={!selection.shedId || !silos.length}>
             {!selection.siloId && <option value="">{t("fsdSelectSilo")}</option>}
-            {silos.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+            {silos.map((option) => <option key={option.id} value={option.id}>{option.name || option.code}</option>)}
           </select>
         </Field>
         <Field label={t("fsdPlanningDate")} htmlFor="sd-planning-date">

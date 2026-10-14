@@ -35,14 +35,14 @@ beforeEach(() => {
 });
 
 describe('A shed record shows the silos that feed it (checklist 1a)', () => {
-  it('lists each silo as CODE — Name with the feed it holds', async () => {
+  it('lists each silo by name with the feed it holds (14 Oct)', async () => {
     render(<MasterRecordView config={locationConfig} id="shed-1" onClose={jest.fn()} />);
     const section = await screen.findByRole('region', { name: /silos feeding this shed/i });
     const items = within(section).getAllByRole('listitem');
     expect(items).toHaveLength(2);
-    expect(items[0].textContent).toContain('GRA100/SILO-001 — Feed Silo 1');
+    expect(items[0].textContent).toContain('Feed Silo 1');
     expect(items[0].textContent).toContain('Weaner Grower Mash (18% CP)');
-    expect(items[1].textContent).toContain('GRA100/SILO-003 — Feed Silo 3');
+    expect(items[1].textContent).toContain('Feed Silo 3');
   });
 
   it('says a silo is empty rather than leaving the feed blank', async () => {
