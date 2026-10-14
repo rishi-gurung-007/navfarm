@@ -15,6 +15,9 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { stagesNeedingScheduler } from './occupied-stages';
+import { applySchedulerFeedLines, type WantedFeedLine } from '../lifecycle/refresh-scheduler-feed';
+import { feedQtyToKg } from '../lifecycle/feed-qty-kg';
+import { validateFeedLines, type FeedLine } from '../../master-data/breed/lifecycle-feed-lines';
 
 /** "KPI UOM fetched as per KPI" — the unit a given kpi_metric is captured in isn't a free
  * choice, it's implied by the metric itself. Known metrics auto-derive kpi_uom (overriding
@@ -1130,6 +1133,57 @@ export class SchedulerHeaderService {
       tolerance_type: line.tolerance_type ?? null,
       severity: line.severity ?? null,
     }));
+  }
+
+  /**
+   * Replace a scheduler's Feed Consumption lines with the set the user edited (Rishi, 14 Oct).
+   *
+   * The same shape and the same rules as the breed lifecycle stage's feed lines: whole stage
+   * days, one feed per day, no gap and no overlap (validateFeedLines), and a quantity entered
+   * in a weight UOM that is stored as kilograms.
+   *
+   * Days already entered are not rewritten. applySchedulerFeedLines cuts a line with entries
+   * back to its last entered day and starts the new feed the day after, so a posted
+   * batch_daily_data row still reads the item and rate it was posted against.
+   *
+   * The lines it writes carry no lifecycle_ref_id — they are this scheduler's, not the stage's.
+   * The stage stays the standard: changing the stage's feed later brings this scheduler back in
+   * line through the same function, protecting entered days the same way.
+   */
+  async updateFeedLines(id: string, lines: FeedLine[], tenantId: string, userPayload?: any) {
+    const sh = schema.schedulerHeader;
+    const [header] = await this.db.select().from(sh).where(eq(sh.scheduler_id, id)).limit(1);
+    if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
+
+    // Same scope gate findOne applies — a scheduler outside the caller's farms is not theirs to edit.
+    const scope = farmScope(this.cls);
+    const [batchInScope] = await this.db
+      .select({ batch_id: schema.batchHeader.batch_id })
+      .from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, header.batch_id), ...batchScopeConditions(scope)))
+      .limit(1);
+    if (!batchInScope) throw new NotFoundException(`Scheduler '${id}' not found.`);
+    if (header.scheduler_status === 'COMPLETED') {
+      throw new BadRequestException('This scheduler is completed; its feed can no longer be changed.');
+    }
+
+    const validated = validateFeedLines(lines);
+    const wanted: WantedFeedLine[] = [];
+    for (const [i, line] of validated.entries()) {
+      const { kg } = await feedQtyToKg(this.db, line.feed_qty_per_head_per_day_kg, line.feed_qty_uom, `Feed line ${i + 1}`);
+      wanted.push({ fromDay: line.period_from, toDay: line.period_to, itemId: line.feed_item_id, qty: kg, lifecycleId: null });
+    }
+
+    const [stage] = await this.db.select({ stage_name: schema.stageMaster.stage_name })
+      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, header.stage_id)).limit(1);
+
+    await applySchedulerFeedLines(this.db, {
+      header: { scheduler_id: header.scheduler_id, effective_from: header.effective_from, nob_id: header.nob_id, lob_id: header.lob_id, stage_id: header.stage_id },
+      wanted,
+      stageName: stage?.stage_name ?? null,
+    });
+
+    return this.findOne(id);
   }
 
   async findOne(id: string) {

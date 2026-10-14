@@ -504,3 +504,45 @@ export class UpdateSchedulerLineDto {
   @IsBoolean()
   is_active?: boolean;
 }
+
+/**
+ * One feed line as the scheduler's own Feed Consumption editor posts it (Rishi, 14 Oct).
+ *
+ * Deliberately the same shape as a breed lifecycle stage's feed line, so the two screens
+ * read alike. `period_from`/`period_to` are stage days, the same unit the lifecycle uses;
+ * the quantity is per head per day in `feed_qty_uom` and the service converts it to the kg
+ * that scheduler_line.standard_qty holds.
+ */
+export class SchedulerFeedLineInput {
+  @ApiProperty({ description: 'The feed item' })
+  @IsUUID()
+  feed_item_id: string;
+
+  @ApiProperty({ description: 'First stage day this feed applies to (day 1 = the day the batch entered the stage)' })
+  @IsInt()
+  @Min(0)
+  period_from: number;
+
+  @ApiProperty({ description: 'Last stage day this feed applies to' })
+  @IsInt()
+  @Min(0)
+  period_to: number;
+
+  @ApiProperty({ description: 'Daily feed per head, in feed_qty_uom' })
+  @IsNumber()
+  @Min(0)
+  feed_qty_per_head_per_day_kg: number;
+
+  @ApiProperty({ required: false, description: 'A weight UOM code for the quantity above; blank = KG' })
+  @IsOptional()
+  @IsString()
+  feed_qty_uom?: string;
+}
+
+export class UpdateSchedulerFeedLinesDto {
+  @ApiProperty({ type: [SchedulerFeedLineInput], description: 'The scheduler\'s whole feed line set. Lines must follow one another with no gap or overlap.' })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SchedulerFeedLineInput)
+  lines: SchedulerFeedLineInput[];
+}

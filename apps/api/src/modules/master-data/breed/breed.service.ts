@@ -1,5 +1,6 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { validateFeedLines, linesOf, siblingKey, type FeedLine } from './lifecycle-feed-lines';
+import { feedQtyToKg } from '../../production/lifecycle/feed-qty-kg';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne, inArray, isNotNull, sql, getTableColumns, count, asc, desc } from 'drizzle-orm';
@@ -1001,30 +1002,13 @@ export class BreedService {
     };
   }
 
-  /** Kilograms in one unit of a weight UOM: the common ones by code, others from UOM Conversion (to KG). */
-  private static readonly KG_PER_UOM: Record<string, number> = { KG: 1, KGS: 1, GRAM: 0.001, GRAMS: 0.001, G: 0.001, GM: 0.001, TONNE: 1000, MT: 1000, TON: 1000, LB: 0.45359237 };
-
-  /** Each feed line with its daily amount in kg (line.kg); a UOM with no known factor to KG is refused by name. */
+  /** Each feed line with its daily amount in kg (line.kg). The UOM table and the refusal live in
+   * feed-qty-kg.ts, shared with the scheduler's own feed editor so the two cannot disagree. */
   private async withKg(lines: FeedLine[]): Promise<FeedLine[]> {
     const out: FeedLine[] = [];
     for (const [i, line] of lines.entries()) {
-      const uom = (line.feed_qty_uom || 'KG').toUpperCase();
-      let factor = BreedService.KG_PER_UOM[uom];
-      if (factor === undefined) {
-        const [conv] = await this.db
-          .select({ f: schema.uomConversionMaster.conversion_factor })
-          .from(schema.uomConversionMaster)
-          .where(and(
-            eq(schema.uomConversionMaster.from_uom, uom), eq(schema.uomConversionMaster.to_uom, 'KG'),
-            isNull(schema.uomConversionMaster.item_id), eq(schema.uomConversionMaster.is_active, true), isNull(schema.uomConversionMaster.deleted_at),
-          ))
-          .limit(1);
-        factor = conv ? Number(conv.f) : undefined as unknown as number;
-      }
-      if (factor === undefined || !Number.isFinite(factor) || factor <= 0) {
-        throw new BadRequestException(`Feed line ${i + 1}: UOM ${uom} has no conversion to KG. Pick a weight UOM, or add a ${uom} to KG conversion in UOM Conversion.`);
-      }
-      out.push({ ...line, feed_qty_uom: uom, kg: Number((line.feed_qty_per_head_per_day_kg * factor).toFixed(4)) });
+      const { uom, kg } = await feedQtyToKg(this.db, line.feed_qty_per_head_per_day_kg, line.feed_qty_uom, `Feed line ${i + 1}`);
+      out.push({ ...line, feed_qty_uom: uom, kg });
     }
     return out;
   }
