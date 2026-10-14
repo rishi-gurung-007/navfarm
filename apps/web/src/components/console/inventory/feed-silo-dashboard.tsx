@@ -200,7 +200,7 @@ function FeedSiloDashboardContent() {
                 label: `${option.code} — ${option.name}`,
               }))}
               placeholder={t("fsdSelectShed")}
-              columnHeaders={false}
+              columnHeaders={["Code", "Shed Name"]}
               triggerClassName="nf-input-sm min-w-44 h-9"
             />
             <select
@@ -212,7 +212,7 @@ function FeedSiloDashboardContent() {
               disabled={!farmChosen || !sheds.length}
             >
               {!selection.shedId && <option value="">{t("fsdSelectShed")}</option>}
-              {sheds.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+              {sheds.map((option) => <option key={option.id} value={option.id}>{option.name || option.code}</option>)}
             </select>
           </div>
         </Field>
@@ -229,7 +229,7 @@ function FeedSiloDashboardContent() {
                 label: `${option.code} — ${option.name}`,
               }))}
               placeholder={t("fsdSelectSilo")}
-              columnHeaders={false}
+              columnHeaders={["Code", "Silo Name"]}
               triggerClassName="nf-input-sm min-w-44 h-9"
             />
             <select
@@ -241,7 +241,7 @@ function FeedSiloDashboardContent() {
               disabled={!selection.shedId || !silos.length}
             >
               {!selection.siloId && <option value="">{t("fsdSelectSilo")}</option>}
-              {silos.map((option) => <option key={option.id} value={option.id}>{option.code} — {option.name}</option>)}
+              {silos.map((option) => <option key={option.id} value={option.id}>{option.name || option.code}</option>)}
             </select>
           </div>
         </Field>

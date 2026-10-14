@@ -38,7 +38,7 @@ describe('A silo record shows human-readable attached sheds instead of raw IDs',
 
     render(<MasterRecordView config={locationConfig} id="silo-1" onClose={jest.fn()} />);
 
-    const text = await screen.findByText('FARM-001/SHED-001 — Breeding & Gestation Complex');
+    const text = await screen.findByText('Breeding & Gestation Complex');
     expect(text).toBeDefined();
     expect(screen.queryByText('74b0010c-8237-485b-ae40-7549263b13de')).toBeNull();
   });
@@ -84,7 +84,7 @@ describe('A silo record shows human-readable attached sheds instead of raw IDs',
     render(<MasterRecordView config={locationConfig} id="silo-1" onClose={jest.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByText('FARM-001/SHED-001 — Breeding & Gestation Complex')).toBeDefined();
+      expect(screen.getByText('Breeding & Gestation Complex')).toBeDefined();
     });
     expect(screen.queryByText('74b0010c-8237-485b-ae40-7549263b13de')).toBeNull();
   });

@@ -343,7 +343,7 @@ export default function BioAssetRollForwardPanel() {
                   <>
                     {data.glReconciliation.glAccounts.map((a: Row) => (
                       <div key={a.account_code} className="flex justify-between py-1.5">
-                        <span style={S.sub}>{a.account_code} — {a.account_name}</span>
+                        <span style={S.sub}>{a.account_name || a.account_code}</span>
                         <span className="font-mono font-medium" style={S.primary}>
                           {formatCurrency(a.balance)}
                         </span>

@@ -1357,7 +1357,28 @@
       "idx": 193,
       "version": "5",
       "when": 1792000000062,
-      "tag": "0194_scheduler_no",
+      "tag": "0194_lifecycle_json_unencode",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "5",
+      "when": 1792000000063,
+      "tag": "0195_lifecycle_feed_uom",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "5",
+      "when": 1792000000064,
+      "tag": "0196_scheduler_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "5",
+      "when": 1792000000065,
+      "tag": "0197_lifecycle_retired_lines",
       "breakpoints": true
     }
   ]

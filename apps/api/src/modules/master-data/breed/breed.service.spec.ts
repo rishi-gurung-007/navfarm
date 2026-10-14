@@ -7,6 +7,9 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
+// The scheduler refresh after a feed change has its own spec (refresh-scheduler-feed.spec.ts); here it is a stub.
+jest.mock('../../production/lifecycle/refresh-scheduler-feed', () => ({ refreshSchedulerFeedLines: jest.fn().mockResolvedValue([]) }));
+
 describe('BreedService', () => {
   let service: BreedService;
 
@@ -45,6 +48,11 @@ describe('BreedService', () => {
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
+    // Any query a test does not script answers "no rows": a lifecycle stage's other feed-line rows (13 Oct) are
+    // looked up on every read, and a single-line stage simply has none.
+    const noRows: any = { then: (res: any, rej: any) => Promise.resolve([]).then(res, rej) };
+    for (const k of ['from', 'where', 'limit', 'leftJoin', 'orderBy', 'offset']) noRows[k] = jest.fn().mockReturnValue(noRows);
+    mockDbSelect.mockReturnValue(noRows);
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
     numberSeries.resolveSeriesFor.mockReset();
@@ -408,7 +416,9 @@ describe('BreedService', () => {
       );
       const inserted = values.mock.calls[0]?.[0];
       expect(inserted.kpi_alert_period).toBe('WEEKLY');
-      expect(JSON.parse(inserted.kpi_thresholds)[0]).toMatchObject({ uom: 'G', average_value: 500 });
+      // Stored as a JSON array, not an encoded string: the KPI evaluator reads it with Array.isArray (13 Oct).
+      expect(Array.isArray(inserted.kpi_thresholds)).toBe(true);
+      expect(inserted.kpi_thresholds[0]).toMatchObject({ uom: 'G', average_value: 500 });
     });
 
     it.each([
@@ -511,6 +521,8 @@ describe('BreedService', () => {
     });
 
     it('re-derives company/nob/lob from the breed on update — a request can never set them (ADDENDUM 3)', async () => {
+      // A stage's other feed-line rows (13 Oct) are read too: none here.
+      const noRows = () => { const c: any = { then: (res: any, rej: any) => Promise.resolve([]).then(res, rej) }; for (const k of ['from', 'where', 'limit', 'orderBy']) c[k] = jest.fn().mockReturnValue(c); return c; };
       mockDbSelect
         .mockReturnValueOnce({
           // findOneLifecycleStage
@@ -524,12 +536,15 @@ describe('BreedService', () => {
             }),
           }),
         })
+        .mockReturnValueOnce(noRows()) // its stage rows (inside findOneLifecycleStage)
+        .mockReturnValueOnce(noRows()) // the stage's other rows
         .mockReturnValueOnce({
           // the breed re-read: company/nob/lob come from here
           from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([
             { breed_id: 'breed-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-1' },
           ]) }) }),
         })
+        .mockReturnValueOnce(noRows()) // the updated row, re-read
         .mockReturnValueOnce({
           // findOneLifecycleStage again for the return
           from: jest.fn().mockReturnValue({

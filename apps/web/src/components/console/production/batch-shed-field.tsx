@@ -31,7 +31,7 @@ export function BatchShedField({
     .sort((a, b) => a.shed_code.localeCompare(b.shed_code));
   const label = (id: string | null) => {
     const s = options.find((o) => o.shed_id === id) ?? sheds.find((o) => o.shed_id === id);
-    return s ? `${s.shed_code} — ${s.shed_name}` : t("blNoShed");
+    return s ? s.shed_name || s.shed_code : t("blNoShed");
   };
   const closed = batch.status === "CLOSED" || batch.status === "CANCELLED";
 
@@ -72,7 +72,7 @@ export function BatchShedField({
         >
           <option value="">{t("blNoShed")}</option>
           {options.map((s) => (
-            <option key={s.shed_id} value={s.shed_id}>{`${s.shed_code} — ${s.shed_name}`}</option>
+            <option key={s.shed_id} value={s.shed_id}>{s.shed_name || s.shed_code}</option>
           ))}
         </select>
         <Button size="sm" variant="outline" onClick={save} disabled={saving || value === (batch.shed_id ?? "")}>

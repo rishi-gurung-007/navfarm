@@ -8,6 +8,19 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 
+/**
+ * The day an animal actually left the herd, beside its Expected Cull Date (Rishi, 14 Oct): the date of death for one
+ * that died (mortality in data entry or Dispose), the actual cull date for one culled. Read-only, derived on read.
+ */
+function withExitDates<T extends { disposal_type?: string | null; status?: string | null; disposal_date?: string | null; cull_date?: string | null }>(animal: T) {
+  const died = animal.disposal_type === 'DIED' || animal.status === 'DEAD';
+  return {
+    ...animal,
+    date_of_death: died ? animal.disposal_date ?? null : null,
+    actual_cull_date: animal.cull_date ?? (animal.disposal_type === 'CULLED' ? animal.disposal_date ?? null : null),
+  };
+}
+
 @ApiTags('Animal Register')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,7 +47,7 @@ export class AnimalController {
   async findAll(@Query() query: QueryAnimalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.animalService.findAll(query, tenantId);
-    return { success: true, message: 'Animals retrieved successfully.', data: result };
+    return { success: true, message: 'Animals retrieved successfully.', data: result.map(withExitDates) };
   }
 
   @Get('lookup/tag')
@@ -52,7 +65,7 @@ export class AnimalController {
   @ApiParam({ name: 'id', description: 'Animal UUID' })
   async findOne(@Param('id') id: string) {
     const result = await this.animalService.findOne(id);
-    return { success: true, message: 'Animal retrieved.', data: result };
+    return { success: true, message: 'Animal retrieved.', data: withExitDates(result) };
   }
 
   @Put(':id')

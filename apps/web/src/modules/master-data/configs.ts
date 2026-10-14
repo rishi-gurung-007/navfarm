@@ -101,13 +101,14 @@ const location: MasterDataConfig = {
       hideInForm: true, hideInTable: true,
       section: "Identification",
     },
-    // CC (11 Oct): each farm / mill has its own cost centre; inventory journals take it from here.
+    // CC (11 Oct): a mill's cost centre; inventory journals take it from here. Hidden on farms (Rishi, 14 Oct) — a
+    // farm keeps any value it already has (an unshown field is not sent, so an edit leaves it as it is).
     {
       key: "cost_center_id", label: "Cost Centre", type: "select-entity",
       entityEndpoint: "/cost-center?isActive=true", entityValueKey: "cost_center_id",
       entityLabelKeys: ["cost_center_code", "cost_center_name"],
-      visibleWhen: { anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] },
-      helpText: "The cost centre every inventory journal for this farm or mill is posted against. Optional.",
+      visibleWhen: { anyOf: [{ key: "location_type", equals: ["MILL"] }] }, hideStoredWhenHidden: true,
+      helpText: "The cost centre every inventory journal for this mill is posted against. Optional.",
       section: "Identification",
     },
     // Hidden for SILO (2026-09-24, client request) — a silo is a sealed vessel
@@ -493,6 +494,8 @@ const animal: MasterDataConfig = {
   // and posting the gain or loss on disposal, and the API now rejects them on
   // the plain update path.
   statusActiveValues: ["ACTIVE", "QUARANTINE", "SICK", "PREGNANT", "LACTATING", "DRY"],
+  // Rishi, 14 Oct: an animal that died (or left the herd) stays findable here, greyed by its status.
+  listParams: { includeDisposed: "true" },
   columns: [
     { key: "animal_code", label: "Code" },
     { key: "animal_type", label: "Type" },
@@ -638,6 +641,9 @@ const animal: MasterDataConfig = {
     { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "productive_life_start", label: "Productive Life Start", type: "date", section: "Production" },
     { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
+    // Rishi, 14 Oct: when it actually left — derived by the API from the disposal (never edited here).
+    { key: "date_of_death", label: "Date of Death", type: "date", readOnly: true, hideInForm: true, section: "Production" },
+    { key: "actual_cull_date", label: "Actual Cull Date", type: "date", readOnly: true, hideInForm: true, section: "Production" },
     { key: "notes", label: "Notes", type: "textarea", section: "Production" },
   ],
 };
@@ -1289,8 +1295,8 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "lifecycle_code", label: "Code" },
     { key: "stage", label: "Stage" },
     { key: "calc_unit", label: "Unit" },
-    { key: "period_from", label: "From" },
-    { key: "period_to", label: "To" },
+    { key: "period_from", label: "Effective From" },
+    { key: "period_to", label: "Effective To" },
     { key: "std_fcr", label: "Std FCR" },
     // LFO (11 Oct): blank = the default row; a farm name marks a farm-level override.
     { key: "farm_name", label: "Farm (override)", noFilter: true },
@@ -1313,8 +1319,10 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "calc_unit", label: "Period Unit", type: "select", required: true,
       options: ["DAY", "WEEK", "MONTH"].map((v) => ({ value: v, label: v })),
     },
-    { key: "period_from", label: "Period From", type: "number", min: 0, required: true },
-    { key: "period_to", label: "Period To", type: "number", min: 0, required: true },
+    // With Feed Consumption lines the stage's range is the lines' (first From .. last To) and these are not needed;
+    // they set the range only for a stage with no feed (13 Oct).
+    { key: "period_from", label: "Effective From", type: "number", min: 0, helpText: "Stage day numbers, counted from the day the batch or animal entered this stage — not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To." },
+    { key: "period_to", label: "Effective To", type: "number", min: 0, helpText: "Stage day numbers, counted from the day the batch or animal entered this stage — not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To." },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
     // for the stage; BBP §6 hard-blocks gilt selection below 15. Shown only for
     // Category SOW (2026-09-21) — the same restriction Animal Register's own
@@ -1331,21 +1339,11 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "season_type", label: "Season", type: "select",
       options: ["ALL", "SUMMER", "WINTER"].map((v) => ({ value: v, label: v.charAt(0) + v.slice(1).toLowerCase() })),
     },
-    { key: "feed_item_id", label: "Feed", type: "select-entity", searchable: true, entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
-    { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", type: "number", step: "0.01", min: 0 },
-    // TDD Master Setup row 37: how this stage's feed is supplied.
-    {
-      key: "feed_form", label: "Feed Form", type: "select",
-      options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }],
-    },
-    { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
     {
       key: "farm_id", label: "Farm (override)", type: "select-entity", searchable: true,
       entityEndpoint: "/location?locationType=FARM&rootOnly=true&isActive=true", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"],
       helpText: "Optional. Pick a farm to make this feed item and rate apply to that farm only, over the default row. Blank = the default for every farm.",
     },
-    { key: "effective_from", label: "Effective From", type: "date", helpText: "Optional. The first date this feed row applies, so a diet change can be planned ahead. Blank = always." },
-    { key: "effective_to", label: "Effective To", type: "date", helpText: "Optional. The last date this feed row applies. Rows for the same stage and days cannot overlap in dates." },
     { key: "std_body_weight_kg", label: "Std Body Weight (KG)", type: "number", step: "0.01", min: 0 },
     { key: "std_adg_gpd", label: "Std ADG (g/day)", type: "number", step: "0.01", min: 0 },
     { key: "std_fcr", label: "Std FCR", type: "number", step: "0.01", min: 0, max: 99.999 },
@@ -1367,8 +1365,8 @@ const breedLifecycleStage: MasterDataConfig = {
         // Display only: a line's period is always the header's KPI period (Rishi, 12 Oct).
         { key: "kpi_period", label: "KPI Period", type: "select", defaultFromField: "kpi_alert_period", readOnlyFollow: true, options: KPI_PERIOD_OPTIONS },
         // Stage days (day-in-stage, 1 = first day of the stage); both empty = the whole stage.
-        { key: "from_day", label: "From (day)", type: "number", step: "1", min: 1 },
-        { key: "to_day", label: "To (day)", type: "number", step: "1", min: 1 },
+        { key: "from_day", label: "From", type: "number", step: "1", min: 1 },
+        { key: "to_day", label: "To", type: "number", step: "1", min: 1 },
         { key: "average_value", label: "Average Value", type: "number", step: "0.01" },
         { key: "tolerance_pct", label: "Tolerance (%)", type: "number", step: "0.01", min: 0, max: 100 },
         { key: "tolerance_type", label: "Tolerance Type", type: "select", options: [{ value: "UPPER", label: "Upper" }, { value: "LOWER", label: "Lower" }] },
@@ -1380,6 +1378,24 @@ const breedLifecycleStage: MasterDataConfig = {
       key: "kpi_alert_period", label: "KPI period", type: "select", subDialog: true,
       options: KPI_PERIOD_OPTIONS,
       helpText: "The KPI period for every line below (Daily or Weekly).",
+    },
+    // Feed Consumption (Rishi, 13 Oct): the stage's feeds as lines in the form, just before Resource Requirements
+    // and laid out like them. Each line is a run of the stage's days (in the Period Unit) with its own feed; lines follow one another
+    // with no gap or overlap (1-8, 9-20, ...). Each is stored as one of the stage's rows, which the scheduler,
+    // forecast and requisition already read. TDD Master Setup row 37: Feed Form = how that feed is supplied.
+    {
+      key: "feed_lines", label: "Feed Consumption", type: "json",
+      jsonRow: [
+        { key: "feed_item_id", label: "Feed Item", type: "select-entity", entityEndpoint: "/item?itemType=FEED", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"] },
+        { key: "period_from", label: "Effective From", type: "number", step: "1", min: 0 },
+        { key: "period_to", label: "Effective To", type: "number", step: "1", min: 0 },
+        { key: "feed_form", label: "Feed Form", type: "select", options: [{ value: "BULK", label: "Bulk" }, { value: "BAGGED", label: "Bagged" }] },
+        { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head", type: "number", step: "0.01", min: 0 },
+        // 0195 (14 Oct): the amount's own weight UOM; blank = KG. The API keeps the kg equivalent for the forecast.
+        { key: "feed_qty_uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code"] },
+        { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
+      ],
+      helpText: "One line per feed. Daily Feed per Head is in the line's UOM (blank = KG). Effective From / Effective To are the stage's days in the Period Unit, counted from the day the batch or animal entered the stage; lines must follow one another with no gap or overlap (e.g. 1-8, then 9-20).",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a

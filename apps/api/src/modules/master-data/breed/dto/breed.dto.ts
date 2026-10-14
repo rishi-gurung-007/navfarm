@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, Matches, MaxLength, registerDecorator } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested, ValidateIf, MaxLength, registerDecorator } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -543,6 +543,23 @@ function IsNotBeforeDay(other: string) {
     });
 }
 
+/**
+ * One Feed Consumption line of a lifecycle stage (13 Oct): a feed for a run of the stage's days, in the row's Period
+ * Unit. Lines follow one another with no gap or overlap; each is stored as one of the stage's rows.
+ */
+export class FeedLineRowDto {
+  @ApiProperty({ example: 1 }) @Type(() => Number) @IsInt() @Min(0) period_from: number;
+  @ApiProperty({ example: 8 }) @Type(() => Number) @IsInt() @Min(0) period_to: number;
+  @ApiProperty() @IsUUID() feed_item_id: string;
+  @ApiProperty({ required: false, enum: ['BULK', 'BAGGED'] })
+  @Transform(({ value }) => (value === '' ? undefined : value)) @IsOptional() @IsIn(['BULK', 'BAGGED']) feed_form?: string;
+  @ApiProperty({ example: 2.5, description: 'Daily feed per head, in feed_qty_uom' }) @Type(() => Number) @IsNumber() @Min(0) feed_qty_per_head_per_day_kg: number;
+  @ApiProperty({ required: false, example: 'KG', description: 'A weight UOM code; blank = KG' })
+  @Transform(({ value }) => (value === '' || value == null ? undefined : String(value))) @IsOptional() @IsString() @MaxLength(20) feed_qty_uom?: string;
+  @ApiProperty({ required: false })
+  @Transform(({ value }) => (value === '' || value == null ? undefined : Number(value))) @IsOptional() @IsNumber() @Min(0) @Max(100) feed_wastage_pct?: number;
+}
+
 export class KpiThresholdRowDto {
   @ApiProperty({ description: 'A kpi_metric_master metric_code' })
   @IsString()
@@ -675,12 +692,15 @@ export class CreateBreedLifecycleStageDto {
   @IsIn(CALC_UNITS)
   calc_unit: string;
 
+  // With feed_lines the range comes from the lines (first From .. last To), so these are needed only without them.
   @ApiProperty({ description: 'Start of this standard range in calc_unit', example: 1 })
+  @ValidateIf((o) => !Array.isArray(o.feed_lines) || o.feed_lines.length === 0)
   @IsInt()
   @Min(0)
   period_from: number;
 
   @ApiProperty({ description: 'End of this standard range in calc_unit', example: 11 })
+  @ValidateIf((o) => !Array.isArray(o.feed_lines) || o.feed_lines.length === 0)
   @IsInt()
   @Min(0)
   period_to: number;
@@ -727,18 +747,6 @@ export class CreateBreedLifecycleStageDto {
   @MaxLength(36)
   @IsOptional()
   farm_id?: string | null;
-
-  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
-  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
-  @IsOptional()
-  effective_from?: string | null;
-
-  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
-  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
-  @IsOptional()
-  effective_to?: string | null;
 
   @ApiProperty({ description: 'Expected average body weight at end of this range, KG', required: false })
   @IsNumber()
@@ -812,6 +820,14 @@ export class CreateBreedLifecycleStageDto {
   @Type(() => KpiThresholdRowDto)
   @IsOptional()
   kpi_thresholds?: KpiThresholdRowDto[];
+
+  @ApiProperty({ required: false, type: [FeedLineRowDto], description: 'Feed Consumption lines; each becomes one of the stage rows (Day 1-8 one feed, 9-20 the next).' })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeedLineRowDto)
+  @IsOptional()
+  feed_lines?: FeedLineRowDto[];
+
 
   @ApiProperty({ description: 'Alert if actual KPI falls below this', required: false })
   @IsNumber()
@@ -930,18 +946,6 @@ export class UpdateBreedLifecycleStageDto {
   @IsOptional()
   farm_id?: string | null;
 
-  @ApiProperty({ description: 'First calendar day this feed row applies (YYYY-MM-DD). Blank = always. Master Setup r30/r38.', required: false })
-  @ValidateIf((o) => o.effective_from !== undefined && o.effective_from !== null && o.effective_from !== '')
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective From must be a date (YYYY-MM-DD).' })
-  @IsOptional()
-  effective_from?: string | null;
-
-  @ApiProperty({ description: 'Last calendar day this feed row applies (YYYY-MM-DD). Blank = open-ended.', required: false })
-  @ValidateIf((o) => o.effective_to !== undefined && o.effective_to !== null && o.effective_to !== '')
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Effective To must be a date (YYYY-MM-DD).' })
-  @IsOptional()
-  effective_to?: string | null;
-
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
@@ -1014,6 +1018,14 @@ export class UpdateBreedLifecycleStageDto {
   @Type(() => KpiThresholdRowDto)
   @IsOptional()
   kpi_thresholds?: KpiThresholdRowDto[];
+
+  @ApiProperty({ required: false, type: [FeedLineRowDto], description: 'Feed Consumption lines; each becomes one of the stage rows (Day 1-8 one feed, 9-20 the next).' })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeedLineRowDto)
+  @IsOptional()
+  feed_lines?: FeedLineRowDto[];
+
 
   @ApiProperty({ required: false })
   @IsNumber()

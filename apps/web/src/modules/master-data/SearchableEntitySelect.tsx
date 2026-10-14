@@ -370,6 +370,8 @@ export function SearchableEntitySelect({
     const field = ariaLabel.trim().toLowerCase();
 
     if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
+    // A UOM or currency is its code (KG, USD): the code is the thing itself (Rishi, 14 Oct).
+    if (/\b(uom|unit|currency)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
     if (/\b(description|desc)\b/.test(field)) {
       const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
       if (index >= 0) return parts[index] || getLabel(selected);

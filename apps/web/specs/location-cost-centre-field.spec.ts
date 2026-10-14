@@ -14,7 +14,8 @@ describe("Location Master Cost Centre field (11 Oct)", () => {
     expect(field.required).toBeFalsy();
   });
 
-  it("is shown for FARM and MILL only", () => {
-    expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: ["FARM", "MILL"] }] });
+  it("is shown for MILL only, never on a farm even when one holds a value (14 Oct)", () => {
+    expect(field.visibleWhen).toEqual({ anyOf: [{ key: "location_type", equals: ["MILL"] }] });
+    expect(field.hideStoredWhenHidden).toBe(true);
   });
 });

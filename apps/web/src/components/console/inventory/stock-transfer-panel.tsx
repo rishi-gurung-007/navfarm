@@ -1644,7 +1644,7 @@ export default function StockTransferPanel() {
                           {!canUserReceive(editingTransfer) && (
                             <span className="inline-flex items-center gap-1.5 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md">
                               <Truck className="h-3.5 w-3.5 shrink-0" />
-                              <span>In transit to {warehouseCode(editingTransfer.to_warehouse_id, editingTransfer.to_warehouse_code || editingTransfer.to_warehouse_name)} — Awaiting receipt</span>
+                              <span>In transit to {editingTransfer.to_warehouse_name || warehouseCode(editingTransfer.to_warehouse_id, editingTransfer.to_warehouse_code)} — Awaiting receipt</span>
                             </span>
                           )}
                         </>

@@ -8,6 +8,9 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { FarmScope } from '../../../common/farm-scope';
 import { transactionCls, useFarmScope as useFarmScopeCls } from '../../../test-utils/transaction-cls';
 
+// Vaccinations by age have their own spec (lifecycle/vaccination-lines.spec.ts); here they are a stub.
+jest.mock('../lifecycle/vaccination-sync', () => ({ syncVaccinationLines: jest.fn().mockResolvedValue({ added: 0, removed: 0 }) }));
+
 describe('SchedulerHeaderService', () => {
   const dialect = new MySqlDialect();
   let service: SchedulerHeaderService;

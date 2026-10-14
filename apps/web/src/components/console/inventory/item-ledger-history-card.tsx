@@ -141,22 +141,12 @@ export default function ItemLedgerHistoryCard({
         style={S.surface}
       >
         <div>
-          <span
-            className="text-[11px] font-semibold uppercase tracking-wider"
-            style={S.muted}
-          >
-            Item Code & Name
-          </span>
-          <p
-            className="mt-0.5 font-mono text-sm font-bold truncate"
-            style={S.primary}
-            title={item.item_name}
-          >
-            {item.item_code}
-          </p>
-          <p className="text-xs truncate" style={S.sub} title={item.item_name}>
-            {item.item_name}
-          </p>
+          <span className="text-[11px] font-semibold uppercase tracking-wider" style={S.muted}>Item Code</span>
+          <p className="mt-0.5 font-mono text-sm font-bold truncate" style={S.primary}>{item.item_code}</p>
+        </div>
+        <div>
+          <span className="text-[11px] font-semibold uppercase tracking-wider" style={S.muted}>Item Name</span>
+          <p className="mt-0.5 text-sm truncate" style={S.primary} title={item.item_name}>{item.item_name}</p>
         </div>
 
         <div>

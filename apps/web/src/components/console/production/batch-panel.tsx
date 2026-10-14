@@ -1315,10 +1315,10 @@ export default function BatchPanel() {
     }
   };
 
-  const itemLabel = (id: string) => {
-    const it = items.find((i) => i.item_id === id);
-    return it ? `${it.item_code} — ${it.item_name}` : '—';
-  };
+  // Code and name are two columns in a table, the name elsewhere (Rishi, 14 Oct).
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || '—';
+  const itemName = (id: string) => { const it = items.find((i) => i.item_id === id); return it ? it.item_name || it.item_code : '—'; };
+  const itemLabel = itemName;
   const batchLabel = (id: string) => {
     const b = batches.find((x) => x.batch_id === id);
     return b ? b.batch_no : '—';
@@ -2255,9 +2255,7 @@ export default function BatchPanel() {
                 <table className="w-full border-collapse text-left text-xs">
                   <TableHeader>
                     <tr className="border-b border-(--row-border)">
-                      <TableHead className="h-auto px-3 py-2">
-                        {t('blColItem')}
-                      </TableHead>
+                      <TableHead className="h-auto px-3 py-2">{t('blColItem')}</TableHead>
                       <TableHead className="h-auto px-3 py-2">
                         {t('blColSourceBatch')}
                       </TableHead>
@@ -2512,9 +2510,7 @@ export default function BatchPanel() {
                     <table className="w-full border-collapse text-left text-xs">
                       <TableHeader>
                         <tr className="border-b border-[var(--row-border)]">
-                          <TableHead className="h-auto px-3 py-2">
-                            {t('blColItem')}
-                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">{t('blColItem')}</TableHead>
                           <TableHead className="h-auto px-3 py-2">
                             {t('blColStdQtyPerUnitDay')}
                           </TableHead>
@@ -3144,9 +3140,8 @@ export default function BatchPanel() {
                     <table className="w-full border-collapse text-left text-xs">
                       <TableHeader>
                         <tr className="border-b border-[var(--row-border)]">
-                          <TableHead className="h-auto px-3 py-2">
-                            {t('blColItem')}
-                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">Item No.</TableHead>
+                          <TableHead className="h-auto px-3 py-2">Item Description</TableHead>
                           <TableHead className="h-auto px-3 py-2">
                             {t('blColSourceBatch')}
                           </TableHead>
@@ -3167,9 +3162,11 @@ export default function BatchPanel() {
                             <TableCell
                               className="px-3 py-2 font-medium"
                               style={S.primary}
-                            >
-                              {itemLabel(l.item_id)}
-                            </TableCell>
+                            >{itemCode(l.item_id)}</TableCell>
+                            <TableCell
+                              className="px-3 py-2 font-medium"
+                              style={S.primary}
+                            >{itemName(l.item_id)}</TableCell>
                             <TableCell className="px-3 py-2" style={S.sub}>
                               {l.source_batch_id
                                 ? batchLabel(l.source_batch_id)
@@ -3333,9 +3330,8 @@ export default function BatchPanel() {
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColEntryType')}
                               </TableHead>
-                              <TableHead className="h-auto px-3 py-2">
-                                {t('blColItem')}
-                              </TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item No.</TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item Description</TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColStage')}
                               </TableHead>
@@ -3362,9 +3358,11 @@ export default function BatchPanel() {
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
-                                >
-                                  {itemLabel(e.bio_asset_item_id)}
-                                </TableCell>
+                                >{itemCode(e.bio_asset_item_id)}</TableCell>
+                                <TableCell
+                                  className="px-3 py-2"
+                                  style={S.primary}
+                                >{itemName(e.bio_asset_item_id)}</TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
                                   {e.stage ?? '—'}
                                 </TableCell>
@@ -3423,9 +3421,8 @@ export default function BatchPanel() {
                         <table className="w-full border-collapse text-left text-xs">
                           <TableHeader>
                             <tr className="border-b border-[var(--row-border)]">
-                              <TableHead className="h-auto px-3 py-2">
-                                {t('blColItem')}
-                              </TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item No.</TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item Description</TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColType')}
                               </TableHead>
@@ -3449,9 +3446,11 @@ export default function BatchPanel() {
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
-                                >
-                                  {itemLabel(l.item_id)}
-                                </TableCell>
+                                >{itemCode(l.item_id)}</TableCell>
+                                <TableCell
+                                  className="px-3 py-2"
+                                  style={S.primary}
+                                >{itemName(l.item_id)}</TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
                                   {l.output_type}
                                 </TableCell>
@@ -3520,9 +3519,8 @@ export default function BatchPanel() {
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColType')}
                               </TableHead>
-                              <TableHead className="h-auto px-3 py-2">
-                                {t('blColItem')}
-                              </TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item No.</TableHead>
+                              <TableHead className="h-auto px-3 py-2">Item Description</TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColStdValue')}
                               </TableHead>
@@ -3544,9 +3542,8 @@ export default function BatchPanel() {
                                 >
                                   {v.variance_type}
                                 </TableCell>
-                                <TableCell className="px-3 py-2" style={S.sub}>
-                                  {v.item_id ? itemLabel(v.item_id) : '—'}
-                                </TableCell>
+                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemCode(v.item_id) : '—'}</TableCell>
+                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemName(v.item_id) : '—'}</TableCell>
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
@@ -4082,9 +4079,7 @@ export default function BatchPanel() {
             <table className="w-full border-collapse text-left text-xs">
               <TableHeader>
                 <tr className="border-b border-[var(--row-border)]">
-                  <TableHead className="h-auto px-3 py-2">
-                    {t('blColItem')}
-                  </TableHead>
+                  <TableHead className="h-auto px-3 py-2">{t('blColItem')}</TableHead>
                   <TableHead className="h-auto px-3 py-2">
                     {t('blColType')}
                   </TableHead>

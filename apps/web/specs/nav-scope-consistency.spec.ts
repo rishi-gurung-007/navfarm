@@ -147,6 +147,7 @@ describe('Sidebar consistency across workspace scopes', () => {
     }
   });
 
+  // Rishi, 14 Oct (final): Feed Forecast is its own sidebar item, its views in its flyout like Farm Master's.
   it('lists Feed Forecast as a top-level item in the company and operational workspaces', () => {
     const scopes = navByScope();
     for (const scope of ['COMPANY', 'OPERATIONAL']) {

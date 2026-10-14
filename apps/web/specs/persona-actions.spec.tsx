@@ -180,6 +180,7 @@ describe('FeedForecastTabs navigation copy', () => {
     expect(translations.en.fftTabFeedRequisition).toBe('Requisition');
   });
 
+  // Rishi, 14 Oct (final): no in-page tabs; the views are reached from the Feed Forecast sidebar flyout.
   it('renders no horizontal in-page tablist since navigation is driven by the sidebar flyout', () => {
     render(<FeedForecastTabs tab="feed-requisition" onTabChange={() => undefined} />);
     expect(screen.queryByRole('tablist')).toBeNull();

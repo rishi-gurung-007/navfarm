@@ -173,8 +173,11 @@ export default function StockBalancePanel() {
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
-                <TableHead className="whitespace-nowrap">{t("sbpColItem")}</TableHead>
-                <TableHead className="whitespace-nowrap">{t("sbpColWarehouse")}</TableHead>
+                {/* Code and name are two columns (Rishi, 14 Oct). */}
+                <TableHead className="whitespace-nowrap">Item Code</TableHead>
+                <TableHead className="whitespace-nowrap">Item Description</TableHead>
+                <TableHead className="whitespace-nowrap">Location Code</TableHead>
+                <TableHead className="whitespace-nowrap">Location Name</TableHead>
                 <TableHead className="whitespace-nowrap text-right">{t("sbpColOnHand")}</TableHead>
                 <TableHead className="whitespace-nowrap">{t("sbpColUom")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right">{t("sbpColValue")}</TableHead>
@@ -184,9 +187,9 @@ export default function StockBalancePanel() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <tr><TableCell colSpan={7} className="py-10 text-center" style={S.sub}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("sbpLoading")}</TableCell></tr>
+                <tr><TableCell colSpan={9} className="py-10 text-center" style={S.sub}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("sbpLoading")}</TableCell></tr>
               ) : rows.length === 0 ? (
-                <tr><TableCell colSpan={7} className="py-10 text-center" style={S.sub}><Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("sbpNoStockOnHand")}</TableCell></tr>
+                <tr><TableCell colSpan={9} className="py-10 text-center" style={S.sub}><Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("sbpNoStockOnHand")}</TableCell></tr>
               ) : (
                 pagedRows.map((row) => {
                   const belowReorder = row.reorder_level != null && row.on_hand_qty <= row.reorder_level;
@@ -197,19 +200,10 @@ export default function StockBalancePanel() {
                       className="cursor-pointer hover:bg-[var(--surface-raised)] transition"
                       title="Click to view purchase and consumption ledger history"
                     >
-                      <TableCell className="whitespace-nowrap font-medium" style={S.primary}>
-                        <div className="flex flex-col">
-                          <span className="font-mono text-xs font-bold text-[var(--accent)] hover:underline">
-                            {row.item_code}
-                          </span>
-                          <span className="truncate max-w-[280px] text-xs" style={S.sub} title={row.item_description}>
-                            {row.item_description}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>
-                        {row.warehouse_code ? `${row.warehouse_code} — ${row.warehouse_name}` : "—"}
-                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs font-bold text-[var(--accent)] hover:underline">{row.item_code}</TableCell>
+                      <TableCell className="max-w-[280px] truncate text-xs" style={S.primary} title={row.item_description}>{row.item_description}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>{row.warehouse_code || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs" style={S.sub}>{row.warehouse_name || "—"}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono font-semibold" style={S.primary}>
                         {fmt(row.on_hand_qty)}
                       </TableCell>

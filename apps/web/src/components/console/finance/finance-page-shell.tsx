@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStoredUser, hasPermission, NavUser } from "@/hooks/useAuth";
-import { useContextNav, type ContextNavModel } from "@/components/shell/ContextNav";
 import { useLanguage } from "@/hooks/useLanguage";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ConsolePage } from "@/components/ui/console-page";
 import { ShieldAlert } from "lucide-react";
 
-const FINANCE_SECTIONS = [
+/**
+ * The module's sections, in menu order. Exported because the sidebar builds
+ * Finance & Costing's flyout from this same list (Rishi, 14 Oct) — the sections
+ * used to be an in-page sub-navigation here, which put Finance's pages in a
+ * different place from every other module's.
+ */
+export const FINANCE_SECTIONS = [
   { key: "journal", href: "/finance/journal", labelKey: "finJournal" },
   { key: "profit-loss", href: "/finance/profit-loss", labelKey: "finProfitLoss" },
   { key: "balance-sheet", href: "/finance/balance-sheet", labelKey: "finBalanceSheet" },
@@ -48,23 +53,7 @@ function useFinancePageState() {
 
 export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTabKey; children: React.ReactNode }) {
   const { t } = useLanguage();
-  const router = useRouter();
   const { ready, mayView } = useFinancePageState();
-
-  const contextNav = useMemo<ContextNavModel | null>(() => {
-    if (!ready || !mayView) return null;
-    return {
-      label: t("moduleSections", { module: t("finance") }),
-      groups: [{ items: FINANCE_SECTIONS.map((s) => ({ key: s.key, label: t(s.labelKey as any) })) }],
-      activeKey,
-      onSelect: (key) => {
-        const target = FINANCE_SECTIONS.find((s) => s.key === key);
-        if (target) router.push(target.href);
-      },
-    };
-  }, [ready, mayView, activeKey, t, router]);
-
-  useContextNav(contextNav);
 
   if (!ready) return null;
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
 import type { MasterDataField } from "./types";
+import { entityDisplayText, nameOrCode } from "@/utils/code-name";
 import { formatDecimal } from "@/lib/utils";
 
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
@@ -51,15 +52,22 @@ export function MasterFieldValue({ field, value, record }: {
     // Master r8: a dated link is shown with its dates; an undated one reads as before.
     const day = (d?: string | null) => (d ? String(d).slice(0, 10) : "");
     return <>{details.map((d) => {
-      const label = [d.location_code, d.location_name].filter(Boolean).join(" — ");
+      const label = nameOrCode(d.location_code, d.location_name);
       return d.effective_from || d.effective_to ? `${label} (${day(d.effective_from) || "…"} → ${day(d.effective_to) || "…"})` : label;
     }).join(", ")}</>;
   }
 
+  // A list field (KPIs & Alerts, Feed Consumption, Resource Requirements, Vaccination / Medication Protocol) reads as
+  // its lines, with the form's own columns, not as raw JSON (Rishi, 14 Oct).
+  if (field?.type === "json" && field.jsonRow?.length) {
+    return <JsonRowsTable field={field} value={value} />;
+  }
+
   // Master r16: Feed in Silo opens the item record.
   if (field?.key === "silo_feed_item" && typeof value === "string" && value && typeof (record as any)?.silo_feed_item_id === "string") {
+    // The feed's name, linked (14 Oct: a field shows the thing, not code + name).
     const [code, ...rest] = value.split(" — ");
-    return <><a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{code}</a>{rest.length ? ` — ${rest.join(" — ")}` : ""}</>;
+    return <a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{nameOrCode(code, rest.join(" — "))}</a>;
   }
 
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(val);
@@ -91,9 +99,8 @@ export function MasterFieldValue({ field, value, record }: {
 
     const extractLabel = (row: any): string => {
       if (!row || typeof row !== "object") return "";
-      const keys = field?.entityLabelKeys || [];
-      const parts = keys.map((k) => row[k]).filter((p) => p !== null && p !== undefined && p !== "");
-      if (parts.length > 0) return parts.join(" — ");
+      const text = entityDisplayText(row, field?.entityLabelKeys || [], field?.entityValueKey);
+      if (text) return text;
       return row.code || row.name || row.title || row.label || "";
     };
 
@@ -199,4 +206,46 @@ export function MasterFieldValue({ field, value, record }: {
     );
   }
   return <>{formatMasterValue(value, field)}</>;
+}
+
+/** The rows of a list field as a table: one line per row, the form's columns, codes and ids shown as the thing. */
+function JsonRowsTable({ field, value }: { field: MasterDataField; value: unknown }) {
+  let rows: unknown = value;
+  if (typeof rows === "string") {
+    try { rows = JSON.parse(rows); } catch { rows = []; }
+  }
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object") as Record<string, unknown>[];
+  if (!list.length) return <>{field.emptyLabel ?? "—"}</>;
+  const columns = field.jsonRow ?? [];
+  const cell = (col: MasterDataField, row: Record<string, unknown>) => {
+    const v = row[col.key];
+    if (v === null || v === undefined || v === "") return "—";
+    if (col.type === "select" && col.options?.length) {
+      return col.options.find((o) => String(o.value) === String(v))?.label ?? String(v);
+    }
+    if (col.type === "select-entity") return <MasterFieldValue field={col} value={v} record={row} />;
+    return formatMasterValue(v, col);
+  };
+  return (
+    <div className="overflow-x-auto rounded-md border border-[var(--border)]">
+      <table className="w-full min-w-max border-collapse text-left text-xs">
+        <thead>
+          <tr className="bg-[var(--surface-raised)]">
+            {columns.map((col) => (
+              <th key={col.key} scope="col" className="whitespace-nowrap border-b border-[var(--border)] px-2 py-1.5 font-semibold text-[var(--text-secondary)]">{col.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((row, i) => (
+            <tr key={i} className="border-b border-[var(--border)] last:border-b-0">
+              {columns.map((col) => (
+                <td key={col.key} className="whitespace-nowrap px-2 py-1.5 font-normal">{cell(col, row)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }

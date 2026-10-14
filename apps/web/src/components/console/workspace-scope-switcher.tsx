@@ -258,7 +258,7 @@ export default function WorkspaceScopeSwitcher({
 
   const standardUserFarm = user?.farm;
   const fixedFarmLabel = user?.userType === "STANDARD_USER" && standardUserFarm
-    ? t("wsFixedFarmLabel", { code: standardUserFarm.location_code, name: standardUserFarm.location_name })
+    ? t("wsFixedFarmLabel", { code: standardUserFarm.location_code, name: standardUserFarm.location_name || standardUserFarm.location_code })
     : null;
 
   // A switcher only makes sense when there's something to switch to. A
@@ -296,7 +296,7 @@ export default function WorkspaceScopeSwitcher({
           screen read as "my data is gone" instead of "this is another farm". */}
       {activeFarmObj && (
         <p className="text-[10px] truncate mt-0.5" style={{ color: "var(--sidebar-active-accent)" }}>
-          {activeFarmObj.location_code} — {activeFarmObj.location_name}
+          {activeFarmObj.location_name || activeFarmObj.location_code}
         </p>
       )}
       {fixedFarmLabel && (

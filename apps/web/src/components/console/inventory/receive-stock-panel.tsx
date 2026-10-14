@@ -211,7 +211,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                   value: w.warehouse_id,
                   code: w.warehouse_code,
                   name: w.warehouse_name,
-                  label: `From: ${w.warehouse_code} — ${w.warehouse_name}`,
+                  label: `From: ${w.warehouse_name || w.warehouse_code}`,
                 })),
               ]}
               columnHeaders={false}
@@ -230,7 +230,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
               <option value="">All Origins</option>
               {warehouses.map((w) => (
                 <option key={w.warehouse_id} value={w.warehouse_id}>
-                  From: {w.warehouse_code} — {w.warehouse_name}
+                  From: {w.warehouse_name || w.warehouse_code}
                 </option>
               ))}
             </select>
@@ -249,7 +249,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                   value: w.warehouse_id,
                   code: w.warehouse_code,
                   name: w.warehouse_name,
-                  label: `To: ${w.warehouse_code} — ${w.warehouse_name}`,
+                  label: `To: ${w.warehouse_name || w.warehouse_code}`,
                 })),
               ]}
               columnHeaders={false}
@@ -268,7 +268,7 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
               <option value="">All Destinations</option>
               {warehouses.map((w) => (
                 <option key={w.warehouse_id} value={w.warehouse_id}>
-                  To: {w.warehouse_code} — {w.warehouse_name}
+                  To: {w.warehouse_name || w.warehouse_code}
                 </option>
               ))}
             </select>
@@ -303,7 +303,9 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                 <TableHead className="whitespace-nowrap px-3 py-2.5">Transfer Order Ref</TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5">Posting Date</TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5">Source &amp; Destination Locations</TableHead>
-                <TableHead className="whitespace-nowrap px-3 py-2.5">Item Code &amp; Description</TableHead>
+                {/* Code and name are two columns (Rishi, 14 Oct). */}
+                <TableHead className="whitespace-nowrap px-3 py-2.5">Item Code</TableHead>
+                <TableHead className="whitespace-nowrap px-3 py-2.5">Item Description</TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5 text-right">Qty Received</TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5 text-right">DOA / Waste Qty</TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5">Received By</TableHead>
@@ -313,14 +315,14 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={10} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" style={S.accent} />
                     Loading receipt history records…
                   </TableCell>
                 </TableRow>
               ) : pagedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={10} className="py-12 text-center" style={S.sub}>
                     <PackageCheck className="mx-auto mb-2 h-8 w-8 opacity-40 text-emerald-500" />
                     No transfer receipt records found.
                   </TableCell>
@@ -365,11 +367,10 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                       </span>
                     </TableCell>
 
-                    {/* Item Code & Description */}
+                    <TableCell className="px-3 py-2.5 text-xs whitespace-nowrap font-bold font-mono" style={S.primary}>{row.item_code}</TableCell>
                     <TableCell className="px-3 py-2.5 text-xs max-w-[240px]">
                       <div className="flex flex-col">
-                        <span className="font-bold font-mono" style={S.primary}>{row.item_code}</span>
-                        <span className="truncate text-[11px]" style={S.sub}>{row.item_name}</span>
+                        <span className="truncate" style={S.sub}>{row.item_name}</span>
                         {(row.serial_no || row.lot_no) && (
                           <span className="font-mono text-[10px] text-(--accent) flex items-center gap-1 mt-0.5">
                             <Barcode className="h-2.5 w-2.5" />
@@ -548,7 +549,8 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                 <table className="w-full border-collapse text-left text-xs">
                   <TableHeader>
                     <tr className="border-b border-(--row-border)">
-                      <TableHead className="px-3 py-2">Item Code &amp; Description</TableHead>
+                      <TableHead className="px-3 py-2">Item Code</TableHead>
+                      <TableHead className="px-3 py-2">Item Description</TableHead>
                       <TableHead className="px-3 py-2 text-right">Good Qty Received</TableHead>
                       <TableHead className="px-3 py-2 text-right">DOA / Waste Loss</TableHead>
                       <TableHead className="px-3 py-2">UOM</TableHead>
@@ -559,12 +561,8 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                   </TableHeader>
                   <TableBody>
                     <TableRow className="border-b border-(--row-border)">
-                      <TableCell className="px-3 py-2.5 font-medium" style={S.primary}>
-                        <div className="flex flex-col">
-                          <span className="font-bold font-mono">{viewingReceipt.item_code}</span>
-                          <span className="text-[11px]" style={S.sub}>{viewingReceipt.item_name}</span>
-                        </div>
-                      </TableCell>
+                      <TableCell className="px-3 py-2.5 font-bold font-mono whitespace-nowrap" style={S.primary}>{viewingReceipt.item_code}</TableCell>
+                      <TableCell className="px-3 py-2.5" style={S.primary}>{viewingReceipt.item_name}</TableCell>
                       <TableCell className="px-3 py-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                         +{Number(viewingReceipt.quantity).toLocaleString()}
                       </TableCell>

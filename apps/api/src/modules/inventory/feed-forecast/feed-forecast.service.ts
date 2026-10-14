@@ -2536,8 +2536,6 @@ export class FeedForecastService {
         period_to: schema.breedLifecycleStages.period_to,
         kg: schema.breedLifecycleStages.feed_qty_per_head_per_day_kg,
         wastage: schema.breedLifecycleStages.feed_wastage_pct,
-        effective_from: schema.breedLifecycleStages.effective_from,
-        effective_to: schema.breedLifecycleStages.effective_to,
         farm_id: schema.breedLifecycleStages.farm_id,
       })
       .from(schema.breedLifecycleStages)
@@ -2571,8 +2569,6 @@ export class FeedForecastService {
         toDay: range.toDay,
         kgPerHeadPerDay: Number(r.kg),
         wastagePct: Number(r.wastage ?? 0),
-        effectiveFrom: r.effective_from ?? null,
-        effectiveTo: r.effective_to ?? null,
         farmId: r.farm_id ?? null,
       };
     });

@@ -293,14 +293,12 @@ export class LifecycleKpiEvaluator {
           toDay: range.toDay,
           kgPerHeadPerDay: 0,
           wastagePct: 0,
-          effectiveFrom: r.effective_from ?? null,
-          effectiveTo: r.effective_to ?? null,
           farmId: r.farm_id ?? null,
         });
       }
       // Day-in-stage counts from the stage start (day 1), the same stretch the feed rows use.
       const dayInStage = daysBetween(h.effective_from, date) + 1;
-      const found = feedRowFor(candidates, dayInStage, date, batch.farm_id);
+      const found = feedRowFor(candidates, dayInStage, batch.farm_id);
       if ('error' in found) {
         if (found.error === 'OVERLAP') this.logger.warn(`Batch ${batch.batch_no}: several lifecycle rows cover day ${dayInStage} of the stage; KPI check skipped.`);
         continue;

@@ -1,5 +1,6 @@
 "use client";
 
+import { nameOrCode } from "@/utils/code-name";
 import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -106,8 +107,12 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
           every field stays where it was. Blocking is not a reason to hide the
           record: the list keeps blocked rows precisely so they can be looked at
           and restored. */}
-      {(record.is_active === false || !!record.deleted_at) &&
-        <p><StatusBadge status="BLOCKED" label="Blocked" /></p>}
+      {(record.is_active === false || !!record.deleted_at) && (() => {
+        // An animal that left the herd says how (Dead, Culled, Sold…), not "Blocked" (Rishi, 14 Oct).
+        const status = String(record.status ?? "");
+        const left = !!config.statusActiveValues && !!status && !config.statusActiveValues.includes(status);
+        return <p><StatusBadge status="BLOCKED" label={left ? status.charAt(0) + status.slice(1).toLowerCase() : "Blocked"} /></p>;
+      })()}
       {config.owner === "BC" && <BcOwnershipNotice config={config} />}
       {sections.map((sec) => (
         <div key={sec.title || "main"} className="space-y-3">
@@ -118,7 +123,8 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
           )}
           <dl className={`grid grid-cols-1 gap-4 sm:grid-cols-2${config.owner === "BC" ? " order-last" : ""}`}>
             {sec.fields.map((field) => (
-              <div key={field.key} className="min-w-0">
+              // A list field takes the full width, so its lines read as a table (14 Oct).
+              <div key={field.key} className={`min-w-0${field.type === "json" && field.jsonRow?.length ? " sm:col-span-2" : ""}`}>
                 <dt className="text-xs text-[var(--text-muted)]">{labelOf(field)}</dt>
                 <dd className="mt-1 whitespace-pre-wrap break-words text-sm font-medium">
                   <MasterFieldValue field={field} value={record[field.key]} record={record} />
@@ -162,7 +168,7 @@ function ShedSilos({ silos }: { silos: unknown }) {
         <ul className="mt-3 space-y-2">
           {rows.map((silo) => (
             <li key={silo.location_id} className="text-sm">
-              <span className="font-medium">{silo.location_code} — {silo.location_name}</span>
+              <span className="font-medium">{nameOrCode(silo.location_code, silo.location_name)}</span>
               <span className="ml-2 text-xs text-[var(--text-muted)]">
                 {silo.current_feed_item_name || silo.current_feed_item_code
                   ? `holding ${silo.current_feed_item_name || silo.current_feed_item_code}`

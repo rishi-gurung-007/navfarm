@@ -11,6 +11,7 @@ import {
   Bell,
   Database,
   Boxes,
+  TrendingUp,
   Landmark,
   LogOut,
   RefreshCw,
@@ -23,7 +24,6 @@ import {
   AlertTriangle,
   Package,
   CalendarClock,
-  TrendingUp,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -49,6 +49,7 @@ import { PROFILE_ITEMS } from "../../components/shell/ProfilePopover";
 import { ThemeIconButton } from "../../components/shell/ThemeIconButton";
 import { resolveLobFamily } from "@/lib/lob";
 import { LIVESTOCK_SECTIONS } from "@/components/console/livestock/livestock-page-shell";
+import { FINANCE_SECTIONS } from "@/components/console/finance/finance-page-shell";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
 
 /** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
@@ -290,6 +291,12 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         : t(section.labelKey),
     href: section.href,
   }));
+  // Finance's sections reached the user through an in-page sub-navigation until
+  // 14 Oct; they are a sidebar flyout now, like every other module's.
+  const financeChildren = FINANCE_SECTIONS.map((section) => ({
+    label: t(section.labelKey),
+    href: section.href,
+  }));
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
@@ -297,6 +304,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     { label: t("invStockAdjustment"), href: "/inventory/stock-adjustment" },
     { label: t("invLedger"), href: "/inventory/ledger" },
   ];
+  // Feed Forecast is its own sidebar item, its views listed in its flyout like Farm Master's masters (Rishi, 14 Oct);
+  // the same views stay as tabs on the page.
   const feedForecastChildren = [
     { label: t("fftTabDashboard"), href: "/inventory/feed-forecast?tab=dashboard" },
     { label: t("fftTabForecast"), href: "/inventory/feed-forecast?tab=forecast" },
@@ -353,7 +362,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
-      { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
+      { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
       // Requisitions — D24 puts the feed alerts on the Alerts page and D25
@@ -429,7 +438,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
-      { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance" },
+      { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },
       { label: t("approvals"), href: "/approvals", icon: CheckSquare, activePrefix: "/approvals" },

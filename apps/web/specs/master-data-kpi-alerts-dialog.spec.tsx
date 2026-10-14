@@ -58,7 +58,7 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
 
     fireEvent.click(within(stacked).getByRole("button", { name: "Add" }));
     // Column order, left to right.
-    const labels = ["KPI Item", "UOM", "KPI Period", "From (day)", "To (day)", "Average Value", "Tolerance (%)", "Tolerance Type", "Alert Severity"];
+    const labels = ["KPI Item", "UOM", "KPI Period", "From", "To", "Average Value", "Tolerance (%)", "Tolerance Type", "Alert Severity"];
     const found = Array.from(stacked.querySelectorAll("label")).map((l) => l.textContent?.replace("*", "").trim()).filter((t) => labels.includes(t as string));
     expect(found).toEqual(labels);
 
@@ -69,8 +69,8 @@ describe("Breed Lifecycle Stage KPIs & Alerts dialog", () => {
     expect(rowEl.querySelectorAll("label").length).toBe(labels.length);
     expect(within(rowEl).getByRole("button", { name: "Remove" })).toBeTruthy();
 
-    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "From (day)" }), { target: { value: "3" } });
-    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "To (day)" }), { target: { value: "9" } });
+    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "From" }), { target: { value: "3" } });
+    fireEvent.change(within(stacked).getByRole("spinbutton", { name: "To" }), { target: { value: "9" } });
     fireEvent.change(within(stacked).getByRole("spinbutton", { name: "Average Value" }), { target: { value: "500" } });
     fireEvent.click(within(stacked).getByRole("button", { name: "KPI period" }));
     fireEvent.click(screen.getAllByRole("option", { name: "Weekly" }).find((o) => !o.closest("select"))!);

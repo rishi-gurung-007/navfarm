@@ -456,13 +456,13 @@ describe('FeedForecastPanel — farm user (D13)', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     expect(screen.queryByRole('combobox', { name: 'ffFarm' })).toBeNull();
-    expect(screen.getByText('VIL100 — VILLA FRANCA FARM')).toBeTruthy();
+    expect(screen.getByText('VILLA FRANCA FARM')).toBeTruthy();
   });
 
   it("falls back to the response farm's code and name", async () => {
     mockFarm = adminFarm({ isFixed: true, farms: [], fixedFarm: null });
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    expect(screen.getByText('VIL100 — VILLA FRANCA FARM')).toBeTruthy();
+    expect(screen.getByText('VILLA FRANCA FARM')).toBeTruthy();
   });
 });

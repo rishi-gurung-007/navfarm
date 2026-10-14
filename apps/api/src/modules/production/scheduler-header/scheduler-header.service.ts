@@ -13,8 +13,12 @@ import {
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { syncVaccinationLines } from '../lifecycle/vaccination-sync';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { stagesNeedingScheduler } from './occupied-stages';
+import { applySchedulerFeedLines, type WantedFeedLine } from '../lifecycle/refresh-scheduler-feed';
+import { feedQtyToKg } from '../lifecycle/feed-qty-kg';
+import { validateFeedLines, type FeedLine } from '../../master-data/breed/lifecycle-feed-lines';
 
 /** "KPI UOM fetched as per KPI" — the unit a given kpi_metric is captured in isn't a free
  * choice, it's implied by the metric itself. Known metrics auto-derive kpi_uom (overriding
@@ -146,6 +150,8 @@ export class SchedulerHeaderService {
     batch: typeof schema.batchHeader.$inferSelect,
     stageId: string,
     stage: typeof schema.stageMaster.$inferSelect,
+    /** The scheduler's stage entry date (day 1), for vaccinations by age. */
+    effectiveFrom?: string | null,
   ) {
     if (!batch.breed_id) return;
     // All active rows for this breed+stage, oldest period first — not just one. A stage can
@@ -256,8 +262,15 @@ export class SchedulerHeaderService {
       customDaysByLine[lineId] = [entry.day];
     }
 
+    if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
+
+    // AGE_WEEKS vaccinations as stage days, from the batch's date of birth (Rishi, 14 Oct; vaccination-sync.ts).
+    if (effectiveFrom) {
+      await syncVaccinationLines(this.db, {
+        scheduler_id: schedulerId, batch_id: batch.batch_id, stage_id: stageId, effective_from: effectiveFrom, nob_id: batch.nob_id, lob_id: batch.lob_id,
+      }, lifecycle.vaccination_protocol, lifecycle.lifecycle_id);
+    }
     if (!lines.length) return;
-    await this.db.insert(schema.schedulerLine).values(lines);
 
     const customDayRows = Object.entries(customDaysByLine).flatMap(([lineId, days]) =>
       days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
@@ -742,7 +755,7 @@ export class SchedulerHeaderService {
     if (systemScheduler) {
       await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, stageId);
     } else if (!declined) {
-      await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage);
+      await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage, effectiveFrom);
     }
 
     await this.auditService.log({
@@ -940,7 +953,7 @@ export class SchedulerHeaderService {
     } else if (systemScheduler) {
       await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, dto.stage_id);
     } else {
-      await this.generateLinesFromLifecycle(schedulerId, batch, dto.stage_id, stage);
+      await this.generateLinesFromLifecycle(schedulerId, batch, dto.stage_id, stage, effectiveFrom);
     }
 
     await this.auditService.log({
@@ -1087,6 +1100,116 @@ export class SchedulerHeaderService {
     return rows.map((r) => ({ ...r, on_hand_qty: Number(r.on_hand_qty) })).filter((r) => r.on_hand_qty > 0.0001);
   }
 
+  /**
+   * The KPIs & Alerts lines of the batch's breed lifecycle stage, for the scheduler to show
+   * read-only (Rishi, 14 Oct).
+   *
+   * These are not scheduler lines and deliberately do not become any: the alert source stays
+   * lifecycle-kpi.evaluator, which reads breed_lifecycle_stages.kpi_thresholds itself. The
+   * scheduler's own DESCRIPTIVE lines still carry the older single std_value/alert-limit model,
+   * so copying these onto lines would put two alerting paths on one breach. Showing them is
+   * what was missing: the stage's KPIs were invisible from the scheduler.
+   *
+   * A stage record is several rows when it has several feed lines, and the KPI list is copied to
+   * all of them, so the first row that has one speaks for the stage.
+   */
+  private async loadLifecycleKpis(header: { tenant_id: string; company_id: string | null; breed_id: string | null; stage_id: string }) {
+    if (!header.breed_id) return { kpis: [], feed: [] };
+    const t = schema.breedLifecycleStages;
+    const rows = await this.db
+      .select({
+        kpi_thresholds: t.kpi_thresholds, kpi_alert_period: t.kpi_alert_period,
+        calc_unit: t.calc_unit, period_from: t.period_from, period_to: t.period_to,
+        feed_item_id: t.feed_item_id, feed_qty_uom: t.feed_qty_uom, feed_wastage_pct: t.feed_wastage_pct,
+      })
+      .from(t)
+      .where(and(
+        eq(t.tenant_id, header.tenant_id),
+        eq(t.breed_id, header.breed_id),
+        eq(t.stage_id, header.stage_id),
+        sql`${t.company_id} <=> ${header.company_id ?? null}`,
+        eq(t.is_active, true),
+      ))
+      .orderBy(asc(t.period_from));
+
+    // The stage's feed rows, for the scheduler's feed editor to show the UOM a rate was entered
+    // in and the wastage, neither of which a scheduler_line has a column for. Read-only there.
+    const feed = rows
+      .filter((r) => r.feed_item_id)
+      .map((r) => {
+        const { fromDay, toDay } = stageDayRange(r.calc_unit, r.period_from, r.period_to);
+        return { from_day: fromDay, to_day: toDay, feed_item_id: r.feed_item_id, feed_qty_uom: r.feed_qty_uom ?? 'KG', feed_wastage_pct: r.feed_wastage_pct ?? null };
+      });
+
+    const row = rows.find((r) => Array.isArray(r.kpi_thresholds) && r.kpi_thresholds.length);
+    if (!row) return { kpis: [], feed };
+    // A line's period is always the stage's KPI period (Rishi, 12 Oct) — the line only carries
+    // its own when an older row set one, so the header wins and the line is the fallback.
+    const kpis = (row.kpi_thresholds as Array<Record<string, unknown>>).map((line) => ({
+      metric: line.metric ?? null,
+      uom: line.uom ?? null,
+      kpi_period: row.kpi_alert_period ?? line.kpi_period ?? null,
+      from_day: line.from_day ?? null,
+      to_day: line.to_day ?? null,
+      average_value: line.average_value ?? null,
+      tolerance_pct: line.tolerance_pct ?? null,
+      tolerance_type: line.tolerance_type ?? null,
+      severity: line.severity ?? null,
+    }));
+    return { kpis, feed };
+  }
+
+  /**
+   * Replace a scheduler's Feed Consumption lines with the set the user edited (Rishi, 14 Oct).
+   *
+   * The same shape and the same rules as the breed lifecycle stage's feed lines: whole stage
+   * days, one feed per day, no gap and no overlap (validateFeedLines), and a quantity entered
+   * in a weight UOM that is stored as kilograms.
+   *
+   * Days already entered are not rewritten. applySchedulerFeedLines cuts a line with entries
+   * back to its last entered day and starts the new feed the day after, so a posted
+   * batch_daily_data row still reads the item and rate it was posted against.
+   *
+   * The lines it writes carry no lifecycle_ref_id — they are this scheduler's, not the stage's.
+   * The stage stays the standard: changing the stage's feed later brings this scheduler back in
+   * line through the same function, protecting entered days the same way.
+   */
+  async updateFeedLines(id: string, lines: FeedLine[], tenantId: string, userPayload?: any) {
+    const sh = schema.schedulerHeader;
+    const [header] = await this.db.select().from(sh).where(eq(sh.scheduler_id, id)).limit(1);
+    if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
+
+    // Same scope gate findOne applies — a scheduler outside the caller's farms is not theirs to edit.
+    const scope = farmScope(this.cls);
+    const [batchInScope] = await this.db
+      .select({ batch_id: schema.batchHeader.batch_id })
+      .from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, header.batch_id), ...batchScopeConditions(scope)))
+      .limit(1);
+    if (!batchInScope) throw new NotFoundException(`Scheduler '${id}' not found.`);
+    if (header.scheduler_status === 'COMPLETED') {
+      throw new BadRequestException('This scheduler is completed; its feed can no longer be changed.');
+    }
+
+    const validated = validateFeedLines(lines);
+    const wanted: WantedFeedLine[] = [];
+    for (const [i, line] of validated.entries()) {
+      const { kg } = await feedQtyToKg(this.db, line.feed_qty_per_head_per_day_kg, line.feed_qty_uom, `Feed line ${i + 1}`);
+      wanted.push({ fromDay: line.period_from, toDay: line.period_to, itemId: line.feed_item_id, qty: kg, lifecycleId: null });
+    }
+
+    const [stage] = await this.db.select({ stage_name: schema.stageMaster.stage_name })
+      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, header.stage_id)).limit(1);
+
+    await applySchedulerFeedLines(this.db, {
+      header: { scheduler_id: header.scheduler_id, effective_from: header.effective_from, nob_id: header.nob_id, lob_id: header.lob_id, stage_id: header.stage_id },
+      wanted,
+      stageName: stage?.stage_name ?? null,
+    });
+
+    return this.findOne(id);
+  }
+
   async findOne(id: string) {
     const [header] = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, id)).limit(1);
     if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
@@ -1108,6 +1231,7 @@ export class SchedulerHeaderService {
       ? await this.db.select().from(schema.schedulerLineCustomDays).where(inArray(schema.schedulerLineCustomDays.line_id, lineIds))
       : [];
     const siloStock = await this.loadSiloStock(header.location_id);
+    const lifecycleStage = await this.loadLifecycleKpis(header);
 
     const [batch] = await this.db.select({ batch_no: schema.batchHeader.batch_no })
       .from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, header.batch_id)).limit(1);
@@ -1157,6 +1281,8 @@ export class SchedulerHeaderService {
       location_name: location?.location_name ?? null,
       system_scheduler_name: systemScheduler?.scheduler_name ?? null,
       silo_stock: siloStock,
+      lifecycle_kpis: lifecycleStage.kpis,
+      lifecycle_feed: lifecycleStage.feed,
       lines: lines.map((line) => {
         const itemInfo = line.item_id ? itemMap.get(line.item_id) : null;
         return {

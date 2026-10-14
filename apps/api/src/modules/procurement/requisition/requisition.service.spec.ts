@@ -227,10 +227,27 @@ describe('RequisitionService.create — department identities are Cost Centre ro
       [departmentRow('cc-x', { cost_center_type: 'WAREHOUSE' })],
     );
     const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
-    // The only identity checked is the requester's (from User Setup) — the sender value is ignored.
-    await expect(service.create(storeDto({ sender_department_id: 'cc-snd' }) as any, TENANT, { userId: 'u1' }))
+    // The only identity checked is the requester's — a department chosen on the document; the sender value is ignored.
+    await expect(service.create(storeDto({ sender_department_id: 'cc-snd', requester_department_id: 'cc-x' }) as any, TENANT, { userId: 'u1' }))
       .rejects.toThrow('Requester department must be an active DEPARTMENT cost centre of this company.');
     expect(insertValues).toHaveLength(0);
+  });
+
+  it("leaves the user's own department blank when it is not a department of this company (14 Oct)", async () => {
+    const { db, selectResults, insertValues } = makeDb();
+    selectResults.push(
+      [{ full_name: 'Ada Farm', department_id: 'cc-other-company' }],
+      [], // not a DEPARTMENT of this company
+      [{ company_id: 'another-company' }], // it is another company's
+      [{ item_id: 'item-1' }],
+      [],
+      [],
+      [headerRow({ requester_name: 'Ada Farm', requester_department_id: null })],
+      [lineRow()],
+    );
+    const service = new RequisitionService(transactionCls(db), approvalsMock() as any, STOCK_TRANSFERS_STUB as any, NUMBER_SERIES_STUB as any);
+    await service.create(storeDto() as any, TENANT, { userId: 'u1' });
+    expect(insertValues[0].values).toMatchObject({ requester_name: 'Ada Farm', requester_department_id: null });
   });
 
   it('refuses a requester department inherited from the user when it is no longer valid', async () => {

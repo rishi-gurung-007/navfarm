@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The farm picker of the feed screens (A5, S3): "CODE — Name" in code order,
+ * The farm picker of the feed screens (A5, S3): farm names in code order,
  * grouped by company when the tenant-wide workspace lists more than one. A
  * farm login's farm is shown, not offered (D13).
  */
@@ -11,8 +11,9 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import type { FeedFarm } from "./use-feed-farm";
 
+/** A farm as the feed screens show it: its name, or its code without one (14 Oct: a field shows the thing). */
 export function feedFarmLabel(f: { code: string; name: string }): string {
-  return `${f.code} — ${f.name}`;
+  return f.name?.trim() || f.code;
 }
 
 export function FeedFarmSelect({

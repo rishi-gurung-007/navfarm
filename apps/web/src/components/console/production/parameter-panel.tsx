@@ -154,11 +154,11 @@ export default function ParameterPanel() {
 
   const itemLabel = (id: string) => {
     const it = items.find((i) => i.item_id === id);
-    return it ? it.item_code : "—";
+    return it ? it.item_name || it.item_code : "—";
   };
   const resourceLabel = (id: string) => {
     const r = resources.find((x) => x.resource_id === id);
-    return r ? r.resource_code : "—";
+    return r ? r.resource_name || r.resource_code : "—";
   };
 
   return (
@@ -266,7 +266,7 @@ export default function ParameterPanel() {
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldItem")}</label>
                 <select value={form.item_id} onChange={(e) => setForm((f: Row) => ({ ...f, item_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramSelectPlaceholder")}</option>
-                  {(form.parameter_type === "CONSUMPTION" ? consumableItems : items).map((it) => <option key={it.item_id} value={it.item_id}>{it.item_code} — {it.item_name}</option>)}
+                  {(form.parameter_type === "CONSUMPTION" ? consumableItems : items).map((it) => <option key={it.item_id} value={it.item_id}>{it.item_name || it.item_code}</option>)}
                 </select>
               </div>
             )}
@@ -275,7 +275,7 @@ export default function ParameterPanel() {
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldResourceOptional")}</label>
                 <select value={form.resource_id} onChange={(e) => setForm((f: Row) => ({ ...f, resource_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramNone")}</option>
-                  {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_code}</option>)}
+                  {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_name || r.resource_code}</option>)}
                 </select>
               </div>
             )}

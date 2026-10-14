@@ -121,7 +121,8 @@ const STATUS_FILTER = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "POSTED", "REJEC
 const LIST_COLUMNS = ["fscColCountNo", "fscColCountType", "fscColPeriod", "fscColCountedAt", "fscColSource", "fscColStatus"] as const;
 // Engine §1 rows 8–17; checkpoint 37: the system quantity is always "System Balance KG".
 const SILO_COLUMNS = ["fscColSilo", "fscColSiloName", "fscColHouse", "fscColItem", "fscColDiet", "fscColCapacity"] as const;
-const PLANNING_COLUMNS = ["fscColShortfall", "fscColNextDietIn", "fscColNextItem"] as const;
+// Code and name are two columns (Rishi, 14 Oct).
+const PLANNING_COLUMNS = ["fscColShortfall", "fscColNextDietIn", "fscColNextItem", "fscColNextItemName"] as const;
 const LINE_COLUMNS = [...SILO_COLUMNS, "fscColSystemBalance", "fscColCounted", "fscColVariance", "fscColVariancePct", ...PLANNING_COLUMNS, "fscColReason"] as const;
 const ENTRY_COLUMNS = [...SILO_COLUMNS, "fscColSystemBalance", ...PLANNING_COLUMNS, "fscColCounted", "fscColReason"] as const;
 const RIGHT = new Set<string>(["fscColCapacity", "fscColSystemBalance", "fscColCounted", "fscColVariance", "fscColVariancePct", "fscColShortfall", "fscColNextDietIn"]);
@@ -206,7 +207,7 @@ function SiloCells({ siloId, siloCode, siloName, houses, itemId, itemCode, itemN
     <td className={TD}>{siloCode ? <RecordLink code={siloCode} href={locationHref(siloId)} /> : t("fscSiloCodeMissing")}</td>
     <td className={TD}>{siloName || unavailable}</td>
     <td className={TD}>{houses && houses.length
-      ? houses.map((house, index) => <span key={house.id}>{index > 0 && ", "}<RecordLink code={house.code} href={locationHref(house.id)} /></span>)
+      ? houses.map((house, index) => <span key={house.id}>{index > 0 && ", "}<RecordLink code={house.name || house.code} href={locationHref(house.id)} /></span>)
       : t("fscNoHouse")}</td>
     <td className={TD}><RecordLink code={itemCode} href={itemHref(itemId)} /></td>
     <td className={`${TD} min-w-48 whitespace-normal break-words`}>{itemName || unavailable}</td>
@@ -226,8 +227,9 @@ function PlanningCells({ siloId, projectedShortfallKg, nextDietInDays, nextDietI
       {nextDietInDays === null || nextDietInDays === undefined ? t("fscNoNextDiet") : `${nextDietInDays} ${t("fsdDaysUnit")}`}
     </td>
     <td className={TD}>{nextDietItemCode
-      ? <><RecordLink code={nextDietItemCode} href={nextDietItemId ? itemHref(nextDietItemId) : null} />{nextDietItemName ? ` — ${nextDietItemName}` : ""}</>
+      ? <RecordLink code={nextDietItemCode} href={nextDietItemId ? itemHref(nextDietItemId) : null} />
       : t("fscNoNextDiet")}</td>
+    <td className={`${TD} min-w-48 whitespace-normal break-words`}>{nextDietItemCode ? nextDietItemName || unavailable : ""}</td>
   </>;
 }
 
@@ -444,7 +446,7 @@ export default function FeedStockCountPanel() {
                       label: `${m.location_code}${m.location_name ? ` — ${m.location_name}` : ""}`,
                     })),
                   ]}
-                  columnHeaders={false}
+                  columnHeaders={["Code", "Mill Name"]}
                   triggerClassName="nf-input-sm min-w-[12rem] h-9"
                 />
                 <select
@@ -456,7 +458,7 @@ export default function FeedStockCountPanel() {
                 >
                   <option value="">{t("fscCountAtFarm")}</option>
                   {mills.map((m) => (
-                    <option key={m.location_id} value={m.location_id}>{`${m.location_code}${m.location_name ? ` — ${m.location_name}` : ""}`}</option>
+                    <option key={m.location_id} value={m.location_id}>{m.location_name || m.location_code}</option>
                   ))}
                 </select>
               </div>

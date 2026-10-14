@@ -46,6 +46,7 @@ export interface SelectedSiloDashboard {
   /** Checkpoint 9: the ACTIVE silo at the house whose Feed Type matches the next diet. */
   nextDietSiloId?: string | null;
   nextDietSiloCode?: string | null;
+  nextDietSiloName?: string | null;
   projectedShortfallKg: number;
   recommendedOrderKg: number;
   requisitionId: string | null;
@@ -79,10 +80,11 @@ const TD = "border-b border-(--border) px-3 py-2 align-top";
 
 const date = (value: string | null | undefined, unavailable: string) => value ? formatDateShort(value) : unavailable;
 
-/** "CODE — Name" with the code linked to the item record; the name alone when no code is known. */
+/** The item's name (its code without one), linked to the item record (14 Oct: a field shows the thing). */
 function ItemValue({ id, code, name, unavailable }: { id?: string | null; code?: string | null; name: string | null; unavailable: string }) {
-  if (!code) return <>{name ?? unavailable}</>;
-  return <><RecordLink code={code} href={id ? itemHref(id) : null} />{name ? ` — ${name}` : ""}</>;
+  const text = name || code;
+  if (!text) return <>{unavailable}</>;
+  return <RecordLink code={text} href={id ? itemHref(id) : null} />;
 }
 
 export interface DashboardShed {
@@ -112,7 +114,7 @@ export function FeedSiloDashboardCards({
     ? unavailable
     : silo.siloAvailableForNextDiet
       ? silo.nextDietSiloCode
-        ? <>{t("fsdYes")} · <RecordLink code={silo.nextDietSiloCode} href={silo.nextDietSiloId ? locationHref(silo.nextDietSiloId) : null} /></>
+        ? <>{t("fsdYes")} · <RecordLink code={silo.nextDietSiloName || silo.nextDietSiloCode} href={silo.nextDietSiloId ? locationHref(silo.nextDietSiloId) : null} /></>
         : t("fsdYes")
       : t("fsdNo");
   const nextDiet: ReactNode = silo.nextDietItemName || silo.nextDietItemCode
@@ -206,12 +208,12 @@ export function FeedSiloDashboardCards({
           <tbody>
             <tr>
               <td className={`${TD} font-medium`}>{t("fsdSilo")}</td>
-              <td className={`${TD} break-words text-right`}><a className="text-(--accent) hover:underline" href={`/master-data/location?recordId=${encodeURIComponent(silo.siloId)}`}>{silo.siloCode}</a>{silo.siloName ? ` — ${silo.siloName}` : ""}</td>
+              <td className={`${TD} break-words text-right`}><a className="text-(--accent) hover:underline" href={`/master-data/location?recordId=${encodeURIComponent(silo.siloId)}`}>{silo.siloName || silo.siloCode}</a></td>
             </tr>
             {shed && (
               <tr>
                 <td className={`${TD} font-medium`}>{t("fsdShed")}</td>
-                <td className={`${TD} break-words text-right`}><RecordLink code={shed.code} href={locationHref(shed.id)} />{shed.name ? ` — ${shed.name}` : ""}</td>
+                <td className={`${TD} break-words text-right`}><RecordLink code={shed.name || shed.code} href={locationHref(shed.id)} /></td>
               </tr>
             )}
             {details.map((detail) => <tr key={detail.label}><td className={`${TD} font-medium`}>{t(detail.label)}</td><td className={`${TD} min-w-48 break-words text-right tabular-nums`}>{detail.value}</td></tr>)}

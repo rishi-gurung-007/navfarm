@@ -61,10 +61,10 @@ function route(url: string) {
 /** The Dashboard starts empty: pick Farm, then Shed, then Silo, one at a time. */
 async function pickAll(shed = 'shed-a', silo?: string) {
   fireEvent.change(screen.getByLabelText('ffFarm'), { target: { value: 'farm-1' } });
-  await waitFor(() => expect(within(screen.getByLabelText('fsdShed')).queryByText(/SHED-001/)).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByLabelText('fsdShed')).queryByText(/First shed/)).toBeTruthy());
   fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: shed } });
   const siloId = silo ?? (shed === 'shed-b' ? 'silo-b' : 'silo-a');
-  await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(new RegExp(siloId === 'silo-b' ? 'SILO-002' : 'SILO-001'))).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(new RegExp(siloId === 'silo-b' ? 'Second silo' : 'First silo'))).toBeTruthy());
   fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: siloId } });
 }
 
@@ -123,10 +123,10 @@ describe('FeedSiloDashboard', () => {
     fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: 'shed-b' } });
     expect(screen.queryByText('GRS/SILO-001')).toBeNull();
     expect(screen.getByText('fsdSelectPrompt')).toBeTruthy();
-    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/SILO-002/)).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/Second silo/)).toBeTruthy());
     expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('');
     fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: 'silo-b' } });
-    expect(await screen.findByText('GRS/SILO-002')).toBeTruthy();
+    expect((await screen.findAllByText('Second silo')).length).toBeGreaterThan(0);
   });
 
   it('ignores an older selected-Silo response after the parent Shed changes', async () => {
@@ -141,9 +141,9 @@ describe('FeedSiloDashboard', () => {
     fireEvent.change(screen.getByLabelText('fsdPlanningDate'), { target: { value: '2026-10-06' } });
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(before + 1));
     fireEvent.change(screen.getByLabelText('fsdShed'), { target: { value: 'shed-b' } });
-    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/SILO-002/)).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByLabelText('fsdSilo')).queryByText(/Second silo/)).toBeTruthy());
     fireEvent.change(screen.getByLabelText('fsdSilo'), { target: { value: 'silo-b' } });
-    await screen.findByText('GRS/SILO-002');
+    await screen.findAllByText('Second silo');
     resolveOld(response('shed-a', 'silo-a'));
 
     await waitFor(() => expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('silo-b'));
@@ -170,7 +170,7 @@ describe('FeedSiloDashboard', () => {
     for (const label of labels) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     expect(screen.getAllByText('fsdNotScheduled').length).toBeGreaterThan(0);
     expect(screen.getAllByText('9,000').length).toBeGreaterThan(0);
-    expect(within(table).getByRole('link', { name: 'GRS/SILO-001' }).getAttribute('href')).toContain('recordId=silo-a');
+    expect(within(table).getByRole('link', { name: 'First silo' }).getAttribute('href')).toContain('recordId=silo-a');
     expect(within(table).getByRole('link', { name: 'reqStatusDraft' }).getAttribute('href')).toContain('/requisitions?id=req-1');
   });
 
@@ -192,9 +192,9 @@ describe('FeedSiloDashboard', () => {
 
     expect(within(table).getByText('fsdFirstShortageDate')).toBeTruthy();
     expect(within(table).getAllByText(/08\/10\/26/).length).toBeGreaterThan(0);
-    expect(within(table).getByRole('link', { name: 'GRS/SHED-001' }).getAttribute('href')).toBe('/master-data/location?recordId=shed-a');
-    expect(within(table).getByRole('link', { name: 'FEED-R1' }).getAttribute('href')).toBe('/master-data/item?recordId=r1');
-    expect(within(table).getByRole('link', { name: 'FEED-R2' }).getAttribute('href')).toBe('/master-data/item?recordId=r2');
+    expect(within(table).getByRole('link', { name: 'First shed' }).getAttribute('href')).toBe('/master-data/location?recordId=shed-a');
+    expect(within(table).getByRole('link', { name: 'Diet R1' }).getAttribute('href')).toBe('/master-data/item?recordId=r1');
+    expect(within(table).getByRole('link', { name: 'Diet R2' }).getAttribute('href')).toBe('/master-data/item?recordId=r2');
     expect(within(table).getByRole('link', { name: 'BIN-001' }).getAttribute('href')).toBe('/master-data/location?recordId=bin-1');
     expect(within(table).getByRole('link', { name: 'GRS/SILO-002' }).getAttribute('href')).toBe('/master-data/location?recordId=silo-b');
   });

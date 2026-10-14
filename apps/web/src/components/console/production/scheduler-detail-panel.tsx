@@ -104,6 +104,12 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   const [copyOpen, setCopyOpen] = useState(false);
 
+  // The scheduler's own Feed Consumption lines, edited together (Rishi, 14 Oct) the way the
+  // breed lifecycle stage's are: one feed per run of stage days, following one another.
+  const [feedRows, setFeedRows] = useState<Row[] | null>(null);
+  const [savingFeed, setSavingFeed] = useState(false);
+  const [feedError, setFeedError] = useState("");
+
   // Collapsible sections
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [linesCollapsed, setLinesCollapsed] = useState(false);
@@ -141,6 +147,56 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   };
 
   useEffect(load, [schedulerId]);
+
+  // Rebuilt from the server on every load, so a save or a stage change is what the editor shows.
+  useEffect(() => {
+    if (!header) { setFeedRows(null); return; }
+    const stageFeed: Row[] = header.lifecycle_feed || [];
+    setFeedRows(
+      (header.lines || [])
+        .filter((l: Row) => l.line_type === "CONSUMPTION" && l.occurrence === "DAILY" && l.is_active !== false)
+        .sort((a: Row, b: Row) => Number(a.start_day) - Number(b.start_day))
+        .map((l: Row) => {
+          // UOM and wastage have no column on a scheduler line; they come from the stage row
+          // whose days this line falls in, and are shown read-only.
+          const stage = stageFeed.find((f) => Number(f.from_day) <= Number(l.start_day) && Number(l.start_day) <= Number(f.to_day));
+          return {
+            line_id: l.line_id,
+            feed_item_id: l.item_id || "",
+            period_from: l.start_day ?? "",
+            period_to: l.end_day ?? "",
+            feed_qty_per_head_per_day_kg: toInputNumber(l.standard_qty),
+            feed_qty_uom: "KG",
+            stage_uom: stage?.feed_qty_uom ?? null,
+            stage_wastage_pct: stage?.feed_wastage_pct ?? null,
+          };
+        }),
+    );
+    setFeedError("");
+  }, [header]);
+
+  const saveFeedRows = async () => {
+    if (!header || !feedRows) return;
+    setSavingFeed(true);
+    setFeedError("");
+    try {
+      await api.put(`/scheduler-header/${header.scheduler_id}/feed-lines`, {
+        lines: feedRows.map((r) => ({
+          feed_item_id: r.feed_item_id,
+          period_from: Number(r.period_from),
+          period_to: Number(r.period_to),
+          feed_qty_per_head_per_day_kg: Number(r.feed_qty_per_head_per_day_kg),
+          feed_qty_uom: r.feed_qty_uom || "KG",
+        })),
+      });
+      load();
+      onChanged?.();
+    } catch (err: any) {
+      setFeedError(err?.message || "Could not save the feed lines.");
+    } finally {
+      setSavingFeed(false);
+    }
+  };
 
   useEffect(() => {
     if (itemsProp || resourcesProp || !header) return;
@@ -482,6 +538,148 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
               </TableBody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/*
+        The scheduler's own Feed Consumption lines, editable here (Rishi, 14 Oct) and laid out
+        like the lifecycle stage's: Feed Item first, then the stage days it covers, the daily
+        amount per head, the UOM and the wastage. UOM and wastage come from the stage and are
+        read-only — a scheduler_line has no column for either.
+
+        Saving keeps history: a line whose days are already entered is cut back to its last
+        entered day and the new feed starts the day after, so a posted entry still reads the
+        item and rate it was posted against.
+      */}
+      {!isSystem && feedRows && feedRows.length > 0 && (
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("scFeedLinesTitle")}</p>
+            <Button size="sm" onClick={saveFeedRows} disabled={savingFeed} className="nf-btn-primary">
+              {savingFeed ? t("saving") : t("scFeedLinesSave")}
+            </Button>
+          </div>
+          {feedError && <div className="mb-2"><InlineAlert>{feedError}</InlineAlert></div>}
+          <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader><tr className="border-b border-[var(--row-border)]">
+                <TableHead className="h-auto px-3 py-2">{t("lcFeedItem")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("lcEffectiveFrom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("lcEffectiveTo")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("lcDailyFeedPerHead")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiUom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("lcFeedWastage")}</TableHead>
+                <TableHead className="h-auto px-3 py-2" />
+              </tr></TableHeader>
+              <TableBody>
+                {feedRows.map((r: Row, i: number) => {
+                  const set = (patch: Row) => setFeedRows((rows) => (rows || []).map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                  return (
+                    <TableRow key={r.line_id ?? i}>
+                      <TableCell className="px-3 py-2 min-w-[220px]">
+                        <SearchableSelect
+                          ariaLabel={`${t("lcFeedItem")} ${i + 1}`}
+                          value={r.feed_item_id}
+                          onChange={(val) => set({ feed_item_id: val })}
+                          options={consumableItems.map((it) => ({ value: it.item_id, label: `${it.item_name}${it.uom_primary ? ` (${it.uom_primary})` : ""}` }))}
+                          placeholder={t("scPlaceholderSelectItem")}
+                          searchPlaceholder="Search items…"
+                        />
+                      </TableCell>
+                      <TableCell className="px-3 py-2">
+                        <input aria-label={`${t("lcEffectiveFrom")} ${i + 1}`} className={inputCls} style={S.input} type="number" step="1" min={0}
+                          value={r.period_from} onChange={(e) => set({ period_from: e.target.value })} />
+                      </TableCell>
+                      <TableCell className="px-3 py-2">
+                        <input aria-label={`${t("lcEffectiveTo")} ${i + 1}`} className={inputCls} style={S.input} type="number" step="1" min={0}
+                          value={r.period_to} onChange={(e) => set({ period_to: e.target.value })} />
+                      </TableCell>
+                      <TableCell className="px-3 py-2">
+                        <input aria-label={`${t("lcDailyFeedPerHead")} ${i + 1}`} className={inputCls} style={S.input} type="number" step="0.01" min={0}
+                          value={r.feed_qty_per_head_per_day_kg} onChange={(e) => set({ feed_qty_per_head_per_day_kg: e.target.value })} />
+                      </TableCell>
+                      {/* The rate above is in kg, which is what the line stores; the stage's own
+                          entry UOM is shown so a GRAM-entered standard is still recognisable. */}
+                      <TableCell className="px-3 py-2" style={S.primary}>KG{r.stage_uom && r.stage_uom !== "KG" ? ` (${t("lcStageEntersIn", { uom: r.stage_uom })})` : ""}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{r.stage_wastage_pct ?? "—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          aria-label={`${t("mdRemoveRow")} ${i + 1}`}
+                          className="rounded p-1 hover:bg-(--surface-raised)"
+                          style={S.muted}
+                          onClick={() => setFeedRows((rows) => (rows || []).filter((_, j) => j !== i))}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </table>
+          </div>
+          <div className="mt-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setFeedRows((rows) => {
+                  const list = rows || [];
+                  // Starts the day after the last line, so a new row is gapless to begin with.
+                  const nextFrom = list.length ? Number(list[list.length - 1].period_to) + 1 : 1;
+                  return [...list, { feed_item_id: "", period_from: nextFrom, period_to: nextFrom, feed_qty_per_head_per_day_kg: "", feed_qty_uom: "KG", stage_uom: null, stage_wastage_pct: null }];
+                })
+              }
+            >
+              <Plus className="h-3.5 w-3.5" /> {t("scFeedLinesAdd")}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-[10px]" style={S.sub}>{t("scFeedLinesHint")}</p>
+        </div>
+      )}
+
+      {/*
+        The stage's KPIs & Alerts, read-only (Rishi, 14 Oct). These belong to the breed
+        lifecycle stage, not to this scheduler: breed_lifecycle_stages.kpi_thresholds is what
+        lifecycle-kpi.evaluator alerts on, and it stays the single source. Shown here because
+        the stage's KPIs were otherwise invisible from the scheduler. Edit them on the stage.
+      */}
+      {header.lifecycle_kpis && header.lifecycle_kpis.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("scLifecycleKpisTitle")}</p>
+          <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader><tr className="border-b border-[var(--row-border)]">
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiItem")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiUom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiPeriod")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiFrom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiTo")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiAverage")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiTolerancePct")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiToleranceType")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiSeverity")}</TableHead>
+              </tr></TableHeader>
+              <TableBody>
+                {header.lifecycle_kpis.map((k: Row, i: number) => (
+                  <TableRow key={`${k.metric ?? "kpi"}-${i}`}>
+                    <TableCell className="px-3 py-2 font-medium" style={S.primary}>{k.metric ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.uom ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.kpi_period ?? "—"}</TableCell>
+                    {/* Both days empty means the KPI covers the whole stage. */}
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.from_day ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.to_day ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.average_value ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.tolerance_pct ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.tolerance_type ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.severity ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-[10px]" style={S.sub}>{t("scLifecycleKpisHint")}</p>
         </div>
       )}
 

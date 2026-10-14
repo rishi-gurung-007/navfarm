@@ -1,5 +1,6 @@
 "use client";
 
+import { mergeLifecycleFeedRows } from "./utils/master-csv";
 import { useState, useRef } from "react";
 import {
   Upload,
@@ -319,13 +320,17 @@ export default function MasterDataImportModal({
           }
 
           // Periods
-          const pFromRaw = getRawValue(raw, "period_from", "Period From", ["from", "periodfrom"]) || "0";
-          const pToRaw = getRawValue(raw, "period_to", "Period To", ["to", "periodto"]) || "0";
+          // The form calls these Effective From / Effective To (stage day numbers, 13 Oct).
+          // The "periodfrom"/"periodto" aliases keep a CSV written against the previous
+          // labels importing — getRawValue's normalised pass strips case and spaces, so
+          // they also cover the "Period From" / "Period To" headers themselves.
+          const pFromRaw = getRawValue(raw, "period_from", "Effective From", ["from", "periodfrom"]) || "0";
+          const pToRaw = getRawValue(raw, "period_to", "Effective To", ["to", "periodto"]) || "0";
           const pFrom = parseInt(pFromRaw, 10);
           const pTo = parseInt(pToRaw, 10);
-          if (isNaN(pFrom) || pFrom < 0) errors.push("Period From must be a non-negative integer.");
-          if (isNaN(pTo) || pTo < 0) errors.push("Period To must be a non-negative integer.");
-          if (pFrom > pTo) errors.push(`Period From (${pFrom}) cannot be greater than Period To (${pTo}).`);
+          if (isNaN(pFrom) || pFrom < 0) errors.push("Effective From must be a non-negative integer.");
+          if (isNaN(pTo) || pTo < 0) errors.push("Effective To must be a non-negative integer.");
+          if (pFrom > pTo) errors.push(`Effective From (${pFrom}) cannot be greater than Effective To (${pTo}).`);
 
           payload.period_from = pFrom;
           payload.period_to = pTo;
@@ -377,7 +382,7 @@ export default function MasterDataImportModal({
 
           // Numeric standards
           const stageStandards: { key: string; label: string; aliases?: string[] }[] = [
-            { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head (kg)", aliases: ["Feed Qty", "Daily Feed", "feed_qty"] },
+            { key: "feed_qty_per_head_per_day_kg", label: "Daily Feed per Head", aliases: ["Daily Feed per Head (kg)", "Feed Qty", "Daily Feed", "feed_qty"] },
             { key: "feed_wastage_pct", label: "Feed Wastage (%)", aliases: ["Feed Wastage %", "wastage", "feed_wastage"] },
             { key: "std_body_weight_kg", label: "Std Body Weight (KG)", aliases: ["Body Weight", "Std Body Weight (kg)", "body_weight"] },
             { key: "std_adg_gpd", label: "Std ADG (g/day)", aliases: ["ADG", "std_adg", "Std ADG"] },
@@ -392,6 +397,20 @@ export default function MasterDataImportModal({
               if (isNaN(val) || val < 0) errors.push(`${label} must be a non-negative number.`);
               else payload[key] = val;
             }
+          }
+
+          // A row's feed is one Feed Consumption line (14 Oct): sent as feed_lines so the API converts its UOM to kg and
+          // rows of one stage with following days join that stage as further lines.
+          if (payload.feed_item_id) {
+            const feedForm = (getRawValue(raw, "feed_form", "Feed Form", ["feedform"]) || "").trim().toUpperCase();
+            const feedUom = (getRawValue(raw, "feed_qty_uom", "Feed UOM", ["feeduom"]) || "").trim().toUpperCase();
+            payload.feed_lines = [{
+              period_from: payload.period_from, period_to: payload.period_to, feed_item_id: payload.feed_item_id,
+              ...(["BULK", "BAGGED"].includes(feedForm) ? { feed_form: feedForm } : {}),
+              feed_qty_per_head_per_day_kg: payload.feed_qty_per_head_per_day_kg ?? 0,
+              ...(feedUom ? { feed_qty_uom: feedUom } : {}),
+              ...(payload.feed_wastage_pct !== undefined ? { feed_wastage_pct: payload.feed_wastage_pct } : {}),
+            }];
           }
 
           const outputUom = getRawValue(raw, "output_uom", "Output UOM", ["uom", "outputuom"]);
@@ -430,7 +449,10 @@ export default function MasterDataImportModal({
 
   const handleCommitImport = async () => {
     const validRows = stagedRows.filter((r) => r.isValid);
-    const validItems = validRows.map((r) => r.payload);
+    let validItems = validRows.map((r) => r.payload);
+    // An exported stage with several Feed Consumption lines is several rows with one code: they import as one stage
+    // with those lines (14 Oct), not as a second stage refused for a duplicate code.
+    if (config.key === "breed-lifecycle-stage") validItems = mergeLifecycleFeedRows(validItems);
     if (validItems.length === 0) return;
 
     setSubmitting(true);

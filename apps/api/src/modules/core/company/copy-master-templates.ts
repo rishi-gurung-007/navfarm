@@ -52,6 +52,21 @@ export function planTemplateCopies(sets: TemplateRows[], companyId: string): Tem
       const mapped = identities.get(`gl_account_master:${copy.row[field]}`);
       if (mapped) copy.row[field] = mapped;
     }
+    // A lifecycle stage's lists name items and resources by id inside JSON (14 Oct): a copied stage must point at the
+    // copied company's vaccine, drug and resource, not the source company's, which it cannot see.
+    if (copy.table === schema.breedLifecycleStages) {
+      const remapList = (value: unknown, key: string, table: string) => Array.isArray(value)
+        ? value.map((entry) => {
+          if (!entry || typeof entry !== 'object') return entry;
+          const id = (entry as Row)[key];
+          const mapped = id ? identities.get(`${table}:${id}`) : undefined;
+          return mapped ? { ...(entry as Row), [key]: mapped } : entry;
+        })
+        : value;
+      copy.row.vaccination_protocol = remapList(copy.row.vaccination_protocol, 'vaccine_item_id', 'item_master');
+      copy.row.medication_protocol = remapList(copy.row.medication_protocol, 'medicine_item_id', 'item_master');
+      copy.row.resource_requirements = remapList(copy.row.resource_requirements, 'resource_id', 'resource_master');
+    }
     for (const fk of getTableConfig(copy.table).foreignKeys) {
       const ref = fk.reference();
       for (const column of ref.columns) {

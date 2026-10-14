@@ -1,4 +1,6 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { validateFeedLines, linesOf, siblingKey, type FeedLine } from './lifecycle-feed-lines';
+import { feedQtyToKg } from '../../production/lifecycle/feed-qty-kg';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne, inArray, isNotNull, sql, getTableColumns, count, asc, desc } from 'drizzle-orm';
@@ -26,11 +28,19 @@ import {
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
 import { findEffectiveOverlap } from '../../production/lifecycle/lifecycle-effective.rules';
+import { refreshSchedulerFeedLines } from '../../production/lifecycle/refresh-scheduler-feed';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 };
+
+
+/**
+ * A JSON list column's value as plain rows. The column type serialises it itself: JSON.stringify'ing it first stored
+ * the list as an encoded string (13 Oct), which the KPI evaluator (Array.isArray) then ignored.
+ */
+const jsonRows = (rows: unknown): unknown => JSON.parse(JSON.stringify(rows));
 
 @Injectable()
 export class BreedService {
@@ -814,9 +824,6 @@ export class BreedService {
       if (row.tolerance_pct != null && row.average_value == null) {
         throw new BadRequestException(`KPI ${row.metric}: a tolerance is measured around the Average Value, so enter one.`);
       }
-      if (row.lower_limit == null && row.upper_limit == null) {
-        throw new BadRequestException(`KPI ${row.metric} needs a Lower Limit, an Upper Limit, or both.`);
-      }
       if (row.lower_limit != null && row.upper_limit != null && row.lower_limit > row.upper_limit) {
         throw new BadRequestException(`KPI ${row.metric}: Lower Limit ${row.lower_limit} is above Upper Limit ${row.upper_limit}.`);
       }
@@ -880,26 +887,26 @@ export class BreedService {
   }
 
   /**
-   * Master Setup r30/r38: a feed row's effective window may not overlap another active feed row's over the same
-   * breed, stage and stage-day range. Rows with no feed item never feed, so they are not compared.
+   * Master Setup r35-r38: a feed row's stage days may not overlap another active feed row's for the same breed, stage
+   * and farm scope. Rows with no feed item never feed, so they are not compared.
    */
   private async assertNoEffectiveOverlap(
-    row: { lifecycle_id?: string; breed_id: string; stage_id: string; feed_item_id?: string | null; calc_unit?: string; period_from?: number; period_to?: number; effective_from?: string | null; effective_to?: string | null; farm_id?: string | null },
+    row: { lifecycle_id?: string; breed_id: string; stage_id: string; feed_item_id?: string | null; calc_unit?: string; period_from?: number; period_to?: number; farm_id?: string | null; season_type?: string | null; category?: string | null; company_id?: string | null },
     tenantId: string,
+    /** The stage record's own rows (its other feed lines), checked against each other by validateFeedLines instead. */
+    excludeIds: string[] = [],
   ) {
     if (!row.feed_item_id || !row.calc_unit || row.period_from == null || row.period_to == null) return;
-    if (row.effective_from && row.effective_to && row.effective_from > row.effective_to) {
-      throw new BadRequestException('Effective From cannot be after Effective To.');
-    }
     const others = await this.db
       .select({
         lifecycle_id: schema.breedLifecycleStages.lifecycle_id,
         calc_unit: schema.breedLifecycleStages.calc_unit,
         period_from: schema.breedLifecycleStages.period_from,
         period_to: schema.breedLifecycleStages.period_to,
-        effective_from: schema.breedLifecycleStages.effective_from,
-        effective_to: schema.breedLifecycleStages.effective_to,
         farm_id: schema.breedLifecycleStages.farm_id,
+        season_type: schema.breedLifecycleStages.season_type,
+        category: schema.breedLifecycleStages.category,
+        company_id: schema.breedLifecycleStages.company_id,
       })
       .from(schema.breedLifecycleStages)
       .where(and(
@@ -910,16 +917,114 @@ export class BreedService {
         isNotNull(schema.breedLifecycleStages.feed_item_id),
       ));
     const clash = findEffectiveOverlap(
-      { lifecycleId: row.lifecycle_id, calcUnit: row.calc_unit, periodFrom: row.period_from, periodTo: row.period_to, effectiveFrom: row.effective_from, effectiveTo: row.effective_to, farmId: row.farm_id ?? null },
-      (others ?? []).map((o) => ({ lifecycleId: o.lifecycle_id, calcUnit: o.calc_unit, periodFrom: o.period_from, periodTo: o.period_to, effectiveFrom: o.effective_from, effectiveTo: o.effective_to, farmId: o.farm_id ?? null })),
+      { lifecycleId: row.lifecycle_id, calcUnit: row.calc_unit, periodFrom: row.period_from, periodTo: row.period_to,
+        farmId: row.farm_id ?? null, seasonType: row.season_type ?? null, category: row.category ?? null, companyId: row.company_id ?? null },
+      (others ?? []).filter((o) => !excludeIds.includes(o.lifecycle_id)).map((o) => ({
+        lifecycleId: o.lifecycle_id, calcUnit: o.calc_unit, periodFrom: o.period_from, periodTo: o.period_to,
+        farmId: o.farm_id ?? null, seasonType: o.season_type ?? null, category: o.category ?? null, companyId: o.company_id ?? null })),
     );
     if (clash) {
-      throw new BadRequestException('Another feed row for this breed, stage and farm scope already covers these days in this effective date range. Change the Effective From / Effective To so they do not overlap.');
+      throw new BadRequestException('Another feed row for this breed, stage and farm scope already covers these days. Change Effective From / Effective To so they do not overlap.');
     }
+  }
+
+  /**
+   * After a stage's feed changes, the open batch schedulers of that breed and stage follow it for the days not yet
+   * entered (Rishi, 13 Oct; refresh-scheduler-feed.ts). Each scheduler changed is written to the audit log.
+   */
+  private async refreshStageSchedulers(stages: Array<{ breed_id: string; stage_id: string } | undefined>, tenantId: string, userPayload?: any) {
+    const seen = new Set<string>();
+    for (const { breed_id, stage_id } of stages.filter((s): s is { breed_id: string; stage_id: string } => !!s)) {
+      const key = `${breed_id}|${stage_id}`;
+      if (!breed_id || !stage_id || seen.has(key)) continue;
+      seen.add(key);
+      const changed = await refreshSchedulerFeedLines(this.db, { tenantId, breedId: breed_id, stageId: stage_id });
+      for (const schedulerId of changed) {
+        await this.auditService.log({
+          tenantId,
+          userId: userPayload?.userId,
+          action: 'UPDATE',
+          entityName: 'scheduler_header',
+          entityId: schedulerId,
+          newValues: { feed_lines_refreshed_from: 'breed_lifecycle_stages', breed_id, stage_id },
+        });
+      }
+    }
+  }
+
+  /**
+   * The rows that make one stage record (its Feed Consumption lines, 13 Oct): same breed, stage, farm override,
+   * season and category, and the same active state. Sorted by Period From.
+   */
+  private async stageRows(row: Record<string, any>) {
+    const t = schema.breedLifecycleStages;
+    const nullSafe = (col: any, v: unknown) => sql`${col} <=> ${v ?? null}`;
+    return this.db.select().from(t).where(and(
+      eq(t.tenant_id, row.tenant_id),
+      eq(t.breed_id, row.breed_id),
+      eq(t.stage_id, row.stage_id),
+      nullSafe(t.farm_id, row.farm_id),
+      nullSafe(t.season_type, row.season_type),
+      nullSafe(t.category, row.category),
+      // Company is part of the scope for the same reason the overlap rule now uses it:
+      // breed and stage can both be tenant-level rows, and without this one company's
+      // feed lines appeared on another's stage record (Rishi, 13 Oct).
+      nullSafe(t.company_id, row.company_id),
+      eq(t.is_active, row.is_active ?? true),
+      isNull(t.retired_at),
+    )).orderBy(asc(t.period_from));
+  }
+
+  /** A stage record as the form reads it: the whole day range of its rows and their feeds as lines. */
+  private withFeedLines<T extends Record<string, any>>(record: T, rows: Array<Record<string, any>>) {
+    const all = rows.length ? rows : [record];
+    return {
+      ...record,
+      period_from: Math.min(...all.map((r) => Number(r.period_from))),
+      period_to: Math.max(...all.map((r) => Number(r.period_to))),
+      feed_lines: linesOf(all),
+    };
+  }
+
+  /** The feed columns a line sets on its row; every other column is shared by the stage's rows. */
+  private static readonly LINE_COLUMNS = ['period_from', 'period_to', 'feed_item_id', 'feed_form', 'feed_qty_per_head_per_day_kg', 'feed_qty_per_head_per_day', 'feed_qty_uom', 'feed_wastage_pct'] as const;
+
+  private lineColumns(line: FeedLine) {
+    return {
+      period_from: line.period_from,
+      period_to: line.period_to,
+      feed_item_id: line.feed_item_id,
+      feed_form: line.feed_form || null,
+      // The _kg column stays in kg for everything that reads it; the line keeps what was entered (0195, 14 Oct).
+      feed_qty_per_head_per_day_kg: String(line.kg ?? line.feed_qty_per_head_per_day_kg),
+      feed_qty_per_head_per_day: String(line.feed_qty_per_head_per_day_kg),
+      feed_qty_uom: line.feed_qty_uom || 'KG',
+      feed_wastage_pct: line.feed_wastage_pct == null ? null : String(line.feed_wastage_pct),
+    };
+  }
+
+  /** Each feed line with its daily amount in kg (line.kg). The UOM table and the refusal live in
+   * feed-qty-kg.ts, shared with the scheduler's own feed editor so the two cannot disagree. */
+  private async withKg(lines: FeedLine[]): Promise<FeedLine[]> {
+    const out: FeedLine[] = [];
+    for (const [i, line] of lines.entries()) {
+      const { uom, kg } = await feedQtyToKg(this.db, line.feed_qty_per_head_per_day_kg, line.feed_qty_uom, `Feed line ${i + 1}`);
+      out.push({ ...line, feed_qty_uom: uom, kg });
+    }
+    return out;
   }
 
   async createLifecycleStage(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const breed = await this.findOneBreed(dto.breed_id, tenantId);
+    // Feed Consumption lines (13 Oct): the first line is this row; the others become the stage's further rows.
+    const feedLines = dto.feed_lines?.length ? await this.withKg(validateFeedLines(dto.feed_lines as FeedLine[])) : null;
+    if (feedLines) {
+      for (const line of feedLines) await this.assertItemExists(line.feed_item_id);
+      Object.assign(dto, this.lineColumns(feedLines[0]), {
+        feed_qty_per_head_per_day_kg: feedLines[0].kg,
+        feed_wastage_pct: feedLines[0].feed_wastage_pct ?? undefined,
+      });
+    }
 
     const [stage] = await this.db
       .select()
@@ -933,11 +1038,11 @@ export class BreedService {
     if (dto.feed_item_id) await this.assertItemExists(dto.feed_item_id);
     if (dto.output_item_id) await this.assertItemExists(dto.output_item_id);
     if (dto.period_from != null && dto.period_to != null && dto.period_from > dto.period_to) {
-      throw new BadRequestException('Period From cannot be greater than Period To.');
+      throw new BadRequestException('Effective From cannot be greater than Effective To.');
     }
     await this.assertFarmOverride(dto.farm_id, breed.company_id, tenantId);
     await this.assertLifecycleRows(dto, tenantId);
-    await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: dto.feed_item_id, calc_unit: dto.calc_unit, period_from: dto.period_from, period_to: dto.period_to, effective_from: dto.effective_from, effective_to: dto.effective_to, farm_id: dto.farm_id || null }, tenantId);
+    await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: dto.feed_item_id, calc_unit: dto.calc_unit, period_from: dto.period_from, period_to: dto.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId);
 
     // The row carries company_id (0084) — a request may not choose its value:
     // it is stamped FROM THE BREED, so a row created under a company breed is
@@ -971,8 +1076,6 @@ export class BreedService {
       feed_qty_per_head_per_day_kg: dto.feed_qty_per_head_per_day_kg?.toString() || null,
       feed_form: dto.feed_form || null,
       feed_wastage_pct: dto.feed_wastage_pct?.toString() || null,
-      effective_from: dto.effective_from || null,
-      effective_to: dto.effective_to || null,
       farm_id: dto.farm_id || null,
       std_body_weight_kg: dto.std_body_weight_kg?.toString() || null,
       std_adg_gpd: dto.std_adg_gpd?.toString() || null,
@@ -981,10 +1084,10 @@ export class BreedService {
       output_item_id: dto.output_item_id || null,
       output_uom: dto.output_uom || null,
       std_output_qty: dto.std_output_qty?.toString() || null,
-      medication_protocol: dto.medication_protocol ? JSON.stringify(dto.medication_protocol) : null,
-      vaccination_protocol: dto.vaccination_protocol ? JSON.stringify(dto.vaccination_protocol) : null,
-      resource_requirements: dto.resource_requirements ? JSON.stringify(dto.resource_requirements) : null,
-      kpi_thresholds: dto.kpi_thresholds ? JSON.stringify(dto.kpi_thresholds) : null,
+      medication_protocol: dto.medication_protocol ? jsonRows(dto.medication_protocol) : null,
+      vaccination_protocol: dto.vaccination_protocol ? jsonRows(dto.vaccination_protocol) : null,
+      resource_requirements: dto.resource_requirements ? jsonRows(dto.resource_requirements) : null,
+      kpi_thresholds: dto.kpi_thresholds ? jsonRows(dto.kpi_thresholds) : null,
       kpi_lower_limit: dto.kpi_lower_limit?.toString() || null,
       kpi_upper_limit: dto.kpi_upper_limit?.toString() || null,
       alert_severity: dto.alert_severity || null,
@@ -995,6 +1098,14 @@ export class BreedService {
     };
 
     await this.db.insert(schema.breedLifecycleStages).values(newLifecycleStage);
+    // The first line's amount and UOM as entered (0195).
+    if (feedLines) await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(feedLines[0])).where(eq(schema.breedLifecycleStages.lifecycle_id, lifecycleId));
+    // The further feed lines: copies of this row with their own days and feed (no code of their own).
+    for (const line of feedLines?.slice(1) ?? []) {
+      await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId, [lifecycleId]);
+      await this.db.insert(schema.breedLifecycleStages).values({ ...newLifecycleStage, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null });
+    }
+    await this.refreshStageSchedulers([{ breed_id: dto.breed_id, stage_id: dto.stage_id }], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1002,7 +1113,7 @@ export class BreedService {
       action: 'CREATE',
       entityName: 'breed_lifecycle_stages',
       entityId: lifecycleId,
-      newValues: newLifecycleStage,
+      newValues: { ...newLifecycleStage, feed_lines: feedLines ?? undefined },
     });
 
     return this.findOneLifecycleStage(lifecycleId);
@@ -1065,7 +1176,17 @@ export class BreedService {
     if (!lifecycleStage) {
       throw new NotFoundException(`Breed lifecycle stage with ID '${id}' not found.`);
     }
-    return lifecycleStage;
+    // A retired line (0197) stands for the stage it was removed from, active or not.
+    const rows = lifecycleStage.retired_at
+      ? ((await this.stageRows({ ...lifecycleStage, is_active: true })).length
+        ? await this.stageRows({ ...lifecycleStage, is_active: true })
+        : await this.stageRows({ ...lifecycleStage, is_active: false }))
+      : await this.stageRows(lifecycleStage);
+    // Any row of a stage stands for the stage, which is its first row (the one the list shows, holding the code): a
+    // link to a later feed line's row (a requisition or scheduler line keeps one) opens and saves the stage itself.
+    const first = [...rows].sort((a, b) => Number(a.period_from) - Number(b.period_from) || String(a.lifecycle_id).localeCompare(String(b.lifecycle_id)))[0];
+    if (first && first.lifecycle_id !== id) return this.findOneLifecycleStage(first.lifecycle_id);
+    return this.withFeedLines(lifecycleStage, rows);
   }
 
   async findAllLifecycleStages(query: QueryBreedLifecycleStageDto, tenantId: string) {
@@ -1107,6 +1228,17 @@ export class BreedService {
       }
     }
 
+    // One record per stage (13 Oct): a stage fed several feeds is several rows; only its first (lowest Period From)
+    // is listed, carrying the others as its feed lines.
+    // Retired feed lines (0197) are history, never listed.
+    conditions.push(isNull(schema.breedLifecycleStages.retired_at));
+    conditions.push(sql`NOT EXISTS (SELECT 1 FROM breed_lifecycle_stages s2 WHERE s2.tenant_id = ${schema.breedLifecycleStages.tenant_id}
+      AND s2.breed_id = ${schema.breedLifecycleStages.breed_id} AND s2.stage_id = ${schema.breedLifecycleStages.stage_id}
+      AND s2.farm_id <=> ${schema.breedLifecycleStages.farm_id} AND s2.season_type <=> ${schema.breedLifecycleStages.season_type}
+      AND s2.category <=> ${schema.breedLifecycleStages.category} AND s2.is_active = ${schema.breedLifecycleStages.is_active} AND s2.retired_at IS NULL
+      AND (s2.period_from < ${schema.breedLifecycleStages.period_from}
+        OR (s2.period_from = ${schema.breedLifecycleStages.period_from} AND s2.lifecycle_id < ${schema.breedLifecycleStages.lifecycle_id})))`);
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -1145,11 +1277,41 @@ export class BreedService {
       .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
       .where(where);
 
-    return { data, total: Number(counted?.total ?? 0), limit, offset };
+    // Each listed stage's rows, to show its whole day range and its feed lines.
+    const pairs = [...new Set(data.map((r) => r.breed_id))];
+    const siblings = pairs.length
+      ? await this.db.select().from(schema.breedLifecycleStages).where(and(
+          eq(schema.breedLifecycleStages.tenant_id, tenantId),
+          inArray(schema.breedLifecycleStages.breed_id, pairs),
+        ))
+      : [];
+    const byKey = new Map<string, Array<Record<string, any>>>();
+    for (const r of siblings) {
+      const k = `${siblingKey(r)}|${r.is_active ? 1 : 0}`;
+      byKey.set(k, [...(byKey.get(k) ?? []), r]);
+    }
+    const withLines = data.map((r) => this.withFeedLines(r, byKey.get(`${siblingKey(r)}|${r.is_active ? 1 : 0}`) ?? [r]));
+
+    return { data: withLines, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async updateLifecycleStage(id: string, dto: UpdateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const lifecycleStage = await this.findOneLifecycleStage(id);
+    // Saved through a later feed line's row: the stage is edited through its first row (see findOneLifecycleStage).
+    id = lifecycleStage.lifecycle_id;
+    // The stage's other rows (its other feed lines), read before anything changes: they follow this row's shared
+    // fields, and with feed_lines they are reassigned, added to or removed (13 Oct).
+    const otherRows = (await this.stageRows(lifecycleStage)).filter((r) => r.lifecycle_id !== id);
+    const feedLines = dto.feed_lines?.length ? await this.withKg(validateFeedLines(dto.feed_lines as FeedLine[])) : null;
+    if (feedLines) {
+      for (const line of feedLines) await this.assertItemExists(line.feed_item_id);
+      Object.assign(dto, {
+        period_from: feedLines[0].period_from, period_to: feedLines[0].period_to,
+        feed_item_id: feedLines[0].feed_item_id, feed_form: feedLines[0].feed_form || null,
+        feed_qty_per_head_per_day_kg: feedLines[0].kg,
+        feed_wastage_pct: feedLines[0].feed_wastage_pct ?? null,
+      });
+    }
     // ADDENDUM 3: scope is re-derived FROM THE BREED on every update, so the
     // row always carries its breed's company/nob/lob — a request can never set
     // them to something else, and a row saved under 593d7c96's gap is stamped
@@ -1171,7 +1333,7 @@ export class BreedService {
     const effectiveFrom = dto.period_from !== undefined ? dto.period_from : lifecycleStage.period_from;
     const effectiveTo = dto.period_to !== undefined ? dto.period_to : lifecycleStage.period_to;
     if (effectiveFrom != null && effectiveTo != null && effectiveFrom > effectiveTo) {
-      throw new BadRequestException('Period From cannot be greater than Period To.');
+      throw new BadRequestException('Effective From cannot be greater than Effective To.');
     }
     await this.assertFarmOverride(dto.farm_id, breed.company_id, tenantId);
     await this.assertLifecycleRows(dto, tenantId);
@@ -1184,10 +1346,11 @@ export class BreedService {
       calc_unit: pick(dto.calc_unit, lifecycleStage.calc_unit),
       period_from: effectiveFrom,
       period_to: effectiveTo,
-      effective_from: pick(dto.effective_from, lifecycleStage.effective_from),
-      effective_to: pick(dto.effective_to, lifecycleStage.effective_to),
       farm_id: pick(dto.farm_id, lifecycleStage.farm_id) || null,
-    }, tenantId);
+      season_type: pick(dto.season_type, lifecycleStage.season_type) ?? null,
+      category: pick(dto.category, lifecycleStage.category) ?? null,
+      company_id: lifecycleStage.company_id ?? null,
+    }, tenantId, otherRows.map((r) => r.lifecycle_id));
 
     const updates: any = {};
     // Blank means "untouched": the form posts "" for every optional field, and the
@@ -1206,8 +1369,6 @@ export class BreedService {
     if (dto.feed_qty_per_head_per_day_kg !== undefined) updates.feed_qty_per_head_per_day_kg = dto.feed_qty_per_head_per_day_kg?.toString() || null;
     if (dto.feed_form !== undefined) updates.feed_form = dto.feed_form || null;
     if (dto.feed_wastage_pct !== undefined) updates.feed_wastage_pct = dto.feed_wastage_pct?.toString() || null;
-    if (dto.effective_from !== undefined) updates.effective_from = dto.effective_from || null;
-    if (dto.effective_to !== undefined) updates.effective_to = dto.effective_to || null;
     if (dto.farm_id !== undefined) updates.farm_id = dto.farm_id || null;
     if (dto.std_body_weight_kg !== undefined) updates.std_body_weight_kg = dto.std_body_weight_kg?.toString() || null;
     if (dto.std_adg_gpd !== undefined) updates.std_adg_gpd = dto.std_adg_gpd?.toString() || null;
@@ -1216,10 +1377,10 @@ export class BreedService {
     if (dto.output_item_id !== undefined) updates.output_item_id = dto.output_item_id;
     if (dto.output_uom !== undefined) updates.output_uom = dto.output_uom;
     if (dto.std_output_qty !== undefined) updates.std_output_qty = dto.std_output_qty?.toString() || null;
-    if (dto.medication_protocol !== undefined) updates.medication_protocol = JSON.stringify(dto.medication_protocol);
-    if (dto.vaccination_protocol !== undefined) updates.vaccination_protocol = JSON.stringify(dto.vaccination_protocol);
-    if (dto.resource_requirements !== undefined) updates.resource_requirements = JSON.stringify(dto.resource_requirements);
-    if (dto.kpi_thresholds !== undefined) updates.kpi_thresholds = JSON.stringify(dto.kpi_thresholds);
+    if (dto.medication_protocol !== undefined) updates.medication_protocol = dto.medication_protocol ? jsonRows(dto.medication_protocol) : null;
+    if (dto.vaccination_protocol !== undefined) updates.vaccination_protocol = dto.vaccination_protocol ? jsonRows(dto.vaccination_protocol) : null;
+    if (dto.resource_requirements !== undefined) updates.resource_requirements = dto.resource_requirements ? jsonRows(dto.resource_requirements) : null;
+    if (dto.kpi_thresholds !== undefined) updates.kpi_thresholds = dto.kpi_thresholds ? jsonRows(dto.kpi_thresholds) : null;
     if (dto.kpi_lower_limit !== undefined) updates.kpi_lower_limit = dto.kpi_lower_limit?.toString() || null;
     if (dto.kpi_upper_limit !== undefined) updates.kpi_upper_limit = dto.kpi_upper_limit?.toString() || null;
     if (dto.alert_severity !== undefined) updates.alert_severity = dto.alert_severity;
@@ -1235,6 +1396,49 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set(updates)
       .where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    // The first line's amount and UOM as entered (0195); a kg rate set without lines was entered in kg.
+    if (feedLines) {
+      await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(feedLines[0])).where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    } else if (updates.feed_qty_per_head_per_day_kg !== undefined) {
+      await this.db.update(schema.breedLifecycleStages).set({ feed_qty_per_head_per_day: null, feed_qty_uom: null }).where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+    }
+
+    // The stage's other rows take the same shared fields (KPIs, mortality, protocols, scope, dates): one stage, one
+    // set of standards. Their own days and feed are left alone unless feed_lines reassigns them.
+    const shared: Record<string, unknown> = { ...updates };
+    for (const c of [...BreedService.LINE_COLUMNS, 'lifecycle_code', 'is_active']) delete shared[c];
+    const [updated] = await this.db.select().from(schema.breedLifecycleStages).where(eq(schema.breedLifecycleStages.lifecycle_id, id)).limit(1);
+    if (Object.keys(shared).length) {
+      for (const r of otherRows) {
+        await this.db.update(schema.breedLifecycleStages).set(shared).where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
+      }
+    }
+    if (feedLines) {
+      const rest = feedLines.slice(1);
+      for (let i = 0; i < rest.length; i++) {
+        const line = rest[i];
+        await this.assertNoEffectiveOverlap({
+          breed_id: updated.breed_id, stage_id: updated.stage_id, feed_item_id: line.feed_item_id, calc_unit: updated.calc_unit,
+          period_from: line.period_from, period_to: line.period_to, farm_id: updated.farm_id,
+          season_type: updated.season_type ?? null, category: updated.category ?? null, company_id: updated.company_id ?? null,
+        }, tenantId, [id, ...otherRows.map((r) => r.lifecycle_id)]);
+        if (otherRows[i]) {
+          await this.db.update(schema.breedLifecycleStages).set(this.lineColumns(line)).where(eq(schema.breedLifecycleStages.lifecycle_id, otherRows[i].lifecycle_id));
+        } else {
+          const { lifecycle_id: _id, lifecycle_code: _code, created_at: _created, ...copy } = updated as any;
+          await this.db.insert(schema.breedLifecycleStages).values({ ...copy, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null, created_by: userPayload?.userId || null });
+        }
+      }
+      // Lines taken away are kept as hidden history rows (Rishi, 14 Oct; 0197): a requisition or scheduler line that
+      // points at one keeps its stage label and required-feed check, while the row is no longer a line of the stage.
+      for (const r of otherRows.slice(rest.length)) {
+        await this.db.update(schema.breedLifecycleStages)
+          .set({ is_active: false, retired_at: sql`CURRENT_TIMESTAMP` })
+          .where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
+      }
+    }
+    // The stage it was and the stage it is (a changed Stage moves the feed from one to the other).
+    await this.refreshStageSchedulers([lifecycleStage, updated], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1242,8 +1446,8 @@ export class BreedService {
       action: 'UPDATE',
       entityName: 'breed_lifecycle_stages',
       entityId: id,
-      oldValues: lifecycleStage,
-      newValues: updates,
+      oldValues: { ...lifecycleStage },
+      newValues: { ...updates, ...(feedLines ? { feed_lines: feedLines } : {}) },
     });
 
     return this.findOneLifecycleStage(id);
@@ -1252,10 +1456,13 @@ export class BreedService {
   async removeLifecycleStage(id: string, tenantId: string, userPayload?: any) {
     const lifecycleStage = await this.findOneLifecycleStage(id);
 
+    // The whole stage: all its feed lines' rows.
+    const rowIds = (await this.stageRows(lifecycleStage)).map((r) => r.lifecycle_id);
     await this.db
       .update(schema.breedLifecycleStages)
       .set({ is_active: false })
-      .where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+      .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
+    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1283,10 +1490,12 @@ export class BreedService {
       return { success: true, message: 'Breed lifecycle stage is already active.' };
     }
 
+    const rowIds = (await this.stageRows(lifecycleStage)).map((r) => r.lifecycle_id);
     await this.db
       .update(schema.breedLifecycleStages)
       .set({ is_active: true })
-      .where(eq(schema.breedLifecycleStages.lifecycle_id, id));
+      .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
+    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,

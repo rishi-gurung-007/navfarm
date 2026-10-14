@@ -231,10 +231,21 @@ export default function MortalityHealthPanel() {
     api.get(`/breed-lifecycle-stage?companyId=${companyId}&limit=200`)
       .then(async (res: any) => {
         const rows: any[] = Array.isArray(res) ? res : (res?.data?.data ?? res?.data ?? []);
-        const [breeds, stages] = await Promise.all([
+        const [breeds, stages, vaccines] = await Promise.all([
           api.get(`/breed?companyId=${companyId}&limit=200`).catch(() => []),
           api.get(`/stage?companyId=${companyId}&limit=200`).catch(() => []),
+          api.get(`/item?companyId=${companyId}&itemType=VACCINE&limit=500`).catch(() => []),
         ]);
+        const vaccineName = new Map<string, string>(
+          (Array.isArray(vaccines) ? vaccines : (vaccines as any)?.data ?? []).map((v: any) => [v.item_id, v.item_name || v.item_code]),
+        );
+        // The protocol row as the lifecycle form saves it (vaccine_item_id, trigger_type, trigger_value, route; 14 Oct),
+        // with the older { vaccine, day } shape still read.
+        const whenText = (e: any) =>
+          e.trigger_type === "AGE_WEEKS" ? `Age ${e.trigger_value} weeks`
+            : e.trigger_type === "WEEKS_PREGNANT" ? `${e.trigger_value} weeks pregnant`
+              : e.trigger_type === "PER_CYCLE" ? "Every pregnancy cycle"
+                : e.day != null ? `Day ${e.day}` : "—";
         const breedName = new Map<string, string>(
           (Array.isArray(breeds) ? breeds : (breeds as any)?.data ?? []).map((b: any) => [b.breed_id, b.breed_name || b.breed_code]),
         );
@@ -248,9 +259,9 @@ export default function MortalityHealthPanel() {
           for (const [i, e] of entries.entries()) {
             items.push({
               id: `${row.lifecycle_id}-${i}`,
-              vaccine_name: e.vaccine ?? "—",
+              vaccine_name: vaccineName.get(e.vaccine_item_id) ?? e.vaccine ?? "—",
               target_disease: e.route ?? "—",
-              scheduled_date: e.day != null ? `Day ${e.day}` : "—",
+              scheduled_date: whenText(e),
               target_stage: `${breedName.get(row.breed_id) ?? "—"} · ${stageName.get(row.stage_id) ?? "—"}`,
               coverage_pct: 100,
               status: "SCHEDULED",

@@ -301,17 +301,40 @@ export async function exportMasterRowsToCsv(
     return lbl;
   });
 
+  // Breed Lifecycle Stage (14 Oct): a stage's feed lives in its Feed Consumption lines, so the export writes one row
+  // per line — the line's days replace the stage's, and its feed columns follow — in the shape the import reads back
+  // (rows of one stage with following days become one stage with several lines again).
+  const feedLineExport = config.key === "breed-lifecycle-stage";
+  let feedItemCode: (id: unknown) => string = (id) => String(id ?? "");
+  if (feedLineExport) {
+    headerLabels.push("Feed", "Feed Form", "Daily Feed per Head", "Feed UOM", "Feed Wastage (%)");
+    try {
+      const list = unwrap<Row[]>(await api.get("/item?itemType=FEED&limit=1000"));
+      const byId = new Map((Array.isArray(list) ? list : []).map((it) => [String(it.item_id), String(it.item_code ?? it.item_name ?? "")]));
+      feedItemCode = (id) => byId.get(String(id)) ?? String(id ?? "");
+    } catch { /* ids stay as they are */ }
+  }
+
   const csvRows: string[] = [];
   // Row 1: Human-readable header labels
   csvRows.push(headerLabels.map(escapeCsvCell).join(","));
 
   for (const r of rows) {
-    const lineCells = exportFields.map((f: MasterDataField) => {
-      const rawVal = r[f.key];
-      const resolved = resolveExportCellValue(f, rawVal, r, lookupMap);
-      return escapeCsvCell(resolved);
-    });
-    csvRows.push(lineCells.join(","));
+    const lines: Row[] = feedLineExport && Array.isArray(r.feed_lines) && r.feed_lines.length ? r.feed_lines : [null as unknown as Row];
+    for (const line of lines) {
+      const source = line ? { ...r, period_from: line.period_from, period_to: line.period_to } : r;
+      const lineCells = exportFields.map((f: MasterDataField) => {
+        const rawVal = source[f.key];
+        const resolved = resolveExportCellValue(f, rawVal, source, lookupMap);
+        return escapeCsvCell(resolved);
+      });
+      if (feedLineExport) {
+        lineCells.push(...(line
+          ? [feedItemCode(line.feed_item_id), line.feed_form ?? "", line.feed_qty_per_head_per_day_kg ?? "", line.feed_qty_uom ?? "KG", line.feed_wastage_pct ?? ""]
+          : ["", "", "", "", ""]).map((v) => escapeCsvCell(String(v))));
+      }
+      csvRows.push(lineCells.join(","));
+    }
   }
 
   const dateStr = new Date().toISOString().slice(0, 10);
@@ -396,7 +419,9 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "std_teats",
       "season_type",
       "feed_item_code",
+      "feed_form",
       "feed_qty_per_head_per_day_kg",
+      "feed_qty_uom",
       "feed_wastage_pct",
       "std_body_weight_kg",
       "std_adg_gpd",
@@ -470,4 +495,26 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
   const headers = fields.map((f: MasterDataField) => f.key);
   const sample = fields.map((f: MasterDataField) => (f.placeholder ? f.placeholder : f.type === "number" ? "10" : "Sample"));
   return [headers.join(","), sample.join(",")].join("\r\n");
+}
+
+/**
+ * Breed Lifecycle Stage import (14 Oct): the export writes a stage with several Feed Consumption lines as several rows
+ * with one code. Rows sharing a code become one stage carrying all their feed lines (in file order); rows without a
+ * code, or without a feed line, stay as they are.
+ */
+export function mergeLifecycleFeedRows<T extends { lifecycle_code?: unknown; feed_lines?: unknown[] }>(items: T[]): T[] {
+  const byCode = new Map<string, T>();
+  const merged: T[] = [];
+  for (const item of items) {
+    const code = String(item.lifecycle_code ?? "").trim();
+    const first = code ? byCode.get(code) : undefined;
+    if (first && Array.isArray(item.feed_lines)) {
+      first.feed_lines = [...(first.feed_lines ?? []), ...item.feed_lines];
+      continue;
+    }
+    const copy = { ...item, ...(Array.isArray(item.feed_lines) ? { feed_lines: [...item.feed_lines] } : {}) } as T;
+    if (code) byCode.set(code, copy);
+    merged.push(copy);
+  }
+  return merged;
 }

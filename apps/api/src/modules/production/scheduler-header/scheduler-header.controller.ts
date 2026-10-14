@@ -4,7 +4,7 @@ import { SchedulerHeaderService } from './scheduler-header.service';
 import {
   CreateSchedulerHeaderDto, UpdateSchedulerHeaderDto,
   GenerateSchedulerHeaderDto, QuerySchedulerHeaderDto, UpdateSchedulerHeaderStatusDto,
-  CreateSchedulerLineDto, UpdateSchedulerLineDto, CopySchedulerLinesDto,
+  CreateSchedulerLineDto, UpdateSchedulerLineDto, CopySchedulerLinesDto, UpdateSchedulerFeedLinesDto,
 } from './dto/scheduler-header.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -110,6 +110,22 @@ export class SchedulerHeaderController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.schedulerHeaderService.copyLinesInto(id, dto, tenantId, req.user);
     return { success: true, message: 'Activities copied.', data: result };
+  }
+
+  @Put(':id/feed-lines')
+  @RequirePermission('PRODUCTION', 'BATCH_SCHEDULE', 'edit')
+  @ApiOperation({
+    summary: "Replace the scheduler's Feed Consumption lines",
+    description:
+      'The whole feed line set, in the same shape as a breed lifecycle stage\'s: stage days, one feed per day, '
+      + 'no gap and no overlap. Days already entered keep the feed they were posted against — such a line is cut '
+      + 'back to its last entered day and the new feed starts the day after.',
+  })
+  @ApiParam({ name: 'id', description: 'Scheduler UUID' })
+  async updateFeedLines(@Param('id') id: string, @Body() dto: UpdateSchedulerFeedLinesDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.schedulerHeaderService.updateFeedLines(id, dto.lines as any, tenantId, req.user);
+    return { success: true, message: 'Feed lines updated.', data: result };
   }
 
   @Put(':id/lines/:lineId')

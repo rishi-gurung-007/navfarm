@@ -1,4 +1,4 @@
-import { FeedRow, feedRowFor, isEffectiveOn } from '../../production/lifecycle/feed-row-days';
+import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
 
 /**
  * Next Diet Feed Item from the breed lifecycle (client ruling, Rishi 12 Oct): a batch's next diet is always
@@ -62,7 +62,7 @@ export function resolveNextStageDiets(args: {
   items: Record<string, string>;
   breedNames?: Record<string, string>;
 }): NextStageDiet[] {
-  const { batches, stages, feedRows, farmId, planningDate, shedCodeById, items } = args;
+  const { batches, stages, feedRows, farmId, shedCodeById, items } = args;
   const out: NextStageDiet[] = [];
   for (const b of batches) {
     const shedCode = shedCodeById.get(b.shedId);
@@ -79,16 +79,14 @@ export function resolveNextStageDiets(args: {
     }
     const nextName = next.stageName ?? next.stageCode;
     const date = current?.durationDays && current.durationDays >= 1 ? addDays(segment.start, current.durationDays) : null;
-    const onDate = date ?? planningDate;
     const rows = feedRows.filter((r) => r.breedId === b.breedId && r.stageId === next.stageId);
-    // The row that feeds day 1 of the stage; if the lifecycle starts later in the stage, its earliest effective row.
+    // The row that feeds day 1 of the stage; if the lifecycle starts later in the stage, its earliest row.
     let row: FeedRow | undefined;
-    const first = feedRowFor(rows, 1, onDate, farmId);
+    const first = feedRowFor(rows, 1, farmId);
     if ('row' in first) row = first.row;
     else if (first.error === 'NONE') {
-      const effective = rows.filter((r) => isEffectiveOn(r, onDate));
-      const own = farmId ? effective.filter((r) => r.farmId === farmId) : [];
-      const pool = own.length ? own : effective.filter((r) => !r.farmId);
+      const own = farmId ? rows.filter((r) => r.farmId === farmId) : [];
+      const pool = own.length ? own : rows.filter((r) => !r.farmId);
       row = [...pool].sort((a, c) => a.fromDay - c.fromDay || a.lifecycleId.localeCompare(c.lifecycleId))[0];
     }
     if (!row) {

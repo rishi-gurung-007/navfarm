@@ -1,4 +1,4 @@
--- 13 Oct 2026: a scheduler is shown and quoted by a readable number (SCH-000001) instead of its UUID. The UUID stays
+-- 13 Oct 2026 (Arun; numbered 0196 on merge, 14 Oct — 0194 and 0195 were taken): a scheduler is shown and quoted by a readable number (SCH-000001) instead of its UUID. The UUID stays
 -- the key. Numbers come from a SCHEDULER series, one per company like every other series (template row + one per
 -- company). Existing schedulers are numbered per company in the order they were created, and each company's counter
 -- carries on after them. Additive. The series inserts skip a series that already exists, and the numbering skips a

@@ -2,6 +2,24 @@ import * as schema from '../../../core/database/schema';
 import { planTemplateCopies } from './copy-master-templates';
 
 describe('company template snapshot', () => {
+  it('remaps the vaccine, drug and resource ids inside a lifecycle stage\'s lists to the copied company (14 Oct)', () => {
+    const copies = planTemplateCopies([
+      { table: schema.itemMaster, rows: [{ item_id: 'vaccine' }, { item_id: 'drug' }] },
+      { table: schema.resourceMaster, rows: [{ resource_id: 'vet' }] },
+      { table: schema.breedLifecycleStages, rows: [{
+        lifecycle_id: 'stage',
+        vaccination_protocol: [{ vaccine_item_id: 'vaccine', trigger_type: 'AGE_WEEKS', trigger_value: 6 }],
+        medication_protocol: [{ medicine_item_id: 'drug', problem: 'Scour' }, { medicine_item_id: 'not-copied' }],
+        resource_requirements: [{ resource_id: 'vet', quantity: 1 }],
+      }] },
+    ], 'company');
+    const id = (original: string, key: string) => copies.find((c) => c.originalId === original)!.row[key];
+    const stage = copies.find((c) => c.originalId === 'stage')!.row;
+    expect(stage.vaccination_protocol).toEqual([{ vaccine_item_id: id('vaccine', 'item_id'), trigger_type: 'AGE_WEEKS', trigger_value: 6 }]);
+    expect(stage.medication_protocol).toEqual([{ medicine_item_id: id('drug', 'item_id'), problem: 'Scour' }, { medicine_item_id: 'not-copied' }]);
+    expect(stage.resource_requirements).toEqual([{ resource_id: id('vet', 'resource_id'), quantity: 1 }]);
+  });
+
   it('remaps legacy logical account references to company-owned accounts', () => {
     const copies = planTemplateCopies([
       { table: schema.glAccountMaster, rows: [{ gl_account_id: 'account' }] },

@@ -43,8 +43,13 @@ export interface MasterDataField {
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
-  /** Edited in a stacked dialog opened from the record dialog's header ("KPIs & Alerts"), not in the form grid. Still part of the form state and payload. */
-  subDialog?: boolean;
+  /** With visibleWhen: stay hidden on edit even when the record already holds a value (it is kept, not sent). */
+  hideStoredWhenHidden?: boolean;
+  /**
+   * Edited in a stacked dialog opened from a button in the record dialog's header, not in the form grid. Still part
+   * of the form state and payload. `true` = the "KPIs & Alerts" dialog; a string names another dialog (and button).
+   */
+  subDialog?: boolean | string;
   placeholder?: string;
   /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
   defaultFromField?: string;
@@ -512,6 +517,8 @@ export interface MasterDataConfig {
    * are the Cost Centre table fixed to type DEPARTMENT.
    */
   fixedFilter?: { queryParam: string; payloadKey: string; value: string };
+  /** Extra query parameters on every list request (e.g. the Animal Register asking for animals that left the herd). */
+  listParams?: Record<string, string>;
 }
 
 export interface MasterDataFilterTabOption {
