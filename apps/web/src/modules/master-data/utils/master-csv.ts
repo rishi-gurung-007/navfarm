@@ -496,3 +496,25 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
   const sample = fields.map((f: MasterDataField) => (f.placeholder ? f.placeholder : f.type === "number" ? "10" : "Sample"));
   return [headers.join(","), sample.join(",")].join("\r\n");
 }
+
+/**
+ * Breed Lifecycle Stage import (14 Oct): the export writes a stage with several Feed Consumption lines as several rows
+ * with one code. Rows sharing a code become one stage carrying all their feed lines (in file order); rows without a
+ * code, or without a feed line, stay as they are.
+ */
+export function mergeLifecycleFeedRows<T extends { lifecycle_code?: unknown; feed_lines?: unknown[] }>(items: T[]): T[] {
+  const byCode = new Map<string, T>();
+  const merged: T[] = [];
+  for (const item of items) {
+    const code = String(item.lifecycle_code ?? "").trim();
+    const first = code ? byCode.get(code) : undefined;
+    if (first && Array.isArray(item.feed_lines)) {
+      first.feed_lines = [...(first.feed_lines ?? []), ...item.feed_lines];
+      continue;
+    }
+    const copy = { ...item, ...(Array.isArray(item.feed_lines) ? { feed_lines: [...item.feed_lines] } : {}) } as T;
+    if (code) byCode.set(code, copy);
+    merged.push(copy);
+  }
+  return merged;
+}

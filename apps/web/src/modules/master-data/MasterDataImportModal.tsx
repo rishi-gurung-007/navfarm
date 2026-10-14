@@ -1,5 +1,6 @@
 "use client";
 
+import { mergeLifecycleFeedRows } from "./utils/master-csv";
 import { useState, useRef } from "react";
 import {
   Upload,
@@ -451,22 +452,7 @@ export default function MasterDataImportModal({
     let validItems = validRows.map((r) => r.payload);
     // An exported stage with several Feed Consumption lines is several rows with one code: they import as one stage
     // with those lines (14 Oct), not as a second stage refused for a duplicate code.
-    if (config.key === "breed-lifecycle-stage") {
-      const byCode = new Map<string, any>();
-      const merged: any[] = [];
-      for (const item of validItems) {
-        const code = String(item.lifecycle_code ?? "").trim();
-        const first = code ? byCode.get(code) : undefined;
-        if (first && Array.isArray(item.feed_lines)) {
-          first.feed_lines = [...(first.feed_lines ?? []), ...item.feed_lines];
-          continue;
-        }
-        const copy = { ...item, ...(Array.isArray(item.feed_lines) ? { feed_lines: [...item.feed_lines] } : {}) };
-        if (code) byCode.set(code, copy);
-        merged.push(copy);
-      }
-      validItems = merged;
-    }
+    if (config.key === "breed-lifecycle-stage") validItems = mergeLifecycleFeedRows(validItems);
     if (validItems.length === 0) return;
 
     setSubmitting(true);

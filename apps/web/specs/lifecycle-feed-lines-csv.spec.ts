@@ -6,7 +6,7 @@ jest.mock("@/services/api-client", () => ({
   api: { get: jest.fn(async (url: string) => (url.startsWith("/item") ? { data: [{ item_id: "i1", item_code: "MASH" }, { item_id: "i2", item_code: "FIN" }] } : { data: [] })) },
 }));
 
-import { exportMasterRowsToCsv } from "@/modules/master-data/utils/master-csv";
+import { exportMasterRowsToCsv, mergeLifecycleFeedRows } from "@/modules/master-data/utils/master-csv";
 import { getConfig } from "@/modules/master-data/configs";
 
 describe("Breed Lifecycle Stage CSV export with Feed Consumption lines", () => {
@@ -41,5 +41,22 @@ describe("Breed Lifecycle Stage CSV export with Feed Consumption lines", () => {
     const rows = written.replace(/^﻿/, "").split("\r\n");
     expect(rows).toHaveLength(2);
     expect(rows[1].split(",").slice(-5)).toEqual(["", "", "", "", ""]);
+  });
+});
+
+describe("Breed Lifecycle Stage CSV import merges a stage's feed rows", () => {
+  it("joins rows with one code into one stage with all their lines, in file order", () => {
+    const merged = mergeLifecycleFeedRows([
+      { lifecycle_code: "Z-WEANER", feed_lines: [{ period_from: 1, period_to: 20 }] },
+      { lifecycle_code: "Z-DRY", feed_lines: [{ period_from: 1, period_to: 7 }] },
+      { lifecycle_code: "Z-WEANER", feed_lines: [{ period_from: 21, period_to: 43 }] },
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].feed_lines).toEqual([{ period_from: 1, period_to: 20 }, { period_from: 21, period_to: 43 }]);
+    expect(merged[1].lifecycle_code).toBe("Z-DRY");
+  });
+  it("leaves rows without a code or without feed apart", () => {
+    const rows = [{ lifecycle_code: "", feed_lines: [{ period_from: 1, period_to: 5 }] }, { lifecycle_code: "", feed_lines: [{ period_from: 6, period_to: 9 }] }, { lifecycle_code: "A" }, { lifecycle_code: "A" }];
+    expect(mergeLifecycleFeedRows(rows as any)).toHaveLength(4);
   });
 });
