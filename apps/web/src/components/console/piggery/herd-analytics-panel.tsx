@@ -8,6 +8,7 @@ import {
 import { api } from "@/services/api-client";
 import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
@@ -83,16 +84,23 @@ export default function HerdAnalyticsPanel() {
           <p className="text-xs" style={S.muted}>{t("hapSubtitle")}</p>
         </div>
         {batches.length > 0 && (
-          <select
-            value={selectedBatchId}
-            onChange={(e) => handleBatchFilterChange(e.target.value)}
-            className="nf-input h-9 text-xs"
-          >
-            <option value="">{t("hapAllBatches")}</option>
-            {batches.map((b) => (
-              <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-            ))}
-          </select>
+          <div className="min-w-[14rem]">
+            <SearchableSelect
+              ariaLabel={t("hapAllBatches")}
+              value={selectedBatchId}
+              onChange={(val) => handleBatchFilterChange(val)}
+              options={[
+                { value: "", label: t("hapAllBatches") },
+                ...batches.map((b) => ({
+                  value: b.batch_id,
+                  label: b.batch_no,
+                })),
+              ]}
+              columnHeaders={false}
+              placeholder={t("hapAllBatches")}
+              triggerClassName="nf-input-sm min-w-[14rem] h-9"
+            />
+          </div>
         )}
       </div>
 

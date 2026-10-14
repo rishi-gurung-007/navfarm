@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
 import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -838,35 +839,33 @@ export function BreedingPanel() {
             </div>
             <form onSubmit={handleCreateMating} className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowGilt")}</label>
-                <select
-                  className="nf-input w-full text-sm"
-                  style={S.input}
+                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-sow">{t("brpLabelSowGilt")}</label>
+                <SearchableSelect
+                  id="mating-sow"
                   value={matingForm.sow_animal_id}
-                  onChange={(e) => setMatingForm({ ...matingForm, sow_animal_id: e.target.value })}
-                  required
-                >
-                  <option value="">{t("brpSelectSow")}</option>
-                  {sows.map((s) => (
-                    <option key={s.animal_id} value={s.animal_id}>
-                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count })}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setMatingForm({ ...matingForm, sow_animal_id: String(val) })}
+                  placeholder={t("brpSelectSow")}
+                  options={sows.map((s) => ({
+                    value: s.animal_id,
+                    label: t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count }),
+                  }))}
+                  columnHeaders={false}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelMatingType")}</label>
-                  <select
-                    className="nf-input w-full text-sm"
-                    style={S.input}
+                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-type">{t("brpLabelMatingType")}</label>
+                  <SearchableSelect
+                    id="mating-type"
                     value={matingForm.mating_type}
-                    onChange={(e) => setMatingForm({ ...matingForm, mating_type: e.target.value })}
-                  >
-                    <option value="AI">{t("brpOptionAi")}</option>
-                    <option value="NATURAL_MATING">{t("brpOptionNaturalMating")}</option>
-                  </select>
+                    onChange={(val) => setMatingForm({ ...matingForm, mating_type: String(val) })}
+                    options={[
+                      { value: "AI", label: t("brpOptionAi") },
+                      { value: "NATURAL_MATING", label: t("brpOptionNaturalMating") },
+                    ]}
+                    columnHeaders={false}
+                  />
                 </div>
 
                 <div>
@@ -887,63 +886,59 @@ export function BreedingPanel() {
                   names its boar by itself. */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>
+                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-boar">
                     {matingForm.mating_type === "NATURAL_MATING" ? t("brpLabelBoarAnimal") : t("brpLabelBoarOptional")}
                   </label>
-                  <select
-                    className="nf-input w-full text-sm"
-                    style={S.input}
+                  <SearchableSelect
+                    id="mating-boar"
                     value={matingForm.boar_animal_id}
-                    onChange={(e) => setMatingForm({ ...matingForm, boar_animal_id: e.target.value })}
-                    required={matingForm.mating_type === "NATURAL_MATING"}
-                  >
-                    <option value="">{t("brpSelectBoar")}</option>
-                    {boars.map((b) => (
-                      <option key={b.animal_id} value={b.animal_id}>
-                        {t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") })}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setMatingForm({ ...matingForm, boar_animal_id: String(val) })}
+                    placeholder={t("brpSelectBoar")}
+                    options={boars.map((b) => ({
+                      value: b.animal_id,
+                      label: t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") }),
+                    }))}
+                    columnHeaders={false}
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBatch")}</label>
-                  <select
-                    className="nf-input w-full text-sm"
-                    style={S.input}
+                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-batch">{t("brpLabelBatch")}</label>
+                  <SearchableSelect
+                    id="mating-batch"
                     value={matingForm.batch_id}
-                    onChange={(e) => editMating("batch_id", e.target.value)}
-                  >
-                    <option value="">{t("brpSelectBatch")}</option>
-                    {batches.map((b) => (
-                      <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => editMating("batch_id", String(val))}
+                    placeholder={t("brpSelectBatch")}
+                    options={batches.map((b) => ({
+                      value: b.batch_id,
+                      label: b.batch_no,
+                    }))}
+                    columnHeaders={false}
+                  />
                 </div>
               </div>
 
               {matingForm.mating_type === "AI" && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSemenLotId")}</label>
+                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-semen-lot">{t("brpLabelSemenLotId")}</label>
                     {/* A select of logged collections, not free text: the API
                         accepts only a semen_batch id, so a typed lot name was
                         always refused. */}
-                    <select
-                      className="nf-input w-full text-sm"
-                      style={S.input}
+                    <SearchableSelect
+                      id="mating-semen-lot"
                       value={matingForm.semen_lot_id}
-                      onChange={(e) => setMatingForm({ ...matingForm, semen_lot_id: e.target.value })}
-                    >
-                      <option value="">{t("brpSelectSemenLot")}</option>
-                      {semenBatches.map((sb) => {
+                      onChange={(val) => setMatingForm({ ...matingForm, semen_lot_id: String(val) })}
+                      placeholder={t("brpSelectSemenLot")}
+                      options={semenBatches.map((sb) => {
                         const left = Number(sb.doses_collected) - Number(sb.doses_used_internal || 0) - Number(sb.doses_sold || 0);
-                        return (
-                          <option key={sb.semen_batch_id} value={sb.semen_batch_id} disabled={left <= 0}>
-                            {t("brpSemenLotOptionLabel", { boar: sb.pooled ? (sb.boars || []).map((b: Row) => b.boar_code).join(" + ") : sb.boar_code, date: sb.collection_date })}{sb.pooled ? " · pooled" : ""} · {sb.lot_no ?? "no lot"} · {left} doses left
-                          </option>
-                        );
+                        return {
+                          value: sb.semen_batch_id,
+                          label: `${t("brpSemenLotOptionLabel", { boar: sb.pooled ? (sb.boars || []).map((b: Row) => b.boar_code).join(" + ") : sb.boar_code, date: sb.collection_date })}${sb.pooled ? " · pooled" : ""} · ${sb.lot_no ?? "no lot"} · ${left} doses left`,
+                          disabled: left <= 0,
+                        };
                       })}
-                    </select>
+                      columnHeaders={false}
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelDoseQuantity")}</label>
@@ -1001,17 +996,17 @@ export function BreedingPanel() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelResultShort")}</label>
-                  <select
-                    className="nf-input w-full text-sm"
-                    style={S.input}
+                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-conception-result">{t("brpLabelResultShort")}</label>
+                  <SearchableSelect
+                    id="mating-conception-result"
                     value={matingForm.conception_result}
-                    onChange={(e) => editMating("conception_result", e.target.value)}
-                  >
-                    {CONCEPTION_RESULTS.map((r) => (
-                      <option key={r} value={r}>{t(`brpResult${r}`)}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => editMating("conception_result", String(val))}
+                    options={CONCEPTION_RESULTS.map((r) => ({
+                      value: r,
+                      label: t(`brpResult${r}`),
+                    }))}
+                    columnHeaders={false}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowParity")}</label>
@@ -1094,17 +1089,18 @@ export function BreedingPanel() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelCheckMethod")}</label>
-                <select
-                  className="nf-input w-full text-sm"
-                  style={S.input}
+                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="preg-check-method">{t("brpLabelCheckMethod")}</label>
+                <SearchableSelect
+                  id="preg-check-method"
                   value={pregCheckForm.preg_check_method}
-                  onChange={(e) => setPregCheckForm({ ...pregCheckForm, preg_check_method: e.target.value })}
-                >
-                  <option value="ULTRASOUND">{t("brpOptionUltrasoundScan")}</option>
-                  <option value="RECTAL">{t("brpOptionRectalPalpation")}</option>
-                  <option value="VISUAL">{t("brpOptionVisualHeatCheck")}</option>
-                </select>
+                  onChange={(val) => setPregCheckForm({ ...pregCheckForm, preg_check_method: String(val) })}
+                  options={[
+                    { value: "ULTRASOUND", label: t("brpOptionUltrasoundScan") },
+                    { value: "RECTAL", label: t("brpOptionRectalPalpation") },
+                    { value: "VISUAL", label: t("brpOptionVisualHeatCheck") },
+                  ]}
+                  columnHeaders={false}
+                />
               </div>
 
               <div>
@@ -1149,21 +1145,18 @@ export function BreedingPanel() {
             </div>
             <form onSubmit={handleCreateFarrowing} className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowRequired")}</label>
-                <select
-                  className="nf-input w-full text-sm"
-                  style={S.input}
+                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="farrow-sow">{t("brpLabelSowRequired")}</label>
+                <SearchableSelect
+                  id="farrow-sow"
                   value={farrowForm.sow_animal_id}
-                  onChange={(e) => setFarrowForm({ ...farrowForm, sow_animal_id: e.target.value })}
-                  required
-                >
-                  <option value="">{t("brpSelectSow")}</option>
-                  {sows.map((s) => (
-                    <option key={s.animal_id} value={s.animal_id}>
-                      {t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count })}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setFarrowForm({ ...farrowForm, sow_animal_id: String(val) })}
+                  placeholder={t("brpSelectSow")}
+                  options={sows.map((s) => ({
+                    value: s.animal_id,
+                    label: t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count }),
+                  }))}
+                  columnHeaders={false}
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1179,18 +1172,19 @@ export function BreedingPanel() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelFarrowingStatus")}</label>
-                  <select
-                    className="nf-input w-full text-sm"
-                    style={S.input}
+                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="farrow-status">{t("brpLabelFarrowingStatus")}</label>
+                  <SearchableSelect
+                    id="farrow-status"
                     value={farrowForm.farrowing_status}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, farrowing_status: e.target.value })}
-                  >
-                    <option value="NORMAL">{t("brpOptionNormalUnassisted")}</option>
-                    <option value="ASSISTED">{t("brpOptionAssistedDelivery")}</option>
-                    <option value="C_SECTION">{t("brpOptionCaesareanSection")}</option>
-                    <option value="COMPLICATIONS">{t("brpOptionComplications")}</option>
-                  </select>
+                    onChange={(val) => setFarrowForm({ ...farrowForm, farrowing_status: String(val) })}
+                    options={[
+                      { value: "NORMAL", label: t("brpOptionNormalUnassisted") },
+                      { value: "ASSISTED", label: t("brpOptionAssistedDelivery") },
+                      { value: "C_SECTION", label: t("brpOptionCaesareanSection") },
+                      { value: "COMPLICATIONS", label: t("brpOptionComplications") },
+                    ]}
+                    columnHeaders={false}
+                  />
                 </div>
               </div>
 
@@ -1266,34 +1260,32 @@ export function BreedingPanel() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-item">Piglet item</label>
-                    <select
+                    <SearchableSelect
                       id="piglet-item"
-                      className="nf-input w-full text-sm"
-                      style={S.input}
                       value={farrowForm.piglet_item_id}
-                      onChange={(e) => setFarrowForm({ ...farrowForm, piglet_item_id: e.target.value })}
-                    >
-                      <option value="">No piglet lot</option>
-                      {pigletItems.map((i) => (
-                        <option key={i.item_id} value={i.item_id}>{i.item_name}</option>
-                      ))}
-                    </select>
+                      onChange={(val) => setFarrowForm({ ...farrowForm, piglet_item_id: String(val) })}
+                      placeholder="No piglet lot"
+                      options={pigletItems.map((i) => ({
+                        value: i.item_id,
+                        label: i.item_name,
+                      }))}
+                      columnHeaders={false}
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-stage">Piglets start in stage</label>
-                    <select
+                    <SearchableSelect
                       id="piglet-stage"
-                      className="nf-input w-full text-sm"
-                      style={S.input}
                       value={farrowForm.piglet_stage_id}
-                      onChange={(e) => setFarrowForm({ ...farrowForm, piglet_stage_id: e.target.value })}
+                      onChange={(val) => setFarrowForm({ ...farrowForm, piglet_stage_id: String(val) })}
                       disabled={!farrowForm.piglet_item_id}
-                    >
-                      <option value="">The sow’s own stage</option>
-                      {stages.map((st) => (
-                        <option key={st.stage_id} value={st.stage_id}>{st.stage_name}</option>
-                      ))}
-                    </select>
+                      placeholder="The sow’s own stage"
+                      options={stages.map((st) => ({
+                        value: st.stage_id,
+                        label: st.stage_name,
+                      }))}
+                      columnHeaders={false}
+                    />
                   </div>
                 </div>
               </div>
@@ -1381,35 +1373,33 @@ export function BreedingPanel() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-batch">Move to batch</label>
-                      <select
+                      <SearchableSelect
                         id="wean-batch"
-                        className="nf-input w-full text-sm"
-                        style={S.input}
                         value={weanForm.move_to_batch_id}
-                        onChange={(e) => setWeanForm({ ...weanForm, move_to_batch_id: e.target.value, move_to_stage_code: "" })}
-                      >
-                        <option value="">Stay in the lot’s batch</option>
-                        {batches
+                        onChange={(val) => setWeanForm({ ...weanForm, move_to_batch_id: String(val), move_to_stage_code: "" })}
+                        placeholder="Stay in the lot’s batch"
+                        options={batches
                           .filter((b) => b.tracking_mode === "BATCH_WISE" && b.costing_method === "BIO_ASSET" && b.batch_id !== selectedFarrow.piglet_batch_id)
-                          .map((b) => (
-                            <option key={b.batch_id} value={b.batch_id}>{b.batch_no}</option>
-                          ))}
-                      </select>
+                          .map((b) => ({
+                            value: b.batch_id,
+                            label: b.batch_no,
+                          }))}
+                        columnHeaders={false}
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-stage">Or move the lot to stage</label>
-                      <select
+                      <SearchableSelect
                         id="wean-stage"
-                        className="nf-input w-full text-sm"
-                        style={S.input}
                         value={weanForm.move_to_stage_code}
-                        onChange={(e) => setWeanForm({ ...weanForm, move_to_stage_code: e.target.value, move_to_batch_id: "" })}
-                      >
-                        <option value="">No stage change</option>
-                        {stages.map((st) => (
-                          <option key={st.stage_id} value={st.stage_code}>{st.stage_name}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => setWeanForm({ ...weanForm, move_to_stage_code: String(val), move_to_batch_id: "" })}
+                        placeholder="No stage change"
+                        options={stages.map((st) => ({
+                          value: st.stage_code,
+                          label: st.stage_name,
+                        }))}
+                        columnHeaders={false}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1498,18 +1488,17 @@ export function BreedingPanel() {
 
               <div>
                 <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="semen-item">Semen item</label>
-                <select
+                <SearchableSelect
                   id="semen-item"
-                  className="nf-input w-full text-sm"
-                  style={S.input}
                   value={semenForm.output_item_id}
-                  onChange={(e) => setSemenForm({ ...semenForm, output_item_id: e.target.value })}
-                >
-                  <option value="">Record the collection only</option>
-                  {semenItems.map((i) => (
-                    <option key={i.item_id} value={i.item_id}>{i.item_name}</option>
-                  ))}
-                </select>
+                  onChange={(val) => setSemenForm({ ...semenForm, output_item_id: String(val) })}
+                  placeholder="Record the collection only"
+                  options={semenItems.map((i) => ({
+                    value: i.item_id,
+                    label: i.item_name,
+                  }))}
+                  columnHeaders={false}
+                />
                 <p className="text-[11px] mt-1" style={S.muted}>
                   Choosing an item posts the doses to the boar’s farm store as a lot of it, with a QR for the lot (boar, batch, lot number, collection date, doses and expiry).
                 </p>

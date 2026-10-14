@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Plus, Search, Loader2, Inbox, Eye, Trash2, Pill, AlertCircle, ChevronRight, Scan, ArrowRight,
+  Search, Loader2, Inbox, Eye, Trash2, Pill, AlertCircle, ChevronRight, Scan, ArrowRight,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -16,6 +16,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import RfidScannerModal from "@/components/console/piggery/rfid-scanner-modal";
 import AnimalStageTransitionModal from "@/components/console/piggery/animal-stage-transition-modal";
 import { ReasonSelect } from "@/components/ui/reason-select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
@@ -58,7 +59,6 @@ const STATUS_LABEL_KEY: Record<string, TranslationKeys> = {
   SLAUGHTERED: "anpStatusSlaughtered",
 };
 
-const ANIMAL_TYPES = ["SOW", "BOAR", "GILT", "PIGLET", "COMMERCIAL_PIG"];
 const ANIMAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   SOW: "anpTypeSow",
   BOAR: "anpTypeBoar",
@@ -67,9 +67,6 @@ const ANIMAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   COMMERCIAL_PIG: "anpTypeCommercialPig",
 };
 
-const GENDERS = [{ value: "F", label: "Female" }, { value: "M", label: "Male" }];
-
-const ENTRY_TYPES = ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"];
 const ENTRY_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   PURCHASED_IMPORTED: "anpEntryPurchasedImported",
   PURCHASED_LOCAL: "anpEntryPurchasedLocal",
@@ -158,13 +155,7 @@ export default function AnimalPanel() {
   const [pageSize]              = useState(PAGE_SIZE);
 
   // ── Reference data ──────────────────────────────────────────────────────────
-  const [nobs, setNobs]       = useState<Row[]>([]);
-  const [lobs, setLobs]       = useState<Row[]>([]);
-  const [breeds, setBreeds]   = useState<Row[]>([]);
-  // `breeds` above is LOB-scoped and only populated inside the Register-Animal
-  // form, so the list table could never resolve a name from it — the raw
-  // breed_id UUID leaked into the Breed column. This is the table's own
-  // company-wide lookup, loaded once on mount.
+  // Company-wide breed lookup for the list table, loaded once on mount.
   const [breedLookup, setBreedLookup] = useState<Record<string, string>>({});
   const breedName = (id?: string | null) => (id && breedLookup[id]) || id || "—";
   const [items, setItems]     = useState<Row[]>([]);
@@ -181,17 +172,6 @@ export default function AnimalPanel() {
   // ── Stage Transition Modal ──────────────────────────────────────────────
   const [transitionOpen, setTransitionOpen]     = useState(false);
   const [transitionAnimal, setTransitionAnimal] = useState<Row | null>(null);
-
-  // ── Create animal modal ─────────────────────────────────────────────────────
-  const [createOpen, setCreateOpen]   = useState(false);
-  const [createSaving, setCreateSaving] = useState(false);
-  const [createError, setCreateError]   = useState("");
-  const [createNobId, setCreateNobId]   = useState("");
-  const [createForm, setCreateForm]     = useState<Row>({
-    animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10),
-    breed_id: "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "",
-    source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE",
-  });
 
   // ── Detail modal ────────────────────────────────────────────────────────────
   const [viewing, setViewing]     = useState<Row | null>(null);
@@ -274,30 +254,17 @@ export default function AnimalPanel() {
   // Reference data — loaded once on mount
   useEffect(() => {
     const qs = companyId ? `?companyId=${companyId}&limit=500` : "?limit=500";
-    api.get(`/setup/wizard/nobs${qs}`).then((r) => setNobs(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/uom${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/batch${qs}`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/stage?limit=100`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => {});
-    // Reason Master Template (Master Templates/, added 2026-09-21) — MORTALITY
-    // and CULL reasons belong on this same Dispose action; isActive filters to
-    // rows the admin hasn't blocked.
-    // qs already starts with "?"; prefixing another made the URL "/reason??isActive=…", which the API refused, so the
-    // Dispose reason pickers were always empty.
     api.get(`/reason${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
-    // Items — scoped for medicine/vaccine picker separately from living-asset picker
     api.get(`/item${qs}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
       setItems(all);
       setMedItems(all.filter((i: Row) => ["MEDICINE", "VACCINE"].includes(i.item_type)));
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // LOBs depend on selected NOB (create form)
-  useEffect(() => {
-    if (!createNobId) { setLobs([]); return; }
-    api.get(`/setup/wizard/lobs/${createNobId}`).then((r) => setLobs(unwrap<Row[]>(r) || [])).catch(() => setLobs([]));
-  }, [createNobId]);
 
   // Company-wide breed names for the list table (see breedLookup above).
   useEffect(() => {
@@ -311,17 +278,6 @@ export default function AnimalPanel() {
       })
       .catch(() => setBreedLookup({}));
   }, [companyId]);
-
-  // Breeds depend on LOB
-  useEffect(() => {
-    if (!createForm.lob_id) { setBreeds([]); return; }
-    const qs = new URLSearchParams();
-    if (companyId) qs.set("companyId", companyId);
-    if (createNobId) qs.set("nobId", createNobId);
-    if (createForm.lob_id) qs.set("lobId", createForm.lob_id);
-    qs.set("limit", "200");
-    api.get(`/breed?${qs.toString()}`).then((r) => setBreeds(unwrap<Row[]>(r) || [])).catch(() => {});
-  }, [createForm.lob_id, createNobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Medication logs — loaded when opening the medications tab
   const loadMedLogs = async (animalId: string) => {
@@ -367,47 +323,6 @@ export default function AnimalPanel() {
     if (tab === "valuation" && viewing) loadBioAssetLedger(viewing.animal_id);
   };
 
-
-  const handleCreate = async () => {
-    setCreateSaving(true);
-    setCreateError("");
-    try {
-      if (!createNobId) throw new Error(t("anpErrNobRequired"));
-      if (!createForm.lob_id) throw new Error(t("anpErrLobRequired"));
-      if (!createForm.animal_type) throw new Error(t("anpErrAnimalTypeRequired"));
-      if (!createForm.gender) throw new Error(t("anpErrGenderRequired"));
-      if (!createForm.entry_type) throw new Error(t("anpErrEntryTypeRequired"));
-      if (!createForm.entry_date) throw new Error(t("anpErrEntryDateRequired"));
-      if (!createForm.breed_id) throw new Error(t("anpErrBreedRequired"));
-      if (!createForm.item_id) throw new Error(t("anpErrItemRequired"));
-      if (!createForm.acquisition_cost) throw new Error(t("anpErrAcquisitionCostRequired"));
-
-      await api.post("/animal", {
-        company_id: companyId,
-        nob_id: createNobId,
-        lob_id: createForm.lob_id,
-        animal_type: createForm.animal_type,
-        gender: createForm.gender,
-        entry_type: createForm.entry_type,
-        entry_date: createForm.entry_date,
-        breed_id: createForm.breed_id,
-        item_id: createForm.item_id,
-        acquisition_cost: Number(createForm.acquisition_cost),
-        dob: createForm.dob || undefined,
-        rfid_tag: createForm.rfid_tag || undefined,
-        source_receipt_id: createForm.source_receipt_id || undefined,
-        source_batch_id: createForm.source_batch_id || undefined,
-        notes: createForm.notes || undefined,
-        status: createForm.status || "ACTIVE",
-      });
-      setCreateOpen(false);
-      load();
-    } catch (err: any) {
-      setCreateError(err?.message || t("anpErrRegisterAnimal"));
-    } finally {
-      setCreateSaving(false);
-    }
-  };
 
   const handleLogDose = async () => {
     if (!viewing) return;
@@ -488,18 +403,24 @@ export default function AnimalPanel() {
           />
         </div>
 
-        <select
-          id="animal-status-filter"
-          className={inputCls}
-          style={{ width: "auto" }}
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">{t("anpAllStatuses")}</option>
-          {Object.keys(STATUS_LABEL_KEY).map((s) => (
-            <option key={s} value={s}>{statusLabel(s)}</option>
-          ))}
-        </select>
+        <div className="min-w-[12rem]">
+          <SearchableSelect
+            id="animal-status-filter"
+            ariaLabel={t("anpAllStatuses")}
+            value={statusFilter}
+            onChange={(val) => setStatusFilter(val)}
+            options={[
+              { value: "", label: t("anpAllStatuses") },
+              ...Object.keys(STATUS_LABEL_KEY).map((s) => ({
+                value: s,
+                label: statusLabel(s),
+              })),
+            ]}
+            columnHeaders={false}
+            placeholder={t("anpAllStatuses")}
+            triggerClassName="nf-input-sm min-w-[12rem] h-9"
+          />
+        </div>
 
         <label className="flex items-center gap-2 text-sm cursor-pointer" style={S.sub}>
           <input
@@ -513,15 +434,6 @@ export default function AnimalPanel() {
 
         <Button variant="outline" size="sm" onClick={() => setScannerOpen(true)}>
           <Scan className="mr-1.5 h-3.5 w-3.5" /> {t("anpRfidFastScanner")}
-        </Button>
-
-        <Button id="animal-create-btn" size="sm" onClick={() => {
-          setCreateNobId("");
-          setCreateForm({ animal_type: "", gender: "", entry_type: "", entry_date: new Date().toISOString().slice(0, 10), breed_id: "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "", source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE", lob_id: "" });
-          setCreateError("");
-          setCreateOpen(true);
-        }}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> {t("anpRegisterAnimal")}
         </Button>
       </div>
 
@@ -596,135 +508,7 @@ export default function AnimalPanel() {
         </div>
       )}
 
-      {/* ═══ Create Animal Modal ═══════════════════════════════════════════════ */}
-      <Dialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title={t("anpRegisterAnimal")}
-        description={t("anpRegisterAnimalDesc")}
-        maxWidth="lg"
-        footer={
-          <Button id="animal-create-save-btn" onClick={handleCreate} disabled={createSaving}>
-            {createSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpRegister")}
-          </Button>
-        }
-      >
-        <Toast variant="danger" message={createError} onClose={() => setCreateError("")} />
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {/* NOB */}
-          <div>
-            <label className="nf-label" htmlFor="ca-nob">{t("anpNatureOfBusiness")}</label>
-            <select id="ca-nob" className={inputCls} value={createNobId} onChange={(e) => { setCreateNobId(e.target.value); setCreateForm((f) => ({ ...f, lob_id: "" })); }}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {nobs.map((n) => <option key={n.nob_id} value={n.nob_id}>{n.nob_name}</option>)}
-            </select>
-          </div>
-
-          {/* LOB */}
-          <div>
-            <label className="nf-label" htmlFor="ca-lob">{t("anpLineOfBusiness")}</label>
-            <select id="ca-lob" className={inputCls} value={createForm.lob_id} onChange={(e) => setCreateForm((f) => ({ ...f, lob_id: e.target.value }))}>
-              <option value="">{t("anpSelectNobFirst")}</option>
-              {lobs.map((l) => <option key={l.lob_id} value={l.lob_id}>{l.lob_name}</option>)}
-            </select>
-          </div>
-
-          {/* Animal type */}
-          <div>
-            <label className="nf-label" htmlFor="ca-type">{t("anpAnimalType")}</label>
-            <select id="ca-type" className={inputCls} value={createForm.animal_type} onChange={(e) => setCreateForm((f) => ({ ...f, animal_type: e.target.value }))}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {ANIMAL_TYPES.map((tp) => <option key={tp} value={tp}>{animalTypeLabel(tp)}</option>)}
-            </select>
-          </div>
-
-          {/* Gender */}
-          <div>
-            <label className="nf-label" htmlFor="ca-gender">{t("anpGender")}</label>
-            <select id="ca-gender" className={inputCls} value={createForm.gender} onChange={(e) => setCreateForm((f) => ({ ...f, gender: e.target.value }))}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {GENDERS.map((g) => <option key={g.value} value={g.value}>{genderLabel(g.value)}</option>)}
-            </select>
-          </div>
-
-          {/* Entry type */}
-          <div>
-            <label className="nf-label" htmlFor="ca-entry-type">{t("anpEntryType")}</label>
-            <select id="ca-entry-type" className={inputCls} value={createForm.entry_type} onChange={(e) => setCreateForm((f) => ({ ...f, entry_type: e.target.value }))}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {ENTRY_TYPES.map((tp) => <option key={tp} value={tp}>{entryTypeLabel(tp)}</option>)}
-            </select>
-          </div>
-
-          {/* Entry date */}
-          <div>
-            <label className="nf-label" htmlFor="ca-entry-date">{t("anpEntryDate")}</label>
-            <input id="ca-entry-date" type="date" className={inputCls} value={createForm.entry_date} onChange={(e) => setCreateForm((f) => ({ ...f, entry_date: e.target.value }))} />
-          </div>
-
-          {/* Breed */}
-          <div>
-            <label className="nf-label" htmlFor="ca-breed">{t("anpBreed")}</label>
-            <select id="ca-breed" className={inputCls} value={createForm.breed_id} onChange={(e) => setCreateForm((f) => ({ ...f, breed_id: e.target.value }))}>
-              <option value="">{t("anpSelectLobFirst")}</option>
-              {breeds.map((b) => <option key={b.breed_id} value={b.breed_id}>{b.breed_name}</option>)}
-            </select>
-          </div>
-
-          {/* Item (living asset) */}
-          <div>
-            <label className="nf-label" htmlFor="ca-item">{t("anpItemLivingAsset")}</label>
-            <select id="ca-item" className={inputCls} value={createForm.item_id} onChange={(e) => setCreateForm((f) => ({ ...f, item_id: e.target.value }))}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {items.filter((i) => i.item_type === "LIVING_ASSET" || !i.item_type).map((i) => <option key={i.item_id} value={i.item_id}>{i.item_name}</option>)}
-            </select>
-          </div>
-
-          {/* Acquisition cost */}
-          <div>
-            <label className="nf-label" htmlFor="ca-cost">{t("anpAcquisitionCost")}</label>
-            <input id="ca-cost" type="number" min="0" step="0.01" className={inputCls} placeholder="0.00" value={createForm.acquisition_cost} onChange={(e) => setCreateForm((f) => ({ ...f, acquisition_cost: e.target.value }))} />
-          </div>
-
-          {/* DOB */}
-          <div>
-            <label className="nf-label" htmlFor="ca-dob">{t("anpDateOfBirth")}</label>
-            <input id="ca-dob" type="date" className={inputCls} value={createForm.dob} onChange={(e) => setCreateForm((f) => ({ ...f, dob: e.target.value }))} />
-          </div>
-
-          {/* RFID */}
-          <div>
-            <label className="nf-label" htmlFor="ca-rfid">{t("anpRfidTag")}</label>
-            <input id="ca-rfid" type="text" className={inputCls} placeholder={t("anpRfidTagPlaceholder")} value={createForm.rfid_tag} onChange={(e) => setCreateForm((f) => ({ ...f, rfid_tag: e.target.value }))} />
-          </div>
-
-          {/* Source receipt — shown when PURCHASED */}
-          {["PURCHASED_IMPORTED", "PURCHASED_LOCAL"].includes(createForm.entry_type) && (
-            <div>
-              <label className="nf-label" htmlFor="ca-receipt">{t("anpSourceReceiptId")}</label>
-              <input id="ca-receipt" type="text" className={inputCls} placeholder={t("anpSourceReceiptPlaceholder")} value={createForm.source_receipt_id} onChange={(e) => setCreateForm((f) => ({ ...f, source_receipt_id: e.target.value }))} />
-            </div>
-          )}
-
-          {/* Source batch — shown when BORN_ON_FARM */}
-          {createForm.entry_type === "BORN_ON_FARM" && (
-            <div>
-              <label className="nf-label" htmlFor="ca-batch">{t("anpSourceBatch")}</label>
-              <select id="ca-batch" className={inputCls} value={createForm.source_batch_id} onChange={(e) => setCreateForm((f) => ({ ...f, source_batch_id: e.target.value }))}>
-                <option value="">{t("anpSelectBatch")}</option>
-                {batches.map((b) => <option key={b.batch_id} value={b.batch_id}>{b.batch_no || b.batch_id}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Notes — full width */}
-          <div className="sm:col-span-2">
-            <label className="nf-label" htmlFor="ca-notes">{t("anpNotes")}</label>
-            <textarea id="ca-notes" className={inputCls} rows={2} value={createForm.notes} onChange={(e) => setCreateForm((f) => ({ ...f, notes: e.target.value }))} />
-          </div>
-        </div>
-      </Dialog>
 
       {/* ═══ Detail modal ═════════════════════════════════════════════════════ */}
       {viewing && (
@@ -1013,14 +797,18 @@ export default function AnimalPanel() {
         <div className="space-y-4">
           <div>
             <label className="nf-label" htmlFor="dose-item">{t("anpMedicineVaccine")}</label>
-            <select id="dose-item" className={inputCls} value={doseForm.item_id} onChange={(e) => setDoseForm((f) => ({ ...f, item_id: e.target.value }))}>
-              <option value="">{t("anpSelectPlaceholder")}</option>
-              {medItems.map((i) => (
-                <option key={i.item_id} value={i.item_id}>
-                  {i.item_name}{i.withdrawal_days != null ? t("anpWithdrawalDaysSuffix", { days: i.withdrawal_days }) : ""}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="dose-item"
+              ariaLabel={t("anpMedicineVaccine")}
+              value={doseForm.item_id}
+              onChange={(val) => setDoseForm((f) => ({ ...f, item_id: val }))}
+              options={medItems.map((i) => ({
+                value: i.item_id,
+                label: `${i.item_name}${i.withdrawal_days != null ? t("anpWithdrawalDaysSuffix", { days: i.withdrawal_days }) : ""}`,
+              }))}
+              placeholder={t("anpSelectPlaceholder")}
+              columnHeaders={false}
+            />
             {medItems.length === 0 && (
               <p className="mt-1 text-xs" style={S.muted}>{t("anpNoMedItemsHint")}</p>
             )}
@@ -1038,10 +826,15 @@ export default function AnimalPanel() {
             </div>
             <div className="w-28">
               <label className="nf-label" htmlFor="dose-uom">{t("anpUom")}</label>
-              <select id="dose-uom" className={inputCls} value={doseForm.uom} onChange={(e) => setDoseForm((f) => ({ ...f, uom: e.target.value }))}>
-                <option value="">—</option>
-                {uoms.map((u) => <option key={u.uom_id || u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
-              </select>
+              <SearchableSelect
+                id="dose-uom"
+                ariaLabel={t("anpUom")}
+                value={doseForm.uom}
+                onChange={(val) => setDoseForm((f) => ({ ...f, uom: val }))}
+                options={uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))}
+                placeholder="—"
+                columnHeaders={false}
+              />
             </div>
           </div>
 
@@ -1087,9 +880,19 @@ export default function AnimalPanel() {
         <div className="space-y-4 mt-1">
           <div>
             <label className="nf-label" htmlFor="dispose-type">{t("anpDisposalType")}</label>
-            <select id="dispose-type" className={inputCls} value={disposeForm.disposal_type} onChange={(e) => { setDisposeForm((f) => ({ ...f, disposal_type: e.target.value, disposal_reason_id: "" })); setDisposeError(""); setDisposeIsWithdrawal(false); }}>
-              {DISPOSAL_TYPES.map((tp) => <option key={tp} value={tp}>{disposalTypeLabel(tp)}</option>)}
-            </select>
+            <SearchableSelect
+              id="dispose-type"
+              ariaLabel={t("anpDisposalType")}
+              value={disposeForm.disposal_type}
+              onChange={(val) => {
+                setDisposeForm((f) => ({ ...f, disposal_type: val, disposal_reason_id: "" }));
+                setDisposeError("");
+                setDisposeIsWithdrawal(false);
+              }}
+              options={DISPOSAL_TYPES.map((tp) => ({ value: tp, label: disposalTypeLabel(tp) }))}
+              placeholder={t("anpSelectPlaceholder")}
+              columnHeaders={false}
+            />
           </div>
 
           <div>

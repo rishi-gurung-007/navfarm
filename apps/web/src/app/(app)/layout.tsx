@@ -58,7 +58,7 @@ const sortCountries = (rows: any) =>
 export default function ConsoleLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { t, tLob, tLabel } = useLanguage();
+  const { t, tLabel } = useLanguage();
   const [user, setUser] = useState<NavUser | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -348,7 +348,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // sits next to Batches in both, because a scheduler belongs to a batch
       // and a stage — which is exactly what the shared-order spec is for.
       { label: t("navSchedulers"), href: "/schedulers", icon: CalendarClock, activePrefix: "/schedulers" },
-      { label: t("navLivestock"), href: "/livestock", icon: Pill, children: livestockChildren },
+      { label: t("navLivestock"), href: "/livestock", icon: Pill, activePrefix: "/livestock", children: livestockChildren },
       { label: t("inventoryStock"), href: "/inventory/balance", icon: Boxes, activePrefix: "/inventory", children: inventoryChildren },
       { label: t("navFeedForecast"), href: "/inventory/feed-forecast", icon: TrendingUp, activePrefix: "/inventory/feed-forecast", children: feedForecastChildren, flyout: true },
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
@@ -398,7 +398,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
      * reads correctly without a new nav tree.
      */
     navItems = [
-      { label: t("lobDashboard", { lob: tLob(activeLob) }), href: "/dashboard", icon: LayoutDashboard },
+      { label: t("dashboard"), href: "/dashboard", icon: LayoutDashboard },
       {
         label: t("navBatches"),
         href: "/batches",
@@ -406,6 +406,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         // Layers here, while Layers is also Operational Areas' icon — so one
         // item had two icons and one icon meant two items.
         icon: Wheat,
+        activePrefix: "/batches",
         children: batchChildren,
       },
       {
@@ -418,6 +419,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         label: t("navLivestock"),
         href: "/livestock",
         icon: Pill,
+        activePrefix: "/livestock",
         // Rendered from the shell's own section list so the sidebar and the
         // routes can never drift apart. Dairy calls its register something
         // else, and that is the only per-LOB override.

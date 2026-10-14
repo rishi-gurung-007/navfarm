@@ -10,6 +10,7 @@ import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Toast } from "@/components/ui/toast";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 
@@ -290,18 +291,20 @@ export default function RfidScannerModal({
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="sm:col-span-2">
                       <label className="nf-label text-xs">{t("rfmMedicineVaccine")}</label>
-                      <select
-                        className="nf-input text-xs"
+                      <SearchableSelect
+                        ariaLabel={t("rfmMedicineVaccine")}
                         value={doseItemId}
-                        onChange={(e) => setDoseItemId(e.target.value)}
-                      >
-                        <option value="">{t("rfmSelectMedicine")}</option>
-                        {medItems.map((m) => (
-                          <option key={m.item_id} value={m.item_id}>
-                            {m.item_name} ({m.item_type}) {m.withdrawal_days ? t("rfmWithdrawalDaysSuffix", { days: String(m.withdrawal_days) }) : ""}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(val) => setDoseItemId(val)}
+                        options={[
+                          { value: "", label: t("rfmSelectMedicine") },
+                          ...medItems.map((m) => ({
+                            value: m.item_id,
+                            label: `${m.item_name} (${m.item_type})${m.withdrawal_days ? ` ${t("rfmWithdrawalDaysSuffix", { days: String(m.withdrawal_days) })}` : ""}`,
+                          })),
+                        ]}
+                        columnHeaders={false}
+                        placeholder={t("rfmSelectMedicine")}
+                      />
                     </div>
                     <div>
                       <label className="nf-label text-xs">{t("rfmDoseQty")}</label>
@@ -314,16 +317,20 @@ export default function RfidScannerModal({
                           value={doseQty}
                           onChange={(e) => setDoseQty(e.target.value)}
                         />
-                        <select
-                          className="nf-input text-xs w-20"
-                          value={doseUom}
-                          onChange={(e) => setDoseUom(e.target.value)}
-                        >
-                          <option value="ML">ML</option>
-                          <option value="DOSE">DOSE</option>
-                          <option value="MG">MG</option>
-                          <option value="GM">GM</option>
-                        </select>
+                        <div className="w-24">
+                          <SearchableSelect
+                            ariaLabel="UOM"
+                            value={doseUom}
+                            onChange={(val) => setDoseUom(val)}
+                            options={[
+                              { value: "ML", label: "ML" },
+                              { value: "DOSE", label: "DOSE" },
+                              { value: "MG", label: "MG" },
+                              { value: "GM", label: "GM" },
+                            ]}
+                            columnHeaders={false}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>

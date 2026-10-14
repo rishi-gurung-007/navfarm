@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, ReadField } from "@/components/ui/field";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { EntityLookupField } from "@/modules/master-data/EntityLookupField";
 import { Button } from "@/components/ui/button";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -660,14 +661,17 @@ export default function MortalityHealthPanel() {
             <span>{t("mhHistoricalPostMortemLog")}</span>
             <div className="flex items-center gap-3">
               {mortalityAnimalOptions.length > 0 && (
-                <select
+                <SearchableSelect
+                  id="mortality-animal-filter"
                   value={mortalityAnimalFilter}
-                  onChange={(e) => setMortalityAnimalFilter(e.target.value)}
-                  className="nf-input h-7 text-[11px]"
-                >
-                  <option value="">{t("bulkScopeWholeBatch")}</option>
-                  {mortalityAnimalOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                </select>
+                  onChange={(val) => setMortalityAnimalFilter(String(val))}
+                  options={[
+                    { value: "", label: t("bulkScopeWholeBatch") },
+                    ...mortalityAnimalOptions.map(([id, label]) => ({ value: id, label })),
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName="nf-input-sm min-w-[12rem] h-9"
+                />
               )}
               <span>{t("mhTotalDeathsLogged", { count: filteredMortalityList.length })}</span>
             </div>
@@ -729,14 +733,17 @@ export default function MortalityHealthPanel() {
             <span>{t("mhPrescriptionVeterinaryInterventionsLog")}</span>
             <div className="flex items-center gap-3">
               {treatmentAnimalOptions.length > 0 && (
-                <select
+                <SearchableSelect
+                  id="treatment-animal-filter"
                   value={treatmentAnimalFilter}
-                  onChange={(e) => setTreatmentAnimalFilter(e.target.value)}
-                  className="nf-input h-7 text-[11px]"
-                >
-                  <option value="">{t("bulkScopeWholeBatch")}</option>
-                  {treatmentAnimalOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                </select>
+                  onChange={(val) => setTreatmentAnimalFilter(String(val))}
+                  options={[
+                    { value: "", label: t("bulkScopeWholeBatch") },
+                    ...treatmentAnimalOptions.map(([id, label]) => ({ value: id, label })),
+                  ]}
+                  columnHeaders={false}
+                  triggerClassName="nf-input-sm min-w-[12rem] h-9"
+                />
               )}
               <span>{t("mhActiveCases", { count: activeTreatmentsCount })}</span>
             </div>
@@ -879,14 +886,19 @@ export default function MortalityHealthPanel() {
               />
             </div>
             <div>
-              <label className="font-semibold block mb-1">{t("mhBatchPen")}</label>
-              <select
+              <label className="font-semibold block mb-1" htmlFor="mortality-batch">{t("mhBatchPen")}</label>
+              <SearchableSelect
+                id="mortality-batch"
                 value={newMortality.batch_no}
-                onChange={(e) => { setNewMortality({ ...newMortality, batch_no: e.target.value }); setMortalityAnimalIds(new Set()); loadModalAnimals(e.target.value); }}
-                className="nf-input w-full"
-              >
-                {batches.map((b) => <option key={b.id} value={b.no}>{b.no}</option>)}
-              </select>
+                onChange={(val) => {
+                  const bNo = String(val);
+                  setNewMortality({ ...newMortality, batch_no: bNo });
+                  setMortalityAnimalIds(new Set());
+                  loadModalAnimals(bNo);
+                }}
+                options={batches.map((b) => ({ value: b.no, label: b.no }))}
+                columnHeaders={false}
+              />
             </div>
           </div>
 
@@ -930,20 +942,22 @@ export default function MortalityHealthPanel() {
           </div>
 
           <div>
-            <label className="font-semibold block mb-1">{t("mhPrimaryCauseOfDeath")}</label>
-            <select
+            <label className="font-semibold block mb-1" htmlFor="mortality-cause">{t("mhPrimaryCauseOfDeath")}</label>
+            <SearchableSelect
+              id="mortality-cause"
               value={newMortality.cause_of_death}
-              onChange={(e) => setNewMortality({ ...newMortality, cause_of_death: e.target.value })}
-              className="nf-input w-full"
-            >
-              <option value="Respiratory Distress / Pneumonia">{t("mhCauseRespiratoryDistress")}</option>
-              <option value="Overlay / Crushing">{t("mhCauseOverlayCrushing")}</option>
-              <option value="Gastric Ulcer / Hemorrhage">{t("mhCauseGastricUlcer")}</option>
-              <option value="Colibacillosis / Enteritis">{t("mhCauseColibacillosis")}</option>
-              <option value="Uterine / Rectal Prolapse">{t("mhCauseUterineProlapse")}</option>
-              <option value="Sudden Heart Failure / Stress">{t("mhCauseSuddenHeartFailure")}</option>
-              <option value="Other Non-Infectious">{t("mhCauseOtherNonInfectious")}</option>
-            </select>
+              onChange={(val) => setNewMortality({ ...newMortality, cause_of_death: String(val) })}
+              options={[
+                { value: "Respiratory Distress / Pneumonia", label: t("mhCauseRespiratoryDistress") },
+                { value: "Overlay / Crushing", label: t("mhCauseOverlayCrushing") },
+                { value: "Gastric Ulcer / Hemorrhage", label: t("mhCauseGastricUlcer") },
+                { value: "Colibacillosis / Enteritis", label: t("mhCauseColibacillosis") },
+                { value: "Uterine / Rectal Prolapse", label: t("mhCauseUterineProlapse") },
+                { value: "Sudden Heart Failure / Stress", label: t("mhCauseSuddenHeartFailure") },
+                { value: "Other Non-Infectious", label: t("mhCauseOtherNonInfectious") },
+              ]}
+              columnHeaders={false}
+            />
           </div>
 
           <div>
@@ -958,16 +972,18 @@ export default function MortalityHealthPanel() {
           </div>
 
           <div>
-            <label className="font-semibold block mb-1">{t("mhBiosecureDisposalMethod")}</label>
-            <select
+            <label className="font-semibold block mb-1" htmlFor="mortality-disposal-method">{t("mhBiosecureDisposalMethod")}</label>
+            <SearchableSelect
+              id="mortality-disposal-method"
               value={newMortality.disposal_method}
-              onChange={(e) => setNewMortality({ ...newMortality, disposal_method: e.target.value })}
-              className="nf-input w-full"
-            >
-              <option value="Incineration (Biosecure)">{t("mhDisposalIncineration")}</option>
-              <option value="Deep Burial with Lime">{t("mhDisposalDeepBurial")}</option>
-              <option value="Certified Carcass Rendering">{t("mhDisposalCertifiedRendering")}</option>
-            </select>
+              onChange={(val) => setNewMortality({ ...newMortality, disposal_method: String(val) })}
+              options={[
+                { value: "Incineration (Biosecure)", label: t("mhDisposalIncineration") },
+                { value: "Deep Burial with Lime", label: t("mhDisposalDeepBurial") },
+                { value: "Certified Carcass Rendering", label: t("mhDisposalCertifiedRendering") },
+              ]}
+              columnHeaders={false}
+            />
           </div>
 
 
@@ -998,13 +1014,18 @@ export default function MortalityHealthPanel() {
               />
             </Field>
             <Field label={t("mhBatchPen")} htmlFor="treatment-batch" required>
-              <select id="treatment-batch"
+              <SearchableSelect
+                id="treatment-batch"
                 value={newTreatment.batch_no}
-                onChange={(e) => { setNewTreatment({ ...newTreatment, batch_no: e.target.value }); setTreatmentAnimalIds(new Set()); loadModalAnimals(e.target.value); }}
-                className="nf-input w-full"
-              >
-                {batches.map((b) => <option key={b.id} value={b.no}>{b.no}</option>)}
-              </select>
+                onChange={(val) => {
+                  const bNo = String(val);
+                  setNewTreatment({ ...newTreatment, batch_no: bNo });
+                  setTreatmentAnimalIds(new Set());
+                  loadModalAnimals(bNo);
+                }}
+                options={batches.map((b) => ({ value: b.no, label: b.no }))}
+                columnHeaders={false}
+              />
             </Field>
           </div>
 
@@ -1047,10 +1068,16 @@ export default function MortalityHealthPanel() {
               <input id="treatment-dosage" value={newTreatment.dosage ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, dosage: e.target.value })} className="nf-input w-full" />
             </Field>
             <Field label="Route" htmlFor="treatment-route">
-              <select id="treatment-route" value={newTreatment.route ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, route: e.target.value })} className="nf-input w-full">
-                <option value="">Not recorded</option>
-                {Object.entries(ROUTE_TO_CODE).map(([label, code]) => <option key={code} value={code}>{label}</option>)}
-              </select>
+              <SearchableSelect
+                id="treatment-route"
+                value={newTreatment.route ?? ""}
+                onChange={(val) => setNewTreatment({ ...newTreatment, route: String(val) })}
+                options={[
+                  { value: "", label: "Not recorded" },
+                  ...Object.entries(ROUTE_TO_CODE).map(([label, code]) => ({ value: code, label })),
+                ]}
+                columnHeaders={false}
+              />
             </Field>
             <Field label={t("mhMeatWithdrawalPeriodDays")} htmlFor="treatment-withdrawal">
               <input id="treatment-withdrawal" type="number" min="0" value={newTreatment.withdrawal_days ?? ""} onChange={(e) => setNewTreatment({ ...newTreatment, withdrawal_days: e.target.value === "" ? undefined : Number(e.target.value) })} className="nf-input w-full" />

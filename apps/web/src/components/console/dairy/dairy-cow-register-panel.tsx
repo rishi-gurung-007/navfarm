@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -231,33 +231,35 @@ export default function DairyCowRegisterPanel() {
             />
           </div>
 
-          <select
+          <SearchableSelect
+            id="dairy-status-filter"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-[var(--radius-sm)] border px-2.5 py-1.5 text-xs font-semibold"
-            style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
-          >
-            <option value="ALL">{t("baapAllStatuses")}</option>
-            <option value="LACTATING">{t("dyMilking")}</option>
-            <option value="DRY">{t("ctDryStatus")}</option>
-            <option value="PREGNANT">{t("dyPregnantHeifer")}</option>
-            <option value="QUARANTINE">{t("anpStatusQuarantine")}</option>
-          </select>
+            onChange={(val) => setStatusFilter(String(val))}
+            options={[
+              { value: "ALL", label: t("baapAllStatuses") },
+              { value: "LACTATING", label: t("dyMilking") },
+              { value: "DRY", label: t("ctDryStatus") },
+              { value: "PREGNANT", label: t("dyPregnantHeifer") },
+              { value: "QUARANTINE", label: t("anpStatusQuarantine") },
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[10rem] h-9"
+          />
 
           {/* Breeds come from breed_master, so this list matches what the
               company can actually register — it used to offer three fixed
               breed names regardless of the tenant's catalogue. */}
-          <select
+          <SearchableSelect
+            id="dairy-breed-filter"
             value={breedFilter}
-            onChange={(e) => setBreedFilter(e.target.value)}
-            className="rounded-[var(--radius-sm)] border px-2.5 py-1.5 text-xs font-semibold"
-            style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
-          >
-            <option value="ALL">{t("dyAllBreeds")}</option>
-            {breeds.map((b) => (
-              <option key={b.breed_id} value={b.breed_id}>{b.breed_name}</option>
-            ))}
-          </select>
+            onChange={(val) => setBreedFilter(String(val))}
+            options={[
+              { value: "ALL", label: t("dyAllBreeds") },
+              ...breeds.map((b) => ({ value: b.breed_id, label: b.breed_name })),
+            ]}
+            columnHeaders={false}
+            triggerClassName="nf-input-sm min-w-[10rem] h-9"
+          />
         </div>
 
         <Button onClick={() => { setFormError(""); setShowAddModal(true); }} className="gap-1.5">
@@ -355,21 +357,29 @@ export default function DairyCowRegisterPanel() {
             </label>
             <label className="block">
               <span className="nf-text-label">{t("dashBreedLabel")}</span>
-              <Select value={form.breed_id} onChange={(e) => setForm({ ...form, breed_id: e.target.value })}>
-                <option value="">{t("dySelectBreed")}</option>
-                {breeds.map((b) => (
-                  <option key={b.breed_id} value={b.breed_id}>{b.breed_name}</option>
-                ))}
-              </Select>
+              <SearchableSelect
+                id="dairy-add-breed"
+                value={form.breed_id}
+                onChange={(val) => setForm({ ...form, breed_id: String(val) })}
+                options={breeds.map((b) => ({ value: b.breed_id, label: b.breed_name }))}
+                placeholder={t("dySelectBreed")}
+                columnHeaders={false}
+              />
             </label>
             <label className="block">
               <span className="nf-text-label">{t("dyAnimalType")}</span>
-              <Select value={form.animal_type} onChange={(e) => setForm({ ...form, animal_type: e.target.value })}>
-                <option value="COW">{t("dyTypeCow")}</option>
-                <option value="HEIFER">{t("dyTypeHeifer")}</option>
-                <option value="CALF">{t("dyTypeCalf")}</option>
-                <option value="BULL">{t("dyTypeBull")}</option>
-              </Select>
+              <SearchableSelect
+                id="dairy-add-animal-type"
+                value={form.animal_type}
+                onChange={(val) => setForm({ ...form, animal_type: String(val) })}
+                options={[
+                  { value: "COW", label: t("dyTypeCow") },
+                  { value: "HEIFER", label: t("dyTypeHeifer") },
+                  { value: "CALF", label: t("dyTypeCalf") },
+                  { value: "BULL", label: t("dyTypeBull") },
+                ]}
+                columnHeaders={false}
+              />
             </label>
             <label className="block">
               <span className="nf-text-label">{t("anpDateOfBirth")}</span>

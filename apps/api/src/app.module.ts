@@ -77,6 +77,7 @@ import { QcModule } from './modules/production/qc/qc.module';
 import { QrCodeModule } from './modules/production/qr-code/qr-code.module';
 import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
+import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
@@ -185,6 +186,7 @@ import { SystemController } from './system/system.controller';
     QrCodeModule,
     AnimalModule,
     BreedingModule,
+    PiggeryAnalyticsModule,
   ],
   controllers: [SystemController],
   providers: [],

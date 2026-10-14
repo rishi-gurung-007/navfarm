@@ -12,6 +12,7 @@ import {
   Wheat,
   Building2,
   DollarSign,
+  LayoutDashboard,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -47,6 +48,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { ConsolePage } from "../../../components/ui/console-page";
 import { StatRow, StatCard } from "../../../components/ui/stat-row";
 import { resolveLobFamily } from "@/lib/lob";
+import PiggeryGmDashboard from "@/components/console/piggery/piggery-gm-dashboard";
 
 const CHART_COLORS = ["var(--accent)", "var(--success)", "var(--info)", "var(--warning)", "#8a6fd6", "#4fb0a5"];
 
@@ -106,6 +108,7 @@ export default function DashboardPage() {
   // or drill into one. Defaults to the first active batch, matching the old
   // hardcoded behavior, but is now a real, switchable selection.
   const [batchViewMode, setBatchViewMode] = useState<string>("ALL");
+  const [piggeryViewMode, setPiggeryViewMode] = useState<"gm" | "operations">("gm");
 
   useEffect(() => {
     const token = getStoredToken();
@@ -802,8 +805,39 @@ export default function DashboardPage() {
 
         return (
           <div className="space-y-6">
-            {/* 4 Piggery Operational Stat Strips */}
-            <StatRow>
+            {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations */}
+            <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+              <button
+                onClick={() => setPiggeryViewMode("gm")}
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                  piggeryViewMode === "gm"
+                    ? "bg-[var(--accent)] text-white shadow-xs"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                }`}
+              >
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                <span>Piggery GM Executive Dashboard</span>
+              </button>
+
+              <button
+                onClick={() => setPiggeryViewMode("operations")}
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                  piggeryViewMode === "operations"
+                    ? "bg-[var(--accent)] text-white shadow-xs"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Batch Lifecycle Operations</span>
+              </button>
+            </div>
+
+            {piggeryViewMode === "gm" ? (
+              <PiggeryGmDashboard />
+            ) : (
+              <div className="space-y-6">
+                {/* 4 Piggery Operational Stat Strips */}
+                <StatRow>
               <StatCard
                 icon={Activity}
                 label={t("dashBreedingSowsGilts")}
@@ -926,13 +960,23 @@ export default function DashboardPage() {
                       <span>{t("dashAnimalEarTagRegister")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    <button
+                      onClick={() => router.push("/livestock/analytics")}
+                      className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
+                      style={{ borderColor: "var(--border)" }}
+                    >
+                      <span>Piggery GM Executive Dashboard</span>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        );
-      })()}
+        )}
+      </div>
+    );
+  })()}
 
       {/* ========================================================================= */}
       {/* ── 4. OPERATIONAL SCOPE: DAIRY DASHBOARD ── */}
