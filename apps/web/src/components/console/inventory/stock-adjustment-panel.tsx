@@ -75,6 +75,13 @@ const emptyDraftLine = (defaultType: "POSITIVE" | "NEGATIVE" = "POSITIVE"): Jour
   remarks: "",
 });
 
+/** A stored reason "RSN-N3 — Adjustment" as its code and name; free text has no code. */
+function reasonParts(reason?: string | null): { code: string; name: string } {
+  if (!reason) return { code: "—", name: "—" };
+  const [code, ...rest] = reason.split(" — ");
+  return rest.length ? { code, name: rest.join(" — ") } : { code: "—", name: reason };
+}
+
 export default function StockAdjustmentPanel() {
   const { t } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
@@ -576,6 +583,8 @@ export default function StockAdjustmentPanel() {
                 <TableHead className="whitespace-nowrap">{t("sapAdjustmentNo") || "Voucher #"}</TableHead>
                 <TableHead className="whitespace-nowrap">{t("sapPostingDate") || "Date"}</TableHead>
                 <TableHead className="whitespace-nowrap">{t("sapWarehouse") || "Location"}</TableHead>
+                {/* The reason is stored as "CODE — Name"; code and name are two columns (Rishi, 14 Oct). */}
+                <TableHead className="whitespace-nowrap">Reason Code</TableHead>
                 <TableHead className="whitespace-nowrap">{t("sapReason") || "Reason"}</TableHead>
                 <TableHead className="text-right">{t("sapStatus") || "Status"}</TableHead>
                 <TableHead className="text-right">{t("sapActions") || "Actions"}</TableHead>
@@ -584,13 +593,13 @@ export default function StockAdjustmentPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={6} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={7} className="py-10 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("sapLoading")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={6} className="py-10 text-center" style={S.sub}>
+                  <TableCell colSpan={7} className="py-10 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("sapNoAdjustmentsYet")}
                   </TableCell>
                 </tr>
@@ -606,9 +615,8 @@ export default function StockAdjustmentPanel() {
                     <TableCell className="whitespace-nowrap" style={S.primary}>
                       {warehouseLabel(row.warehouse_id)}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>
-                      {row.reason || "—"}
-                    </TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{reasonParts(row.reason).code}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{reasonParts(row.reason).name}</TableCell>
                     <TableCell className="text-right">
                       <StatusBadge status={row.status} />
                     </TableCell>
@@ -1270,7 +1278,7 @@ export default function StockAdjustmentPanel() {
                 <p className="font-semibold uppercase tracking-wider" style={S.muted}>
                   {t("sapReason")}
                 </p>
-                <p style={S.primary}>{viewing.reason || "—"}</p>
+                <p style={S.primary}>{reasonParts(viewing.reason).name}</p>
               </div>
               {viewing.posted_at && (
                 <div>

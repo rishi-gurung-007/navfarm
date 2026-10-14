@@ -791,6 +791,7 @@ export function MasterDataTable({
       if (companyId) params.set("companyId", companyId);
       if (search) params.set("search", search);
       if (config.fixedFilter) params.set(config.fixedFilter.queryParam, config.fixedFilter.value);
+      for (const [key, value] of Object.entries(config.listParams ?? {})) params.set(key, value);
       if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
       if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
       // Send the active filter-tab value as its configured query param.

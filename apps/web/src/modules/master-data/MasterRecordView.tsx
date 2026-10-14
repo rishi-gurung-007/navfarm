@@ -107,8 +107,12 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
           every field stays where it was. Blocking is not a reason to hide the
           record: the list keeps blocked rows precisely so they can be looked at
           and restored. */}
-      {(record.is_active === false || !!record.deleted_at) &&
-        <p><StatusBadge status="BLOCKED" label="Blocked" /></p>}
+      {(record.is_active === false || !!record.deleted_at) && (() => {
+        // An animal that left the herd says how (Dead, Culled, Sold…), not "Blocked" (Rishi, 14 Oct).
+        const status = String(record.status ?? "");
+        const left = !!config.statusActiveValues && !!status && !config.statusActiveValues.includes(status);
+        return <p><StatusBadge status="BLOCKED" label={left ? status.charAt(0) + status.slice(1).toLowerCase() : "Blocked"} /></p>;
+      })()}
       {config.owner === "BC" && <BcOwnershipNotice config={config} />}
       {sections.map((sec) => (
         <div key={sec.title || "main"} className="space-y-3">

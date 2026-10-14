@@ -709,6 +709,13 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />
             <ReadField label="Expected cull date" value={fmt(row.expected_cull_date)} />
+            {/* Rishi, 14 Oct: beside the expected date, the day it actually happened — the date of
+                death for an animal that died (mortality in data entry or Dispose), the actual cull date for one culled. */}
+            {row.disposal_type === "DIED" || row.status === "DEAD" ? (
+              <ReadField label="Date of death" value={fmt(row.disposal_date)} />
+            ) : (
+              <ReadField label="Actual cull date" value={fmt(row.cull_date ?? (row.disposal_type === "CULLED" ? row.disposal_date : null))} />
+            )}
             {/* Disposal is set by the Dispose action, which checks withdrawal
                 periods and posts the gain or loss — never by a form field.
                 Blank until it happens. */}

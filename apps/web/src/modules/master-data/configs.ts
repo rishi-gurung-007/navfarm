@@ -494,6 +494,8 @@ const animal: MasterDataConfig = {
   // and posting the gain or loss on disposal, and the API now rejects them on
   // the plain update path.
   statusActiveValues: ["ACTIVE", "QUARANTINE", "SICK", "PREGNANT", "LACTATING", "DRY"],
+  // Rishi, 14 Oct: an animal that died (or left the herd) stays findable here, greyed by its status.
+  listParams: { includeDisposed: "true" },
   columns: [
     { key: "animal_code", label: "Code" },
     { key: "animal_type", label: "Type" },
@@ -639,6 +641,9 @@ const animal: MasterDataConfig = {
     { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "productive_life_start", label: "Productive Life Start", type: "date", section: "Production" },
     { key: "expected_cull_date", label: "Expected Cull Date", type: "date", section: "Production" },
+    // Rishi, 14 Oct: when it actually left — derived by the API from the disposal (never edited here).
+    { key: "date_of_death", label: "Date of Death", type: "date", readOnly: true, hideInForm: true, section: "Production" },
+    { key: "actual_cull_date", label: "Actual Cull Date", type: "date", readOnly: true, hideInForm: true, section: "Production" },
     { key: "notes", label: "Notes", type: "textarea", section: "Production" },
   ],
 };

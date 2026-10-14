@@ -517,6 +517,8 @@ export interface MasterDataConfig {
    * are the Cost Centre table fixed to type DEPARTMENT.
    */
   fixedFilter?: { queryParam: string; payloadKey: string; value: string };
+  /** Extra query parameters on every list request (e.g. the Animal Register asking for animals that left the herd). */
+  listParams?: Record<string, string>;
 }
 
 export interface MasterDataFilterTabOption {
