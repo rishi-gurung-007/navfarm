@@ -73,8 +73,6 @@ export function ShellHarness({ withContextNav }: { withContextNav: boolean }) {
       signOutLabel="Sign out"
       profileItems={[{ label: "Account" }, { label: "Preferences" }, { label: "Settings" }]}
       profileMenuLabel="Account menu"
-      breadcrumbRoot="Harness"
-      breadcrumbCurrent="Shell geometry"
       contextNav={withContextNav ? contextNav : undefined}
     >
       {/* The page header is page content now, so the fixture renders it the

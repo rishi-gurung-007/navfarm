@@ -66,8 +66,6 @@ export interface AppShellProps {
   profileItems: ProfileMenuItem[];
   /** Accessible name for the avatar trigger, e.g. "Account menu". */
   profileMenuLabel: string;
-  breadcrumbRoot: string;
-  breadcrumbCurrent: string;
   headerRight?: ReactNode;
   /**
    * Structural slot for the contextual (module) navigation column. When
@@ -571,8 +569,6 @@ export function AppShell(props: AppShellProps) {
     signOutLabel,
     profileItems,
     profileMenuLabel,
-    breadcrumbRoot,
-    breadcrumbCurrent,
     headerRight,
     contextNav,
     children,
@@ -829,12 +825,6 @@ export function AppShell(props: AppShellProps) {
         >
           <Menu size={18} />
         </button>
-        {/* The breadcrumb used to sit here, with its current segment set in
-            semibold primary text. That made it a second title competing with
-            the page's H1 from inside the chrome. It is the first step of the
-            content hierarchy, not chrome, so it moved into <main> directly
-            above the page header — see below. The header keeps its geometry,
-            its height and its global controls. */}
         <div className="ml-auto flex min-w-0 items-center gap-2.5">
           {headerRight}
           <ProfilePopover
@@ -852,17 +842,6 @@ export function AppShell(props: AppShellProps) {
       <div data-shell-region="workspace" data-has-context-nav={contextNav ? "true" : "false"}>
         {contextNav && <div data-shell-region="context-nav">{contextNav}</div>}
         <main data-shell-region="content">
-          {/* Step one of the content hierarchy, rendered once for every route
-              whether or not it has a PageHeader yet: one breadcrumb landmark
-              exists on every page and no page can add a second. It scrolls
-              away under the page header rather than pinning — the title is
-              what has to stay legible while the work surface moves. */}
-          <nav aria-label={t("shBreadcrumb")} data-shell-breadcrumb>
-            <ol>
-              <li>{breadcrumbRoot}</li>
-              <li aria-current="page">{breadcrumbCurrent}</li>
-            </ol>
-          </nav>
           {children}
         </main>
       </div>

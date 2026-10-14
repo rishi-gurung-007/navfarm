@@ -225,59 +225,13 @@ body {
 
    The content hierarchy of apple.design.md §9, in one place:
 
-     breadcrumb → title → description → actions → toolbar → work surface
+     title → description → actions → toolbar → work surface
 
    All of it lives inside <main>. None of it is chrome: the global header
    above stays exactly what it was, and this is emphatically not a second one.
 
-   Markup lives in `components/ui/PageHeader.tsx`; the breadcrumb directly
-   above it is emitted once by `components/shell/AppShell.tsx`.
+   Markup lives in `components/ui/PageHeader.tsx`.
    ───────────────────────────────────────────────────────────────────────── */
-
-/* The gutter every page container already uses (`max-w-7xl` + `p-4 sm:p-6
-   lg:p-7`), so the breadcrumb lines up with the title beneath it without each
-   page having to restate it. */
-[data-shell-breadcrumb] {
-  max-width: 80rem;
-  margin-inline: auto;
-  padding: 1rem 1rem 0;
-}
-
-[data-shell-breadcrumb] ol {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.375rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  /* Subordinate to the H1 by size and colour both — a breadcrumb that reads as
-     a title is the exact failure this hierarchy exists to prevent. No pills,
-     no chips, no bold current segment. */
-  font-size: 0.75rem;
-  line-height: 1.4;
-  color: var(--text-muted);
-}
-
-[data-shell-breadcrumb] li {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-}
-
-[data-shell-breadcrumb] li + li::before {
-  content: '/';
-  /* Decorative: the list semantics already convey the path, so the separator
-     is drawn rather than written into the accessible name. */
-  color: var(--text-disabled);
-}
-
-[data-shell-breadcrumb] li:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 [data-shell-region='page-header'] {
   position: static;
@@ -339,10 +293,6 @@ body {
 }
 
 @media (min-width: 640px) {
-  [data-shell-breadcrumb] {
-    padding: 1.5rem 1.5rem 0;
-  }
-
   /* Above the narrowest viewport the title and its actions share one row, with
      the actions trailing. Below it they stack, which is why the row is a
      column by default rather than a wrapping row: a wrapped row leaves the
@@ -361,10 +311,6 @@ body {
 }
 
 @media (min-width: 1024px) {
-  [data-shell-breadcrumb] {
-    padding: 1.75rem 1.75rem 0;
-  }
-
   /* Pinned only where <main> is genuinely the scroller. Below this breakpoint
      the document scrolls and the global header and module index are already
      sticky; a third pinned band would take the work surface with it. */
@@ -592,15 +538,6 @@ body {
   [data-shell-region='content'] > [data-fill-height] {
     flex: 1 1 auto;
     min-height: 0;
-    width: 100%;
-  }
-
-  /* The breadcrumb carries max-width + margin-inline: auto, which centres it
-     inside a block <main>. As a COLUMN FLEX item those auto margins also stop
-     it stretching, so it shrank to its text and read as centred on a fill page
-     while every other screen has it left-aligned. A definite width restores
-     the block behaviour: capped at its max-width, the same box as the page. */
-  [data-shell-region='content']:has(> [data-fill-height]) > [data-shell-breadcrumb] {
     width: 100%;
   }
 

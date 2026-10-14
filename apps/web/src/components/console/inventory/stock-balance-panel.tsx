@@ -10,10 +10,13 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import { Dialog } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Pagination } from "@/components/ui/pagination";
 import ItemLedgerHistoryCard from "./item-ledger-history-card";
 import InventoryLedgerDetail from "./inventory-ledger-detail";
 
 type Row = Record<string, any>;
+
+const PAGE_SIZE = 25;
 
 const S = {
   surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
@@ -47,6 +50,8 @@ export default function StockBalancePanel() {
   const [belowReorderOnly, setBelowReorderOnly] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Row | null>(null);
   const [viewingLedgerEntry, setViewingLedgerEntry] = useState<Row | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
   const companyId = getActiveCompanyId();
 
@@ -75,6 +80,10 @@ export default function StockBalancePanel() {
   }, [itemId, warehouseId, belowReorderOnly]);
 
   useEffect(() => {
+    setPage(1);
+  }, [itemId, warehouseId, belowReorderOnly, pageSize]);
+
+  useEffect(() => {
     if (!companyId) return;
     const params = new URLSearchParams({ companyId, limit: "500" });
     api.get(`/item?${params.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => undefined);
@@ -83,6 +92,7 @@ export default function StockBalancePanel() {
 
   const totalValue = rows.reduce((sum, r) => sum + Number(r.on_hand_value || 0), 0);
   const belowReorderCount = rows.filter((r) => r.reorder_level != null && r.on_hand_qty <= r.reorder_level).length;
+  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="flex flex-col gap-4">
@@ -178,7 +188,7 @@ export default function StockBalancePanel() {
               ) : rows.length === 0 ? (
                 <tr><TableCell colSpan={7} className="py-10 text-center" style={S.sub}><Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("sbpNoStockOnHand")}</TableCell></tr>
               ) : (
-                rows.map((row) => {
+                pagedRows.map((row) => {
                   const belowReorder = row.reorder_level != null && row.on_hand_qty <= row.reorder_level;
                   return (
                     <TableRow 
@@ -226,6 +236,17 @@ export default function StockBalancePanel() {
             </TableBody>
           </table>
         </div>
+        {!loading && rows.length > 0 && (
+          <div className="border-t px-2" style={{ borderColor: "var(--border)" }}>
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={rows.length}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
+          </div>
+        )}
       </div>
 
       {/* Item Stock & Purchase/Consumption Ledger History Card Dialog */}

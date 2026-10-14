@@ -458,13 +458,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
         .toUpperCase()
     : "U";
 
-  const breadcrumbLabel =
-    activeScope === "TENANT"
-      ? "Tenant Workspace"
-      : activeScope === "COMPANY"
-      ? activeCompany?.company_name || "Company Workspace"
-      : `${activeLob || "Operational"} Area`;
-
   const headerRight = (
     <span className="hidden shrink-0 sm:inline-flex"><LanguageSelector /></span>
   );
@@ -492,8 +485,6 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
             signOutLabel={t("signOut")}
             profileItems={PROFILE_ITEMS.map((key) => ({ label: t(key), href: key === "account" ? "/account/profile" : "/account/settings" }))}
             profileMenuLabel={t("accountMenu")}
-            breadcrumbRoot="NAVFarm"
-            breadcrumbCurrent={breadcrumbLabel}
             headerRight={headerRight}
             contextNav={contextNav}
           >

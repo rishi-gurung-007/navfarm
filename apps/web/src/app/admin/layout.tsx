@@ -52,8 +52,6 @@ export default function AdminLayout({ children, modal }: { children: React.React
   }
 
   const initials = user.fullName?.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase() || "SA";
-  const activeNavItem = adminNavItems.find((i) => pathname.startsWith(i.href));
-  const breadcrumbLabel = activeNavItem ? t(activeNavItem.key) : "Admin";
 
   const sidebarSummary = (
     <div className="rounded-[var(--radius-sm)] border border-white/10 bg-white/[0.05] px-3 py-2.5">
@@ -90,8 +88,6 @@ export default function AdminLayout({ children, modal }: { children: React.React
         signOutLabel={t("signOut")}
         profileItems={PROFILE_ITEMS.map((key) => ({ label: t(key), href: key === "account" ? "/account/profile" : "/account/settings" }))}
         profileMenuLabel={t("accountMenu")}
-        breadcrumbRoot="Admin"
-        breadcrumbCurrent={breadcrumbLabel}
         headerRight={headerRight}
       >
         {children}

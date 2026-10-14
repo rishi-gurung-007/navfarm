@@ -18,7 +18,7 @@ import {
  *
  * The hierarchy under test is
  *
- *   primary nav → context nav → breadcrumb → H1 → description → actions → work
+ *   primary nav → context nav → H1 → description → actions → work
  *
  * and the properties that make it real rather than decorative: exactly one H1
  * per route, the header inside the content region rather than in the chrome,
@@ -80,45 +80,13 @@ test.describe('one H1 per route', () => {
 });
 
 test.describe('breadcrumb', () => {
-  test.use({ viewport: { width: 1440, height: 900 } });
-
-  test('is a single named navigation landmark in the content region', async ({ page }) => {
+  // The "NAVFarm / <Area>" breadcrumb was removed from every page; the H1 is
+  // the first step of the content hierarchy.
+  test('is not rendered', async ({ page }) => {
     await gotoConsole(page, { path: '/console/master-data' });
 
-    const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' });
-    await expect(breadcrumb).toHaveCount(1);
-    await expect(breadcrumb).toBeVisible();
-
-    // It is part of the page's reading order, not of the chrome above it.
-    await expect(page.locator(`${CONTENT} ${BREADCRUMB}`)).toHaveCount(1);
-    await expect(page.locator(`${HEADER} ${BREADCRUMB}`)).toHaveCount(0);
-
-    // A list, with the current page marked — not two bare spans.
-    await expect(breadcrumb.getByRole('listitem')).toHaveCount(2);
-    await expect(breadcrumb.locator('[aria-current="page"]')).toHaveCount(1);
-  });
-
-  test('stays visually subordinate to the H1 and reads before it', async ({ page }) => {
-    await gotoConsole(page, { path: '/console/master-data' });
-
-    const crumb = await fontSize(page, `${BREADCRUMB} ol`);
-    const title = await fontSize(page, PAGE_TITLE);
-    expect(crumb).not.toBeNull();
-    expect(title).not.toBeNull();
-    // Not "smaller by a hair": the title has to dominate at a glance.
-    expect(title!).toBeGreaterThan(crumb! * 1.8);
-
-    // Document order puts the path above the title it qualifies.
-    const order = await page.evaluate(
-      ([crumbSel, titleSel]) => {
-        const a = document.querySelector(crumbSel!);
-        const b = document.querySelector(titleSel!);
-        if (!a || !b) return null;
-        return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-      },
-      [BREADCRUMB, PAGE_TITLE],
-    );
-    expect(order).toBe(true);
+    await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toHaveCount(0);
+    await expect(page.locator(BREADCRUMB)).toHaveCount(0);
   });
 });
 
