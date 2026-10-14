@@ -48,6 +48,8 @@ function unwrap<T = any>(res: any): T {
 interface ItemLedgerHistoryCardProps {
   itemId: string;
   companyId?: string | null;
+  /** The location of the Stock Balance row that opened the card: its rows are highlighted (Rishi, 14 Oct). */
+  highlightWarehouseId?: string | null;
   onClose?: () => void;
   onViewLedgerEntry?: (entry: Row) => void;
 }
@@ -55,9 +57,14 @@ interface ItemLedgerHistoryCardProps {
 export default function ItemLedgerHistoryCard({
   itemId,
   companyId,
+  highlightWarehouseId,
   onClose,
   onViewLedgerEntry,
 }: ItemLedgerHistoryCardProps) {
+  const rowStyle = (row: Row) =>
+    highlightWarehouseId && row.warehouse_id === highlightWarehouseId
+      ? { borderColor: 'var(--border)', backgroundColor: 'var(--accent-muted)', boxShadow: 'inset 3px 0 0 var(--accent)' }
+      : { borderColor: 'var(--border)' };
   const { formatMoney } = useCompanyCurrency();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -310,7 +317,7 @@ export default function ItemLedgerHistoryCard({
                       return (
                         <TableRow
                           key={layer.ledger_id}
-                          style={{ borderColor: 'var(--border)' }}
+                          style={rowStyle(layer)}
                         >
                           <TableCell
                             className="py-2.5 px-3 font-mono font-semibold"
@@ -526,7 +533,7 @@ export default function ItemLedgerHistoryCard({
                       return (
                         <TableRow
                           key={out.ledger_id}
-                          style={{ borderColor: 'var(--border)' }}
+                          style={rowStyle(out)}
                         >
                           <TableCell
                             className="py-2.5 px-3 font-mono font-semibold"

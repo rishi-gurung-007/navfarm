@@ -105,7 +105,7 @@ export default function StockBalancePanel() {
         </div>
         <div>
           <dt className="nf-text-caption">{t("sbpTotalOnHandValue")}</dt>
-          <dd className="mt-0.5 text-xl font-semibold" style={S.primary}>{formatMoney(fmt(totalValue))}</dd>
+          <dd className="mt-0.5 text-xl font-semibold" style={S.primary}>{formatMoney(totalValue)}</dd>
         </div>
         <div>
           <dt className="nf-text-caption">{t("sbpAtBelowReorderLevel")}</dt>
@@ -209,7 +209,7 @@ export default function StockBalancePanel() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>{row.uom}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>
-                        {formatMoney(fmt(row.on_hand_value))}
+                        {formatMoney(row.on_hand_value)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
                         {row.reorder_level != null ? fmt(row.reorder_level) : "—"}
@@ -255,6 +255,7 @@ export default function StockBalancePanel() {
             <ItemLedgerHistoryCard
               itemId={selectedItem.item_id}
               companyId={companyId}
+              highlightWarehouseId={selectedItem.warehouse_id}
               onClose={() => setSelectedItem(null)}
               onViewLedgerEntry={(entry) => setViewingLedgerEntry(entry)}
             />
