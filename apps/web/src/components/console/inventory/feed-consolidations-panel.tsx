@@ -69,10 +69,6 @@ export function FeedConsolidationsPanel() {
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9">
-        <div>
-          <h2 className="text-base font-semibold text-(--text-primary)">{t("fcsTitle")}</h2>
-          <p className="mt-0.5 text-sm text-(--text-secondary)">{t("fcsIntro")}</p>
-        </div>
         <Field label={t("fcsStatusFilter")} htmlFor="consolidation-status">
           <SearchableSelect
             id="consolidation-status"

@@ -181,10 +181,6 @@ function FeedSiloDashboardContent() {
 
   return (
     <div data-fill-body className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pb-4">
-      <div className="shrink-0">
-        <h2 className="text-sm font-semibold text-(--text-primary)">{t("fsdTitle")}</h2>
-        <p className="mt-0.5 text-xs text-(--text-secondary)">{t("fsdDescription")}</p>
-      </div>
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9">
         <FeedFarmSelect id="sd-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmChosen ? farmId : null} fixedLabel={fixedLabel} allLabel={t("fsdSelectFarm")} onChange={chooseFarm} />
         <Field label={t("fsdShed")} htmlFor="sd-shed">
