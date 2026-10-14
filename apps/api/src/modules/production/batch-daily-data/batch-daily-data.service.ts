@@ -1,3 +1,4 @@
+import { isFeedTypeCode } from '../../../common/feed-form';
 import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import {
   Injectable,
@@ -169,12 +170,12 @@ export class BatchDailyDataService {
       // applied can carry lot_required on an untracked item, which is priced by its costing method alone.
       const [tracked] = line.item_id
         ? await this.db
-            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked })
+            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked, item_type: schema.itemMaster.item_type })
             .from(schema.itemMaster)
             .where(eq(schema.itemMaster.item_id, line.item_id))
             .limit(1)
         : [];
-      if (!line.item_id || tracked?.lot || tracked?.serial) {
+      if (lotMustBeNamed(line.line_type, line.item_id, tracked)) {
         throw new BadRequestException(
           `'${line.activity_name}' requires a lot or serial number.`,
         );
@@ -1968,4 +1969,20 @@ export class BatchDailyDataService {
         ),
       );
   }
+}
+
+/**
+ * Whether an entry of a lot-required line must name its lot or serial. Feed (Rishi, 14 Oct): the daily entry no longer
+ * asks which lot — a lot-tracked feed leaves the in-date lot with the nearest expiry first (planLots) — so only a
+ * serial, or a lot-tracked item that is not feed, must be named. An untracked item has nothing to name.
+ */
+export function lotMustBeNamed(
+  lineType: string,
+  itemId: string | null | undefined,
+  tracked: { lot?: boolean | null; serial?: boolean | null; item_type?: string | null } | undefined,
+): boolean {
+  if (!itemId) return true;
+  if (tracked?.serial) return true;
+  if (!tracked?.lot) return false;
+  return !(lineType === 'CONSUMPTION' && isFeedTypeCode(tracked.item_type));
 }
