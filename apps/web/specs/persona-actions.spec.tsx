@@ -180,8 +180,11 @@ describe('FeedForecastTabs navigation copy', () => {
     expect(translations.en.fftTabFeedRequisition).toBe('Requisition');
   });
 
-  it('renders no horizontal in-page tablist since navigation is driven by the sidebar flyout', () => {
+  // Rishi, 14 Oct: Feed Forecast's views are tabs on its page again (it sits under Inventory & Stock).
+  it('renders the Feed Forecast views as in-page tabs', () => {
     render(<FeedForecastTabs tab="feed-requisition" onTabChange={() => undefined} />);
-    expect(screen.queryByRole('tablist')).toBeNull();
+    const tabList = screen.getByRole('tablist');
+    const tabTexts = Array.from(tabList.querySelectorAll('[role="tab"]')).map((t) => t.textContent);
+    expect(tabTexts).toEqual(['Dashboard', 'Calculation', 'Feed Plan', 'Compare Report', 'Requisition', 'Feed Mill Consolidation', 'Feed Loading Instructions', 'Physical Stock Count']);
   });
 });
