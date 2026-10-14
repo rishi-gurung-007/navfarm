@@ -123,7 +123,8 @@ export function MasterRecordView({ config, id, onClose }: { config: MasterDataCo
           )}
           <dl className={`grid grid-cols-1 gap-4 sm:grid-cols-2${config.owner === "BC" ? " order-last" : ""}`}>
             {sec.fields.map((field) => (
-              <div key={field.key} className="min-w-0">
+              // A list field takes the full width, so its lines read as a table (14 Oct).
+              <div key={field.key} className={`min-w-0${field.type === "json" && field.jsonRow?.length ? " sm:col-span-2" : ""}`}>
                 <dt className="text-xs text-[var(--text-muted)]">{labelOf(field)}</dt>
                 <dd className="mt-1 whitespace-pre-wrap break-words text-sm font-medium">
                   <MasterFieldValue field={field} value={record[field.key]} record={record} />
