@@ -971,6 +971,7 @@ export class BreedService {
       // feed lines appeared on another's stage record (Rishi, 13 Oct).
       nullSafe(t.company_id, row.company_id),
       eq(t.is_active, row.is_active ?? true),
+      isNull(t.retired_at),
     )).orderBy(asc(t.period_from));
   }
 
@@ -1175,7 +1176,12 @@ export class BreedService {
     if (!lifecycleStage) {
       throw new NotFoundException(`Breed lifecycle stage with ID '${id}' not found.`);
     }
-    const rows = await this.stageRows(lifecycleStage);
+    // A retired line (0197) stands for the stage it was removed from, active or not.
+    const rows = lifecycleStage.retired_at
+      ? ((await this.stageRows({ ...lifecycleStage, is_active: true })).length
+        ? await this.stageRows({ ...lifecycleStage, is_active: true })
+        : await this.stageRows({ ...lifecycleStage, is_active: false }))
+      : await this.stageRows(lifecycleStage);
     // Any row of a stage stands for the stage, which is its first row (the one the list shows, holding the code): a
     // link to a later feed line's row (a requisition or scheduler line keeps one) opens and saves the stage itself.
     const first = [...rows].sort((a, b) => Number(a.period_from) - Number(b.period_from) || String(a.lifecycle_id).localeCompare(String(b.lifecycle_id)))[0];
@@ -1224,10 +1230,12 @@ export class BreedService {
 
     // One record per stage (13 Oct): a stage fed several feeds is several rows; only its first (lowest Period From)
     // is listed, carrying the others as its feed lines.
+    // Retired feed lines (0197) are history, never listed.
+    conditions.push(isNull(schema.breedLifecycleStages.retired_at));
     conditions.push(sql`NOT EXISTS (SELECT 1 FROM breed_lifecycle_stages s2 WHERE s2.tenant_id = ${schema.breedLifecycleStages.tenant_id}
       AND s2.breed_id = ${schema.breedLifecycleStages.breed_id} AND s2.stage_id = ${schema.breedLifecycleStages.stage_id}
       AND s2.farm_id <=> ${schema.breedLifecycleStages.farm_id} AND s2.season_type <=> ${schema.breedLifecycleStages.season_type}
-      AND s2.category <=> ${schema.breedLifecycleStages.category} AND s2.is_active = ${schema.breedLifecycleStages.is_active}
+      AND s2.category <=> ${schema.breedLifecycleStages.category} AND s2.is_active = ${schema.breedLifecycleStages.is_active} AND s2.retired_at IS NULL
       AND (s2.period_from < ${schema.breedLifecycleStages.period_from}
         OR (s2.period_from = ${schema.breedLifecycleStages.period_from} AND s2.lifecycle_id < ${schema.breedLifecycleStages.lifecycle_id})))`);
 
@@ -1421,10 +1429,12 @@ export class BreedService {
           await this.db.insert(schema.breedLifecycleStages).values({ ...copy, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null, created_by: userPayload?.userId || null });
         }
       }
-      // Lines taken away: their rows go. Nothing holds a key to a lifecycle row (a scheduler line keeps only a
-      // reference id), and the audit log keeps what they were.
+      // Lines taken away are kept as hidden history rows (Rishi, 14 Oct; 0197): a requisition or scheduler line that
+      // points at one keeps its stage label and required-feed check, while the row is no longer a line of the stage.
       for (const r of otherRows.slice(rest.length)) {
-        await this.db.delete(schema.breedLifecycleStages).where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
+        await this.db.update(schema.breedLifecycleStages)
+          .set({ is_active: false, retired_at: sql`CURRENT_TIMESTAMP` })
+          .where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
       }
     }
     // The stage it was and the stage it is (a changed Stage moves the feed from one to the other).

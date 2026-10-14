@@ -5220,7 +5220,7 @@ export class BatchService {
       ? await this.db
           .select({ item_id: schema.breedLifecycleStages.feed_item_id })
           .from(schema.breedLifecycleStages)
-          .where(and(inArray(schema.breedLifecycleStages.feed_item_id, consumptionItemIds), eq(schema.breedLifecycleStages.feed_form, 'BAGGED')))
+          .where(and(inArray(schema.breedLifecycleStages.feed_item_id, consumptionItemIds), eq(schema.breedLifecycleStages.feed_form, 'BAGGED'), isNull(schema.breedLifecycleStages.retired_at)))
       : [];
     const baggedItemIds = new Set((baggedRows ?? []).map((r) => r.item_id));
     const itemLabel = (itemId: string | null) => {

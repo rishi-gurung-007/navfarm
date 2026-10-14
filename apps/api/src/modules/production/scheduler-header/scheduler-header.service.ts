@@ -13,6 +13,7 @@ import {
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { syncVaccinationLines } from '../lifecycle/vaccination-sync';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { stagesNeedingScheduler } from './occupied-stages';
 import { applySchedulerFeedLines, type WantedFeedLine } from '../lifecycle/refresh-scheduler-feed';
@@ -149,6 +150,8 @@ export class SchedulerHeaderService {
     batch: typeof schema.batchHeader.$inferSelect,
     stageId: string,
     stage: typeof schema.stageMaster.$inferSelect,
+    /** The scheduler's stage entry date (day 1), for vaccinations by age. */
+    effectiveFrom?: string | null,
   ) {
     if (!batch.breed_id) return;
     // All active rows for this breed+stage, oldest period first — not just one. A stage can
@@ -259,8 +262,15 @@ export class SchedulerHeaderService {
       customDaysByLine[lineId] = [entry.day];
     }
 
+    if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
+
+    // AGE_WEEKS vaccinations as stage days, from the batch's date of birth (Rishi, 14 Oct; vaccination-sync.ts).
+    if (effectiveFrom) {
+      await syncVaccinationLines(this.db, {
+        scheduler_id: schedulerId, batch_id: batch.batch_id, stage_id: stageId, effective_from: effectiveFrom, nob_id: batch.nob_id, lob_id: batch.lob_id,
+      }, lifecycle.vaccination_protocol, lifecycle.lifecycle_id);
+    }
     if (!lines.length) return;
-    await this.db.insert(schema.schedulerLine).values(lines);
 
     const customDayRows = Object.entries(customDaysByLine).flatMap(([lineId, days]) =>
       days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
@@ -745,7 +755,7 @@ export class SchedulerHeaderService {
     if (systemScheduler) {
       await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, stageId);
     } else if (!declined) {
-      await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage);
+      await this.generateLinesFromLifecycle(schedulerId, batch, stageId, stage, effectiveFrom);
     }
 
     await this.auditService.log({
@@ -943,7 +953,7 @@ export class SchedulerHeaderService {
     } else if (systemScheduler) {
       await this.copyLinesFromSystemScheduler(schedulerId, systemScheduler.system_scheduler_id, batch, dto.stage_id);
     } else {
-      await this.generateLinesFromLifecycle(schedulerId, batch, dto.stage_id, stage);
+      await this.generateLinesFromLifecycle(schedulerId, batch, dto.stage_id, stage, effectiveFrom);
     }
 
     await this.auditService.log({

@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import * as schema from '../../../core/database/schema';
+import { syncVaccinationLines } from './vaccination-sync';
 import { stageDayRange } from './feed-row-days';
 
 /** A scheduler feed line as the refresh sees it. */
@@ -104,7 +105,7 @@ export async function refreshSchedulerFeedLines(
   const sl = schema.schedulerLine;
 
   const headers = await db
-    .select({ scheduler_id: sh.scheduler_id, effective_from: sh.effective_from, nob_id: sh.nob_id, lob_id: sh.lob_id })
+    .select({ scheduler_id: sh.scheduler_id, batch_id: sh.batch_id, effective_from: sh.effective_from, nob_id: sh.nob_id, lob_id: sh.lob_id })
     .from(sh)
     .where(and(
       eq(sh.tenant_id, tenantId),
@@ -143,11 +144,23 @@ export async function refreshSchedulerFeedLines(
     : [];
   const itemById = new Map(items.map((i) => [i.item_id, i]));
 
+  // The stage's vaccinations (shared by all its rows) follow too (Rishi, 14 Oct: AGE_WEEKS from the date of birth).
+  const [protocolRow] = await db
+    .select({ lifecycle_id: schema.breedLifecycleStages.lifecycle_id, vaccination_protocol: schema.breedLifecycleStages.vaccination_protocol })
+    .from(schema.breedLifecycleStages)
+    .where(and(
+      eq(schema.breedLifecycleStages.breed_id, breedId),
+      eq(schema.breedLifecycleStages.stage_id, stageId),
+      eq(schema.breedLifecycleStages.is_active, true),
+    ))
+    .orderBy(asc(schema.breedLifecycleStages.period_from))
+    .limit(1);
+
   const changed: string[] = [];
   for (const h of headers) {
-    if (await applySchedulerFeedLines(db, { header: { ...h, stage_id: stageId }, wanted, stageName: stage?.stage_name ?? null, itemById })) {
-      changed.push(h.scheduler_id);
-    }
+    const fed = await applySchedulerFeedLines(db, { header: { ...h, stage_id: stageId }, wanted, stageName: stage?.stage_name ?? null, itemById });
+    const vac = await syncVaccinationLines(db, { ...h, stage_id: stageId }, protocolRow?.vaccination_protocol ?? null, protocolRow?.lifecycle_id ?? null);
+    if (fed || vac.added || vac.removed) changed.push(h.scheduler_id);
   }
   return changed;
 }

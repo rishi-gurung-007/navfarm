@@ -2425,6 +2425,8 @@ export const breedLifecycleStages = mysqlTable('breed_lifecycle_stages', {
   // 0195 (14 Oct): the line's amount and weight UOM as entered; the _kg column above is the same in kg.
   feed_qty_per_head_per_day: decimal('feed_qty_per_head_per_day', { precision: 12, scale: 4 }),
   feed_qty_uom: varchar('feed_qty_uom', { length: 20 }),
+  // 0197 (14 Oct): a removed Feed Consumption line kept as hidden history; set = not a line of its stage any more.
+  retired_at: timestamp('retired_at', { mode: 'string' }),
   feed_wastage_pct: decimal('feed_wastage_pct', { precision: 5, scale: 2 }),
   // 0170, Master Setup r30/r38: effective-dated feed rows for advance diet-change planning. NULL = always effective.
   effective_from: date('effective_from', { mode: 'string' }),
