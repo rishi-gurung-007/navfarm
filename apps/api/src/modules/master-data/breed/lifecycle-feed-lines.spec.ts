@@ -18,12 +18,32 @@ describe('lifecycle Feed Consumption lines (Rishi, 13 Oct)', () => {
     expect(() => validateFeedLines([])).toThrow(/at least one feed line/);
   });
 
-  it('refuses overlapping lines, naming both', () => {
-    expect(() => validateFeedLines([line(1, 8), line(8, 20)])).toThrow(/1-8 and 8-20 overlap/);
+  it('accepts different feeds on the same days: A 1-9 with B 1-9, and A 1-9 with B 1-15 (Rishi, 14 Oct)', () => {
+    const a = (from: number, to: number) => line(from, to, { feed_item_id: 'A' });
+    const b = (from: number, to: number) => line(from, to, { feed_item_id: 'B' });
+    expect(validateFeedLines([a(1, 9), b(1, 9)])).toHaveLength(2);
+    expect(validateFeedLines([b(1, 15), a(1, 9)]).map((l) => [l.feed_item_id, l.period_from, l.period_to]))
+      .toEqual([['A', 1, 9], ['B', 1, 15]]);
+    expect(validateFeedLines([a(1, 20), b(5, 12), line(21, 30, { feed_item_id: 'C' })])).toHaveLength(3);
+  });
+
+  it('refuses the same feed twice on a day, naming both lines', () => {
+    expect(() => validateFeedLines([line(1, 8, { feed_item_id: 'A' }), line(8, 20, { feed_item_id: 'A' })]))
+      .toThrow(/1-8 and 8-20 give the same feed on the same days/);
+  });
+
+  it('lets the same feed carry on in a later line that does not share a day', () => {
+    expect(validateFeedLines([line(1, 8, { feed_item_id: 'A' }), line(9, 20, { feed_item_id: 'A' })])).toHaveLength(2);
   });
 
   it('refuses a gap, naming the days without feed', () => {
     expect(() => validateFeedLines([line(1, 8), line(12, 20)])).toThrow(/days 9-11 have no feed/);
+  });
+
+  it('sees no gap where a longer line covers the days another leaves (A 1-20, B 1-8, C 15-30)', () => {
+    const f = (item: string, from: number, to: number) => line(from, to, { feed_item_id: item });
+    expect(validateFeedLines([f('A', 1, 20), f('B', 1, 8), f('C', 15, 30)])).toHaveLength(3);
+    expect(() => validateFeedLines([f('A', 1, 20), f('B', 1, 8), f('C', 25, 30)])).toThrow(/days 21-24 have no feed/);
   });
 
   it('refuses From after To', () => {

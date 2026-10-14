@@ -1380,8 +1380,8 @@ const breedLifecycleStage: MasterDataConfig = {
       helpText: "The KPI period for every line below (Daily or Weekly).",
     },
     // Feed Consumption (Rishi, 13 Oct): the stage's feeds as lines in the form, just before Resource Requirements
-    // and laid out like them. Each line is a run of the stage's days (in the Period Unit) with its own feed; lines follow one another
-    // with no gap or overlap (1-8, 9-20, ...). Each is stored as one of the stage's rows, which the scheduler,
+    // and laid out like them. Each line is a run of the stage's days (in the Period Unit) with its own feed; several feeds may share
+    // days (A 1-9 with B 1-15; Rishi, 14 Oct), a feed is on a day once, and no day between the first and last line is without feed. Each is stored as one of the stage's rows, which the scheduler,
     // forecast and requisition already read. TDD Master Setup row 37: Feed Form = how that feed is supplied.
     {
       key: "feed_lines", label: "Feed Consumption", type: "json",
@@ -1395,7 +1395,7 @@ const breedLifecycleStage: MasterDataConfig = {
         { key: "feed_qty_uom", label: "UOM", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code"] },
         { key: "feed_wastage_pct", label: "Feed Wastage (%)", type: "number", step: "0.01", min: 0, max: 100 },
       ],
-      helpText: "One line per feed. Daily Feed per Head is in the line's UOM (blank = KG). Effective From / Effective To are the stage's days in the Period Unit, counted from the day the batch or animal entered the stage; lines must follow one another with no gap or overlap (e.g. 1-8, then 9-20).",
+      helpText: "One line per feed. Daily Feed per Head is in the line's UOM (blank = KG). Effective From / Effective To are the stage's days in the Period Unit, counted from the day the batch or animal entered the stage; several feeds can share the same days (e.g. Feed A 1-9 and Feed B 1-15), but the same feed cannot be on a day twice, and every day from the first line to the last needs a feed.",
     },
     // These two columns have existed on breed_lifecycle_stages since the schema
     // was written but were never exposed, so there was no way to record a

@@ -540,7 +540,7 @@ export class SchedulerFeedLineInput {
 }
 
 export class UpdateSchedulerFeedLinesDto {
-  @ApiProperty({ type: [SchedulerFeedLineInput], description: 'The scheduler\'s whole feed line set. Lines must follow one another with no gap or overlap.' })
+  @ApiProperty({ type: [SchedulerFeedLineInput], description: 'The scheduler\'s whole feed line set. Several feeds may share days; a feed is on a day once, and no day between the first and last line is without feed.' })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SchedulerFeedLineInput)

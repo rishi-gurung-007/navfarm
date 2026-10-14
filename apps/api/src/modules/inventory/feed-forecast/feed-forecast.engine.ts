@@ -56,7 +56,7 @@
  *    own demand, so a posted daily entry is never subtracted twice.
  */
 import { linksEffectiveOn } from '../../../common/silo-shed-links';
-import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
+import { FeedRow, feedRowsFor } from '../../production/lifecycle/feed-row-days';
 
 /**
  * D19 "confirmed incoming" into (or, negative, out of) one container, on one day. What counts is the service's rule
@@ -706,7 +706,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
   // Plan B: which lifecycle rows feed each container inside the planning window, which item each batch eats on each
   // planning day (for diet changes), and which containers are a store fallback for a shed that has silos.
   const lifecycleIdsByKey = new Map<string, Set<string>>();
-  const itemByBatchDate = new Map<string, string>();
+  const itemsByBatchDate = new Map<string, Set<string>>();
   const noSiloKeys = new Set<string>();
   const currentDietDaysRemainingByKey = new Map<string, number>();
 
@@ -762,7 +762,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
 
       const dayOfStage = diffDays(segment.start, date) + 1;
       const candidates = feedRowsForBreed.filter((r) => r.stageId === segment.stageId);
-      const result = feedRowFor(candidates, dayOfStage, input.farmId);
+      const result = feedRowsFor(candidates, dayOfStage, input.farmId);
 
       if ('error' in result) {
         // Flags are emitted for the visible window (from..to) and, for NO_FEED_ROW only, for the first
@@ -794,85 +794,89 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         continue;
       }
 
-      const feedRow = result.row;
-      const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay); // D34: no wastage
-      if (demandMicrograms <= 0) continue; // zero demand: no row, no source resolution, nothing to project
+      // Several feeds can share a stage day (Rishi, 14 Oct): each is its own demand on its own source.
+      for (const feedRow of result.rows) {
+        const demandMicrograms = toMicrograms(batch.heads * feedRow.kgPerHeadPerDay); // D34: no wastage
+        if (demandMicrograms <= 0) continue; // zero demand: no row, no source resolution, nothing to project
 
-      // D36: a row whose date falls inside the stage-change window — on or
-      // after the earliest day, before the planned (latest) day's successor —
-      // is indicative: the change may already have happened by then.
-      const inChangeWindow =
-        !!segment.changeWindowStart && date >= segment.changeWindowStart && segment.end !== null && date <= segment.end;
+        // D36: a row whose date falls inside the stage-change window — on or
+        // after the earliest day, before the planned (latest) day's successor —
+        // is indicative: the change may already have happened by then.
+        const inChangeWindow =
+          !!segment.changeWindowStart && date >= segment.changeWindowStart && segment.end !== null && date <= segment.end;
 
-      const resolution = resolveSource(batch.shedId, feedRow.itemId, date);
-      if (resolution.noSiloHoldsItem && date <= input.to) flagNoSilo(batch.shedId, feedRow.itemId);
-      const sk = sourceKeyFor(resolution, feedRow.itemId);
-      keyMeta.set(sk.key, sk);
+        const resolution = resolveSource(batch.shedId, feedRow.itemId, date);
+        if (resolution.noSiloHoldsItem && date <= input.to) flagNoSilo(batch.shedId, feedRow.itemId);
+        const sk = sourceKeyFor(resolution, feedRow.itemId);
+        keyMeta.set(sk.key, sk);
 
-      // The first current-diet change among batches sharing this source is the
-      // date the farm must prepare for.
-      if (date === input.planningDate) {
-        const remainingDays = Math.max(0, feedRow.toDay - dayOfStage);
-        const existing = currentDietDaysRemainingByKey.get(sk.key);
-        if (existing === undefined || remainingDays < existing) {
-          currentDietDaysRemainingByKey.set(sk.key, remainingDays);
+        // The first current-diet change among batches sharing this source is the
+        // date the farm must prepare for.
+        if (date === input.planningDate) {
+          const remainingDays = Math.max(0, feedRow.toDay - dayOfStage);
+          const existing = currentDietDaysRemainingByKey.get(sk.key);
+          if (existing === undefined || remainingDays < existing) {
+            currentDietDaysRemainingByKey.set(sk.key, remainingDays);
+          }
         }
-      }
 
-      let byDate = demandMicrogramsByKeyByDate.get(sk.key);
-      if (!byDate) {
-        byDate = new Map();
-        demandMicrogramsByKeyByDate.set(sk.key, byDate);
-      }
-      byDate.set(date, (byDate.get(date) ?? 0) + demandMicrograms);
-
-      if (date >= input.planningDate && date <= input.to) {
-        let ids = lifecycleIdsByKey.get(sk.key);
-        if (!ids) {
-          ids = new Set();
-          lifecycleIdsByKey.set(sk.key, ids);
+        let byDate = demandMicrogramsByKeyByDate.get(sk.key);
+        if (!byDate) {
+          byDate = new Map();
+          demandMicrogramsByKeyByDate.set(sk.key, byDate);
         }
-        ids.add(feedRow.lifecycleId);
-        itemByBatchDate.set(`${batch.batchId}|${date}`, feedRow.itemId);
-        if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
-      }
+        byDate.set(date, (byDate.get(date) ?? 0) + demandMicrograms);
 
-      if (date >= rowFrom && date <= rowTo) {
-        dailyEntries.push({
-          date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
-          stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
-          inChangeWindow,
-        });
-        const shareKey = `${sk.key}|${date}`;
-        let sharing = batchesByKeyDate.get(shareKey);
-        if (!sharing) {
-          sharing = new Set();
-          batchesByKeyDate.set(shareKey, sharing);
+        if (date >= input.planningDate && date <= input.to) {
+          let ids = lifecycleIdsByKey.get(sk.key);
+          if (!ids) {
+            ids = new Set();
+            lifecycleIdsByKey.set(sk.key, ids);
+          }
+          ids.add(feedRow.lifecycleId);
+          const dayItems = itemsByBatchDate.get(`${batch.batchId}|${date}`) ?? new Set<string>();
+          dayItems.add(feedRow.itemId);
+          itemsByBatchDate.set(`${batch.batchId}|${date}`, dayItems);
+          if (resolution.noSiloHoldsItem) noSiloKeys.add(sk.key);
         }
-        sharing.add(batch.batchId);
-      }
 
-      if (!isInRange(date)) continue; // walk-only date: contributes to the balance, not to the row
+        if (date >= rowFrom && date <= rowTo) {
+          dailyEntries.push({
+            date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
+            stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
+            inChangeWindow,
+          });
+          const shareKey = `${sk.key}|${date}`;
+          let sharing = batchesByKeyDate.get(shareKey);
+          if (!sharing) {
+            sharing = new Set();
+            batchesByKeyDate.set(shareKey, sharing);
+          }
+          sharing.add(batch.batchId);
+        }
 
-      const aggKey = `${batch.batchId}:${feedRow.itemId}`;
-      let agg = rowAggs.get(aggKey);
-      if (!agg) {
-        const shed = shedById.get(batch.shedId);
-        agg = {
-          batchNo: batch.batchNo,
-          itemId: feedRow.itemId,
-          shedCode: shed?.shedCode ?? '',
-          heads: batch.heads,
-          key: sk.key,
-          sourceType: sk.sourceType,
-          sourceCode: sk.sourceCode,
-          rangeDemandMicrograms: 0,
-          perDayIntakeMicrograms: demandMicrograms,
-          firstDemandDate: date,
-        };
-        rowAggs.set(aggKey, agg);
+        if (!isInRange(date)) continue; // walk-only date: contributes to the balance, not to the row
+
+        const aggKey = `${batch.batchId}:${feedRow.itemId}`;
+        let agg = rowAggs.get(aggKey);
+        if (!agg) {
+          const shed = shedById.get(batch.shedId);
+          agg = {
+            batchNo: batch.batchNo,
+            itemId: feedRow.itemId,
+            shedCode: shed?.shedCode ?? '',
+            heads: batch.heads,
+            key: sk.key,
+            sourceType: sk.sourceType,
+            sourceCode: sk.sourceCode,
+            rangeDemandMicrograms: 0,
+            perDayIntakeMicrograms: demandMicrograms,
+            firstDemandDate: date,
+          };
+          rowAggs.set(aggKey, agg);
+        }
+        agg.rangeDemandMicrograms += demandMicrograms;
       }
-      agg.rangeDemandMicrograms += demandMicrograms;
     }
   }
 
@@ -997,16 +1001,20 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     });
   }
 
-  // Diet changes (checkpoint 30): a batch whose item changes between two planning days, compared against the last day
-  // that HAD an item — not strictly the day before (a gap day with no feed row must not hide the change).
+  // Diet changes (checkpoint 30): a batch whose items change between two planning days, compared against the last day
+  // that HAD an item — not strictly the day before (a gap day with no feed row must not hide the change). Several feeds
+  // can share a day (14 Oct): each feed that starts is a change, from a feed that stopped that day if one did, else
+  // from one it now runs beside. A feed that only stops leaves nothing new to prepare for.
   const dietChanges: DietChange[] = [];
   const nextDietKeys = new Set<string>();
   for (const batch of input.batches) {
-    let lastItem: string | null = null;
+    let lastItems: string[] | null = null;
     for (const date of planDates) {
-      const item = itemByBatchDate.get(`${batch.batchId}|${date}`);
-      if (!item) continue;
-      if (lastItem !== null && item !== lastItem) {
+      const today = [...(itemsByBatchDate.get(`${batch.batchId}|${date}`) ?? [])].sort();
+      if (!today.length) continue;
+      const stopped = lastItems ? lastItems.filter((i) => !today.includes(i)) : [];
+      for (const item of lastItems ? today.filter((i) => !lastItems!.includes(i)) : []) {
+        const lastItem = stopped[0] ?? lastItems![0];
         const next = resolveSource(batch.shedId, item, date); // cached: already resolved by the demand loop
         nextDietKeys.add(sourceKeyFor(next, item).key);
         dietChanges.push({
@@ -1023,7 +1031,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
           nextSourceCode: next.sourceType === 'SILO' ? next.sourceCode : null,
         });
       }
-      lastItem = item;
+      lastItems = today;
     }
   }
   dietChanges.sort((a, b) => {

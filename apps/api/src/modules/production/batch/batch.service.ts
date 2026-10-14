@@ -6665,6 +6665,20 @@ export class BatchService {
       );
     };
 
+    /** The day's feed lines (daily CONSUMPTION lines with a standard), every one of them. */
+    const feedLinesForDate = (date: Date) => {
+      const header = schedulerHeaders.find((h) => {
+        const from = new Date(h.effective_from);
+        const to = h.effective_to ? new Date(h.effective_to) : null;
+        return date >= from && (!to || date <= to);
+      });
+      if (!header) return [];
+      const dayOfStage = Math.floor((date.getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      return schedulerLines.filter((l) =>
+        l.scheduler_id === header.scheduler_id && l.line_type === 'CONSUMPTION' && l.occurrence === 'DAILY' && l.standard_qty
+        && dayOfStage >= l.start_day && (l.end_day == null || dayOfStage <= l.end_day));
+    };
+
     // Also fetch breed lifecycle stages for reference
     const lifecycleStandards = batch.breed_id
       ? await this.db
@@ -6743,18 +6757,20 @@ export class BatchService {
 
       // Check schedule lines
       const curDateObj = new Date(startDate.getTime() + (day - 1) * 86400000);
-      const activeFeedLine = lineForDate(curDateObj, 'CONSUMPTION');
-      if (activeFeedLine && activeFeedLine.standard_qty) {
-        stdDailyFeedPerHead = Number(activeFeedLine.standard_qty);
+      // Several feeds can share a day (14 Oct): the standard is the day's feed lines added up, as the actual is.
+      const dayFeedLines = feedLinesForDate(curDateObj);
+      if (dayFeedLines.length) {
+        stdDailyFeedPerHead = dayFeedLines.reduce((sum, l) => sum + Number(l.standard_qty), 0);
       } else {
         // Fallback to breed standards
-        const lc = lifecycleStandards.find((l) => {
+        const lcs = lifecycleStandards.filter((l) => {
           const pF = toDays(l.period_from, l.calc_unit);
           const pT = toDays(l.period_to, l.calc_unit);
           return day >= pF && day <= pT;
         });
+        const lc = lcs[0];
         if (lc) {
-          stdDailyFeedPerHead = Number(lc.feed_qty_per_head_per_day_kg || 0);
+          stdDailyFeedPerHead = lcs.reduce((sum, l) => sum + Number(l.feed_qty_per_head_per_day_kg || 0), 0);
           stdTargetWeight = Number(lc.std_body_weight_kg || 0);
           stdMortPct = Number(lc.std_mortality_rate_pct || 0);
         }

@@ -117,8 +117,8 @@ export class SchedulerHeaderController {
   @ApiOperation({
     summary: "Replace the scheduler's Feed Consumption lines",
     description:
-      'The whole feed line set, in the same shape as a breed lifecycle stage\'s: stage days, one feed per day, '
-      + 'no gap and no overlap. Days already entered keep the feed they were posted against — such a line is cut '
+      'The whole feed line set, in the same shape as a breed lifecycle stage\'s: stage days; several feeds may share '
+      + 'days, but a feed is on a day once and no day between the first and last line is without feed. Days already entered keep the feed they were posted against — such a line is cut '
       + 'back to its last entered day and the new feed starts the day after.',
   })
   @ApiParam({ name: 'id', description: 'Scheduler UUID' })

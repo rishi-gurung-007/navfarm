@@ -4394,7 +4394,7 @@ export const translations = {
     // Its own label: the dialog already has an Update button for the header.
     scFeedLinesSave: "Save Feed Lines",
     scFeedLinesAdd: "Add Feed Line",
-    scFeedLinesHint: "One feed per run of stage days, following one another with no gap or overlap. Days already entered keep the feed they were posted against: that line is cut back to its last entered day and the new feed starts the day after.",
+    scFeedLinesHint: "Several feeds can share the same stage days, but the same feed cannot be on a day twice and every day from the first line to the last needs a feed. Days already entered keep the feed they were posted against: that line is cut back to its last entered day and the new feed starts the day after.",
     lcFeedItem: "Feed Item",
     lcEffectiveFrom: "Effective From",
     lcEffectiveTo: "Effective To",

@@ -1,7 +1,8 @@
 /**
  * Feed Consumption lines of a breed lifecycle stage (Rishi, 13 Oct).
  *
- * A stage can be fed different feeds over its days: Day 1-8 one feed, Day 9-20 the next. The data model already
+ * A stage can be fed different feeds over its days: Day 1-8 one feed, Day 9-20 the next, and since 14 Oct several feeds
+ * on the same days (A on 1-9 and B on 1-15). The data model already
  * stores that as several breed_lifecycle_stages rows for the same stage, each with its own day range and feed, and
  * everything that plans or posts feed (scheduler, forecast, requisition, next diet) reads those rows. These rules let
  * the form show the stage once, with its feeds as lines: one line = one of the stage's rows.
@@ -23,8 +24,9 @@ export interface FeedLine {
 }
 
 /**
- * Lines sorted by From, each with a feed and a daily quantity, From <= To, and following one another with no gap
- * and no overlap (1-8 then 9-20, never 1-8 then 8-20 or 1-8 then 12-20).
+ * Lines sorted by From, each with a feed and a daily quantity and From <= To. Different feeds may share days
+ * (Rishi, 14 Oct: A 1-9 with B 1-9, or A 1-9 with B 1-15); the same feed may not cover a day twice, which would
+ * count it twice. Every day from the first From to the last To still has at least one feed.
  */
 export function validateFeedLines(lines: FeedLine[]): FeedLine[] {
   if (!Array.isArray(lines) || lines.length === 0) {
@@ -37,7 +39,8 @@ export function validateFeedLines(lines: FeedLine[]): FeedLine[] {
     feed_qty_per_head_per_day_kg: Number(l.feed_qty_per_head_per_day_kg),
     feed_qty_uom: l.feed_qty_uom ? String(l.feed_qty_uom).trim().toUpperCase() : 'KG',
     feed_wastage_pct: l.feed_wastage_pct == null || (l.feed_wastage_pct as unknown) === '' ? null : Number(l.feed_wastage_pct),
-  })).sort((a, b) => a.period_from - b.period_from);
+  })).sort((a, b) => a.period_from - b.period_from || a.period_to - b.period_to);
+  let coveredTo = -Infinity;
   sorted.forEach((l, i) => {
     const n = i + 1;
     if (!Number.isInteger(l.period_from) || !Number.isInteger(l.period_to) || l.period_from < 0 || l.period_to < 0) {
@@ -53,15 +56,14 @@ export function validateFeedLines(lines: FeedLine[]): FeedLine[] {
     if (l.feed_wastage_pct != null && (!Number.isFinite(l.feed_wastage_pct) || l.feed_wastage_pct < 0 || l.feed_wastage_pct > 100)) {
       throw new BadRequestException(`Feed line ${n} (${l.period_from}-${l.period_to}): wastage must be between 0 and 100.`);
     }
-    if (i > 0) {
-      const prev = sorted[i - 1];
-      if (l.period_from <= prev.period_to) {
-        throw new BadRequestException(`Feed lines ${prev.period_from}-${prev.period_to} and ${l.period_from}-${l.period_to} overlap: each day can have one feed line only.`);
-      }
-      if (l.period_from > prev.period_to + 1) {
-        throw new BadRequestException(`Feed lines leave a gap between ${prev.period_to} and ${l.period_from}: days ${prev.period_to + 1}-${l.period_from - 1} have no feed. Lines must follow one another.`);
-      }
+    const twin = sorted.slice(0, i).find((p) => p.feed_item_id === l.feed_item_id && l.period_from <= p.period_to);
+    if (twin) {
+      throw new BadRequestException(`Feed lines ${twin.period_from}-${twin.period_to} and ${l.period_from}-${l.period_to} give the same feed on the same days: a feed can be on a day once.`);
     }
+    if (i > 0 && l.period_from > coveredTo + 1) {
+      throw new BadRequestException(`Feed lines leave a gap between ${coveredTo} and ${l.period_from}: days ${coveredTo + 1}-${l.period_from - 1} have no feed.`);
+    }
+    coveredTo = Math.max(coveredTo, l.period_to);
   });
   return sorted;
 }

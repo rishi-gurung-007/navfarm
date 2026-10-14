@@ -17,7 +17,7 @@ import { and, eq, gte, inArray, isNotNull, isNull, lte, or, like } from 'drizzle
 import { randomUUID } from 'crypto';
 import * as schema from '../../../core/database/schema';
 import { headsAtStartOfDate } from '../batch-heads';
-import { feedRowFor, stageDayRange, type FeedRow } from './feed-row-days';
+import { feedRowsFor, stageDayRange, type FeedRow } from './feed-row-days';
 
 export const LIFECYCLE_KPI_ALERT_TYPE = 'LIFECYCLE_KPI';
 
@@ -298,12 +298,13 @@ export class LifecycleKpiEvaluator {
       }
       // Day-in-stage counts from the stage start (day 1), the same stretch the feed rows use.
       const dayInStage = daysBetween(h.effective_from, date) + 1;
-      const found = feedRowFor(candidates, dayInStage, batch.farm_id);
+      // Several feeds can share the day (14 Oct); they are one stage record, and its KPI lines are on each of its rows.
+      const found = feedRowsFor(candidates, dayInStage, batch.farm_id);
       if ('error' in found) {
         if (found.error === 'OVERLAP') this.logger.warn(`Batch ${batch.batch_no}: several lifecycle rows cover day ${dayInStage} of the stage; KPI check skipped.`);
         continue;
       }
-      const stageRow = byId.get(found.row.lifecycleId)!;
+      const stageRow = byId.get(found.rows[0].lifecycleId)!;
       const lines = (Array.isArray(stageRow.kpi_thresholds) ? stageRow.kpi_thresholds : []) as LifecycleKpiLine[];
       const wanted = lines.filter((l) => l?.metric && (!metrics || metrics.includes(l.metric)));
       if (!wanted.length) continue;

@@ -1163,7 +1163,7 @@ export class SchedulerHeaderService {
    * Replace a scheduler's Feed Consumption lines with the set the user edited (Rishi, 14 Oct).
    *
    * The same shape and the same rules as the breed lifecycle stage's feed lines: whole stage
-   * days, one feed per day, no gap and no overlap (validateFeedLines), and a quantity entered
+   * days, several feeds may share a day but a feed is on a day once, no gap (validateFeedLines), and a quantity entered
    * in a weight UOM that is stored as kilograms.
    *
    * Days already entered are not rewritten. applySchedulerFeedLines cuts a line with entries
