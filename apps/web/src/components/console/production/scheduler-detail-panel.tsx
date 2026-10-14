@@ -485,6 +485,50 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
         </div>
       )}
 
+      {/*
+        The stage's KPIs & Alerts, read-only (Rishi, 14 Oct). These belong to the breed
+        lifecycle stage, not to this scheduler: breed_lifecycle_stages.kpi_thresholds is what
+        lifecycle-kpi.evaluator alerts on, and it stays the single source. Shown here because
+        the stage's KPIs were otherwise invisible from the scheduler. Edit them on the stage.
+      */}
+      {header.lifecycle_kpis && header.lifecycle_kpis.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("scLifecycleKpisTitle")}</p>
+          <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+            <table className="w-full border-collapse text-left text-xs">
+              <TableHeader><tr className="border-b border-[var(--row-border)]">
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiItem")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiUom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiPeriod")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiFrom")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiTo")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiAverage")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiTolerancePct")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiToleranceType")}</TableHead>
+                <TableHead className="h-auto px-3 py-2">{t("scColKpiSeverity")}</TableHead>
+              </tr></TableHeader>
+              <TableBody>
+                {header.lifecycle_kpis.map((k: Row, i: number) => (
+                  <TableRow key={`${k.metric ?? "kpi"}-${i}`}>
+                    <TableCell className="px-3 py-2 font-medium" style={S.primary}>{k.metric ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.uom ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.kpi_period ?? "—"}</TableCell>
+                    {/* Both days empty means the KPI covers the whole stage. */}
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.from_day ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.to_day ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.average_value ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.tolerance_pct ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.tolerance_type ?? "—"}</TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>{k.severity ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-[10px]" style={S.sub}>{t("scLifecycleKpisHint")}</p>
+        </div>
+      )}
+
       {/* Collapsible Lines Section */}
       <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
         <div

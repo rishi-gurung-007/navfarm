@@ -1087,6 +1087,51 @@ export class SchedulerHeaderService {
     return rows.map((r) => ({ ...r, on_hand_qty: Number(r.on_hand_qty) })).filter((r) => r.on_hand_qty > 0.0001);
   }
 
+  /**
+   * The KPIs & Alerts lines of the batch's breed lifecycle stage, for the scheduler to show
+   * read-only (Rishi, 14 Oct).
+   *
+   * These are not scheduler lines and deliberately do not become any: the alert source stays
+   * lifecycle-kpi.evaluator, which reads breed_lifecycle_stages.kpi_thresholds itself. The
+   * scheduler's own DESCRIPTIVE lines still carry the older single std_value/alert-limit model,
+   * so copying these onto lines would put two alerting paths on one breach. Showing them is
+   * what was missing: the stage's KPIs were invisible from the scheduler.
+   *
+   * A stage record is several rows when it has several feed lines, and the KPI list is copied to
+   * all of them, so the first row that has one speaks for the stage.
+   */
+  private async loadLifecycleKpis(header: { tenant_id: string; company_id: string | null; breed_id: string | null; stage_id: string }) {
+    if (!header.breed_id) return [];
+    const t = schema.breedLifecycleStages;
+    const rows = await this.db
+      .select({ kpi_thresholds: t.kpi_thresholds, kpi_alert_period: t.kpi_alert_period })
+      .from(t)
+      .where(and(
+        eq(t.tenant_id, header.tenant_id),
+        eq(t.breed_id, header.breed_id),
+        eq(t.stage_id, header.stage_id),
+        sql`${t.company_id} <=> ${header.company_id ?? null}`,
+        eq(t.is_active, true),
+      ))
+      .orderBy(asc(t.period_from));
+
+    const row = rows.find((r) => Array.isArray(r.kpi_thresholds) && r.kpi_thresholds.length);
+    if (!row) return [];
+    // A line's period is always the stage's KPI period (Rishi, 12 Oct) — the line only carries
+    // its own when an older row set one, so the header wins and the line is the fallback.
+    return (row.kpi_thresholds as Array<Record<string, unknown>>).map((line) => ({
+      metric: line.metric ?? null,
+      uom: line.uom ?? null,
+      kpi_period: row.kpi_alert_period ?? line.kpi_period ?? null,
+      from_day: line.from_day ?? null,
+      to_day: line.to_day ?? null,
+      average_value: line.average_value ?? null,
+      tolerance_pct: line.tolerance_pct ?? null,
+      tolerance_type: line.tolerance_type ?? null,
+      severity: line.severity ?? null,
+    }));
+  }
+
   async findOne(id: string) {
     const [header] = await this.db.select().from(schema.schedulerHeader).where(eq(schema.schedulerHeader.scheduler_id, id)).limit(1);
     if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
@@ -1157,6 +1202,7 @@ export class SchedulerHeaderService {
       location_name: location?.location_name ?? null,
       system_scheduler_name: systemScheduler?.scheduler_name ?? null,
       silo_stock: siloStock,
+      lifecycle_kpis: await this.loadLifecycleKpis(header),
       lines: lines.map((line) => {
         const itemInfo = line.item_id ? itemMap.get(line.item_id) : null;
         return {
