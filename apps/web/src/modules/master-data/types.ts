@@ -118,7 +118,7 @@ export interface MasterDataField {
    *
    * Without it the parent's raw value is the param value, which only works when
    * the two vocabularies match. A UOM list narrowed by item type does not:
-   * item_type is LIVESTOCK but the UOM master's type is COUNT. A value with no
+   * item_type is LIVING_ASSET but the UOM master's type is COUNT. A value with no
    * entry sends no param at all, so the field falls back to the unfiltered list
    * rather than showing nothing.
    */
@@ -346,6 +346,10 @@ export interface MasterDataField {
    * one wins. An animal's Sire fills Sire Serial No. from the sire's RFID tag this way.
    */
   fills?: Array<{ key: string; rowKeys: string[] }>;
+  /** searchable select-entity: the row key the closed box shows once picked (Source GRN shows its GRN No.). */
+  selectedLabelKey?: string;
+  /** searchable select-entity: the open list's column headings, instead of Code / Name. */
+  entityColumnHeaders?: string[];
   /** Read-only while the named field holds a value: the value is supplied by that field's `fills`. */
   readOnlyWhenSet?: string;
   /**

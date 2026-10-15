@@ -63,6 +63,8 @@ describe('GoodsReceiptService', () => {
 
   beforeEach(async () => {
     mockDbSelect.mockReset();
+    // Posting looks up which lines are biological assets (14 Oct); unless a test says otherwise, none are.
+    mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
     mockDbUpdate.mockReset();
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockWritePositiveEntry.mockReset().mockResolvedValue({ entry_no: 1 });
@@ -121,6 +123,28 @@ describe('GoodsReceiptService', () => {
       expect(result.status).toBe('POSTED');
     });
 
+    it('posts a biological-asset line as a + entry in the Bio Asset Ledger, with no inventory entry (14 Oct)', async () => {
+      const sowLine = { line_id: 'line-sow', item_id: 'sow-item', quantity: '5', uom: 'HEAD', rate: '1500', lot_no: null };
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...draftReceipt, receipt_no: 'GR-000099', posting_date: '2026-10-14', supplier_id: null, lines: [sowLine] } as any)
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ item_id: 'sow-item', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+
+      await service.post('gr-1', 'tenant-123', { userId: 'user-1' });
+
+      expect(mockWritePositiveEntry).not.toHaveBeenCalled();
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        entry_type: 'PURCHASE', document_type: 'GOODS_RECEIPT', document_no: 'GR-000099', document_line_id: 'line-sow',
+        bio_asset_item_id: 'sow-item', quantity: '5.0000', remaining_quantity: '5.0000', cost_amount: '7500.0000',
+        cost_amount_each_unit: '1500.0000', warehouse_id: 'wh-1', uom: 'HEAD',
+      }));
+    });
+
     it('allows posting when the receipt has no supplier_id at all', async () => {
       jest.spyOn(service, 'findOne')
         .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
@@ -132,7 +156,7 @@ describe('GoodsReceiptService', () => {
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).toHaveBeenCalledTimes(2); // warehouse-active + silo-destination reads — no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(3); // warehouse-active + silo-destination + biological-asset reads — no supplier lookup needed
       expect(result.status).toBe('POSTED');
     });
 
@@ -255,6 +279,8 @@ describe('GoodsReceiptService', () => {
       const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
       await build(feedAlerts, cls);
       postedReceipt();
+      // The biological-asset lookup of the post itself (14 Oct): no line is one.
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
       // The hook's own read of the receipt warehouse fails: the receipt is already posted and must stay posted.
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({

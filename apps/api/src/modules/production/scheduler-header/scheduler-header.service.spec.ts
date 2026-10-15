@@ -2,14 +2,21 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { SchedulerHeaderService } from './scheduler-header.service';
+import { ACTIVITIES_LOCKED_MESSAGE, SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { FarmScope } from '../../../common/farm-scope';
 import { transactionCls, useFarmScope as useFarmScopeCls } from '../../../test-utils/transaction-cls';
 
-// Vaccinations by age have their own spec (lifecycle/vaccination-lines.spec.ts); here they are a stub.
-jest.mock('../lifecycle/vaccination-sync', () => ({ syncVaccinationLines: jest.fn().mockResolvedValue({ added: 0, removed: 0 }) }));
+
+// The stage's activities are built in stage-scheduler-lines.ts, which has its own spec; here the service writes them.
+jest.mock('./stage-scheduler-lines', () => ({ buildStageSchedulerLines: jest.fn() }));
+const buildStageSchedulerLinesMock = jest.requireMock('./stage-scheduler-lines').buildStageSchedulerLines as jest.Mock;
+const feedDraft = (over: object) => ({
+  line_type: 'CONSUMPTION', activity_name: 'Gestation Feed — Gestation Feed 14%', occurrence: 'DAILY', start_day: 1, end_day: 114,
+  day_of_week: null, custom_days: null, is_mandatory: true, item_id: 'item-feed', item_description: 'Gestation Feed 14%',
+  standard_qty: 2.2, qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: false, lifecycle_ref_id: 'lc-1', ...over,
+});
 
 describe('SchedulerHeaderService', () => {
   const dialect = new MySqlDialect();
@@ -75,6 +82,7 @@ describe('SchedulerHeaderService', () => {
   const auditLog = { log: jest.fn().mockResolvedValue({}) };
 
   beforeEach(async () => {
+    buildStageSchedulerLinesMock.mockReset().mockResolvedValue([]);
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
@@ -256,14 +264,6 @@ describe('SchedulerHeaderService', () => {
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // stage lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) }) // priorHeader check — none, so effective_from = batch.start_date and animal_count falls through to opening_quantity
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }) // live animal_register count — none tracked, falls back to opening_quantity
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([{
-          lifecycle_id: 'lc-1', breed_id: 'breed-1', stage_id: 'stage-gest',
-          calc_unit: 'DAY', period_from: 1, period_to: 114,
-          feed_item_id: 'item-feed', feed_qty_per_head_per_day_kg: '2.2000',
-          std_mortality_rate_pct: null, output_item_id: null, std_output_qty: null, std_body_weight_kg: null,
-          medication_protocol: null, vaccination_protocol: null,
-        }]) }) }) }) // breed_lifecycle_stages lookup (one row, ordered by period_from)
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_name: 'Gestation Feed 14%' }]) }) }) }) // feed item name lookup (item_description)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest', scheduler_status: 'DRAFT' }]) }) }) }) // findOne: header
         .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ line_id: 'line-1', line_type: 'CONSUMPTION', item_id: 'item-feed' }]) }) }) // findOne: lines
@@ -272,6 +272,7 @@ describe('SchedulerHeaderService', () => {
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // findOne: stage_name lookup (no breed_id -> breed lookup skipped)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ item_id: 'item-feed', item_name: 'Gestation Feed 14%', uom_primary: 'KG', withdrawal_days: null }]) }) }); // findOne: allItemIds lookup
 
+      buildStageSchedulerLinesMock.mockResolvedValueOnce([feedDraft({})]);
       const result = await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
 
       const headerInsert = insertedValues.one?.find((v) => v.batch_id === 'batch-1' && v.stage_id === 'stage-gest');
@@ -281,7 +282,7 @@ describe('SchedulerHeaderService', () => {
       const lineInsert = insertedValues.many?.[0]?.[0];
       expect(lineInsert).toEqual(expect.objectContaining({
         line_type: 'CONSUMPTION', stage_id: 'stage-gest', item_id: 'item-feed',
-        item_description: 'Gestation Feed 14%', standard_qty: '2.2000', qty_basis: 'PER_HEAD',
+        item_description: 'Gestation Feed 14%', standard_qty: '2.2', qty_basis: 'PER_HEAD', source: 'AUTO', lifecycle_ref_id: 'lc-1',
         activity_name: 'Gestation Feed — Gestation Feed 14%', start_day: 1, end_day: 114,
         // The feed item is not lot or serial tracked, so the line does not ask for a lot.
         lot_required: false,
@@ -307,90 +308,41 @@ describe('SchedulerHeaderService', () => {
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // stage lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) }) // priorHeader check — none
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }) // live animal_register count
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([
-          {
-            lifecycle_id: 'lc-r1', breed_id: 'breed-1', stage_id: 'stage-gest',
-            calc_unit: 'DAY', period_from: 1, period_to: 27,
-            feed_item_id: 'item-r1', feed_qty_per_head_per_day_kg: '0.5000',
-            std_mortality_rate_pct: null, output_item_id: null, std_output_qty: null, std_body_weight_kg: null,
-            medication_protocol: null, vaccination_protocol: null,
-          },
-          {
-            lifecycle_id: 'lc-r2', breed_id: 'breed-1', stage_id: 'stage-gest',
-            calc_unit: 'DAY', period_from: 28, period_to: 114,
-            feed_item_id: 'item-r2', feed_qty_per_head_per_day_kg: '0.9000',
-            std_mortality_rate_pct: null, output_item_id: null, std_output_qty: null, std_body_weight_kg: null,
-            medication_protocol: null, vaccination_protocol: null,
-          },
-        ]) }) }) }) // breed_lifecycle_stages lookup — two rows, ordered by period_from
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_name: 'Starter R1' }]) }) }) }) // feed item name lookup — R1
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_name: 'Grower R2' }]) }) }) }) // feed item name lookup — R2
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest', scheduler_status: 'DRAFT' }]) }) }) }) // findOne: header
         .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines (no line ids -> custom days skipped)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ batch_no: 'BAT-0001' }]) }) }) }) // findOne: batch_no lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }); // findOne: stage_name lookup (no breed_id -> breed lookup skipped; no lines -> allItemIds lookup skipped)
 
+      buildStageSchedulerLinesMock.mockResolvedValueOnce([
+        feedDraft({ lifecycle_ref_id: 'lc-r1', item_id: 'item-r1', activity_name: 'Gestation Feed — Starter R1', end_day: 27, standard_qty: 0.5 }),
+        feedDraft({ lifecycle_ref_id: 'lc-r2', item_id: 'item-r2', activity_name: 'Gestation Feed — Grower R2', start_day: 28, standard_qty: 0.9 }),
+      ]);
       await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
 
       const feedLines = insertedValues.many?.[0] ?? [];
       expect(feedLines).toHaveLength(2);
       expect(feedLines[0]).toEqual(expect.objectContaining({
         lifecycle_ref_id: 'lc-r1', item_id: 'item-r1', activity_name: 'Gestation Feed — Starter R1',
-        start_day: 1, end_day: 27, standard_qty: '0.5000',
+        start_day: 1, end_day: 27, standard_qty: '0.5',
       }));
       expect(feedLines[1]).toEqual(expect.objectContaining({
         lifecycle_ref_id: 'lc-r2', item_id: 'item-r2', activity_name: 'Gestation Feed — Grower R2',
-        start_day: 28, end_day: 114, standard_qty: '0.9000',
+        start_day: 28, end_day: 114, standard_qty: '0.9',
       }));
     });
   });
 
-  describe('createForStage — feed rows the scheduler must not turn into lines', () => {
-    /** The select sequence up to and including the breed_lifecycle_stages read. */
-    const upToLifecycle = (rows: object[]) => {
+  describe('createForStage — a stage the builder cannot read', () => {
+    it('answers a feed row with an unknown period unit as a 400 naming the stage and the unit', async () => {
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
       mockDbSelect
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([batch]) }) }) }) // scoped batch lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // no existing header
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) }) // stage lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) }) // priorHeader check — none
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }) // live animal_register count
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue(rows) }) }) }); // breed_lifecycle_stages
-    };
-    const row = (over: object) => ({
-      lifecycle_id: 'lc', breed_id: 'breed-1', stage_id: 'stage-gest', calc_unit: 'DAY', period_from: 1, period_to: 114,
-      feed_item_id: 'item-feed', feed_qty_per_head_per_day_kg: '2.2000',
-      std_mortality_rate_pct: null, output_item_id: null, std_output_qty: null, std_body_weight_kg: null,
-      medication_protocol: null, vaccination_protocol: null, ...over,
-    });
-
-    // decimal columns arrive as strings, and '0.0000' is truthy — the forecast
-    // compares numerically (gt(..., '0')), so the scheduler must too, or it
-    // schedules a daily feed of nothing that the forecast does not know about.
-    it('skips a feed row whose rate is zero, compared as a number rather than a string', async () => {
-      const insertedValues: any[] = [];
-      mockDbInsert.mockImplementation(() => ({ values: jest.fn((v: any) => { insertedValues.push(v); return Promise.resolve({}); }) }));
-      upToLifecycle([
-        row({ lifecycle_id: 'lc-zero', feed_item_id: 'item-r1', feed_qty_per_head_per_day_kg: '0.0000', period_to: 27 }),
-        row({ lifecycle_id: 'lc-r2', feed_item_id: 'item-r2', feed_qty_per_head_per_day_kg: '0.9000', period_from: 28 }),
-      ]);
-      mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_name: 'Grower R2' }]) }) }) }) // feed item name lookup — R2 only
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest', scheduler_status: 'DRAFT' }]) }) }) }) // findOne: header
-        .mockReturnValueOnce(batchInScopeRow('batch-1'))
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ batch_no: 'BAT-0001' }]) }) }) })
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([stage]) }) }) });
-
-      await service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
-
-      const lines = insertedValues.find((v) => Array.isArray(v)) ?? [];
-      expect(lines.map((l: any) => l.lifecycle_ref_id)).toEqual(['lc-r2']);
-    });
-
-    it('refuses a feed row with an unknown calc_unit as a 400 naming the stage and the unit', async () => {
-      mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));
-      upToLifecycle([row({ calc_unit: 'FORTNIGHT' })]);
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ liveCount: 0 }]) }) }); // live animal_register count
+      buildStageSchedulerLinesMock.mockRejectedValueOnce(new Error('breed_lifecycle_stages.calc_unit must be DAY, WEEK or MONTH — got "FORTNIGHT"'));
 
       const attempt = service.createForStage('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
       await expect(attempt).rejects.toThrow(BadRequestException);
@@ -452,7 +404,6 @@ describe('SchedulerHeaderService', () => {
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // existing check (none)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...batch, lob_id: 'lob-1' }]) }) }) }) // batch lookup
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...stage, lob_id: 'lob-1' }]) }) }) }) // stage lookup
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([]) }) }) }) // generateLinesFromLifecycle: breed_lifecycle_stages (none)
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest' }]) }) }) }) // findOne: header
         .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
         .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines
@@ -578,52 +529,45 @@ describe('SchedulerHeaderService', () => {
     });
   });
 
-  describe('addLine', () => {
-    it('rejects a CONSUMPTION line missing item_id/standard_qty/qty_basis', async () => {
+  // The form fills its activities in from the stage and then sends them, so the same line that auto-create would
+  // have written as AUTO arrived as MANUAL with no link back to the breed lifecycle row. A line that carries a
+  // lifecycle_ref_id came from the stage whichever path created it; one without it the user added by hand.
+  describe('createManualHeader — where a sent line came from', () => {
+    it('records a line carrying a lifecycle ref as AUTO, and one without it as MANUAL', async () => {
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+      jest.spyOn(service, 'alignToStageEntry').mockResolvedValue(null);
       mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1', batch_id: 'batch-1', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) }) }) // findOne: header
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // existing check (none)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...batch, lob_id: 'lob-1' }]) }) }) }) // batch
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ ...stage, lob_id: 'lob-1' }]) }) }) }) // stage
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'new-sched', batch_id: 'batch-1', stage_id: 'stage-gest' }]) }) }) }) // findOne: header
         .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines (no line ids -> custom days skipped)
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch_no lookup (no location_id -> silo stock skipped)
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }); // findOne: stage_name lookup (no breed_id -> breed lookup skipped)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines
+        .mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{}]) }) }) }); // findOne: batch, breed, stage
 
-      await expect(
-        service.addLine('sched-1', { line_type: 'CONSUMPTION', activity_name: 'Evening Feed' } as any, 'tenant-123'),
-      ).rejects.toThrow(ConflictException);
+      await service.createManualHeader({
+        batch_id: 'batch-1', stage_id: 'stage-gest', data_entry_level: 'SHED', effective_from: '2026-03-08', animal_count: 20,
+        lines: [
+          { line_type: 'DESCRIPTIVE', activity_name: 'KPI: Average Daily Gain', kpi_metric: 'ADG', kpi_uom: 'GRAM', capture_per: 'AVERAGE', lifecycle_ref_id: 'lc-1' },
+          { line_type: 'DESCRIPTIVE', activity_name: 'Night check the user added', kpi_metric: 'BCS_SCORE', kpi_uom: 'SCORE', capture_per: 'AVERAGE' },
+        ] as any,
+      }, 'tenant-123', { userId: 'user-1' });
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        activity_name: 'KPI: Average Daily Gain', source: 'AUTO', lifecycle_ref_id: 'lc-1',
+      }));
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        activity_name: 'Night check the user added', source: 'MANUAL', lifecycle_ref_id: null,
+      }));
     });
+  });
 
-    it('rejects a line with the same item and overlapping time period', async () => {
-      mockDbSelect
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1', batch_id: 'batch-1', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) }) }) // findOne: header
-        .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([
-          {
-            line_id: 'line-1',
-            line_type: 'CONSUMPTION',
-            activity_name: 'Booster Vaccine',
-            item_id: 'item-100',
-            occurrence: 'DAILY',
-            start_day: 1,
-            end_day: null,
-          }
-        ]) }) }) // findOne: lines
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: customDays
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_name: 'Weaner' }]) }) }) }) // findOne: stage
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ item_id: 'item-100', item_name: 'Booster Premix', uom_primary: 'KG', withdrawal_days: null }]) }) }); // findOne: items
-
-      await expect(
-        service.addLine('sched-1', {
-          line_type: 'CONSUMPTION',
-          activity_name: 'Booster Vaccine',
-          item_id: 'item-100',
-          occurrence: 'DAILY',
-          start_day: 1,
-          end_day: null,
-          standard_qty: 1.5,
-          qty_basis: 'PER_HEAD',
-        } as any, 'tenant-123'),
-      ).rejects.toThrow('Schedule conflict: Item');
+  describe('a created scheduler\'s activities are fixed (Rishi, 14 Oct)', () => {
+    it.each(['addLine', 'updateLine', 'removeLine', 'copyLinesInto', 'updateFeedLines'] as const)('%s is refused', async (method) => {
+      await expect((service as any)[method]('sched-1', {}, 'tenant-123')).rejects.toThrow(ACTIVITIES_LOCKED_MESSAGE);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 });

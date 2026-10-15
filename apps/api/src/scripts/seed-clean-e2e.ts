@@ -212,7 +212,7 @@ export async function seedCleanE2E() {
       {
         code: 'ICAT-008-ITM-0001',
         name: 'Suckling Live Piglet (0-4 Wks)',
-        type: 'LIVESTOCK',
+        type: 'LIVING_ASSET',
         uom: 'HEAD',
         val: 'BIO_ASSET',
         cost: '180.0000',

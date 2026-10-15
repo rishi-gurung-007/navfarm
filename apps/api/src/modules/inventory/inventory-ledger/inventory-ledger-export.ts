@@ -39,8 +39,8 @@ export interface LedgerExportRow {
 
 type ColumnKind = 'text' | 'number' | 'date' | 'datetime';
 
-export interface LedgerExportColumn {
-  key: keyof LedgerExportRow;
+export interface LedgerExportColumn<R = LedgerExportRow> {
+  key: keyof R & string;
   header: string;
   kind: ColumnKind;
   width: number;
@@ -112,11 +112,11 @@ function csvCell(value: unknown): string {
 }
 
 /** CSV with a UTF-8 byte-order mark so Excel opens names and symbols correctly. */
-export function ledgerRowsToCsv(rows: LedgerExportRow[]): string {
-  const lines = [LEDGER_EXPORT_COLUMNS.map((c) => csvCell(c.header)).join(',')];
+export function ledgerRowsToCsv<R = LedgerExportRow>(rows: R[], columns: LedgerExportColumn<R>[] = LEDGER_EXPORT_COLUMNS as unknown as LedgerExportColumn<R>[]): string {
+  const lines = [columns.map((c) => csvCell(c.header)).join(',')];
   for (const row of rows) {
     lines.push(
-      LEDGER_EXPORT_COLUMNS.map((c) => {
+      columns.map((c) => {
         const raw = row[c.key];
         if (c.kind === 'date') return csvCell(asDateText(raw as string | Date | null, false));
         if (c.kind === 'datetime') return csvCell(asDateText(raw as string | Date | null, true));
@@ -129,16 +129,20 @@ export function ledgerRowsToCsv(rows: LedgerExportRow[]): string {
 }
 
 /** A real .xlsx: typed numbers and dates, a frozen filterable header, sized columns. */
-export async function ledgerRowsToXlsx(rows: LedgerExportRow[]): Promise<Buffer> {
+export async function ledgerRowsToXlsx<R = LedgerExportRow>(
+  rows: R[],
+  columns: LedgerExportColumn<R>[] = LEDGER_EXPORT_COLUMNS as unknown as LedgerExportColumn<R>[],
+  sheetName = 'Inventory Ledger Entries',
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'NAVFarm';
   workbook.created = new Date();
-  const sheet = workbook.addWorksheet('Inventory Ledger Entries', { views: [{ state: 'frozen', ySplit: 1 }] });
-  sheet.columns = LEDGER_EXPORT_COLUMNS.map((c) => ({ header: c.header, key: String(c.key), width: c.width }));
+  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
+  sheet.columns = columns.map((c) => ({ header: c.header, key: String(c.key), width: c.width }));
 
   for (const row of rows) {
     const values: Record<string, unknown> = {};
-    for (const c of LEDGER_EXPORT_COLUMNS) {
+    for (const c of columns) {
       const raw = row[c.key];
       if (c.kind === 'number') values[String(c.key)] = asNumber(raw as string | number | null);
       else if (c.kind === 'date' || c.kind === 'datetime') {
@@ -156,14 +160,14 @@ export async function ledgerRowsToXlsx(rows: LedgerExportRow[]): Promise<Buffer>
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF4' } };
     cell.border = { bottom: { style: 'thin', color: { argb: 'FF9AA7B4' } } };
   });
-  LEDGER_EXPORT_COLUMNS.forEach((c, index) => {
+  columns.forEach((c, index) => {
     const column = sheet.getColumn(index + 1);
     if (c.kind === 'number') column.numFmt = '#,##0.0000';
     else if (c.kind === 'date') column.numFmt = 'yyyy-mm-dd';
     else if (c.kind === 'datetime') column.numFmt = 'yyyy-mm-dd hh:mm:ss';
     if (c.kind === 'number') column.alignment = { horizontal: 'right' };
   });
-  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: LEDGER_EXPORT_COLUMNS.length } };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
 
   const out = await workbook.xlsx.writeBuffer();
   return Buffer.from(out as ArrayBuffer);

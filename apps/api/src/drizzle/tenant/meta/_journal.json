@@ -1385,14 +1385,49 @@
       "idx": 197,
       "version": "5",
       "when": 1792000000066,
-      "tag": "0198_expense_document",
+      "tag": "0198_animal_registration_gl",
       "breakpoints": true
     },
     {
       "idx": 198,
       "version": "5",
       "when": 1792000000067,
-      "tag": "0199_expense_voucher_fields",
+      "tag": "0199_bio_asset_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "5",
+      "when": 1792000000068,
+      "tag": "0200_bio_asset_grn_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "5",
+      "when": 1792000000069,
+      "tag": "0201_living_asset_item_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "5",
+      "when": 1792000000070,
+      "tag": "0202_living_asset_item_template",
+      "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "5",
+      "when": 1792000000071,
+      "tag": "0203_expense_document",
+      "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "5",
+      "when": 1792000000072,
+      "tag": "0204_expense_voucher_fields",
       "breakpoints": true
     }
   ]

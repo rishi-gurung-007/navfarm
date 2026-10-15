@@ -19,6 +19,7 @@ import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/compon
 import { useLanguage } from "@/hooks/useLanguage";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
+import { toApiLine } from "./scheduler-line-payload";
 import { toInputNumber } from "@/lib/utils";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { confirmAction } from "@/components/ui/confirm-dialog";
@@ -166,6 +167,48 @@ const emptyLineForm = (seq = 1) => ({
   resource_name: "",
 });
 
+/** A line from a system scheduler, another scheduler or the stage prefill, as the form edits it. */
+function toDialogLine(l: any, idx: number): Row {
+  return {
+    line_seq: idx + 1,
+    line_type: l.line_type,
+    activity_name: l.activity_name,
+    occurrence: l.occurrence,
+    start_day: l.start_day ?? 1,
+    end_day: l.end_day != null ? l.end_day : "",
+    day_of_week: l.day_of_week != null ? l.day_of_week : "",
+    custom_days: Array.isArray(l.custom_days)
+      ? l.custom_days.map((d: any) => (typeof d === "object" ? d.day_number : d)).join(", ")
+      : (l.custom_days ?? ""),
+    is_mandatory: !!l.is_mandatory,
+    item_id: l.item_id || "",
+    item_description: l.item_description || "",
+    standard_qty: toInputNumber(l.standard_qty),
+    qty_basis: l.qty_basis || "PER_HEAD",
+    allow_qty_edit: l.allow_qty_edit !== false,
+    lot_required: !!l.lot_required,
+    creates_inventory: l.creates_inventory !== false,
+    output_lot_auto: l.output_lot_auto !== false,
+    output_basis: l.output_basis || "PER_BATCH",
+    kpi_metric: l.kpi_metric || "",
+    kpi_uom: l.kpi_uom || "",
+    std_value: toInputNumber(l.std_value),
+    lower_alert_limit: toInputNumber(l.lower_alert_limit),
+    upper_alert_limit: toInputNumber(l.upper_alert_limit),
+    alert_severity: l.alert_severity || "WARNING",
+    capture_per: l.capture_per || "AVERAGE",
+    overhead_category: l.overhead_category || "",
+    gl_account: l.gl_account || "",
+    estimated_cost: toInputNumber(l.estimated_cost),
+    resource_id: l.resource_id || "",
+    resource_name: l.resource_name || "",
+    extension_config: l.extension_config ?? null,
+    // The breed lifecycle row this activity was filled in from: sent back on create so the line records where it
+    // came from, the same as a scheduler the server filled in itself.
+    lifecycle_ref_id: l.lifecycle_ref_id ?? null,
+  };
+}
+
 interface CreateSchedulerModalProps {
   open: boolean;
   onClose: () => void;
@@ -299,6 +342,41 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     }
   }, [stageId, effectiveFrom]);
 
+  // The activities start filled in from the stage (Rishi, 14 Oct): a matching system scheduler's, else the breed
+  // lifecycle stage's feed, resources, vaccinations, medication (as needed) and KPIs. The user changes them here, before
+  // creating — once the scheduler exists its activities are fixed.
+  const [prefilling, setPrefilling] = useState(false);
+  useEffect(() => {
+    if (!open || !batchId || !stageId) return;
+    let cancelled = false;
+    setPrefilling(true);
+    const params = new URLSearchParams({ batch_id: batchId, stage_id: stageId });
+    if (effectiveFrom) params.set("effective_from", effectiveFrom);
+    (async () => {
+      try {
+        const prefill = unwrap<Row>(await api.get(`/scheduler-header/prefill?${params.toString()}`));
+        let next: Row[] = [];
+        let fromSystem: string | null = null;
+        if (prefill?.source === "SYSTEM_SCHEDULER" && prefill.system_scheduler_id) {
+          const data = unwrap<Row>(await api.get(`/system-scheduler/${prefill.system_scheduler_id}`));
+          next = (data?.lines || []).filter((l: Row) => l.is_active !== false).map(toDialogLine);
+          fromSystem = prefill.system_scheduler_id;
+        } else {
+          next = (prefill?.lines || []).map(toDialogLine);
+        }
+        if (!cancelled) {
+          setLines(next);
+          setCopiedSystemSchedulerId(fromSystem);
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "The stage's activities could not be loaded.");
+      } finally {
+        if (!cancelled) setPrefilling(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, batchId, stageId]);
+
   // Copy from a system scheduler or a batch's scheduler — the same picker the scheduler view uses.
   const [copyOpen, setCopyOpen] = useState(false);
   // Set when the lines came from a system scheduler — sent as their recorded origin.
@@ -310,7 +388,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
           it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVESTOCK") ||
+          it.item_type !== "LIVING_ASSET") ||
         it.item_id === lineForm.item_id
     );
   }, [items, lineForm.item_id]);
@@ -331,40 +409,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     const data = unwrap<Row>(await api.get(`${fromSystem ? "/system-scheduler" : "/scheduler-header"}/${sourceId}`));
     const rawLines = (data?.lines || []).filter((l: Row) => l.is_active !== false);
     if (!rawLines.length) throw new Error(t("scCopyNoActivities"));
-    const mappedLines = rawLines.map((l: any, idx: number) => ({
-      line_seq: idx + 1,
-      line_type: l.line_type,
-      activity_name: l.activity_name,
-      occurrence: l.occurrence,
-      start_day: l.start_day ?? 1,
-      end_day: l.end_day != null ? l.end_day : "",
-      day_of_week: l.day_of_week != null ? l.day_of_week : "",
-      custom_days: Array.isArray(l.custom_days)
-        ? l.custom_days.map((d: any) => (typeof d === "object" ? d.day_number : d)).join(", ")
-        : (l.custom_days ?? ""),
-      is_mandatory: !!l.is_mandatory,
-      item_id: l.item_id || "",
-      item_description: l.item_description || "",
-      standard_qty: toInputNumber(l.standard_qty),
-      qty_basis: l.qty_basis || "PER_HEAD",
-      allow_qty_edit: l.allow_qty_edit !== false,
-      lot_required: !!l.lot_required,
-      creates_inventory: l.creates_inventory !== false,
-      output_lot_auto: l.output_lot_auto !== false,
-      output_basis: l.output_basis || "PER_BATCH",
-      kpi_metric: l.kpi_metric || "",
-      kpi_uom: l.kpi_uom || "",
-      std_value: toInputNumber(l.std_value),
-      lower_alert_limit: toInputNumber(l.lower_alert_limit),
-      upper_alert_limit: toInputNumber(l.upper_alert_limit),
-      alert_severity: l.alert_severity || "WARNING",
-      capture_per: l.capture_per || "AVERAGE",
-      overhead_category: l.overhead_category || "",
-      gl_account: l.gl_account || "",
-      estimated_cost: toInputNumber(l.estimated_cost),
-      resource_id: l.resource_id || "",
-      resource_name: l.resource_name || "",
-    }));
+    const mappedLines = rawLines.map(toDialogLine);
     setLines(mappedLines);
     setCopiedSystemSchedulerId(fromSystem ? sourceId : null);
     return true;
@@ -536,7 +581,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         animal_count: animalCount !== "" ? Number(animalCount) : undefined,
         scheduler_status: status,
         notes: notes || undefined,
-        lines: lines.length > 0 ? lines.map(toLinePayload) : undefined,
+        lines: lines.length > 0 ? lines.map(toApiLine) : undefined,
         system_scheduler_id: lines.length > 0 && copiedSystemSchedulerId ? copiedSystemSchedulerId : undefined,
       };
 
@@ -773,10 +818,13 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <div className="p-4 pt-2 border-t border-[var(--border)]">
                 {lines.length === 0 ? (
                   <div className="rounded-[var(--radius-sm)] border border-dashed py-6 text-center" style={{ borderColor: "var(--border)" }}>
-                    <p className="text-xs font-medium" style={S.sub}>No custom activities added yet.</p>
+                    <p className="text-xs font-medium" style={S.sub}>
+                      {prefilling ? "Filling in the stage's activities…" : "This stage has no activities to fill in."}
+                    </p>
                     <p className="text-[11px] mt-1" style={S.muted}>
-                      Click <strong>Add Activity</strong> above to schedule a feed ration, vaccination, or KPI target.
-                      (If left empty, standard lifecycle activities will be auto-generated).
+                      A scheduler's activities are filled in from the batch's breed lifecycle stage — its feed, resources,
+                      vaccinations, medication and KPIs. Add them to the stage in Breed Master, or click{" "}
+                      <strong>Add Activity</strong> above to schedule one here. They are fixed once the scheduler is created.
                     </p>
                   </div>
                 ) : (
@@ -883,7 +931,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
           {/* Dialog Action Buttons */}
           <div className="mt-2 flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border)" }}>
             <span className="text-[11px]" style={S.muted}>
-              {lines.length} {lines.length === 1 ? "activity" : "activities"} configured
+              {prefilling
+                ? "Filling in the stage's activities…"
+                : `${lines.length} ${lines.length === 1 ? "activity" : "activities"} configured — filled in from the stage; change them here, they are fixed once the scheduler is created`}
             </span>
             <div className="flex items-center gap-2">
               <Button size="sm" onClick={handleSaveAll} disabled={saving || !batchId || !stageId} className="nf-btn-primary">
@@ -1485,7 +1535,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     value={lineForm.item_id}
                     onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
                     options={items
-                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVESTOCK')
+                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVING_ASSET')
                       .map((it) => ({
                         value: it.item_id,
                         label: `${it.item_name} (${it.item_code})`,

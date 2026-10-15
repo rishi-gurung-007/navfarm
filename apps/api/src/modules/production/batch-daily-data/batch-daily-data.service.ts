@@ -1,3 +1,4 @@
+import { isFeedTypeCode } from '../../../common/feed-form';
 import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import {
   Injectable,
@@ -28,7 +29,6 @@ import { farmStoreOf } from '../../../common/farm-store';
 import { classifyPostedRow } from '../batch/batch-day-reversal';
 import { animalOutputEvent, outputEventForItem, parsePoolIds, type AnimalOutputEvent } from './animal-output-event';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
-import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
@@ -108,8 +108,6 @@ export class BatchDailyDataService {
     // the farm's silo levels are re-checked afterwards (checkpoint 12).
     // Optional so a testing module that does not provide it still builds.
     @Optional() private readonly feedAlerts?: FeedAlertService,
-    // Breed lifecycle KPI limits/tolerances, checked alongside the schedule-line limits above. Optional like feedAlerts.
-    @Optional() private readonly lifecycleKpi?: LifecycleKpiEvaluator,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -169,12 +167,12 @@ export class BatchDailyDataService {
       // applied can carry lot_required on an untracked item, which is priced by its costing method alone.
       const [tracked] = line.item_id
         ? await this.db
-            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked })
+            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked, item_type: schema.itemMaster.item_type })
             .from(schema.itemMaster)
             .where(eq(schema.itemMaster.item_id, line.item_id))
             .limit(1)
         : [];
-      if (!line.item_id || tracked?.lot || tracked?.serial) {
+      if (lotMustBeNamed(line.line_type, line.item_id, tracked)) {
         throw new BadRequestException(
           `'${line.activity_name}' requires a lot or serial number.`,
         );
@@ -407,7 +405,7 @@ export class BatchDailyDataService {
       case 'CONSUMPTION':
       case 'OUTPUT': {
         // The line's own item, and only that. An OUTPUT line with no item used to take the first
-        // item named like "Piglet" or typed LIVESTOCK, so a semen collection or a manure line could
+        // item named like "Piglet" or typed LIVING_ASSET, so a semen collection or a manure line could
         // be posted into stock as piglets. Lines are validated to carry an item when they are made;
         // one that still has none is fixed, not guessed.
         const resolvedItemId = (line.line_type === 'OUTPUT' && dto.item_id) || line.item_id;
@@ -972,11 +970,8 @@ export class BatchDailyDataService {
       remarks: dailyRemarks,
     });
 
-    // The stage's lifecycle KPIs (limits / tolerance) are checked in addition to the schedule-line limit above.
-    // evaluateSafely never throws, so a failure here cannot undo or block the entry that was just saved.
-    if (this.lifecycleKpi && line.kpi_metric && dto.entered_value != null) {
-      await this.lifecycleKpi.evaluateSafely(batchId, tenantId, dto.entry_date, [line.kpi_metric]);
-    }
+    // KPI alerts come from the scheduler line's own limits (the schedule-limit check above) — the stage's KPIs & Alerts
+    // are filled onto the scheduler as lines when it is created (Rishi, 14 Oct), so the stage is not checked again here.
 
     // CONSUMPTION re-checks the silo levels in postConsumptionGroup. Of the lines that reach here only OUTPUT
     // moves item stock; the rest (overhead, resources, animal transfers) leave every silo where it was. This
@@ -1968,4 +1963,20 @@ export class BatchDailyDataService {
         ),
       );
   }
+}
+
+/**
+ * Whether an entry of a lot-required line must name its lot or serial. Feed (Rishi, 14 Oct): the daily entry no longer
+ * asks which lot — a lot-tracked feed leaves the in-date lot with the nearest expiry first (planLots) — so only a
+ * serial, or a lot-tracked item that is not feed, must be named. An untracked item has nothing to name.
+ */
+export function lotMustBeNamed(
+  lineType: string,
+  itemId: string | null | undefined,
+  tracked: { lot?: boolean | null; serial?: boolean | null; item_type?: string | null } | undefined,
+): boolean {
+  if (!itemId) return true;
+  if (tracked?.serial) return true;
+  if (!tracked?.lot) return false;
+  return !(lineType === 'CONSUMPTION' && isFeedTypeCode(tracked.item_type));
 }

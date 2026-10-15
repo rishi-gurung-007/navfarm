@@ -597,38 +597,65 @@ export class AnimalService {
     // If no receipt is provided (allowed for local purchases, on-farm births, transfers), acquisition_cost
     // must be provided by the caller.
     let acquisitionCost = dto.acquisition_cost;
+    // An animal registered from a GRN (Rishi, 14 Oct): a biological asset is not stock. The GRN is a positive entry
+    // in the Bio Asset Ledger, and each animal registered from it is taken from that entry (its remaining counts
+    // down), so a GRN of 5 registers 5. The GRN and its entries are locked first, so two registrations at once cannot
+    // both take its last animal.
+    let receiptUom: string | null = null;
+    let sourceEntryId: string | null = null;
     if (dto.source_receipt_id) {
       // A receipt reaches a farm through the warehouse it was received into.
-      await this.assertExists(
-        this.db.select().from(schema.goodsReceipt).where(and(
+      const [receipt] = await this.db
+        .select({ receipt_no: schema.goodsReceipt.receipt_no, status: schema.goodsReceipt.status })
+        .from(schema.goodsReceipt)
+        .where(and(
           eq(schema.goodsReceipt.receipt_id, dto.source_receipt_id),
           eq(schema.goodsReceipt.tenant_id, tenantId),
           eq(schema.goodsReceipt.company_id, dto.company_id),
           ...locationReferenceScopeConditions(scope, schema.goodsReceipt.warehouse_id),
-        )),
-        'Goods receipt', dto.source_receipt_id,
-      );
+        ))
+        .limit(1)
+        .for('update');
+      if (!receipt) throw new NotFoundException(`Goods receipt with ID '${dto.source_receipt_id}' not found.`);
 
-      const [receiptLine] = await this.db
-        .select({ rate: schema.goodsReceiptLine.rate, amount: schema.goodsReceiptLine.amount })
-        .from(schema.goodsReceiptLine)
+      if (receipt.status !== 'POSTED') {
+        throw new BadRequestException(`GRN ${receipt.receipt_no} is not posted yet. Post the GRN first, then register its animals.`);
+      }
+      // The GRN's Bio Asset Ledger entries for this item (one per GRN line), in line order: the animal is taken from
+      // the first that still has one remaining.
+      const B = schema.bioAssetLedger;
+      const grnEntries = await this.db
+        .select({ entry_id: B.entry_id, remaining: B.remaining_quantity, rate: B.cost_amount_each_unit, uom: B.uom })
+        .from(B)
+        .innerJoin(schema.goodsReceiptLine, eq(schema.goodsReceiptLine.line_id, B.document_line_id))
         .where(and(
+          eq(B.entry_type, 'PURCHASE'),
           eq(schema.goodsReceiptLine.receipt_id, dto.source_receipt_id),
           eq(schema.goodsReceiptLine.item_id, dto.item_id),
         ))
-        .limit(1);
-
-      if (!receiptLine) {
+        .orderBy(schema.goodsReceiptLine.line_no)
+        .for('update');
+      if (!grnEntries.length) {
         throw new BadRequestException(
           `The source GRN has no line for this animal's item, so there is no purchase price to read. Either the wrong receipt was chosen or the wrong item.`,
         );
       }
-      if (receiptLine.rate === null || receiptLine.rate === undefined) {
+      const grnEntry = grnEntries.find((e) => Number(e.remaining ?? 0) >= 1);
+      if (!grnEntry) {
+        throw new BadRequestException(`GRN ${receipt.receipt_no} has no animals of this item left to register: every one it received is already registered.`);
+      }
+      if (grnEntry.rate === null || grnEntry.rate === undefined) {
         throw new BadRequestException(
           `The source GRN line for this animal's item carries no rate, so the acquisition cost cannot be derived from it.`,
         );
       }
-      acquisitionCost = Number(receiptLine.rate);
+      // Taken from the GRN's entry: one fewer remaining there, and the animal's +1 names it.
+      await this.db.update(B)
+        .set({ remaining_quantity: sql`${B.remaining_quantity} - 1` })
+        .where(eq(B.entry_id, grnEntry.entry_id));
+      sourceEntryId = grnEntry.entry_id;
+      receiptUom = grnEntry.uom;
+      acquisitionCost = Number(grnEntry.rate);
     }
 
     if (acquisitionCost === undefined || acquisitionCost === null || Number.isNaN(Number(acquisitionCost))) {
@@ -739,6 +766,7 @@ export class AnimalService {
 
     await this.db.insert(schema.animalRegister).values(newAnimal);
 
+
     // Record IAS 41 Opening Acquisition in bio_asset_ledger for this tagged animal
     await this.db.insert(schema.bioAssetLedger).values({
       entry_id: randomUUID(),
@@ -747,6 +775,11 @@ export class AnimalService {
       bio_asset_item_id: dto.item_id,
       animal_id: animalId,
       entry_type: 'ACQUISITION',
+      // The Bio Asset Ledger's +1 for this animal (Rishi, 14 Oct), where it stands, in its GRN's UOM.
+      document_type: 'ANIMAL_REGISTRATION',
+      source_entry_id: sourceEntryId,
+      warehouse_id: dto.current_location_id || null,
+      uom: receiptUom ?? 'HEAD',
       document_no: animalCode,
       posting_date: dto.entry_date,
       stage: dto.current_stage_id || null,
@@ -1150,6 +1183,10 @@ export class AnimalService {
         bio_asset_item_id: animal.item_id,
         animal_id: id,
         entry_type: dto.disposal_type === 'DIED' ? 'MORTALITY' : 'TRANSFORMATION',
+        // A death is the Bio Asset Ledger's -1 for this animal (Rishi, 14 Oct), where it stood.
+        document_type: dto.disposal_type === 'DIED' ? 'MORTALITY' : null,
+        warehouse_id: animal.current_location_id || null,
+        uom: 'HEAD',
         document_no: animal.animal_code,
         posting_date: dto.disposal_date,
         stage: animal.current_stage_id || null,

@@ -4,16 +4,16 @@
  *
  * Found on the test server (Porta Farm, 29 Sep): the Animal Register's "Item
  * (Living Asset)" picker was empty because the code asked for
- * `item_type = 'LIVESTOCK'` while that tenant's living-asset type is code
+ * `item_type = 'LIVING_ASSET'` while that tenant's living-asset type is code
  * "LA-001", name "Living Asset" — and its feed type is "FEED-001", not "FEED".
  * Tenants name their own item types (item_type_master is a master like any
- * other), so every FEED / LIVESTOCK decision goes through here.
+ * other), so every FEED / LIVING_ASSET decision goes through here.
  *
  * MEDICINE and VACCINE are deliberately left exact: they gate the withdrawal
  * rules, where a loose match would be the wrong risk to take, and no client
  * type has been seen naming them differently.
  */
-export const ITEM_KINDS = ['FEED', 'LIVESTOCK'] as const;
+export const ITEM_KINDS = ['FEED', 'LIVING_ASSET'] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
 interface Matchers {
@@ -31,9 +31,12 @@ const MATCHERS: Record<ItemKind, Matchers> = {
     codePrefixes: ['FEED'],
     nameFragments: ['feed'],
   },
-  LIVESTOCK: {
-    codes: ['LIVESTOCK'],
-    codePrefixes: ['LA-', 'LA_', 'LIVESTOCK', 'LIVING'],
+  LIVING_ASSET: {
+    // Keep the old code as a read-compatible alias for tenants that have not
+    // applied the rename migration yet. New writes and seeded data use the
+    // canonical LIVING_ASSET code.
+    codes: ['LIVING_ASSET', 'LIVESTOCK'],
+    codePrefixes: ['LA-', 'LA_', 'LIVING'],
     nameFragments: ['living asset', 'livestock'],
   },
 };
@@ -55,7 +58,7 @@ function nameHas(name: string | null | undefined, fragment: string): boolean {
   return new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`).test(haystack);
 }
 
-/** The kind of an item type, or null when it is neither feed nor livestock. */
+/** The kind of an item type, or null when it is neither feed nor a living asset. */
 export function itemKindOf(typeCode: string | null | undefined, typeName: string | null | undefined): ItemKind | null {
   const code = norm(typeCode);
   for (const kind of ITEM_KINDS) {

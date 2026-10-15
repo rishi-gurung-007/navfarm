@@ -1,4 +1,4 @@
-import { FeedRow, feedRowFor } from '../../production/lifecycle/feed-row-days';
+import { FeedRow, feedRowsFor } from '../../production/lifecycle/feed-row-days';
 
 /**
  * Next Diet Feed Item from the breed lifecycle (client ruling, Rishi 12 Oct): a batch's next diet is always
@@ -80,10 +80,11 @@ export function resolveNextStageDiets(args: {
     const nextName = next.stageName ?? next.stageCode;
     const date = current?.durationDays && current.durationDays >= 1 ? addDays(segment.start, current.durationDays) : null;
     const rows = feedRows.filter((r) => r.breedId === b.breedId && r.stageId === next.stageId);
-    // The row that feeds day 1 of the stage; if the lifecycle starts later in the stage, its earliest row.
+    // The row that feeds day 1 of the stage; if the lifecycle starts later in the stage, its earliest row. A silo shows
+    // one next diet: of several feeds on day 1 (14 Oct), the line entered first.
     let row: FeedRow | undefined;
-    const first = feedRowFor(rows, 1, farmId);
-    if ('row' in first) row = first.row;
+    const first = feedRowsFor(rows, 1, farmId);
+    if ('rows' in first) row = first.rows[0];
     else if (first.error === 'NONE') {
       const own = farmId ? rows.filter((r) => r.farmId === farmId) : [];
       const pool = own.length ? own : rows.filter((r) => !r.farmId);

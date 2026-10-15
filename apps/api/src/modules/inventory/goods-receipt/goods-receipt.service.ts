@@ -382,6 +382,41 @@ export class GoodsReceiptService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    if (query.animalItemId) {
+      // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose Bio Asset Ledger entries for
+      // this item still have an animal remaining — each registration takes one — with the unit cost of the entry the
+      // next animal is taken from (the GRN's first line of the item that still has one).
+      const B = schema.bioAssetLedger;
+      const entries = await this.db
+        .select({ receipt: schema.goodsReceipt, remaining: B.remaining_quantity, quantity: B.quantity, rate: B.cost_amount_each_unit })
+        .from(schema.goodsReceipt)
+        .innerJoin(schema.goodsReceiptLine, and(
+          eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
+          eq(schema.goodsReceiptLine.item_id, query.animalItemId),
+        ))
+        .innerJoin(B, and(eq(B.document_line_id, schema.goodsReceiptLine.line_id), eq(B.entry_type, 'PURCHASE')))
+        .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
+        .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no), schema.goodsReceiptLine.line_no);
+      const byReceipt = new Map<string, { receipt: typeof entries[number]['receipt']; left: number; received: number; unitCost: number | null }>();
+      for (const e of entries) {
+        const r = byReceipt.get(e.receipt.receipt_id) ?? { receipt: e.receipt, left: 0, received: 0, unitCost: null };
+        const left = Math.floor(Number(e.remaining ?? 0));
+        r.left += left;
+        r.received += Math.floor(Number(e.quantity ?? 0));
+        if (r.unitCost === null && left >= 1 && e.rate != null) r.unitCost = Number(e.rate);
+        byReceipt.set(e.receipt.receipt_id, r);
+      }
+      return [...byReceipt.values()]
+        .filter((r) => r.left >= 1)
+        .slice(offset, offset + limit)
+        .map((r) => ({
+          ...r.receipt,
+          animals_left: r.left,
+          animals_left_label: `${r.left} of ${r.received} left`,
+          unit_cost: r.unitCost,
+        }));
+    }
+
     return this.db
       .select()
       .from(schema.goodsReceipt)
@@ -524,28 +559,65 @@ export class GoodsReceiptService {
         throw new BadRequestException('GRN cannot be posted — it was already posted by another request.');
       }
 
-      for (const line of receipt.lines) {
-        const ledgerEntry = await this.ledgerService.writePositiveEntry({
-          tenantId,
-          companyId: receipt.company_id,
-          itemId: line.item_id,
-          documentType: 'GOODS_RECEIPT',
-          documentNo: receipt.receipt_no,
-          documentLineId: line.line_id,
-          postingDate: receipt.posting_date,
-          externalReferenceNo: receipt.external_reference_no || undefined,
-          transactionType: 'PURCHASE',
-          quantity: Number(line.quantity),
-          uom: line.uom,
-          rate: line.rate ? Number(line.rate) : undefined,
-          lotNo: line.lot_no || undefined,
-          serialNo: line.serial_no || undefined,
-          expiryDate: line.expiry_date || undefined,
-          warehouseId: receipt.warehouse_id,
-          userId: userPayload?.userId,
-        });
+      // A biological asset is not stock (Rishi, 14 Oct): its line posts no inventory entry and no journal. It is a
+      // positive entry in the Bio Asset Ledger instead — the animals it brought in — which each animal registered
+      // from this GRN is taken from (its remaining counts down).
+      const lineItemIds = [...new Set(receipt.lines.map((l: { item_id: string }) => l.item_id))] as string[];
+      const bioItems = new Map((await this.db
+        .select({ item_id: schema.itemMaster.item_id, nob_id: schema.itemMaster.nob_id, lob_id: schema.itemMaster.lob_id })
+        .from(schema.itemMaster)
+        .where(and(inArray(schema.itemMaster.item_id, lineItemIds), eq(schema.itemMaster.is_biological_asset, true)))).map((r) => [r.item_id, r]));
 
-        await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+      for (const line of receipt.lines) {
+        const bioItem = bioItems.get(line.item_id);
+        if (bioItem) {
+          const quantity = Number(line.quantity);
+          const rate = line.rate == null ? null : Number(line.rate);
+          await this.db.insert(schema.bioAssetLedger).values({
+            entry_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: receipt.company_id,
+            bio_asset_item_id: line.item_id,
+            entry_type: 'PURCHASE',
+            document_type: 'GOODS_RECEIPT',
+            document_no: receipt.receipt_no,
+            document_line_id: line.line_id,
+            posting_date: receipt.posting_date,
+            lot_no: line.lot_no || null,
+            warehouse_id: receipt.warehouse_id,
+            uom: line.uom,
+            quantity: quantity.toFixed(4),
+            remaining_quantity: quantity.toFixed(4),
+            cost_amount: (quantity * (rate ?? 0)).toFixed(4),
+            cost_amount_each_unit: rate == null ? null : rate.toFixed(4),
+            costing_method: 'COST_ACCUMULATION',
+            nob_id: bioItem.nob_id ?? null,
+            lob_id: bioItem.lob_id ?? null,
+            created_by: userPayload?.userId || null,
+          });
+        } else {
+          const ledgerEntry = await this.ledgerService.writePositiveEntry({
+            tenantId,
+            companyId: receipt.company_id,
+            itemId: line.item_id,
+            documentType: 'GOODS_RECEIPT',
+            documentNo: receipt.receipt_no,
+            documentLineId: line.line_id,
+            postingDate: receipt.posting_date,
+            externalReferenceNo: receipt.external_reference_no || undefined,
+            transactionType: 'PURCHASE',
+            quantity: Number(line.quantity),
+            uom: line.uom,
+            rate: line.rate ? Number(line.rate) : undefined,
+            lotNo: line.lot_no || undefined,
+            serialNo: line.serial_no || undefined,
+            expiryDate: line.expiry_date || undefined,
+            warehouseId: receipt.warehouse_id,
+            userId: userPayload?.userId,
+          });
+
+          await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+        }
 
         if (line.serial_no || line.lot_no) {
           try {
@@ -589,3 +661,4 @@ export class GoodsReceiptService {
     return posted;
   }
 }
+

@@ -7,8 +7,6 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 
-// The scheduler refresh after a feed change has its own spec (refresh-scheduler-feed.spec.ts); here it is a stub.
-jest.mock('../../production/lifecycle/refresh-scheduler-feed', () => ({ refreshSchedulerFeedLines: jest.fn().mockResolvedValue([]) }));
 
 describe('BreedService', () => {
   let service: BreedService;

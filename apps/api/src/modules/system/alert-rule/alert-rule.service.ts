@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { masterScopeConditions, MasterScope } from '../../../common/master-data-scope';
+import { farmScope, nullableFarmScopeConditions } from '../../../common/farm-scope';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { alertRuleProblems } from './alert-rule.rules';
@@ -72,7 +73,7 @@ export class AlertRuleService {
   }
 
   private scope(tenantId: string) {
-    return [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table)];
+    return [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table), ...nullableFarmScopeConditions(farmScope(this.cls), table.farm_id)];
   }
 
   /**
@@ -136,6 +137,10 @@ export class AlertRuleService {
 
   /** Row 56: a farm filter must be a top-level FARM of the rule's company. */
   private async assertFarm(farmId: string | null | undefined, companyId: string | null | undefined, tenantId: string) {
+    const scope = farmScope(this.cls);
+    if (scope.farmBound && !farmId) throw new BadRequestException('A Farm Filter is required for your assigned farm.');
+    if (scope.farmId && farmId && scope.farmId !== farmId) throw new BadRequestException('Farm Filter is outside the active farm.');
+    if (scope.farmBound && farmId !== scope.farmId) throw new BadRequestException('Farm Filter is outside your assigned farm.');
     if (!farmId) return;
     const [farm] = await this.db.select({ id: schema.locationMaster.location_id }).from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId),

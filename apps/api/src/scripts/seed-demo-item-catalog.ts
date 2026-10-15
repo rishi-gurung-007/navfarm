@@ -184,7 +184,7 @@ async function run() {
         { code: 'TPL-RAW', description: 'Raw Material', itemType: 'RAW_MATERIAL', valuation: 'FIFO', seriesCode: 'NS-RAW', seriesPrefix: 'RAW' },
         { code: 'TPL-MED', description: 'Medicine', itemType: 'MEDICINE', valuation: 'FIFO', seriesCode: 'NS-MED', seriesPrefix: 'MED' },
         { code: 'TPL-VAC', description: 'Vaccine', itemType: 'VACCINE', valuation: 'FIFO', seriesCode: 'NS-VAC', seriesPrefix: 'VAC' },
-        { code: 'TPL-LVS', description: 'Livestock', itemType: 'LIVESTOCK', valuation: 'STANDARD', seriesCode: 'NS-LVS', seriesPrefix: 'LVS' },
+        { code: 'TPL-LVS', description: 'Living Asset', itemType: 'LIVING_ASSET', valuation: 'STANDARD', seriesCode: 'NS-LVS', seriesPrefix: 'LVS' },
       ];
       const existingModernSeries = await tx.select({ id: schema.noSeries.id, code: schema.noSeries.code })
         .from(schema.noSeries);

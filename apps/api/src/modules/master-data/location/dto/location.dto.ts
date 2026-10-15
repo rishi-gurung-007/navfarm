@@ -534,6 +534,12 @@ export class QueryLocationDto extends MasterListQueryDto {
   @IsBoolean()
   rootOnly?: boolean;
 
+  @ApiProperty({ description: 'Administrative farm selector lookup; does not narrow an administrator to the currently selected farm', required: false })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' ? true : value === 'false' ? false : value)
+  @IsBoolean()
+  farmPicker?: boolean;
+
   @ApiProperty({ description: 'Filter by active status', required: false })
   @IsOptional()
   @Transform(({ value }) => {

@@ -68,14 +68,10 @@ export function FeedLoadingPanel() {
   const dispatch = async (row: LoadingSheet) => { setSaving(row.loading_sheet_id); try { await api.post(`/feed-requisition/loading-sheets/${row.loading_sheet_id}/dispatch`, eta[row.loading_sheet_id] ? { estimatedArrivalAt: eta[row.loading_sheet_id] } : {}); showToast.success(t("flsDispatched")); await load(); } catch (err: any) { showToast.error(err?.message || t("flsDispatchFailed")); } finally { setSaving(null); } };
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
-      <div className="shrink-0">
-        <h2 className="text-base font-semibold text-(--text-primary)">{t("flsTitle")}</h2>
-        <p className="mt-0.5 text-sm text-(--text-secondary)">{t("flsIntro")}</p>
-      </div>
       {rows.length === 0 ? (
         <EmptyState icon={Truck} title={t("flsEmpty")} />
       ) : (
-        <div className="mt-4 max-h-[65vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
+        <div className="max-h-[65vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
           <table aria-label={t("flsListLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
             <thead><tr>
               {([["flsColSheet", "min-w-40"], ["flsColRequisition", ""], ["flsColFarm", "min-w-44"], ["flsColDeliveryDate", ""], ["flsColItem", "min-w-52"], ["flsColRequested", "text-right"], ["flsColApproved", "text-right"], ["flsColReason", "min-w-44"], ["flsColCompartment", "min-w-40"], ["flsColLoaded", "min-w-36"], ["flsColLoadedBy", "min-w-44"], ["flsColLoadedAt", ""], ["flsColStatus", ""], ["flsColEta", "whitespace-nowrap"], ["flsColNotification", "min-w-56"], ["flsColActions", "min-w-44"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}

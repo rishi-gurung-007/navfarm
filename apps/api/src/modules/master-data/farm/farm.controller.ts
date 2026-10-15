@@ -5,6 +5,7 @@ import { QueryFarmDto } from './dto/farm.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 /**
  * Read-only. Farms are rows of `location_master`, so they are created,
@@ -15,6 +16,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiTags('Farm Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('farm')
 export class FarmController {
   constructor(private readonly farmService: FarmService) {}

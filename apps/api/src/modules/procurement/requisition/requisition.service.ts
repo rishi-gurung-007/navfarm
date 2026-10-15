@@ -88,7 +88,7 @@ export class RequisitionService {
     // Task 16: a common requisition's number is issued by the company's
     // REQUISITION Number Series. Required for the same reason as above.
     private readonly numberSeries: NumberSeriesService,
-  ) {}
+  ) { }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -341,6 +341,7 @@ export class RequisitionService {
         .select({
           item_id: schema.itemMaster.item_id, item_code: schema.itemMaster.item_code,
           is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
+          is_biological_asset: schema.itemMaster.is_biological_asset,
         })
         .from(schema.itemMaster)
         .where(and(
@@ -351,6 +352,11 @@ export class RequisitionService {
       const found = new Map(rows.map((r) => [r.item_id, r]));
       const at = lines.findIndex((l) => l.item_id && !found.has(l.item_id));
       if (at >= 0) throw new BadRequestException(`Line ${at + 1}: item is not an active item of this company.`);
+      // Biological assets are not stock (Rishi, 14 Oct): a requisition cannot ask for one.
+      const bio = lines.findIndex((l) => l.item_id && found.get(l.item_id)?.is_biological_asset);
+      if (bio >= 0) {
+        throw new BadRequestException(`Line ${bio + 1}: ${found.get(lines[bio].item_id!)?.item_code} is a biological asset. Biological assets are not held in stock, so they cannot be requisitioned; animals are registered from their GRN in the Animal Register.`);
+      }
       // WP4a fix round 1: an item carries only the identity it tracks — the
       // same rule the released Item Tracking route applies.
       lines.forEach((l, i) => {
@@ -499,7 +505,9 @@ export class RequisitionService {
         is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
       })
       .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), eq(schema.itemMaster.is_blocked, false), isNull(schema.itemMaster.deleted_at)))
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at),
+        // Biological assets are not stock (14 Oct): a requisition cannot ask for one.
+        eq(schema.itemMaster.is_biological_asset, false)))
       .orderBy(schema.itemMaster.item_code);
     // MySQL hands these back as tinyint 1/0; the editor branches on them, so
     // they cross the wire as real booleans rather than truthy numbers.

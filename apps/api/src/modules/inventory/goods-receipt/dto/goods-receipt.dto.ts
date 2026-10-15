@@ -155,6 +155,11 @@ export class QueryGoodsReceiptDto {
   @IsUUID()
   warehouseId?: string;
 
+  @ApiProperty({ description: 'Animal registration (14 Oct): only posted GRNs that still hold at least one animal of this item in stock, each with animals_left.', required: false })
+  @IsOptional()
+  @IsUUID()
+  animalItemId?: string;
+
   @ApiProperty({ description: 'Goods receipts have no is_active flag — findAll already excludes soft-deleted rows unconditionally. Declared so pickers can send the same isActive param every other list endpoint accepts without a 400.', required: false })
   @IsOptional()
   @IsBoolean()

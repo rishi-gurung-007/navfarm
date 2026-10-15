@@ -25,7 +25,7 @@ import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { withTenantTransaction } from '../common/tenant-transaction';
 import { BatchService } from '../modules/production/batch/batch.service';
 import { SystemSchedulerService } from '../modules/production/scheduler-header/system-scheduler.service';
-import { SchedulerHeaderService } from '../modules/production/scheduler-header/scheduler-header.service';
+import { SchedulerHeaderService, ACTIVITIES_LOCKED_MESSAGE } from '../modules/production/scheduler-header/scheduler-header.service';
 import * as schema from '../core/database/schema';
 import { bootApp, buildDemoContext, inTenant } from './demo/harness';
 import { createItemLookup } from './demo/batch-helpers';
@@ -199,44 +199,25 @@ async function scenario(ctx: DemoContext) {
       answer === 'SYSTEM' ? [true, true, ['Farrowing feed']] : [true, false, []]);
   }
 
-  console.log('\n[7] Copying activities into an empty scheduler');
+  console.log('\n[7] A batch scheduler\'s activities are fixed once it exists; a system scheduler is still filled from one');
   {
-    // The EMPTY batch from step 3 has a header and no lines.
+    // 14 Oct (Rishi): a scheduler's activities are set when it is created — copying in, adding or removing is refused.
     const [emptyBatch] = await db.select({ batch_id: schema.batchHeader.batch_id }).from(schema.batchHeader)
       .where(eq(schema.batchHeader.remarks, 'REHEARSAL system scheduler EMPTY')).limit(1);
     const { header: emptyHeader } = await linesOf(emptyBatch.batch_id, firstStageId);
-    const copied = await schedulers.copyLinesInto(emptyHeader!.scheduler_id, { source_type: 'SYSTEM', source_id: firstOwn.system_scheduler_id }, ctx.tenantId, actor);
-    const afterSystem = await linesOf(emptyBatch.batch_id, firstStageId);
-    check('copy from a system scheduler: its 3 lines, marked SYSTEM, origin recorded',
-      [afterSystem.lines.map((l) => [l.activity_name, l.source]), afterSystem.header?.system_scheduler_id === firstOwn.system_scheduler_id, copied.system_scheduler_name],
-      [[['Gestation feed (own breed)', 'SYSTEM'], ['Gestation weigh-in', 'SYSTEM'], ['Gestation dose', 'SYSTEM']], true, 'REHEARSAL Gestation — own breed']);
-    let refusedAgain = '';
-    try {
-      await schedulers.copyLinesInto(emptyHeader!.scheduler_id, { source_type: 'SYSTEM', source_id: firstOwn.system_scheduler_id }, ctx.tenantId, actor);
-    } catch (err) {
-      refusedAgain = err instanceof ConflictException ? 'ConflictException' : String(err);
-    }
-    check('a second copy into a scheduler that now has activities is refused', refusedAgain, 'ConflictException');
+    const refusal = async (attempt: () => Promise<unknown>) => {
+      try { await attempt(); return 'allowed'; } catch (err) { return err instanceof Error ? err.message : String(err); }
+    };
+    check('copying activities into an existing batch scheduler is refused',
+      await refusal(() => schedulers.copyLinesInto(emptyHeader!.scheduler_id, { source_type: 'SYSTEM', source_id: firstOwn.system_scheduler_id }, ctx.tenantId, actor)),
+      ACTIVITIES_LOCKED_MESSAGE);
+    check('adding a line to an existing batch scheduler is refused',
+      await refusal(() => schedulers.addLine(emptyHeader!.scheduler_id, feedLine('Late feed', 0.4) as any, ctx.tenantId, actor)),
+      ACTIVITIES_LOCKED_MESSAGE);
 
-    // A batch scheduler with its only line removed: the copy numbers on after it, from another batch's scheduler.
+    // An empty system scheduler (a template, still editable) filled from a batch's scheduler.
     const donorBatch = await makeBatch('REHEARSAL copy donor', 'SYSTEM');
     const donor = await linesOf(donorBatch, firstStageId);
-    const takerBatch = await makeBatch('REHEARSAL copy taker', 'EMPTY');
-    const taker = await linesOf(takerBatch, firstStageId);
-    await schedulers.addLine(taker.header!.scheduler_id, feedLine('Taker own feed', 0.4) as any, ctx.tenantId, actor);
-    const takerLine = (await linesOf(takerBatch, firstStageId)).lines[0];
-    await schedulers.removeLine(taker.header!.scheduler_id, takerLine.line_id, ctx.tenantId, actor);
-    await schedulers.copyLinesInto(taker.header!.scheduler_id, { source_type: 'BATCH', source_id: donor.header!.scheduler_id }, ctx.tenantId, actor);
-    const afterBatch = await linesOf(takerBatch, firstStageId);
-    const active = afterBatch.lines.filter((l) => l.is_active);
-    check("copy from another batch's scheduler: its 3 lines, MANUAL, numbered after the removed one, no origin",
-      [active.map((l) => [l.line_seq, l.activity_name, l.source]), afterBatch.header?.system_scheduler_id],
-      [[[2, 'Gestation feed (own breed)', 'MANUAL'], [3, 'Gestation weigh-in', 'MANUAL'], [4, 'Gestation dose', 'MANUAL']], null]);
-    const dose = active.find((l) => l.activity_name === 'Gestation dose')!;
-    const doseDays = await db.select().from(schema.schedulerLineCustomDays).where(eq(schema.schedulerLineCustomDays.line_id, dose.line_id));
-    check("copy from a batch's scheduler carries the custom days", doseDays.map((d) => d.day_number).sort(), [10, 3].sort());
-
-    // An empty system scheduler filled from a batch's scheduler.
     const template = await systemSchedulers.create({ company_id: ctx.companyId, stage_id: nextStageId, breed_id: breed.breedId, scheduler_name: 'REHEARSAL from a batch' }, ctx.tenantId, actor);
     const filled = await systemSchedulers.copyLinesInto(template.system_scheduler_id, { source_type: 'BATCH', source_id: donor.header!.scheduler_id }, ctx.tenantId, actor);
     check('copy into an empty system scheduler from a batch: 3 lines, custom days kept',

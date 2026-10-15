@@ -181,7 +181,8 @@ export default function StockAdjustmentPanel() {
     itemParams.set("isActive", "true");
     itemParams.set("isBlocked", "false");
     api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/item?${itemParams.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
+    // Biological assets are not stock (14 Oct): they cannot be adjusted.
+    api.get(`/item?${itemParams.toString()}`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_biological_asset))).catch(() => {});
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

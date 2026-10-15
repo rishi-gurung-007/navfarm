@@ -119,3 +119,68 @@ export class QueryBioAssetLedgerDto {
   @Min(0)
   offset?: number;
 }
+
+/**
+ * The Bio Asset Ledger page (Rishi, 14 Oct): an animal's registration (+1) and its death (-1), filtered the way the
+ * Inventory Ledger is.
+ */
+export class QueryBioAssetLedgerEntriesDto {
+  @ApiProperty({ description: 'Filter by company UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  companyId?: string;
+
+  @ApiProperty({ description: 'Filter by biological item UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  itemId?: string;
+
+  @ApiProperty({ description: 'Filter by location UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiProperty({ description: 'POSITIVE (a registration) or NEGATIVE (a death)', required: false, enum: ['POSITIVE', 'NEGATIVE'] })
+  @IsOptional()
+  @IsIn(['POSITIVE', 'NEGATIVE'])
+  entryType?: 'POSITIVE' | 'NEGATIVE';
+
+  @ApiProperty({ description: 'PURCHASE (a GRN), ANIMAL_REGISTRATION or MORTALITY', required: false, enum: ['PURCHASE', 'ANIMAL_REGISTRATION', 'MORTALITY'] })
+  @IsOptional()
+  @IsIn(['PURCHASE', 'ANIMAL_REGISTRATION', 'MORTALITY'])
+  transactionType?: 'PURCHASE' | 'ANIMAL_REGISTRATION' | 'MORTALITY';
+
+  @ApiProperty({ description: 'Search document no., item, animal, batch or source GRN', required: false })
+  @IsOptional()
+  @IsString()
+  documentNo?: string;
+
+  @ApiProperty({ description: 'Posting date from (YYYY-MM-DD)', required: false })
+  @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @ApiProperty({ description: 'Posting date to (YYYY-MM-DD)', required: false })
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
+
+  @ApiProperty({ description: 'created_at (recently posted first) or posting_date', required: false, enum: ['created_at', 'posting_date'] })
+  @IsOptional()
+  @IsIn(['created_at', 'posting_date'])
+  sortBy?: 'created_at' | 'posting_date';
+
+  @ApiProperty({ description: 'Results per page', default: 250, required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
+}
+
+export class ExportBioAssetLedgerDto extends QueryBioAssetLedgerEntriesDto {
+  @ApiProperty({ description: 'File format: xlsx (default) or csv', required: false, enum: ['xlsx', 'csv'] })
+  @IsOptional()
+  @IsIn(['xlsx', 'csv'])
+  format?: 'xlsx' | 'csv';
+}

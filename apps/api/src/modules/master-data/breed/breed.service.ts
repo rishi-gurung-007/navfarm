@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { validateFeedLines, linesOf, siblingKey, type FeedLine } from './lifecycle-feed-lines';
 import { feedQtyToKg } from '../../production/lifecycle/feed-qty-kg';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne, inArray, isNotNull, sql, getTableColumns, count, asc, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -25,10 +25,10 @@ import { listFilterConditions, listOrderBy } from '../../../common/master-list-q
 import {
   assertLobInScope,
   farmScope,
+  nullableFarmScopeConditions,
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
 import { findEffectiveOverlap } from '../../production/lifecycle/lifecycle-effective.rules';
-import { refreshSchedulerFeedLines } from '../../production/lifecycle/refresh-scheduler-feed';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -872,6 +872,10 @@ export class BreedService {
 
   /** Master Setup r30/r39: a farm override must name a FARM location of the breed's own company. */
   private async assertFarmOverride(farmId: string | null | undefined, companyId: string | null | undefined, tenantId: string) {
+    const scope = farmScope(this.cls);
+    if (scope.farmBound && !farmId) throw new ForbiddenException('A farm override is required for your assigned farm.');
+    if (scope.farmId && farmId && scope.farmId !== farmId) throw new ForbiddenException('Farm override is outside the active farm.');
+    if (scope.farmBound && farmId !== scope.farmId) throw new ForbiddenException('Farm override is outside your assigned farm.');
     if (!farmId) return;
     const [farm] = await this.db
       .select({ location_id: schema.locationMaster.location_id, company_id: schema.locationMaster.company_id, location_type: schema.locationMaster.location_type })
@@ -928,29 +932,8 @@ export class BreedService {
     }
   }
 
-  /**
-   * After a stage's feed changes, the open batch schedulers of that breed and stage follow it for the days not yet
-   * entered (Rishi, 13 Oct; refresh-scheduler-feed.ts). Each scheduler changed is written to the audit log.
-   */
-  private async refreshStageSchedulers(stages: Array<{ breed_id: string; stage_id: string } | undefined>, tenantId: string, userPayload?: any) {
-    const seen = new Set<string>();
-    for (const { breed_id, stage_id } of stages.filter((s): s is { breed_id: string; stage_id: string } => !!s)) {
-      const key = `${breed_id}|${stage_id}`;
-      if (!breed_id || !stage_id || seen.has(key)) continue;
-      seen.add(key);
-      const changed = await refreshSchedulerFeedLines(this.db, { tenantId, breedId: breed_id, stageId: stage_id });
-      for (const schedulerId of changed) {
-        await this.auditService.log({
-          tenantId,
-          userId: userPayload?.userId,
-          action: 'UPDATE',
-          entityName: 'scheduler_header',
-          entityId: schedulerId,
-          newValues: { feed_lines_refreshed_from: 'breed_lifecycle_stages', breed_id, stage_id },
-        });
-      }
-    }
-  }
+  // A stage's changes do not reach existing schedulers (Rishi, 14 Oct): a scheduler's activities are taken from the
+  // stage when it is created and fixed from then on (scheduler-header/stage-scheduler-lines.ts).
 
   /**
    * The rows that make one stage record (its Feed Consumption lines, 13 Oct): same breed, stage, farm override,
@@ -1105,7 +1088,6 @@ export class BreedService {
       await this.assertNoEffectiveOverlap({ breed_id: dto.breed_id, stage_id: dto.stage_id, feed_item_id: line.feed_item_id, calc_unit: dto.calc_unit, period_from: line.period_from, period_to: line.period_to, farm_id: dto.farm_id || null, season_type: dto.season_type ?? null, category: dto.category ?? null, company_id: breed.company_id ?? null }, tenantId, [lifecycleId]);
       await this.db.insert(schema.breedLifecycleStages).values({ ...newLifecycleStage, ...this.lineColumns(line), lifecycle_id: randomUUID(), lifecycle_code: null });
     }
-    await this.refreshStageSchedulers([{ breed_id: dto.breed_id, stage_id: dto.stage_id }], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1170,7 +1152,10 @@ export class BreedService {
       .from(schema.breedLifecycleStages)
       .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
       .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
-      .where(eq(schema.breedLifecycleStages.lifecycle_id, id))
+      .where(and(
+        eq(schema.breedLifecycleStages.lifecycle_id, id),
+        ...nullableFarmScopeConditions(farmScope(this.cls), schema.breedLifecycleStages.farm_id),
+      ))
       .limit(1);
 
     if (!lifecycleStage) {
@@ -1191,6 +1176,7 @@ export class BreedService {
 
   async findAllLifecycleStages(query: QueryBreedLifecycleStageDto, tenantId: string) {
     const conditions: any[] = [eq(schema.breedLifecycleStages.tenant_id, tenantId)];
+    conditions.push(...nullableFarmScopeConditions(farmScope(this.cls), schema.breedLifecycleStages.farm_id));
     const scopeConditions = masterScopeConditions(this.cls, schema.breedMaster);
     if (scopeConditions.length) {
       conditions.push(inArray(schema.breedLifecycleStages.breed_id,
@@ -1437,8 +1423,6 @@ export class BreedService {
           .where(eq(schema.breedLifecycleStages.lifecycle_id, r.lifecycle_id));
       }
     }
-    // The stage it was and the stage it is (a changed Stage moves the feed from one to the other).
-    await this.refreshStageSchedulers([lifecycleStage, updated], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1462,7 +1446,6 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set({ is_active: false })
       .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
-    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,
@@ -1495,7 +1478,6 @@ export class BreedService {
       .update(schema.breedLifecycleStages)
       .set({ is_active: true })
       .where(inArray(schema.breedLifecycleStages.lifecycle_id, rowIds.length ? rowIds : [id]));
-    await this.refreshStageSchedulers([lifecycleStage], tenantId, userPayload);
 
     await this.auditService.log({
       tenantId,

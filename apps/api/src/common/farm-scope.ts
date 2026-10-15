@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, SetMetadata } from '@nestjs/common';
-import { and, eq, isNull, sql, SQL } from 'drizzle-orm';
+import { and, eq, isNull, or, sql, SQL } from 'drizzle-orm';
 import { AnyMySqlColumn } from 'drizzle-orm/mysql-core';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -25,8 +25,11 @@ export interface FarmScope {
   /** The one farm in force, or null for every farm the company scope allows. */
   farmId: string | null;
   restricted: boolean;
+  /** True only for FARM_MANAGER/STANDARD_USER, whose farm is assigned rather than selected. */
+  farmBound?: boolean;
   companyId: string | null;
-  /** The validated active area's LOB — restricted users only. */
+  /** The validated active area's LOB. In an operational workspace this bounds
+   * both restricted users and administrators when "All farms" is selected. */
   lobId: string | null;
 }
 
@@ -87,7 +90,10 @@ export async function resolveFarmScope(db: Db, input: ResolveFarmScopeInput): Pr
     ? user.companyId
     : null;
   const companyId = activeArea?.company_id ?? activeCompanyId ?? assignedCompanyId ?? null;
-  const lobId = restricted ? activeArea!.lob_id : null;
+  // "All farms" is still an operational-area selection, not a company-wide
+  // selection. Keep every farm-owned query inside the active LOB for admins as
+  // well; a specific farm further narrows this same scope below.
+  const lobId = activeArea?.lob_id ?? null;
 
   if (isFarmBoundUserType(user.userType)) {
     if (!user.farmId) throw new ForbiddenException('No farm is assigned to this user.');
@@ -95,18 +101,52 @@ export async function resolveFarmScope(db: Db, input: ResolveFarmScopeInput): Pr
     if (!(await activeFarmOfCompany(db, user.farmId, companyId ?? undefined, tenantId))) {
       throw new ForbiddenException('Your assigned farm is not an active farm of this company.');
     }
-    return { farmId: user.farmId, restricted, companyId, lobId };
+    return { farmId: user.farmId, restricted, farmBound: true, companyId, lobId };
   }
 
   if (requested && !(await activeFarmOfCompany(db, requested, companyId ?? undefined, tenantId))) {
     throw new ForbiddenException('Not authorized for this farm.');
   }
-  return { farmId: requested ?? null, restricted, companyId, lobId };
+  return { farmId: requested ?? null, restricted, farmBound: false, companyId, lobId };
 }
 
-/** `column` holds a location on `farmId`: the farm row itself, or a row whose farm_id names it. */
+/**
+ * `column` holds a location on `farmId`.
+ *
+ * `farm_id` is normally denormalized onto descendants, so retain that fast
+ * path for existing queries. `parent_location_id` is the canonical topology,
+ * however, and older/imported rows can have a missing farm_id. The recursive
+ * branch makes the scope correct for every descendant (FARM -> SHED/PEN,
+ * FARM -> SILO/STORE, and MILL -> BIN) without inventing a second hierarchy.
+ */
 export function locationOnFarm(column: AnyMySqlColumn, farmId: string): SQL {
-  return sql`${column} IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ${farmId} OR lf.farm_id = ${farmId})`;
+  return sql`(
+    ${column} IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ${farmId} OR lf.farm_id = ${farmId})
+    OR ${column} IN (
+      WITH RECURSIVE farm_location_tree AS (
+        SELECT root.location_id, root.parent_location_id
+        FROM location_master root
+        WHERE root.location_id = ${farmId}
+        UNION ALL
+        SELECT child.location_id, child.parent_location_id
+        FROM location_master child
+        INNER JOIN farm_location_tree parent ON child.parent_location_id = parent.location_id
+      )
+      SELECT location_id FROM farm_location_tree
+    )
+  )`;
+}
+
+/** Scope a location-owned row, including the farm root itself and all descendants. */
+export function farmLocationScopeConditions(scope: FarmScope, locationIdColumn: AnyMySqlColumn): SQL[] {
+  return scope.farmId ? [locationOnFarm(locationIdColumn, scope.farmId)] : [];
+}
+
+/** Scope a nullable farm override. Administrators retain company/default rows; assigned farm users do not. */
+export function nullableFarmScopeConditions(scope: FarmScope, farmIdColumn: AnyMySqlColumn): SQL[] {
+  if (!scope.farmId) return [];
+  if (scope.farmBound) return [eq(farmIdColumn, scope.farmId)];
+  return [or(eq(farmIdColumn, scope.farmId), isNull(farmIdColumn))!];
 }
 
 /** Scope a row whose only operational boundary is a location/warehouse id. */
@@ -142,12 +182,23 @@ export function batchReferenceScopeConditions(scope: FarmScope, batchIdColumn: A
   return conditions;
 }
 
-/** `column` holds an animal standing on `farmId`: by its location, or by its batch when it has none. */
+/** `column` holds an animal standing on `farmId`: by its current location or current batch. */
 export function animalOnFarm(animalIdColumn: AnyMySqlColumn, farmId: string): SQL {
   return sql`${animalIdColumn} IN (
     SELECT af.animal_id FROM animal_register af
-    WHERE af.current_location_id IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ${farmId} OR lf.farm_id = ${farmId})
-       OR (af.current_location_id IS NULL AND af.current_batch_id IN (SELECT bf.batch_id FROM batch_header bf WHERE bf.farm_id = ${farmId}))
+    WHERE af.current_location_id IN (
+      WITH RECURSIVE farm_location_tree AS (
+        SELECT root.location_id, root.parent_location_id
+        FROM location_master root
+        WHERE root.location_id = ${farmId}
+        UNION ALL
+        SELECT child.location_id, child.parent_location_id
+        FROM location_master child
+        INNER JOIN farm_location_tree parent ON child.parent_location_id = parent.location_id
+      )
+      SELECT location_id FROM farm_location_tree
+    )
+       OR af.current_batch_id IN (SELECT bf.batch_id FROM batch_header bf WHERE bf.farm_id = ${farmId})
   )`;
 }
 

@@ -100,6 +100,11 @@ export class StockAdjustmentService {
       .from(schema.itemMaster)
       .where(inArray(schema.itemMaster.item_id, itemIds));
     const itemMap = new Map(items.map((i) => [i.item_id, i]));
+    // Biological assets are not stock (Rishi, 14 Oct): there is nothing in stock to adjust.
+    const bio = items.find((i) => i.is_biological_asset);
+    if (bio) {
+      throw new BadRequestException(`${bio.item_code} — ${bio.item_name} is a biological asset. Biological assets are not held in stock, so they cannot be on a stock adjustment; animals are registered from their GRN in the Animal Register.`);
+    }
 
     const values: Array<typeof schema.stockAdjustmentLine.$inferInsert> = [];
 

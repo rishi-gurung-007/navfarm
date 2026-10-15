@@ -40,8 +40,8 @@ export const ITEM_CATEGORY_CATALOG = [
   { key: 'CAT-SWINE-FEEDS', name: 'Swine Feeds', itemType: 'FEED' },
   { key: 'CAT-VET-MEDS', name: 'Vet Medicines', itemType: 'MEDICINE' },
   { key: 'CAT-VET-VACCINES', name: 'Swine Vaccines', itemType: 'VACCINE' },
-  { key: 'CAT-BIO-BREEDING', name: 'Breeding Stock', itemType: 'LIVESTOCK' },
-  { key: 'CAT-BIO-COMMERCIAL', name: 'Grower Finisher', itemType: 'LIVESTOCK' },
+  { key: 'CAT-BIO-BREEDING', name: 'Breeding Stock', itemType: 'LIVING_ASSET' },
+  { key: 'CAT-BIO-COMMERCIAL', name: 'Grower Finisher', itemType: 'LIVING_ASSET' },
 ] as const;
 
 /**
@@ -90,10 +90,10 @@ export const ITEM_CATALOG_1: SeedItem[] = [
       { key: 'MED-IVERMECTIN', name: 'Ivermectin 1% Swine Dewormer 100ml', type: 'MEDICINE', cat: 'CAT-VET-MEDS', sub: 'ANTIPARASITIC', uom: 'VIAL', val: 'FIFO', cost: '280.0000', bio: false },
       { key: 'VAC-PARVO-LEPTO', name: 'Parvo-Shield L5 Swine Vaccine (50 Doses)', type: 'VACCINE', cat: 'CAT-VET-VACCINES', sub: 'BREEDING_VACCINE', uom: 'DOSE', val: 'FIFO', cost: '85.0000', bio: false },
       { key: 'VAC-PRRS-MLV', name: 'Ingelvac PRRS MLV Swine Vaccine (50 Doses)', type: 'VACCINE', cat: 'CAT-VET-VACCINES', sub: 'RESPIRATORY_VACCINE', uom: 'DOSE', val: 'FIFO', cost: '120.0000', bio: false },
-      { key: 'BIO-SWINE-PIGLET', name: 'Suckling Live Piglet (0-4 Wks)', type: 'LIVESTOCK', cat: 'CAT-BIO-COMMERCIAL', sub: 'PIGLET_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '3500.0000', bio: true },
-      { key: 'BIO-SWINE-GILT', name: 'Replacement Breeding Gilt', type: 'LIVESTOCK', cat: 'CAT-BIO-BREEDING', sub: 'GILT_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '18000.0000', bio: true },
-      { key: 'BIO-SWINE-SOW', name: 'Mature Parity Breeding Sow', type: 'LIVESTOCK', cat: 'CAT-BIO-BREEDING', sub: 'SOW_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '28000.0000', bio: true },
-      { key: 'BIO-SWINE-BOAR', name: 'Mature Herd Sire Boar', type: 'LIVESTOCK', cat: 'CAT-BIO-BREEDING', sub: 'BOAR_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '45000.0000', bio: true },
+      { key: 'BIO-SWINE-PIGLET', name: 'Suckling Live Piglet (0-4 Wks)', type: 'LIVING_ASSET', cat: 'CAT-BIO-COMMERCIAL', sub: 'PIGLET_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '3500.0000', bio: true },
+      { key: 'BIO-SWINE-GILT', name: 'Replacement Breeding Gilt', type: 'LIVING_ASSET', cat: 'CAT-BIO-BREEDING', sub: 'GILT_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '18000.0000', bio: true },
+      { key: 'BIO-SWINE-SOW', name: 'Mature Parity Breeding Sow', type: 'LIVING_ASSET', cat: 'CAT-BIO-BREEDING', sub: 'SOW_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '28000.0000', bio: true },
+      { key: 'BIO-SWINE-BOAR', name: 'Mature Herd Sire Boar', type: 'LIVING_ASSET', cat: 'CAT-BIO-BREEDING', sub: 'BOAR_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '45000.0000', bio: true },
 ];
 
 export const ITEM_CATALOG_2: SeedItem[] = [
@@ -105,8 +105,8 @@ export const ITEM_CATALOG_2: SeedItem[] = [
       { key: 'FEED-FINISHER', name: 'Finisher High-Gain Porker Feed (15.5% CP)', type: 'FEED', cat: 'CAT-SWINE-FEEDS', sub: 'FINISHER_FEED', uom: 'KG', val: 'FIFO', cost: '31.0000', bio: false },
       { key: 'MED-IVERMECTIN', name: 'Ivermectin 1% Swine Dewormer 100ml', type: 'MEDICINE', cat: 'CAT-VET-MEDS', sub: 'ANTIPARASITIC', uom: 'VIAL', val: 'FIFO', cost: '280.0000', bio: false },
       { key: 'MED-TYLOSIN', name: 'Tylosin Tartrate 100g Soluble Powder', type: 'MEDICINE', cat: 'CAT-VET-MEDS', sub: 'ANTIBIOTIC', uom: 'PACK', val: 'FIFO', cost: '350.0000', bio: false },
-      { key: 'BIO-SWINE-PIGLET', name: 'Weaned Feeder Piglet (7-10kg)', type: 'LIVESTOCK', cat: 'CAT-BIO-COMMERCIAL', sub: 'PIGLET_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '4200.0000', bio: true },
-      { key: 'BIO-SWINE-FINISHER', name: 'Finished Market Porker (105kg Live)', type: 'LIVESTOCK', cat: 'CAT-BIO-COMMERCIAL', sub: 'FINISHER_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '12500.0000', bio: true },
+      { key: 'BIO-SWINE-PIGLET', name: 'Weaned Feeder Piglet (7-10kg)', type: 'LIVING_ASSET', cat: 'CAT-BIO-COMMERCIAL', sub: 'PIGLET_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '4200.0000', bio: true },
+      { key: 'BIO-SWINE-FINISHER', name: 'Finished Market Porker (105kg Live)', type: 'LIVING_ASSET', cat: 'CAT-BIO-COMMERCIAL', sub: 'FINISHER_LIVESTOCK', uom: 'HEAD', val: 'BIO_ASSET', cost: '12500.0000', bio: true },
       { key: 'LVS-DRESSED-PORK', name: 'Dressed Pork Carcass (Wholesale Cut)', type: 'FINISHED_GOODS', cat: 'CAT-BIO-COMMERCIAL', sub: 'CARCASS', uom: 'KG', val: 'FIFO', cost: '185.0000', bio: false },
       // What a semen collection posts to stock: doses, lot-tracked (each collection is a lot with its own QR).
       { key: 'FG-BOAR-SEMEN', name: 'BOAR semen', type: 'FINISHED_GOODS', cat: 'CAT-BIO-BREEDING', sub: 'SEMEN', uom: 'DOSE', val: 'FIFO', cost: '120.0000', bio: false, lot: true },

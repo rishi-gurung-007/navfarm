@@ -88,9 +88,9 @@ export default function WorkspaceScopeSwitcher({
     // Fetch companies and operational areas
     const tenantId = getStoredTenantId() || storedUser?.tenantId;
     const isTenantAdminUser = storedUser?.userType === "TENANT_ADMIN";
-    // A STANDARD_USER's farm is fixed (user_master.farm_id) — they never pick
-    // one, so there is nothing to fetch for them here (decided 2026-09-14/15).
-    const canSelectFarmUser = storedUser?.userType !== "STANDARD_USER";
+    // Farm-bound users' farms are fixed (user_master.farm_id) — they never pick
+    // one, so there is nothing to fetch for them here.
+    const canSelectFarmUser = !["STANDARD_USER", "FARM_MANAGER"].includes(storedUser?.userType || "");
 
     if (tenantId) {
       api.get(`/company/tenant/${tenantId}`).then((res: any) => {
@@ -148,7 +148,7 @@ export default function WorkspaceScopeSwitcher({
         // isActive=true: a retired farm (FARM-001 sits at is_active=0) must not
         // be offered as a choice, because pinning it 403s every farm-scoped
         // request and the screens read as if the data were gone.
-        api.get(`/location?locationType=FARM&rootOnly=true&isActive=true`).then((res: any) => {
+        api.get(`/location?locationType=FARM&rootOnly=true&isActive=true&farmPicker=true`).then((res: any) => {
           const rows = Array.isArray(res) ? res : res?.data;
           if (Array.isArray(rows)) setFarms(rows);
         }).catch(() => {});
@@ -251,13 +251,12 @@ export default function WorkspaceScopeSwitcher({
 
   const isTenantAdmin = user?.userType === "TENANT_ADMIN";
   const isCompanyAdmin = user?.userType === "COMPANY_ADMIN" || isTenantAdmin;
-  // Every user type except STANDARD_USER may view every farm or select one
-  // (decided 2026-09-14/15) — a STANDARD_USER's farm is fixed to
-  // user_master.farm_id and is never a switch.
-  const canSelectFarm = !!user && user.userType !== "STANDARD_USER";
+  // Farm managers and standard users are fixed to user_master.farm_id. Only
+  // admins may select All Farms or another farm.
+  const canSelectFarm = !!user && !["STANDARD_USER", "FARM_MANAGER"].includes(user.userType);
 
   const standardUserFarm = user?.farm;
-  const fixedFarmLabel = user?.userType === "STANDARD_USER" && standardUserFarm
+  const fixedFarmLabel = ["STANDARD_USER", "FARM_MANAGER"].includes(user?.userType || "") && standardUserFarm
     ? t("wsFixedFarmLabel", { code: standardUserFarm.location_code, name: standardUserFarm.location_name || standardUserFarm.location_code })
     : null;
 
@@ -485,8 +484,7 @@ export default function WorkspaceScopeSwitcher({
               )}
             </div>
 
-            {/* 4. Farms — every user type but STANDARD_USER may view every
-                farm or pin the workspace to one (decided 2026-09-14/15). */}
+            {/* 4. Farms — admins may view every farm or pin the workspace to one. */}
             {canSelectFarm && farms.length > 0 && (
               <div>
                 <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{t("wsFarms")}</div>

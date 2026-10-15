@@ -150,7 +150,7 @@ describe('RolesGuard farm scope', () => {
       { userType: 'COMPANY_ADMIN', tenantId: 'tenant-1', companyId: 'co-1' },
     );
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
-    expect(set).toHaveBeenCalledWith('farmScope', { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+    expect(set).toHaveBeenCalledWith('farmScope', { farmId: null, restricted: false, farmBound: false, companyId: 'co-1', lobId: null });
   });
 
   it('refuses a standard user on a farm-scoped route without an area header', async () => {
@@ -273,4 +273,3 @@ describe('RolesGuard document actions, persona constraints and explicit grants',
     await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
   });
 });
-

@@ -13,6 +13,7 @@ import { AnimalController } from '../modules/piggery/animal/animal.controller';
 import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-medication-log.controller';
 import { AnimalMovementLogController } from '../modules/piggery/animal-movement-log/animal-movement-log.controller';
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
+import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
@@ -31,7 +32,13 @@ import { FeedRequisitionController } from '../modules/procurement/feed-requisiti
 import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 import { FeedStockCountController } from '../modules/inventory/feed-stock-count/feed-stock-count.controller';
 import { FeedSettingsController } from '../modules/inventory/feed-settings/feed-settings.controller';
-import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
+import { AlertRuleController } from '../modules/system/alert-rule/alert-rule.controller';
+import { LocationController } from '../modules/master-data/location/location.controller';
+import { ShedController } from '../modules/master-data/shed/shed.controller';
+import { WarehouseController } from '../modules/master-data/warehouse/warehouse.controller';
+import { BinDietAssignmentController } from '../modules/master-data/bin-diet-assignment/bin-diet-assignment.controller';
+import { BreedLifecycleStageController } from '../modules/master-data/breed/breed-lifecycle-stage.controller';
+import { FarmController } from '../modules/master-data/farm/farm.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -54,7 +61,7 @@ import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery
  */
 const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController, SystemSchedulerController,
-  ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController,
+  ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController, PiggeryAnalyticsController,
   GoodsReceiptController, StockAdjustmentController, StockTransferController,
   InventoryLedgerController, FeedForecastController, FeedAlertController,
   AlertController, MilkController, QcController, QrCodeController,
@@ -66,7 +73,13 @@ const SCOPED = {
   ResourceLedgerController,
   FeedStockCountController,
   FeedSettingsController,
-  PiggeryAnalyticsController,
+  AlertRuleController,
+  LocationController,
+  ShedController,
+  WarehouseController,
+  BinDietAssignmentController,
+  BreedLifecycleStageController,
+  FarmController,
 };
 
 const EXEMPT: Record<string, string> = {
@@ -76,15 +89,12 @@ const EXEMPT: Record<string, string> = {
   'production/stage/stage.controller.ts': 'Master data, not farm-specific.',
 
   // piggery / master-data breed family
-  'master-data/breed/breed-lifecycle-stage.controller.ts': 'Master data, not farm-specific.',
   'master-data/breed/species.controller.ts': 'Master data, not farm-specific.',
 
   // master-data — not farm-scoped by decision (records are shared across a company's farms)
   'master-data/activity/activity.controller.ts': 'Master data, not farm-specific.',
-  'master-data/bin-diet-assignment/bin-diet-assignment.controller.ts': 'Company mill-production master; a BIN supplies requisitions across farm destinations and is company-scoped.',
   'master-data/customer/customer.controller.ts': 'Master data, not farm-specific.',
   'master-data/disease/disease.controller.ts': 'Master data, not farm-specific.',
-  'master-data/farm/farm.controller.ts': 'Master data defining the farms themselves, not farm-specific operational records.',
   'master-data/feed-formula/feed-formula.controller.ts': 'Master data, not farm-specific.',
   'master-data/item-attribute/item-attribute.controller.ts': 'Master data, not farm-specific.',
   'master-data/item-category/item-category.controller.ts': 'Master data, not farm-specific.',
@@ -94,15 +104,12 @@ const EXEMPT: Record<string, string> = {
   'inventory/inventory-setup/inventory-setup.controller.ts': 'Company-level inventory setup, not farm-specific.',
   'master-data/kpi-metric/kpi-metric.controller.ts': 'Master data, not farm-specific.',
   'master-data/location-type/location-type.controller.ts': 'Master data, not farm-specific.',
-  'master-data/location/location.controller.ts': 'Master data; locations reference a farm but the master list itself is not farm-scoped for access — write paths that place a record on a location go through assertLocationOnActiveFarm instead.',
   'master-data/no-series/no-series.controller.ts': 'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
   'master-data/reporting-period/reporting-period.controller.ts': 'Company master (Reporting Period Master, D20); periods are company-wide, not a farm\'s.',
   'master-data/resource/resource.controller.ts': 'Master data, not farm-specific.',
-  'master-data/shed/shed.controller.ts': 'Master data, not farm-specific.',
   'master-data/supplier/supplier.controller.ts': 'Master data, not farm-specific.',
   'master-data/uom/uom.controller.ts': 'Master data, not farm-specific.',
-  'master-data/warehouse/warehouse.controller.ts': 'Master data, not farm-specific.',
 
   // core — identity and tenant administration
   'core/auth/auth.controller.ts': 'Authentication flows (login, tokens), not farm records.',
@@ -124,7 +131,6 @@ const EXEMPT: Record<string, string> = {
 
   // system — tenant/system administration and reference data
   'inventory/feed-scheduler/feed-scheduler.controller.ts': 'Admin-only test trigger and run log for the feed scheduler; jobs run each farm as system work, like the timer.',
-  'system/alert-rule/alert-rule.controller.ts': 'Company master (Alerts and Notifications Master); a rule\'s farm_id filters where it applies, it is not an access boundary.',
   'system/audit-log/audit-log.controller.ts': 'Tenant-wide audit trail across every module, not a farm record.',
   'system/costing-method/costing-method.controller.ts': 'System-admin-only reference master data, not farm records.',
   'system/country/country.controller.ts': 'System-admin-only reference master data, not farm records.',

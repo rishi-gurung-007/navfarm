@@ -173,3 +173,57 @@ describe('PiggeryAnalyticsService', () => {
     expect(result.facilityLocations[1].status).toBe('Standby');
   });
 });
+
+/**
+ * The GM dashboard keeps to the caller's farm AND line of business (14/15 Oct).
+ *
+ * A restricted user may hold a LOB and no farm — OPERATIONAL_ADMIN is in RESTRICTED_USER_TYPES but not in
+ * FARM_BOUND_USER_TYPES, so farmScope() returns farmId: null with lobId set. The herd and batch sections get both
+ * halves from animalScopeConditions / batchScopeConditions, but the litters, the matings and the farm list are
+ * scoped by this service itself; when they were scoped on the farm alone, such a user read the whole company's.
+ */
+describe('PiggeryAnalyticsService — a restricted user with a LOB and no farm', () => {
+  /** Every where() the dashboard runs, as SQL text. */
+  async function whereClausesFor(scope: Record<string, unknown>): Promise<string[]> {
+    const { MySqlDialect } = await import('drizzle-orm/mysql-core');
+    const dialect = new MySqlDialect();
+    const captured: string[] = [];
+    const chain: any = {};
+    for (const key of ['from', 'orderBy', 'limit', 'innerJoin', 'leftJoin', 'groupBy']) chain[key] = jest.fn(() => chain);
+    chain.where = jest.fn((condition: any) => {
+      if (condition) captured.push(dialect.sqlToQuery(condition).sql);
+      return chain;
+    });
+    chain.then = (resolve: any, reject: any) => Promise.resolve([]).then(resolve, reject);
+    const db = { select: jest.fn(() => chain) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PiggeryAnalyticsService,
+        { provide: ClsService, useValue: { get: jest.fn((key) => (key === 'tenantDb' ? db : key === 'farmScope' ? scope : null)) } },
+      ],
+    }).compile();
+    await module.get(PiggeryAnalyticsService).getGmDashboard('tenant-1', {} as any);
+    return captured;
+  }
+
+  const RESTRICTED = { farmId: null, restricted: true, companyId: 'company-1', lobId: 'lob-1' };
+
+  it('scopes the litters, the matings and the farm list to the LOB, not just to a farm', async () => {
+    const clauses = await whereClausesFor(RESTRICTED);
+    const touching = (table: string) => clauses.filter((c) => c.includes(table));
+
+    for (const table of ['farrowing_record', 'breeding_record']) {
+      const found = touching(table);
+      expect(found.length).toBeGreaterThan(0);
+      // The sow is matched against the animals of this LOB.
+      expect(found.some((c) => c.includes('animal_register') && c.includes('lob_id'))).toBe(true);
+    }
+    expect(touching('location_master').some((c) => c.includes('lob_id'))).toBe(true);
+  });
+
+  it('leaves the queries unscoped for an unrestricted caller with no farm', async () => {
+    const clauses = await whereClausesFor({ farmId: null, restricted: false, companyId: null, lobId: null });
+    expect(clauses.filter((c) => c.includes('farrowing_record')).some((c) => c.includes('lob_id'))).toBe(false);
+  });
+});

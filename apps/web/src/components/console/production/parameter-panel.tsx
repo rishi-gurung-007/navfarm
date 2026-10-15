@@ -75,7 +75,7 @@ export default function ParameterPanel() {
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
           it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVESTOCK") ||
+          it.item_type !== "LIVING_ASSET") ||
         it.item_id === form.item_id
     );
   }, [items, form.item_id]);

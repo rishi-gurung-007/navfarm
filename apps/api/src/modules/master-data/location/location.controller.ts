@@ -17,10 +17,12 @@ import { CreateLocationDto, UpdateLocationDto, QueryLocationDto } from './dto/lo
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Location Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('location')
 export class LocationController {
   constructor(private readonly locationService: LocationService) {}

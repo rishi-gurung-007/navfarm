@@ -42,6 +42,7 @@ export interface FeedReceiptControls {
   lines: Map<string, { label: string; feedType: string | null; loadingSheetId: string | null; loadingSheetNo: string | null }>;
 }
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
+import { assertNoBiologicalAssets } from '../../../common/biological-assets';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -223,6 +224,7 @@ export class StockTransferService {
   }
 
   private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
+    await assertNoBiologicalAssets(this.db, lines.map((l) => l.item_id), 'stock transfer');
     await this.db.insert(schema.stockTransferLine).values(
       lines.map((line, idx) => {
         const noteParts: string[] = [];

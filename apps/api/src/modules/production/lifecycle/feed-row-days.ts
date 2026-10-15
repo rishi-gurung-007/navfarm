@@ -48,18 +48,18 @@ export interface FeedRow {
 }
 
 /**
- * The single row covering dayOfStage, or an error kind when none or several
- * do. Matches purely by day range — if the caller hands it rows from more
- * than one breed/stage, that mixing is the caller's concern, not something
- * this function detects or guards against.
+ * Every row covering dayOfStage — one per feed, since a stage can give several feeds on the same days (Rishi, 14 Oct)
+ * — or an error kind when none does, or when one feed is covered twice (it would be counted twice). Matches purely by
+ * day range — if the caller hands it rows from more than one breed/stage, that mixing is the caller's concern, not
+ * something this function detects or guards against.
  */
-export function feedRowFor(rows: FeedRow[], dayOfStage: number, farmId?: string | null): { row: FeedRow } | { error: 'NONE' | 'OVERLAP' } {
+export function feedRowsFor(rows: FeedRow[], dayOfStage: number, farmId?: string | null): { rows: FeedRow[] } | { error: 'NONE' | 'OVERLAP' } {
   // Stage days only (Master Setup r35-r38, Rishi 13 Oct): the calendar comes from the batch's stage entry date, not the row.
   const matches = rows.filter((r) => dayOfStage >= r.fromDay && dayOfStage <= r.toDay);
   // Farm override (r30/r39): a row for this farm wins; otherwise the default (no farm). Rows of other farms never compete.
   const own = farmId ? matches.filter((r) => r.farmId === farmId) : [];
   const pool = own.length ? own : matches.filter((r) => !r.farmId);
   if (pool.length === 0) return { error: 'NONE' };
-  if (pool.length > 1) return { error: 'OVERLAP' };
-  return { row: pool[0] };
+  if (new Set(pool.map((r) => r.itemId)).size < pool.length) return { error: 'OVERLAP' };
+  return { rows: pool };
 }

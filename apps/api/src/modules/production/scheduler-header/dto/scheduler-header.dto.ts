@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, IsNumber, IsIn, IsArray, ValidateNested,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -341,6 +342,16 @@ export class CreateSchedulerLineDto {
   @IsOptional()
   @IsBoolean()
   auto_triggers_stage?: boolean;
+
+  @ApiProperty({ required: false, description: 'What the line carries that has no column (a medication line\'s treatment card, a resource line\'s notes).' })
+  @IsOptional()
+  @IsObject()
+  extension_config?: Record<string, unknown>;
+
+  @ApiProperty({ required: false, description: 'The breed_lifecycle_stages row this line was filled in from — sent back by the Create Scheduler form so a line keeps the same origin whichever path created the scheduler.' })
+  @IsOptional()
+  @IsUUID()
+  lifecycle_ref_id?: string;
 }
 
 export class UpdateSchedulerLineDto {
@@ -540,7 +551,7 @@ export class SchedulerFeedLineInput {
 }
 
 export class UpdateSchedulerFeedLinesDto {
-  @ApiProperty({ type: [SchedulerFeedLineInput], description: 'The scheduler\'s whole feed line set. Lines must follow one another with no gap or overlap.' })
+  @ApiProperty({ type: [SchedulerFeedLineInput], description: 'The scheduler\'s whole feed line set. Several feeds may share days; a feed is on a day once, and no day between the first and last line is without feed.' })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SchedulerFeedLineInput)

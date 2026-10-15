@@ -10,14 +10,15 @@ import { ITEM_KINDS, itemKindOf, kindMatchers } from './item-kinds';
  */
 describe('itemKindOf — a tenant\'s own type codes still say what kind it is', () => {
   it.each([
+    ['LIVING_ASSET', 'Living Asset'],
     ['LIVESTOCK', 'Livestock'],
     ['LA-001', 'Living Asset'],
     ['LA-XYZ', 'Living asset — breeding'],
     ['LIVING_ASSET', 'Anything'],
     ['ANYTHING', 'Living Asset'],
     ['ANYTHING', 'LIVESTOCK — pigs'],
-  ])('reads %s / %s as LIVESTOCK', (code, name) => {
-    expect(itemKindOf(code, name)).toBe('LIVESTOCK');
+  ])('reads %s / %s as LIVING_ASSET', (code, name) => {
+    expect(itemKindOf(code, name)).toBe('LIVING_ASSET');
   });
 
   it.each([
@@ -39,14 +40,14 @@ describe('itemKindOf — a tenant\'s own type codes still say what kind it is', 
     ['LABOUR', 'Labour'],
   ])('leaves %s / %s alone', (code, name) => {
     expect(itemKindOf(code, name)).not.toBe('FEED');
-    expect(itemKindOf(code, name)).not.toBe('LIVESTOCK');
+    expect(itemKindOf(code, name)).not.toBe('LIVING_ASSET');
   });
 
   it('does not mistake a feeding-related name that is not a feed type', () => {
     // "FEEDER" starts with FEED, and the client's own types do too (FEED BULK),
     // so the prefix rule is deliberate; a name must contain the whole word.
     expect(itemKindOf('EQUIPMENT', 'Feeder trough')).toBeNull();
-    expect(itemKindOf('EQUIPMENT', 'Livestock trailer')).toBe('LIVESTOCK');
+    expect(itemKindOf('EQUIPMENT', 'Livestock trailer')).toBe('LIVING_ASSET');
   });
 
   it('is null when there is nothing to go on', () => {
@@ -55,15 +56,15 @@ describe('itemKindOf — a tenant\'s own type codes still say what kind it is', 
   });
 
   it('names the two kinds the API filters on', () => {
-    expect(ITEM_KINDS).toEqual(['FEED', 'LIVESTOCK']);
+    expect(ITEM_KINDS).toEqual(['FEED', 'LIVING_ASSET']);
   });
 });
 
 describe('kindMatchers — what a SQL filter needs', () => {
   it('gives the exact codes, the code prefixes and the name fragments per kind', () => {
-    expect(kindMatchers('LIVESTOCK')).toEqual({
-      codes: ['LIVESTOCK'],
-      codePrefixes: ['LA-', 'LA_', 'LIVESTOCK', 'LIVING'],
+    expect(kindMatchers('LIVING_ASSET')).toEqual({
+      codes: ['LIVING_ASSET', 'LIVESTOCK'],
+      codePrefixes: ['LA-', 'LA_', 'LIVING'],
       nameFragments: ['living asset', 'livestock'],
     });
     expect(kindMatchers('FEED')).toEqual({

@@ -4091,3 +4091,44 @@ are wired into the flyout popover menu as per Farm Master, linking directly to t
 `AppShell` active-prefix and query-param matching were also refined so that the default tab (`forecast`)
 and deeper sibling nav routes highlight accurately.
 
+## 15 Oct 2026 — Item type code is `LIVING_ASSET`; `LIVESTOCK` remains NOB/LOB only
+
+The item master code previously stored as `LIVESTOCK` is renamed to `LIVING_ASSET`, with the display name
+`Living Asset`. Tenant migrations update the item type master, item categories, templates and existing item rows;
+seed data and runtime item filters use the new code. The separate Nature of Business / Line of Business taxonomy
+code `LIVESTOCK` is unchanged. Item Master `Diet No.` is shown only when Item Type is exactly `FEED`.
+
+## 15 Oct 2026 — Farm scope for master data and application surfaces (Rishi)
+
+Rishi confirmed the farm filtering policy for the selected farm in the workspace
+switcher:
+
+- Admin users may select a farm. Farm-owned records are filtered to that farm;
+  company/LOB-wide masters remain visible across the selected company/LOB.
+- Farm Managers and Standard Users remain restricted to their assigned farm;
+  they cannot switch to another farm.
+- Farm-owned records include Locations (including Sheds, Stores, Silos,
+  Warehouses and other child locations), Animal Register, Batches, farm-level
+  Breed Lifecycle Stage overrides, BIN Diet Assignments, Alert Rules and Feed
+  Planning Settings.
+- Breed Master remains company/LOB-wide. It is not filtered by which breeds are
+  currently used at a farm.
+- Item Master remains company/LOB-wide and is not filtered by farm. No farm-item
+  assignment or inferred item-usage filter is required.
+- A farm-owned record with no farm value is hidden from farm users and visible
+  only to administrators. This applies to default/shared rows where the data
+  model permits a nullable farm field; admins may still see them.
+- The selected farm scope must be applied consistently across the full
+  application wherever a farm relationship exists, including list, detail,
+  lookup, create/update validation, reports, dashboards and operational
+  transactions. Company/LOB-wide masters must not be narrowed merely because a
+  farm is selected.
+- When an administrator selects **All farms** inside an operational area, that
+  means every farm in the active LOB, not every farm in the company or tenant.
+  A specific farm selection narrows the same LOB scope to that farm. This is
+  especially important for Animal Register and Batch queries, which must not
+  leak another LOB's rows when no individual farm is pinned.
+
+This decision does not authorize inventing a farm relationship for a master that
+has no farm column or derivable farm-owned transaction relationship. Such a
+master remains company/LOB-wide unless Rishi decides otherwise.

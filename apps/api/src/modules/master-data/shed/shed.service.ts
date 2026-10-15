@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryShedDto } from './dto/shed.dto';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { farmLocationScopeConditions, farmScope } from '../../../common/farm-scope';
 
 /**
  * Read-only projection of `location_master` for the SHED type.
@@ -56,6 +57,7 @@ export class ShedService {
     ];
 
     conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
+    conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
     if (query.farmId) conditions.push(eq(schema.locationMaster.farm_id, query.farmId));
     if (query.isActive !== undefined) conditions.push(eq(schema.locationMaster.is_active, query.isActive));
     if (query.search) {
@@ -82,7 +84,7 @@ export class ShedService {
     const [row] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, id), eq(schema.locationMaster.location_type, 'SHED')))
+      .where(and(eq(schema.locationMaster.location_id, id), eq(schema.locationMaster.location_type, 'SHED'), ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id)))
       .limit(1);
 
     if (!row) throw new NotFoundException(`Shed with ID '${id}' not found.`);

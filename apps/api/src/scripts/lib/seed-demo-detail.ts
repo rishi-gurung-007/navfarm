@@ -40,7 +40,7 @@ const ITEM_PROFILE: Record<string, { min: string; max: string; reorder: string; 
   FEED:           { min: '1500.0000', max: '20000.0000', reorder: '4000.0000', lead: 7,  shelf: 90,  tmin: '10.00', tmax: '28.00', posting: 'FINISHED_FEED' },
   MEDICINE:       { min: '10.0000',   max: '150.0000',   reorder: '25.0000',   lead: 21, shelf: 730, tmin: '2.00',  tmax: '8.00',  posting: 'VET_SUPPLIES' },
   VACCINE:        { min: '5.0000',    max: '80.0000',    reorder: '15.0000',   lead: 28, shelf: 365, tmin: '2.00',  tmax: '8.00',  posting: 'VET_SUPPLIES' },
-  LIVESTOCK:      { min: '0.0000',    max: '0.0000',     reorder: '0.0000',    lead: 0,  shelf: null, tmin: null,   tmax: null,    posting: 'BIOLOGICAL_ASSETS' },
+  LIVING_ASSET:   { min: '0.0000',    max: '0.0000',     reorder: '0.0000',    lead: 0,  shelf: null, tmin: null,   tmax: null,    posting: 'BIOLOGICAL_ASSETS' },
   FINISHED_GOODS: { min: '0.0000',    max: '5000.0000',  reorder: '500.0000',  lead: 1,  shelf: 14,  tmin: '-2.00', tmax: '4.00',  posting: 'FINISHED_GOODS' },
 };
 
@@ -61,8 +61,8 @@ const CATEGORY_ITEM_TYPE: Record<string, string> = {
   'Finished Swine Feeds & Diets': 'FEED',
   'Veterinary Medicines & Antibiotics': 'MEDICINE',
   'Swine Immunization Vaccines': 'VACCINE',
-  'Biological Assets - Breeding Stock': 'LIVESTOCK',
-  'Biological Assets - Grower & Finisher': 'LIVESTOCK',
+  'Biological Assets - Breeding Stock': 'LIVING_ASSET',
+  'Biological Assets - Grower & Finisher': 'LIVING_ASSET',
 };
 
 /** Capacity/geometry per location type. Block labels, never a street address. */

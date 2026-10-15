@@ -11,7 +11,6 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
-import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 
 jest.mock('../../../common/period-close', () => ({ assertPostingPeriodOpen: jest.fn().mockResolvedValue(undefined) }));
 
@@ -92,7 +91,6 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
         { provide: AnimalMovementLogService, useValue: movementLog },
         { provide: SiloFeedService, useValue: {} },
         { provide: FeedAlertService, useValue: { evaluateLevelsSafely: jest.fn() } },
-        { provide: LifecycleKpiEvaluator, useValue: { evaluateSafely: jest.fn().mockResolvedValue(0) } },
       ],
     }).compile();
     service = module.get(BatchDailyDataService);

@@ -284,7 +284,8 @@ export default function StockTransferPanel() {
     itemParams.set("limit", "500");
     itemParams.set("isActive", "true");
     itemParams.set("isBlocked", "false");
-    api.get(`/item?${itemParams.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {
+    // Biological assets are not stock (14 Oct): they cannot be transferred.
+    api.get(`/item?${itemParams.toString()}`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_biological_asset))).catch(() => {
       // ignore
     });
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {

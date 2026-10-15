@@ -1,4 +1,4 @@
-import { DAYS_PER_UNIT, FeedRow, feedRowFor, stageDayRange } from './feed-row-days';
+import { DAYS_PER_UNIT, FeedRow, feedRowsFor, stageDayRange } from './feed-row-days';
 
 describe('stageDayRange', () => {
   it('DAY units map 1:1 onto stage days', () => {
@@ -24,7 +24,7 @@ describe('DAYS_PER_UNIT', () => {
   });
 });
 
-describe('feedRowFor', () => {
+describe('feedRowsFor', () => {
   const r1: FeedRow = {
     lifecycleId: 'lc-1', breedId: 'breed-1', stageId: 'stage-1', itemId: 'item-r1',
     itemName: 'Starter R1', fromDay: 1, toDay: 27, kgPerHeadPerDay: 0.5, wastagePct: 2,
@@ -35,36 +35,41 @@ describe('feedRowFor', () => {
   };
 
   it('picks R1 on day 27 (the last day R1 covers)', () => {
-    expect(feedRowFor([r1, r2], 27)).toEqual({ row: r1 });
+    expect(feedRowsFor([r1, r2], 27)).toEqual({ rows: [r1] });
   });
 
   it('picks R2 on day 28 (the first day R2 covers)', () => {
-    expect(feedRowFor([r1, r2], 28)).toEqual({ row: r2 });
+    expect(feedRowsFor([r1, r2], 28)).toEqual({ rows: [r2] });
   });
 
   it('returns NONE on day 32 — past every row', () => {
-    expect(feedRowFor([r1, r2], 32)).toEqual({ error: 'NONE' });
+    expect(feedRowsFor([r1, r2], 32)).toEqual({ error: 'NONE' });
   });
 
-  it('returns OVERLAP when two rows both cover day 26', () => {
-    const overlapping: FeedRow = { ...r2, lifecycleId: 'lc-3', fromDay: 20, toDay: 30 };
-    expect(feedRowFor([r1, overlapping], 26)).toEqual({ error: 'OVERLAP' });
+  it('returns both feeds when two different feeds cover day 26 (Rishi, 14 Oct)', () => {
+    const alongside: FeedRow = { ...r2, lifecycleId: 'lc-3', fromDay: 20, toDay: 30 };
+    expect(feedRowsFor([r1, alongside], 26)).toEqual({ rows: [r1, alongside] });
+  });
+
+  it('returns OVERLAP when the same feed is covered twice on day 26', () => {
+    const twice: FeedRow = { ...r1, lifecycleId: 'lc-3', fromDay: 20, toDay: 30 };
+    expect(feedRowsFor([r1, twice], 26)).toEqual({ error: 'OVERLAP' });
   });
 });
 
-describe('feedRowFor with a farm override (Master Setup r30/r39)', () => {
+describe('feedRowsFor with a farm override (Master Setup r30/r39)', () => {
   const base: FeedRow = { lifecycleId: 'd', breedId: 'b', stageId: 's', itemId: 'default', itemName: null, fromDay: 1, toDay: 60, kgPerHeadPerDay: 2, wastagePct: 0 };
   const ovr: FeedRow = { ...base, lifecycleId: 'o', itemId: 'override', kgPerHeadPerDay: 3, farmId: 'farm-A' };
 
   it('picks the override for its farm and the default for other farms', () => {
-    expect(feedRowFor([base, ovr], 10, 'farm-A')).toEqual({ row: ovr });
-    expect(feedRowFor([base, ovr], 10, 'farm-B')).toEqual({ row: base });
+    expect(feedRowsFor([base, ovr], 10, 'farm-A')).toEqual({ rows: [ovr] });
+    expect(feedRowsFor([base, ovr], 10, 'farm-B')).toEqual({ rows: [base] });
   });
   it('ignores overrides when no farm is given, so farmless rows behave as before', () => {
-    expect(feedRowFor([base, ovr], 10)).toEqual({ row: base });
-    expect(feedRowFor([ovr], 10)).toEqual({ error: 'NONE' });
+    expect(feedRowsFor([base, ovr], 10)).toEqual({ rows: [base] });
+    expect(feedRowsFor([ovr], 10)).toEqual({ error: 'NONE' });
   });
-  it('still reports OVERLAP when two overrides of the same farm cover the day', () => {
-    expect(feedRowFor([base, ovr, { ...ovr, lifecycleId: 'o2' }], 10, 'farm-A')).toEqual({ error: 'OVERLAP' });
+  it('still reports OVERLAP when two overrides of the same farm give the same feed on the day', () => {
+    expect(feedRowsFor([base, ovr, { ...ovr, lifecycleId: 'o2' }], 10, 'farm-A')).toEqual({ error: 'OVERLAP' });
   });
 });

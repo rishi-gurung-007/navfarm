@@ -222,10 +222,6 @@ export function FeedRequisitionPanel() {
 
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
-      <div className="mb-3 shrink-0">
-        <h2 className="text-base font-semibold text-(--text-primary)">{t("rqTitle")}</h2>
-        <p className="mt-0.5 text-sm text-(--text-secondary)">{t("rqIntro")}</p>
-      </div>
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9 [&>div>button]:h-9">
         <div className="flex flex-wrap items-end gap-3">
           <FeedFarmSelect id="rq-farm" label={t("rqFarm")} farms={farm.farms} farmId={listFarmId} fixedLabel={fixedLabel} allLabel={t("rhAllFarms")}

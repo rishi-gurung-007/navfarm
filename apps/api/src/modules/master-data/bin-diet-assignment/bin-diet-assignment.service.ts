@@ -8,6 +8,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { assertAssignmentCompatibility } from './bin-diet-assignment.rules';
 import { MasterScope, masterScopeConditions } from '../../../common/master-data-scope';
+import { farmLocationScopeConditions, farmScope } from '../../../common/farm-scope';
 import { QueryBinDietAssignmentDto, UpdateBinDietAssignmentDto } from './dto/bin-diet-assignment.dto';
 
 export interface CreateBinDietAssignment {
@@ -73,6 +74,7 @@ export class BinDietAssignmentService {
       eq(schema.binDietAssignment.assignment_id, id),
       eq(schema.binDietAssignment.tenant_id, tenantId),
       ...masterScopeConditions(this.cls, schema.binDietAssignment),
+      ...farmLocationScopeConditions(farmScope(this.cls), schema.binDietAssignment.bin_location_id),
     )).limit(1);
     if (!row) throw new NotFoundException('BIN Diet Assignment is not available in this workspace.');
     return row;
@@ -82,6 +84,7 @@ export class BinDietAssignmentService {
     const conditions = [
       eq(schema.binDietAssignment.tenant_id, tenantId),
       ...masterScopeConditions(this.cls, schema.binDietAssignment, query.companyId),
+      ...farmLocationScopeConditions(farmScope(this.cls), schema.binDietAssignment.bin_location_id),
     ];
     if (query.isActive !== undefined) conditions.push(eq(schema.binDietAssignment.is_active, query.isActive));
     // The table sends the search box as `search` and column filters as `filter[<column>]` (12 Oct: the old
@@ -121,6 +124,7 @@ export class BinDietAssignmentService {
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, companyId),
       isNull(schema.locationMaster.deleted_at),
+      ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id),
     )).limit(1);
     if (!bin) throw new NotFoundException('The selected BIN is not available in this company.');
 
@@ -208,6 +212,7 @@ export class BinDietAssignmentService {
     const [bin] = await this.db.select().from(schema.locationMaster).where(and(
       eq(schema.locationMaster.location_id, next.bin_location_id), eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, next.company_id), isNull(schema.locationMaster.deleted_at),
+      ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id),
     )).limit(1);
     const [item] = await this.db.select().from(schema.itemMaster).where(and(
       eq(schema.itemMaster.item_id, next.feed_item_id), eq(schema.itemMaster.tenant_id, tenantId),

@@ -743,6 +743,42 @@ describe('buildFeedForecast — OVERLAPPING_FEED_ROWS', () => {
   });
 });
 
+describe('buildFeedForecast — two feeds on the same stage days (Rishi, 14 Oct)', () => {
+  const row = (lifecycleId: string, itemId: string, fromDay: number, toDay: number, kg: number): FeedRow => ({
+    lifecycleId, breedId: 'l', stageId: 'grower', itemId, itemName: itemId, fromDay, toDay, kgPerHeadPerDay: kg, wastagePct: 0,
+  });
+  const input: ForecastInput = {
+    planningDate: '2026-09-23',
+    from: '2026-09-23',
+    to: '2026-09-26',
+    sheds: [{ shedId: 'h1', shedCode: 'GRS/SHED-001', siloIds: ['s1', 's2'] }],
+    silos: [
+      { siloId: 's1', siloCode: 'GRS/SILO-001', itemId: 'A', balanceKg: 5000 },
+      { siloId: 's2', siloCode: 'GRS/SILO-002', itemId: 'B', balanceKg: 5000 },
+    ],
+    store: null,
+    items: { A: 'Feed A', B: 'Feed B' },
+    batches: [{
+      batchId: 'b', realBatchId: 'b' as any, batchNo: 'GR-2026-01', breedId: 'l', shedId: 'h1', heads: 100,
+      // 2026-09-23 is stage-day 1: A runs days 1-9, B joins on day 3 (2026-09-25).
+      segments: [{ stageId: 'grower', stageCode: 'GROWER', start: '2026-09-23', end: null, projected: false }],
+    }],
+    feedRows: [row('ra', 'A', 1, 9, 1.0), row('rb', 'B', 3, 15, 0.5)],
+  };
+
+  it('forecasts each feed from its own silo, with no overlap flag', () => {
+    const { rows, flags } = buildFeedForecast(input);
+    expect(flags.filter((f) => f.kind === 'OVERLAPPING_FEED_ROWS')).toEqual([]);
+    expect(rows.find((r) => r.itemId === 'A')?.rangeDemandKg).toBe(400); // 4 days x 100 heads x 1.0
+    expect(rows.find((r) => r.itemId === 'B')?.rangeDemandKg).toBe(100); // 2 days x 100 heads x 0.5
+  });
+
+  it('reports B joining as a diet change, without A and B taking turns every day', () => {
+    const { dietChanges } = buildFeedForecast(input);
+    expect(dietChanges.map((d) => [d.fromItemId, d.toItemId, d.changeDate])).toEqual([['A', 'B', '2026-09-25']]);
+  });
+});
+
 describe('buildFeedForecast — two sheds falling back to one STORE, combined demand', () => {
   const feedRows: FeedRow[] = [
     {

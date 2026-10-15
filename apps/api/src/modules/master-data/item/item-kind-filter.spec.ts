@@ -3,7 +3,7 @@ import { itemKindCondition } from './item-kind-filter';
 
 /**
  * Porta Farm's living-asset type is code "LA-001", name "Living Asset", so
- * `GET /item?itemType=LIVESTOCK` — which asked for item_type = 'LIVESTOCK'
+ * `GET /item?itemType=LIVING_ASSET` — the canonical filter for living assets
  * exactly — answered nothing and the Animal Register picker was empty. The
  * filter matches the KIND now, through item_type_master, in SQL: the list is
  * paged, so it cannot be decided in JavaScript after the fact.
@@ -29,10 +29,10 @@ describe('itemKindCondition (item kinds, 29 Sep)', () => {
   };
 
   it('asks for the kind through item_type_master when the filter names a kind', () => {
-    const q = render('LIVESTOCK');
+    const q = render('LIVING_ASSET');
     expect(q.sql).toContain('item_type_master');
     // the exact code, the code prefixes and the name fragments all appear
-    expect(q.params).toEqual(expect.arrayContaining(['LIVESTOCK', 'LA-%', 'LA_%', 'LIVING%', '%living asset%', '%livestock%']));
+    expect(q.params).toEqual(expect.arrayContaining(['LIVING_ASSET', 'LIVESTOCK', 'LA-%', 'LA_%', 'LIVING%', '%living asset%', '%livestock%']));
     // bounded by tenant, and by the company-or-template scope masters use
     expect(q.params).toEqual(expect.arrayContaining(['tenant-1', 'co-1']));
   });
@@ -42,8 +42,8 @@ describe('itemKindCondition (item kinds, 29 Sep)', () => {
     expect(q.params).toEqual(expect.arrayContaining(['FEED', 'FEED%', '%feed%']));
   });
 
-  it('still matches the item_type column itself, so an exact LIVESTOCK item is included', () => {
-    expect(render('LIVESTOCK').sql).toContain('`item_master`.`item_type`');
+  it('still matches the item_type column itself, so an exact living-asset item is included', () => {
+    expect(render('LIVING_ASSET').sql).toContain('`item_master`.`item_type`');
   });
 
   it('falls back to an exact match for a type that is not a kind', () => {
@@ -59,14 +59,14 @@ describe('itemKindCondition (item kinds, 29 Sep)', () => {
   });
 
   it('scopes the types with the caller\'s own master scope when given the CLS', () => {
-    const q = renderWithCls('LIVESTOCK', { kind: 'COMPANY', tenantId: 'tenant-1', companyId: 'co-9' });
+    const q = renderWithCls('LIVING_ASSET', { kind: 'COMPANY', tenantId: 'tenant-1', companyId: 'co-9' });
     expect(q.sql).toContain('item_type_master');
     // co-9 comes from the scope, not from a company this function guessed
     expect(q.params).toEqual(expect.arrayContaining(['co-9']));
   });
 
   it('narrows to templates only when the caller\'s scope has no company', () => {
-    const q = renderWithCls('LIVESTOCK', { kind: 'TENANT', tenantId: 'tenant-1', companyId: null });
+    const q = renderWithCls('LIVING_ASSET', { kind: 'TENANT', tenantId: 'tenant-1', companyId: null });
     expect(q.sql).toContain('`item_type_master`.`company_id` is null');
   });
 

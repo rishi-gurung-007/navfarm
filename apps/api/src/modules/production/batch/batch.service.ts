@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
@@ -307,7 +307,7 @@ export class BatchService {
                   if (
                     it.is_biological_asset ||
                     it.item_type === 'BIOLOGICAL_ASSET' ||
-                    it.item_type === 'LIVESTOCK'
+                    it.item_type === 'LIVING_ASSET'
                   ) {
                     if (!line.quantity || isNaN(lineQty) || lineQty <= 0) {
                       throw new BadRequestException(
@@ -1492,10 +1492,18 @@ export class BatchService {
     // the given code, record it alongside current_stage_code. If not (LOB has no
     // Stage Master data, or the code is hand-typed/custom), stage_id just stays
     // null — current_stage_code remains fully authoritative either way.
-    const [matchedStage] = await this.db
+    //
+    // A stage code exists more than once per LOB: the tenant template row (company_id NULL) and each company's own
+    // copy of it. Matching on LOB and code alone took whichever the database returned first, so a move could land
+    // the batch on the template — a row belonging to no company. BATCH-000012 did (15 Oct): the move wrote the
+    // template FLUSH onto the batch while its earlier scheduler held Blank Test Co's FLUSH, so Data Entry drew two
+    // "Flush" stages and the one-scheduler-per-(batch, stage) check never saw a duplicate. Take the batch's own
+    // company's row, and fall back to the template only when the company has no copy of its own.
+    const stageCandidates = await this.db
       .select({
         stage_id: schema.stageMaster.stage_id,
         applicable_gender: schema.stageMaster.applicable_gender,
+        company_id: schema.stageMaster.company_id,
       })
       .from(schema.stageMaster)
       .where(
@@ -1504,9 +1512,17 @@ export class BatchService {
           eq(schema.stageMaster.stage_code, dto.to_stage_code.toUpperCase()),
           eq(schema.stageMaster.is_active, true),
           isNull(schema.stageMaster.deleted_at),
+          batch.company_id
+            ? or(eq(schema.stageMaster.company_id, batch.company_id), isNull(schema.stageMaster.company_id))
+            : undefined,
         ),
       )
-      .limit(1);
+      .limit(5);
+    // The company's own row, else the tenant template — never another company's, whatever order they came back in.
+    const matchedStage = batch.company_id
+      ? (stageCandidates.find((row) => row.company_id === batch.company_id)
+        ?? stageCandidates.find((row) => (row.company_id ?? null) === null))
+      : stageCandidates[0];
 
     // A code that matches nothing, for a LOB that HAS stages configured, is a
     // caller mistake rather than a LOB without stage master data — the batch
@@ -2532,6 +2548,8 @@ export class BatchService {
           bio_asset_item_id: animal.item_id,
           animal_id: animal.animal_id,
           entry_type: 'MORTALITY',
+          document_type: 'MORTALITY',
+          uom: 'HEAD',
           document_no: animal.animal_code,
           posting_date: dto.transaction_date,
           stage: animal.current_stage_id || null,
@@ -2979,6 +2997,7 @@ export class BatchService {
             bio_asset_item_id: bioAssetSubjectItemId,
             animal_id: dto.animal_id || null,
             entry_type: 'MORTALITY',
+            document_type: 'MORTALITY',
             document_no: batch.batch_no,
             batch_id: id,
             batch_no: batch.batch_no,
@@ -6665,6 +6684,20 @@ export class BatchService {
       );
     };
 
+    /** The day's feed lines (daily CONSUMPTION lines with a standard), every one of them. */
+    const feedLinesForDate = (date: Date) => {
+      const header = schedulerHeaders.find((h) => {
+        const from = new Date(h.effective_from);
+        const to = h.effective_to ? new Date(h.effective_to) : null;
+        return date >= from && (!to || date <= to);
+      });
+      if (!header) return [];
+      const dayOfStage = Math.floor((date.getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      return schedulerLines.filter((l) =>
+        l.scheduler_id === header.scheduler_id && l.line_type === 'CONSUMPTION' && l.occurrence === 'DAILY' && l.standard_qty
+        && dayOfStage >= l.start_day && (l.end_day == null || dayOfStage <= l.end_day));
+    };
+
     // Also fetch breed lifecycle stages for reference
     const lifecycleStandards = batch.breed_id
       ? await this.db
@@ -6743,18 +6776,20 @@ export class BatchService {
 
       // Check schedule lines
       const curDateObj = new Date(startDate.getTime() + (day - 1) * 86400000);
-      const activeFeedLine = lineForDate(curDateObj, 'CONSUMPTION');
-      if (activeFeedLine && activeFeedLine.standard_qty) {
-        stdDailyFeedPerHead = Number(activeFeedLine.standard_qty);
+      // Several feeds can share a day (14 Oct): the standard is the day's feed lines added up, as the actual is.
+      const dayFeedLines = feedLinesForDate(curDateObj);
+      if (dayFeedLines.length) {
+        stdDailyFeedPerHead = dayFeedLines.reduce((sum, l) => sum + Number(l.standard_qty), 0);
       } else {
         // Fallback to breed standards
-        const lc = lifecycleStandards.find((l) => {
+        const lcs = lifecycleStandards.filter((l) => {
           const pF = toDays(l.period_from, l.calc_unit);
           const pT = toDays(l.period_to, l.calc_unit);
           return day >= pF && day <= pT;
         });
+        const lc = lcs[0];
         if (lc) {
-          stdDailyFeedPerHead = Number(lc.feed_qty_per_head_per_day_kg || 0);
+          stdDailyFeedPerHead = lcs.reduce((sum, l) => sum + Number(l.feed_qty_per_head_per_day_kg || 0), 0);
           stdTargetWeight = Number(lc.std_body_weight_kg || 0);
           stdMortPct = Number(lc.std_mortality_rate_pct || 0);
         }

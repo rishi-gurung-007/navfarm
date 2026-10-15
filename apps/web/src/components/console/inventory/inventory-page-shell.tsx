@@ -15,6 +15,8 @@ const INVENTORY_SECTIONS = [
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
   { key: "stock-adjustment", href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
   { key: "ledger", href: "/inventory/ledger", labelKey: "invLedger" },
+  // Biological assets are not stock (Rishi, 14 Oct): their registrations and deaths have their own ledger.
+  { key: "bio-asset-ledger", href: "/inventory/bio-asset-ledger", labelKey: "invBioAssetLedger" },
 ] as const;
 
 export type InventoryTabKey = (typeof INVENTORY_SECTIONS)[number]["key"];
@@ -93,6 +95,7 @@ export function InventoryPageShell({ activeKey, fill = false, title: titleOverri
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "stock-adjustment" ? t("invStockAdjustmentTitle") :
     activeKey === "ledger" ? t("invLedgerTitle") :
+    activeKey === "bio-asset-ledger" ? t("invBioAssetLedger") :
     // Stock Balance, as the sidebar names it — not "Piggery Unit Stock Balance" or "Company Inventory & Stock Balance".
     t("invStockBalance");
 

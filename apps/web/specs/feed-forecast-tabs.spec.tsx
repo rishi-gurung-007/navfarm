@@ -181,7 +181,8 @@ describe('the feed screens read the shared farm selection', () => {
  * still showing): the Feed Forecast tabs take the workbook's names —
  * Dashboard · Calculation · Feed Plan · Requisition · Mill Consolidation ·
  * Loading Instructions · Physical Stock Count, in that order. Compare Report
- * (workbook Feed Forecast r11) follows Feed Plan (brief A, 10 Oct).
+ * (workbook Feed Forecast r11) follows Feed Plan (brief A, 10 Oct). On 14 Oct Rishi renamed two: Feed Requisition and
+ * Feed Comparison Report.
  * The routes keep their existing `?tab=` keys, because they are bookmarks.
  */
 describe("WP1d — Feed Forecast tab names follow the workbook", () => {
@@ -190,6 +191,6 @@ describe("WP1d — Feed Forecast tab names follow the workbook", () => {
     const en = (require("../src/utils/translations") as any).translations.en;
     expect([
       en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabCompareReport, en.fftTabFeedRequisition, en.invFeedConsolidations, en.invFeedLoading, en.fftTabPhysicalCount,
-    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Compare Report", "Requisition", "Feed Mill Consolidation", "Feed Loading Instructions", "Physical Stock Count"]);
+    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Feed Comparison Report", "Feed Requisition", "Feed Mill Consolidation", "Feed Loading Instructions", "Physical Stock Count"]);
   });
 });
