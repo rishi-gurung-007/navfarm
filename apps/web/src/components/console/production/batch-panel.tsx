@@ -693,14 +693,26 @@ export default function BatchPanel() {
     return l ? l.location_name : '—';
   };
   const animalAge = (a: Row) => {
-    if (!a.dob)
-      return a.age_at_entry_weeks != null
-        ? `${a.age_at_entry_weeks} wks (at entry)`
-        : '—';
-    const days = Math.floor(
-      (Date.now() - new Date(a.dob).getTime()) / 86400000,
-    );
-    return days < 60 ? `${days} days` : `${Math.floor(days / 30)} mo`;
+    if (a.dob) {
+      const diff = Date.now() - new Date(a.dob).getTime();
+      if (!Number.isNaN(diff)) {
+        const weeks = Math.max(0, Math.floor(diff / (7 * 86400000)));
+        return String(weeks);
+      }
+    }
+    if (a.age_at_entry_weeks != null) {
+      const entryWeeks = Number(a.age_at_entry_weeks);
+      if (!Number.isNaN(entryWeeks)) {
+        const entryDate = a.entry_date || a.created_at;
+        const elapsedDays = entryDate
+          ? Math.max(0, Math.floor((Date.now() - new Date(entryDate).getTime()) / 86400000))
+          : 0;
+        const elapsedWeeks = Math.floor(elapsedDays / 7);
+        const totalWeeks = entryWeeks + elapsedWeeks;
+        return String(totalWeeks);
+      }
+    }
+    return '—';
   };
 
   const toggleAnimalSelected = (animalId: string) => {
@@ -2778,7 +2790,7 @@ export default function BatchPanel() {
                         <TableHead className="h-auto px-3 py-2">
                           Breed
                         </TableHead>
-                        <TableHead className="h-auto px-3 py-2">Age</TableHead>
+                        <TableHead className="h-auto px-3 py-2">Age (week)</TableHead>
                         <TableHead className="h-auto px-3 py-2">
                           Stage
                         </TableHead>
