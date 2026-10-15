@@ -174,19 +174,17 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
 export interface ResetTargets {
   masterDatabase: string;
   systemDatabase: string;
-  tenantPrefix: string;
+  demoTenantDatabase: string;
 }
 
 /**
  * Derives the databases setup-fresh-database.ts is actually about to drop —
  * by the same rule, from the same env vars (DATABASE_NAME, SYSTEM_TENANT_DATABASE),
  * not by re-filtering SHOW DATABASES through the guard's own naming regex.
- * Filtering by that regex first and only then asserting on what survived the
- * filter meant the assert could never see a name the regex had already
- * excluded — which is exactly the case that matters: DATABASE_NAME or
- * SYSTEM_TENANT_DATABASE pointed at a navcrm_* database by mistake. Deriving
- * the target list the same way the real drop does, and asserting on THAT
- * before any subprocess runs, closes that gap.
+ * The reset is deliberately limited to the demo databases. A local MySQL
+ * commonly contains retained integration/UAT databases whose names also
+ * begin with `nf_`; treating the whole prefix as disposable would make
+ * `pnpm seed` destroy unrelated test data.
  *
  * setup-fresh-database.ts also supports a `piggery_*` isolated naming mode
  * (masterDatabase.startsWith('piggery_')) that assertSafeRebuildTarget's
@@ -205,9 +203,9 @@ export function deriveResetTargets(env: NodeJS.ProcessEnv): ResetTargets {
       'missing what setup-fresh-database.ts would drop under that naming.',
     );
   }
-  const tenantPrefix = NAVFARM_DB_PREFIX;
   const systemDatabase = env.SYSTEM_TENANT_DATABASE || DEFAULT_SYSTEM_DATABASE;
-  return { masterDatabase, systemDatabase, tenantPrefix };
+  const demoTenantDatabase = env.DEMO_TENANT_DATABASE || `${NAVFARM_DB_PREFIX}devco`;
+  return { masterDatabase, systemDatabase, demoTenantDatabase };
 }
 
 export async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]> {
@@ -216,7 +214,11 @@ export async function listResetTargetDatabases(targets: ResetTargets): Promise<s
     const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
     return (rows as Array<{ Database: string }>)
       .map((r) => r.Database)
-      .filter((name) => name === targets.masterDatabase || name === targets.systemDatabase || name.startsWith(targets.tenantPrefix));
+      .filter((name) => new Set([
+        targets.masterDatabase,
+        targets.systemDatabase,
+        targets.demoTenantDatabase,
+      ]).has(name));
   } finally {
     await conn.end();
   }

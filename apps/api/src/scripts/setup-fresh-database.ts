@@ -11,8 +11,8 @@ const ssl = process.env.DATABASE_SSL === 'true'
   : undefined;
 const masterDatabase = process.env.DATABASE_NAME || DEFAULT_MASTER_DATABASE;
 const isPiggeryIsolated = masterDatabase.startsWith('piggery_');
-const tenantPrefix = isPiggeryIsolated ? 'piggery_tenant_' : NAVFARM_DB_PREFIX;
 const systemDatabase = process.env.SYSTEM_TENANT_DATABASE || (isPiggeryIsolated ? 'piggery_tenant_system' : DEFAULT_SYSTEM_DATABASE);
+const demoTenantDatabase = process.env.DEMO_TENANT_DATABASE || `${NAVFARM_DB_PREFIX}devco`;
 
 function assertDbName(value: string): string {
   if (!/^[A-Za-z0-9_]+$/.test(value)) {
@@ -41,17 +41,24 @@ async function runFreshSetup() {
   console.log('================================================================');
   console.log(`Master Database:    ${masterDatabase}`);
   console.log(`System Database:    ${systemDatabase}`);
-  console.log(`Tenant DB Prefix:   ${tenantPrefix}*`);
+  console.log(`Demo Tenant DB:     ${demoTenantDatabase}`);
   console.log('----------------------------------------------------------------');
 
-  // 1. DROP ALL LINKED DATABASES
-  console.log('🧹 Step 1: Dropping all linked databases...');
+  // Validate every configured target before dropping any database. This keeps
+  // a malformed DEMO_TENANT_DATABASE from failing halfway through the reset.
+  assertDbName(masterDatabase);
+  assertDbName(systemDatabase);
+  assertDbName(demoTenantDatabase);
+
+  // 1. DROP ONLY THE DEMO DATABASES
+  console.log('🧹 Step 1: Dropping demo databases...');
   const server = await mysql.createConnection({ host, port, user, password, ssl });
   try {
     const [dbRows] = await server.query<mysql.RowDataPacket[]>('SHOW DATABASES');
+    const targetNames = new Set([masterDatabase, systemDatabase, demoTenantDatabase]);
     const targetDbs = (dbRows as Array<{ Database: string }>)
       .map((r) => r.Database)
-      .filter((d) => d === masterDatabase || d === systemDatabase || d.startsWith(tenantPrefix));
+      .filter((d) => targetNames.has(d));
 
     for (const dbName of targetDbs) {
       assertDbName(dbName);
