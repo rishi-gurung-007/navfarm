@@ -568,7 +568,7 @@ export class ItemService {
       conditions.push(eq(schema.itemMaster.category_id, query.categoryId));
     }
     if (query.itemType) {
-      // Item kinds (29 Sep): a tenant names its own item types, so ?itemType=LIVESTOCK
+      // Item kinds (29 Sep): a tenant names its own item types, so ?itemType=LIVING_ASSET
       // has to reach Porta Farm's "LA-001"/"Living Asset" as well as the literal code.
       // Anything that is not one of our kinds keeps its exact match.
       conditions.push(itemKindCondition(query.itemType, tenantId, this.cls, query.companyId));

@@ -69,6 +69,15 @@ describe("animal register carries RFID only", () => {
     expect(animal.fields.find((f) => f.key === "sire_serial_no")!.readOnlyWhenSet).toBe("sire_animal_id");
     expect(animal.fields.find((f) => f.key === "dam_serial_no")!.readOnlyWhenSet).toBe("dam_animal_id");
   });
+  it("fills Entry Date from the selected GRN Posting Date", () => {
+    const sourceGrn = animal.fields.find((f) => f.key === "source_receipt_id")!;
+    expect(sourceGrn.fills).toEqual([
+      { key: "entry_date", rowKeys: ["posting_date"] },
+      { key: "acquisition_cost", rowKeys: ["unit_cost"] },
+      { key: "total_opening_asset_value", rowKeys: ["unit_cost"] },
+    ]);
+    expect(animal.fields.find((f) => f.key === "entry_date")!.readOnlyWhenSet).toBe("source_receipt_id");
+  });
   it("offers Shed or Pen and calls the placement Current Location", () => {
     const type = animal.fields.find((f) => f.key === "location_type")!;
     expect(type.options?.map((o) => o.value)).toEqual(["SHED", "PEN"]);

@@ -4091,3 +4091,9 @@ are wired into the flyout popover menu as per Farm Master, linking directly to t
 `AppShell` active-prefix and query-param matching were also refined so that the default tab (`forecast`)
 and deeper sibling nav routes highlight accurately.
 
+## 15 Oct 2026 — Item type code is `LIVING_ASSET`; `LIVESTOCK` remains NOB/LOB only
+
+The item master code previously stored as `LIVESTOCK` is renamed to `LIVING_ASSET`, with the display name
+`Living Asset`. Tenant migrations update the item type master, item categories, templates and existing item rows;
+seed data and runtime item filters use the new code. The separate Nature of Business / Line of Business taxonomy
+code `LIVESTOCK` is unchanged. Item Master `Diet No.` is shown only when Item Type is exactly `FEED`.

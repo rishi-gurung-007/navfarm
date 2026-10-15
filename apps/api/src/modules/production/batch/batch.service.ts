@@ -307,7 +307,7 @@ export class BatchService {
                   if (
                     it.is_biological_asset ||
                     it.item_type === 'BIOLOGICAL_ASSET' ||
-                    it.item_type === 'LIVESTOCK'
+                    it.item_type === 'LIVING_ASSET'
                   ) {
                     if (!line.quantity || isNaN(lineQty) || lineQty <= 0) {
                       throw new BadRequestException(

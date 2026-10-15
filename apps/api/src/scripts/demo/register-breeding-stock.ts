@@ -111,7 +111,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
   // line rate, so every kind in the herd needs a line — including on a farm
   // whose receipt was posted by an earlier, narrower run, which is what the
   // top-up covers.
-  const receiptRef = `DEMO-${farm.code}-LIVESTOCK`;
+  const receiptRef = `DEMO-${farm.code}-LIVING_ASSET`;
   const receiptLines: { item_id: string; quantity: number; uom: string; rate?: number; lot_no: string }[] = [];
   for (const { kind, count } of usableHerd) {
     const row = await item(ANIMAL_FACTS[kind].itemCode);

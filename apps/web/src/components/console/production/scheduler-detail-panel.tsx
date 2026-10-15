@@ -114,7 +114,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
           it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVESTOCK") ||
+          it.item_type !== "LIVING_ASSET") ||
         it.item_id === lineForm.item_id
     );
   }, [items, lineForm.item_id]);
@@ -125,7 +125,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
         Boolean(it.is_biological_asset) ||
         it.is_biological_asset === 1 ||
         it.is_biological_asset === "1" ||
-        it.item_type === "LIVESTOCK" ||
+        it.item_type === "LIVING_ASSET" ||
         it.item_id === lineForm.item_id
     );
   }, [items, lineForm.item_id]);

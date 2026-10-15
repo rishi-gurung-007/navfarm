@@ -195,7 +195,7 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
       const raw = form[key];
       const paramName = f.queryParams?.[key];
       // A field may translate the parent's value before sending it — item_type
-      // LIVESTOCK narrows the UOM list to COUNT, not to "LIVESTOCK". An
+      // LIVING_ASSET narrows the UOM list to COUNT, not to "LIVING_ASSET". An
       // unmapped value omits the param and leaves the list unfiltered.
       const map = f.queryValueMap?.[key];
       const val = map ? (raw ? map[String(raw)] : undefined) : raw;

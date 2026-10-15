@@ -768,7 +768,7 @@ describe('BatchDailyDataService', () => {
     const outLine = { line_id: 'line-out', scheduler_id: 'sched-1', is_active: true, line_type: 'OUTPUT', item_id: 'item-piglet', lot_required: false, activity_name: 'Piglet Output (Live Born)' };
     const hdr = { scheduler_id: 'sched-1', batch_id: 'batch-1', company_id: 'comp-1', stage_id: 'st-farrow', animal_count: '2' };
     const lim = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
-    const piglet = { item_id: 'item-piglet', item_type: 'LIVESTOCK', is_biological_asset: true, uom_primary: 'HEAD' };
+    const piglet = { item_id: 'item-piglet', item_type: 'LIVING_ASSET', is_biological_asset: true, uom_primary: 'HEAD' };
     // line, header, batch, [the animal named], lock, idempotency, item, then what sowLitterEvent reads
     const arrange = (animal: object, stageForm: string, openLitter: object[]) => {
       mockDbSelect

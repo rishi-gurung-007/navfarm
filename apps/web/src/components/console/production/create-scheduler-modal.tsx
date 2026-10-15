@@ -386,7 +386,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
           it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVESTOCK") ||
+          it.item_type !== "LIVING_ASSET") ||
         it.item_id === lineForm.item_id
     );
   }, [items, lineForm.item_id]);
@@ -1533,7 +1533,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     value={lineForm.item_id}
                     onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
                     options={items
-                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVESTOCK')
+                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVING_ASSET')
                       .map((it) => ({
                         value: it.item_id,
                         label: `${it.item_name} (${it.item_code})`,

@@ -538,7 +538,9 @@ const animal: MasterDataConfig = {
       key: "entry_type", label: "Entry Type", type: "select", required: true, createOnly: true, section: "Acquisition",
       options: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL", "BORN_ON_FARM", "TRANSFERRED_IN"].map((v) => ({ value: v, label: v.replace(/_/g, " ") })),
     },
-    { key: "entry_date", label: "Entry Date", type: "date", required: true, createOnly: true, section: "Acquisition" },
+    // A GRN is the source document for a purchased animal, so its posting date
+    // is the entry date and cannot be edited independently after the GRN is chosen.
+    { key: "entry_date", label: "Entry Date", type: "date", required: true, createOnly: true, readOnlyWhenSet: "source_receipt_id", section: "Acquisition" },
     // Sits with Entry Date rather than beside Date of Birth (where the master
     // template puts it) because it is the entry that gives it meaning, and the
     // two dates it is computed from are the ones either side of it here.
@@ -547,16 +549,16 @@ const animal: MasterDataConfig = {
     { key: "age_at_entry_weeks", label: "Age at Entry (Weeks)", type: "number", min: 0, readOnly: true, ageFromDates: { from: "dob", to: "entry_date", unit: "weeksAndDays" }, helpText: "The animal's age on the Entry Date, in weeks and days. Calculated from Date of Birth and Entry Date.", section: "Acquisition" },
     // The same age as a single count of days (3 weeks 2 days reads as 23). Shown only; the API stores whole weeks.
     { key: "age_at_entry_days", label: "Age at Entry (Days)", type: "number", min: 0, readOnly: true, hideInTable: true, ageFromDates: { from: "dob", to: "entry_date", unit: "totalDays" }, helpText: "The animal's age on the Entry Date, in total days. Calculated; not typed.", section: "Acquisition" },
-    // LIVESTOCK is the item type seeded for living biological assets. There is
-    // no LIVING_ASSET item type; using it here left this required picker empty.
-    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVESTOCK", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
+    // LIVING_ASSET is the item type seeded for living biological assets. There is
+    // The picker filters by the canonical LIVING_ASSET item type code.
+    { key: "item_id", searchable: true, label: "Item (Living Asset)", type: "select-entity", required: true, createOnly: true, entityEndpoint: "/item?itemType=LIVING_ASSET", entityValueKey: "item_id", entityLabelKeys: ["item_code", "item_name"], section: "Acquisition" },
     // Shown only for the entry types they belong to. The API has always
     // enforced these as COND rules and rejected the wrong combination; the form
     // asked for both from everyone, so a born-on-farm piglet was offered a
     // goods receipt it could never legally carry.
     // 14 Oct (Rishi): only posted GRNs that still hold an animal of the chosen item, with how many are left; registering
     // takes one out of that GRN's stock and the animal's cost is the GRN's rate.
-    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no", "animals_left_label"], selectedLabelKey: "receipt_no", entityColumnHeaders: ["GRN No.", "Animals Left"], fills: [{ key: "acquisition_cost", rowKeys: ["unit_cost"] }, { key: "total_opening_asset_value", rowKeys: ["unit_cost"] }], dependsOn: "item_id", dependsOnMode: "query", queryParams: { item_id: "animalItemId" }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on: choose the Item first, then a GRN that still has one of it in stock. Registering takes one animal out of that GRN's stock. Leave empty if N/A for local purchase.", section: "Acquisition" },
+    { key: "source_receipt_id", searchable: true, label: "Source GRN", type: "select-entity", createOnly: true, entityEndpoint: "/goods-receipt", entityValueKey: "receipt_id", entityLabelKeys: ["receipt_no", "animals_left_label"], selectedLabelKey: "receipt_no", entityColumnHeaders: ["GRN No.", "Animals Left"], fills: [{ key: "entry_date", rowKeys: ["posting_date"] }, { key: "acquisition_cost", rowKeys: ["unit_cost"] }, { key: "total_opening_asset_value", rowKeys: ["unit_cost"] }], dependsOn: "item_id", dependsOnMode: "query", queryParams: { item_id: "animalItemId" }, visibleWhen: { anyOf: [{ key: "entry_type", equals: ["PURCHASED_IMPORTED", "PURCHASED_LOCAL"] }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "PURCHASED_IMPORTED" }] }, helpText: "The receipt this animal arrived on: choose the Item first, then a GRN that still has one of it in stock. Registering takes one animal out of that GRN's stock. Entry Date is taken from the GRN's Posting Date. Leave empty if N/A for local purchase.", section: "Acquisition" },
     { key: "source_batch_id", searchable: true, label: "Source Batch", type: "select-entity", createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], visibleWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, requiredWhen: { anyOf: [{ key: "entry_type", equals: "BORN_ON_FARM" }] }, helpText: "The farrowing batch this animal was born from.", section: "Acquisition" },
     // An imported animal's cost is read off its goods receipt by the API and anything
     // typed is discarded, so it stays readOnly. A local purchase without a GRN requires manual cost entry.
@@ -1178,7 +1180,7 @@ const item: MasterDataConfig = {
     { key: "min_stock_level", label: "Min Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "max_stock_level", label: "Max Stock Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     // TDD Master Setup §2 / Loading Sheet row 65: the feed diet number, 1 to 14.
-    { key: "diet_no", label: "Diet No.", type: "number", min: 1, max: 14, step: "1", nativeNumber: true, helpText: "Feed diet number, 1 to 14.", section: "Inventory" },
+    { key: "diet_no", label: "Diet No.", type: "number", min: 1, max: 14, step: "1", nativeNumber: true, visibleWhen: { anyOf: [{ key: "item_type", equals: "FEED" }] }, helpText: "Feed diet number, 1 to 14.", section: "Inventory" },
     { key: "reorder_level", label: "Reorder Level", type: "number", step: "0.01", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },
     { key: "lead_time_days", label: "Lead Time (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, helpText: "Procurement lead time, for feed/stock forecast planning.", section: "Inventory" },
     { key: "shelf_life_days", label: "Shelf Life (days)", type: "number", min: 0, visibleWhen: WHEN_INVENTORIED, section: "Inventory" },

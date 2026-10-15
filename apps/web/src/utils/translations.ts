@@ -1420,7 +1420,7 @@ export const translations = {
     invTransfersDesc: "Manage inter-location transfer orders, dispatch shipments, and in-transit receipts.",
     invStockAdjustmentTitle: "Stock Adjustment & Physical Count",
     invLedgerTitle: "Inventory Ledger Entries",
-    invBioAssetLedger: "Bio Asset Ledger",
+    invBioAssetLedger: "Assets Ledger",
     invOperationalDesc: "Operational stock, daily feed/med allocations, and dispatches for {{lob}} Unit.",
     invCompanyDesc: "Company-wide location stock, GRN receipts, inter-site movements, and FIFO inventory valuation.",
     invFeedForecast: "Feed Forecast",

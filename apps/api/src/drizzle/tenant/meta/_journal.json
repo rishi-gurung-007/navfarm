@@ -1401,6 +1401,20 @@
       "when": 1792000000068,
       "tag": "0200_bio_asset_grn_entries",
       "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "5",
+      "when": 1792000000069,
+      "tag": "0201_living_asset_item_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "5",
+      "when": 1792000000070,
+      "tag": "0202_living_asset_item_template",
+      "breakpoints": true
     }
   ]
 }

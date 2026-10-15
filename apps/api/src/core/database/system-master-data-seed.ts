@@ -93,7 +93,7 @@ export const SYSTEM_KPI_METRIC_SEED: Array<{
 ];
 
 // Real codes already in use across the seeded demo data (RAW_MATERIAL, CONSUMABLE, FEED,
-// LIVESTOCK, FINISHED_GOODS) plus MEDICINE/VACCINE (item.service.ts's withdrawal_days check
+// LIVING_ASSET, FINISHED_GOODS) plus MEDICINE/VACCINE (item.service.ts's withdrawal_days check
 // branches on these two literal strings), rounded out with the spec's remaining documented
 // types (SEMI_FINISHED, BY_PRODUCT, OVERHEAD) that aren't in use yet.
 // code_prefix defaults to each row's own type_code — same backfill rule migration
@@ -110,7 +110,7 @@ export const SYSTEM_ITEM_TYPE_SEED: Array<{
   { type_code: 'FEED', type_name: 'Feed', code_prefix: 'FEED', description: 'Formulated animal feed.' },
   { type_code: 'MEDICINE', type_name: 'Medicine', code_prefix: 'MEDICINE', description: 'Medicine — requires withdrawal_days before a treated animal may be slaughtered.' },
   { type_code: 'VACCINE', type_name: 'Vaccine', code_prefix: 'VACCINE', description: 'Vaccine — requires withdrawal_days before a treated animal may be slaughtered.' },
-  { type_code: 'LIVESTOCK', type_name: 'Livestock', code_prefix: 'LIVESTOCK', description: 'Living biological asset (animal) tracked as inventory.' },
+  { type_code: 'LIVING_ASSET', type_name: 'Living Asset', code_prefix: 'LIVING_ASSET', description: 'Living biological asset (animal). Not stock — it is carried in the Assets Ledger.' },
   { type_code: 'SEMI_FINISHED', type_name: 'Semi-Finished Good', code_prefix: 'SEMI_FINISHED', description: 'Partially processed output, consumed further downstream.' },
   { type_code: 'FINISHED_GOODS', type_name: 'Finished Goods', code_prefix: 'FINISHED_GOODS', description: 'Final saleable output.' },
   { type_code: 'BY_PRODUCT', type_name: 'By-Product', code_prefix: 'BY_PRODUCT', description: 'Secondary output generated alongside the main product.' },

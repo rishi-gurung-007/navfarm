@@ -214,7 +214,7 @@ export function BreedingPanel() {
       setSemenBatches(unwrap<Row[]>(sRes) || []);
       setAnimals(unwrap<Row[]>(aRes) || []);
       setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
-      api.get("/item?itemType=LIVESTOCK&isActive=true&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset))).catch(() => setPigletItems([]));
+      api.get("/item?itemType=LIVING_ASSET&isActive=true&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset))).catch(() => setPigletItems([]));
       api.get("/stage?limit=100").then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => setStages([]));
       api.get("/item?isActive=true&limit=200").then((r) => setSemenItems(unwrap<Row[]>(r) || [])).catch(() => setSemenItems([]));
     } catch (e: any) {

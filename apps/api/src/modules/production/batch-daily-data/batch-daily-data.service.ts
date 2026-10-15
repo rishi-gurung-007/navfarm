@@ -405,7 +405,7 @@ export class BatchDailyDataService {
       case 'CONSUMPTION':
       case 'OUTPUT': {
         // The line's own item, and only that. An OUTPUT line with no item used to take the first
-        // item named like "Piglet" or typed LIVESTOCK, so a semen collection or a manure line could
+        // item named like "Piglet" or typed LIVING_ASSET, so a semen collection or a manure line could
         // be posted into stock as piglets. Lines are validated to carry an item when they are made;
         // one that still has none is fixed, not guessed.
         const resolvedItemId = (line.line_type === 'OUTPUT' && dto.item_id) || line.item_id;

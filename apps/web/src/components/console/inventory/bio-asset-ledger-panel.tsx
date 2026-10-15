@@ -92,7 +92,7 @@ export default function BioAssetLedgerPanel() {
       const res = await api.get(`/bio-asset-ledger/entries?${params.toString()}`);
       setRows(unwrap<Row[]>(res) || []);
     } catch (err: any) {
-      setError(err?.message || "The Bio Asset Ledger could not be loaded.");
+      setError(err?.message || "The Assets Ledger could not be loaded.");
     } finally {
       setLoading(false);
     }
@@ -319,14 +319,14 @@ export default function BioAssetLedgerPanel() {
                 <tr>
                   <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} />
-                    Loading Bio Asset Ledger entries…
+                    Loading Assets Ledger entries…
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
-                    {hasActiveFilters ? "No Bio Asset Ledger entries match the selected filters." : "No animal has been registered yet."}
+                    {hasActiveFilters ? "No Assets Ledger entries match the selected filters." : "No animal has been registered yet."}
                   </TableCell>
                 </tr>
               ) : (
@@ -380,7 +380,7 @@ export default function BioAssetLedgerPanel() {
                           onClick={(e) => { e.stopPropagation(); setViewingEntry(row); }}
                           className="inline-flex items-center justify-center rounded p-1 hover:bg-[var(--surface-raised)] transition"
                           style={S.sub}
-                          title="View Bio Asset Ledger Entry"
+                          title="View Assets Ledger Entry"
                         >
                           <Eye className="h-4 w-4" style={S.accent} />
                         </button>
@@ -406,7 +406,7 @@ export default function BioAssetLedgerPanel() {
       <Dialog
         open={Boolean(viewingEntry)}
         onClose={() => setViewingEntry(null)}
-        title={viewingEntry ? `Bio Asset Ledger Entry — ${viewingEntry.document_no}` : ""}
+        title={viewingEntry ? `Assets Ledger Entry — ${viewingEntry.document_no}` : ""}
         maxWidth="xl"
       >
         {viewingEntry && <BioAssetLedgerDetail entryId={viewingEntry.entry_id} initialData={viewingEntry} onClose={() => setViewingEntry(null)} />}

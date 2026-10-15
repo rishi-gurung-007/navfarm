@@ -197,7 +197,7 @@ export default function BatchPanel() {
     it?.is_biological_asset === 1 ||
     it?.is_biological_asset === '1' ||
     it?.is_biological_asset === 'true' ||
-    it?.item_type === 'LIVESTOCK';
+    it?.item_type === 'LIVING_ASSET';
 
   const availableInputItems = useMemo(() => {
     if (trackingMode === 'BATCH_WISE') {

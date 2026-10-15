@@ -15,6 +15,14 @@ describe("Item Master — Feed Form", () => {
 
   it("shows only for a feed item type", () => {
     for (const type of ["FEED", "FEED-001", "FEED_BULK", "feed bag"]) expect(isFieldVisible(feedForm, { item_type: type })).toBe(true);
-    for (const type of ["MEDICINE", "LIVESTOCK", "", undefined]) expect(isFieldVisible(feedForm, { item_type: type })).toBe(false);
+    for (const type of ["MEDICINE", "LIVING_ASSET", "", undefined]) expect(isFieldVisible(feedForm, { item_type: type })).toBe(false);
+  });
+
+  it("shows Diet No. only for FEED", () => {
+    const dietNo = item.fields.find((f) => f.key === "diet_no")!;
+    expect(isFieldVisible(dietNo, { item_type: "FEED" })).toBe(true);
+    expect(isFieldVisible(dietNo, { item_type: "FEED-001" })).toBe(false);
+    expect(isFieldVisible(dietNo, { item_type: "LIVING_ASSET" })).toBe(false);
+    expect(isFieldVisible(dietNo, { item_type: "MEDICINE" })).toBe(false);
   });
 });

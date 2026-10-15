@@ -118,7 +118,7 @@ export interface MasterDataField {
    *
    * Without it the parent's raw value is the param value, which only works when
    * the two vocabularies match. A UOM list narrowed by item type does not:
-   * item_type is LIVESTOCK but the UOM master's type is COUNT. A value with no
+   * item_type is LIVING_ASSET but the UOM master's type is COUNT. A value with no
    * entry sends no param at all, so the field falls back to the unfiltered list
    * rather than showing nothing.
    */

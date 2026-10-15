@@ -9,7 +9,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
  * The `itemType` filter of GET /item, as a SQL condition.
  *
  * Porta Farm's living-asset type is code "LA-001" named "Living Asset", so
- * `?itemType=LIVESTOCK` matched nothing and the Animal Register's picker was
+ * `?itemType=LIVING_ASSET` matched nothing and the Animal Register's picker was
  * empty. When the filter names one of our KINDS, the condition matches the
  * item's own `item_type` **or** any of the tenant's types whose code or name
  * says it is that kind — in SQL, because the list is paged and a decision made
@@ -20,7 +20,9 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
  */
 export function itemKindCondition(itemType: string, tenantId: string, scope: ClsService | string | null, requestedCompany?: string): SQL {
   const asked = itemType.trim().toUpperCase();
-  const kind = ITEM_KINDS.find((k) => k === asked);
+  // Accept the retired public filter alias during rollout, but resolve it to
+  // the canonical kind so the SQL includes migrated and legacy rows alike.
+  const kind = ITEM_KINDS.find((k) => k === asked) ?? (asked === 'LIVESTOCK' ? 'LIVING_ASSET' : undefined);
   const exact = eq(schema.itemMaster.item_type, itemType);
   if (!kind) return exact;
 
