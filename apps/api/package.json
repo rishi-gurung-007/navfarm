@@ -636,6 +636,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-repair-protected-tenant": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/repair-protected-tenant-registry.ts",
+          "cwd": "apps/api"
+        }
+      },
       "db-verify-demo-flow": {
         "executor": "nx:run-commands",
         "cache": false,

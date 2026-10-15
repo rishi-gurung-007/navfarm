@@ -24,7 +24,7 @@
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
 import { assertSafeRebuildTarget, parseRebuildArgs } from './lib/rebuild-guards';
-import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX } from '../core/database/database-names';
+import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX, NEVER_DROP_DATABASES } from '../core/database/database-names';
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -218,7 +218,7 @@ export async function listResetTargetDatabases(targets: ResetTargets): Promise<s
         targets.masterDatabase,
         targets.systemDatabase,
         targets.demoTenantDatabase,
-      ]).has(name));
+      ]).has(name) && !NEVER_DROP_DATABASES.includes(name as (typeof NEVER_DROP_DATABASES)[number]));
   } finally {
     await conn.end();
   }
