@@ -62,6 +62,10 @@ export class ManualFeedLineInput {
 
 export class CreateManualFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
+  @ApiPropertyOptional({ description: 'Requisition date (YYYY-MM-DD); defaults to farm today when omitted' })
+  @IsOptional()
+  @IsDateString()
+  requisition_date?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
   @ApiProperty({ type: [ManualFeedLineInput] })
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ManualFeedLineInput)

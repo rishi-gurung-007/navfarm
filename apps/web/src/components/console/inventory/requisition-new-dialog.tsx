@@ -141,7 +141,13 @@ export function RequisitionNewDialog({
   // Rishi, 12 Oct: the farm is never locked. A caller's farmId is only the starting choice; the user
   // may pick another farm (changing it resets the lines, effect below).
   const [pickedFarmId, setPickedFarmId] = useState<string | undefined>(farmId);
-  useEffect(() => { if (open) setPickedFarmId(farmId); }, [open, farmId]);
+  const [requisitionDate, setRequisitionDate] = useState<string>(todayIso());
+  useEffect(() => {
+    if (open) {
+      setPickedFarmId(farmId);
+      setRequisitionDate(todayIso());
+    }
+  }, [open, farmId]);
   const effectiveFarmId = pickedFarmId ?? farm.farmId ?? "";
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -157,6 +163,7 @@ export function RequisitionNewDialog({
     let alive = true;
     setLines([{ ...EMPTY }]);
     setRemarks("");
+    setRequisitionDate(todayIso());
     api
       .get(`/feed-requisition/options?${new URLSearchParams({ farmId: effectiveFarmId }).toString()}`)
       .then((res: any) => {
@@ -234,13 +241,14 @@ export function RequisitionNewDialog({
     settings?.bagSizeKg ?? 0,
   );
   const earliest = lines.map((l) => l.date).filter(Boolean).sort()[0] ?? null;
-  const complete = lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
+  const complete = Boolean(requisitionDate) && lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
 
   const create = async () => {
     setBusy(true);
     try {
       const body = {
         farmId: effectiveFarmId,
+        requisition_date: requisitionDate,
         ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
         lines: lines.map((l) => ({
           destination_location_id: l.dest,
@@ -313,7 +321,18 @@ export function RequisitionNewDialog({
           </div>
           <FeedRequisitionHeaderFields values={{
             reqNo: t("rqnAssignedOnSave"),
-            reqDate: formatDateShort(todayIso()),
+            reqDate: requisitionDate ? formatDateShort(requisitionDate) : null,
+            reqDateControl: (
+              <input
+                id="rqn-date"
+                aria-label={t("rqdReqDate")}
+                type="date"
+                className="nf-input"
+                style={inputStyle}
+                value={requisitionDate}
+                onChange={(e) => setRequisitionDate(e.target.value)}
+              />
+            ),
             reqType: labelOf(DOC_TYPE_LABEL, "ITEM", t),
             source: labelOf(SOURCE_LABEL, "MANUAL_ENTRY", t),
             requesterLogin: requester?.email,

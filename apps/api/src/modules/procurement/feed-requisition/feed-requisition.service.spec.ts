@@ -1024,6 +1024,14 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     expect(inserted.values[0]).toMatchObject({ reason_id: 'reason-1' });
   });
 
+  it('accepts past and future requisition_date on manual requisition', async () => {
+    const { service, log } = setup([source()], queuesWith([], []));
+    await service.createManual({ lines: [manualLine], requisition_date: '2025-05-12' } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
+    expect(header.values.requisition_date).toBe('2025-05-12');
+    expect(header.values.req_no).toContain('REQ-GRS-2025-');
+  });
+
   it('numbers into the new year when the farm zone has already turned (31 Dec 23:00 UTC, Africa/Harare) (D16)', async () => {
     // 31 Dec 2026 23:00 UTC is 1 Jan 2027 01:00 in Harare (UTC+2) — the req_no
     // year must follow the farm's day, not the server's still-2026 one.

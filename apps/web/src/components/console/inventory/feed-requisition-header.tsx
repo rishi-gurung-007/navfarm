@@ -15,12 +15,14 @@
 import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { ReadField as BaseReadField } from "@/components/ui/field";
 import { useLanguage } from "@/hooks/useLanguage";
+import { cn } from "@/lib/utils";
 
 const HALF = "sm:col-span-6 lg:col-span-4";
 
 export interface FeedRequisitionHeaderValues {
   reqNo: ReactNode;
   reqDate: ReactNode;
+  reqDateControl?: ReactNode;
   reqType: ReactNode;
   source: ReactNode;
   requesterLogin?: ReactNode;
@@ -52,7 +54,16 @@ export function FeedRequisitionHeaderFields({ values: v }: { values: FeedRequisi
   return (
     <>
       <ReadField className={HALF} label={t("rqdReqNo")} value={v.reqNo} mono />
-      <ReadField className={HALF} label={t("rqdReqDate")} value={v.reqDate} />
+      {v.reqDateControl ? (
+        <div className={cn("flex min-w-0 flex-col gap-1.5", HALF)}>
+          <label htmlFor="rqn-date" className="nf-text-label flex items-center gap-1 text-(--text-secondary)">
+            <span className="nf-text-label">{t("rqdReqDate")}</span>
+          </label>
+          {v.reqDateControl}
+        </div>
+      ) : (
+        <ReadField className={HALF} label={t("rqdReqDate")} value={v.reqDate} />
+      )}
       <ReadField className={HALF} label={t("rqdReqType")} value={v.reqType} />
       <ReadField className={HALF} label={t("rqdSource")} value={v.source} />
       <ReadField className={HALF} label={t("crqRequesterUserId")} value={v.requesterLogin} mono />

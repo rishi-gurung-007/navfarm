@@ -1035,6 +1035,7 @@ export class FeedRequisitionService implements OnModuleInit {
       // D16: the requisition cycle is dated by the farm's day, the same one the forecast plans from.
       const clock = await this.forecast.farmToday(companyId, tenantId);
       const manualToday = clock.today;
+      const reqDate = dto.requisition_date ?? manualToday;
       // §6a / Req. row 13 and checkpoint 4 for a manual line — the same two rules an edited line meets
       // (lineChangeProblems), with the requirement read from the forecast's demand at that destination.
       // Task 9 had explicitly exempted a manual line ("nothing to differ from"): either entry point
@@ -1074,7 +1075,7 @@ export class FeedRequisitionService implements OnModuleInit {
         includeZeroNeed: true,
       }).filter((line) => selectedKeys.has(line.key));
       const evidenceOf = new Map(manualEvidence.map((line) => [line.key, line]));
-      const cycle = productionCycle(manualToday, farm.settings.productionWeekday);
+      const cycle = productionCycle(reqDate, farm.settings.productionWeekday);
       const [requester] = user?.userId
         ? await this.db.select({ full_name: schema.userMaster.full_name, department_id: schema.userMaster.department_id })
           .from(schema.userMaster).where(and(eq(schema.userMaster.user_id, user.userId), eq(schema.userMaster.tenant_id, tenantId))).limit(1)
@@ -1088,7 +1089,7 @@ export class FeedRequisitionService implements OnModuleInit {
           tenant_id: tenantId,
           company_id: companyId,
           farm_id: farmId,
-          req_no: await this.nextReqNo(farm.code, tenantId, manualToday),
+          req_no: await this.nextReqNo(farm.code, tenantId, reqDate),
           doc_type: FEED_DOC_TYPE,
           status: 'DRAFT',
           requisition_type: 'MANUAL',
@@ -1097,7 +1098,7 @@ export class FeedRequisitionService implements OnModuleInit {
           supply_source: 'MILL',
           priority: requisitionPriority(demand.planningDate, manualEvidence),
           remarks: dto.remarks?.trim() || null,
-          requisition_date: manualToday, // Req. §1 row 6
+          requisition_date: reqDate, // Req. §1 row 6
           required_date: dto.lines.map((l) => l.proposed_delivery_date).sort()[0],
           production_date: cycle.productionDate,
           submission_deadline: cycle.submissionDeadline,

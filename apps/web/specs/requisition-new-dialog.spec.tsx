@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { RequisitionNewDialog } from '../src/components/console/inventory/requisition-new-dialog';
 import { api } from '../src/services/api-client';
 import { translations } from '../src/utils/translations';
+import { todayIso } from '../src/components/console/inventory/feed-format';
 jest.mock('../src/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warn: jest.fn() }, Toast: () => null }));
 import { showToast } from '../src/components/ui/toast';
 beforeEach(() => { for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear(); });
@@ -110,7 +111,9 @@ describe('RequisitionNewDialog (D26)', () => {
     fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', {
-      farmId: 'farm-vil', lines: [{ destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-01' }],
+      farmId: 'farm-vil',
+      requisition_date: todayIso(),
+      lines: [{ destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-01' }],
     }));
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ requisition_id: 'req-9' }));
   });
@@ -431,6 +434,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', {
       farmId: 'farm-vil',
+      requisition_date: todayIso(),
       remarks: 'Urgent',
       lines: [
         { destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-05' },
@@ -477,5 +481,24 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     await waitForSearchable('rqNewDestination:{"line":1}');
     await fillLine(1, 's1', '3000', '2099-10-05');
     expect(within(screen.getByRole('dialog')).queryByText('rqdBaggedTotal')).toBeNull();
+  });
+
+  it('allows user to edit requisition date to past or future dates', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    await waitForSearchable('rqNewDestination:{"line":1}');
+    await fillLine(1, 's1', '3000', '2099-10-05');
+
+    const dateInput = screen.getByLabelText('rqdReqDate') as HTMLInputElement;
+    expect(dateInput.value).toBe(todayIso());
+
+    // Edit to past date
+    fireEvent.change(dateInput, { target: { value: '2025-01-10' } });
+    expect(dateInput.value).toBe('2025-01-10');
+
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', expect.objectContaining({
+      farmId: 'farm-vil',
+      requisition_date: '2025-01-10',
+    })));
   });
 });
