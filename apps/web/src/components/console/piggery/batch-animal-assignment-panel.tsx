@@ -305,7 +305,7 @@ export default function BatchAnimalAssignmentPanel() {
     api.get(`/setup/wizard/nobs${qs}`).then((r) => setNobs(unwrap<Row[]>(r) || [])).catch(() => undefined);
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => undefined);
     api.get(`/stage${qs}`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => undefined);
-    api.get(`/item${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => undefined);
+    api.get(`/item${qs.replace(/^\?/, "?isActive=true&isBlocked=false&")}`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => undefined);
   }, []);
 
   // LOBs depend on the selected NOB in the "register new animal" form
@@ -945,7 +945,7 @@ export default function BatchAnimalAssignmentPanel() {
                   value={regForm.item_id}
                   onChange={(val) => setRegForm((f) => ({ ...f, item_id: val }))}
                   options={items
-                    .filter((i) => i.item_type === "LIVING_ASSET" || !i.item_type)
+                    .filter((i) => !i.is_blocked && i.is_active !== false && (i.item_type === "LIVING_ASSET" || !i.item_type))
                     .map((i) => ({ value: i.item_id, label: i.item_name }))}
                   placeholder={t("anpSelectPlaceholder")}
                   searchPlaceholder="Search item…"

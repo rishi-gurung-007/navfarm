@@ -195,6 +195,10 @@ export class GoodsReceiptService {
         throw new BadRequestException(`Item with ID '${line.item_id}' not found.`);
       }
 
+      if (item.is_blocked) {
+        throw new BadRequestException(`Item '${item.item_code}' is blocked and cannot be received.`);
+      }
+
       const quantityNum = Number(line.quantity);
       if (Number.isNaN(quantityNum) || quantityNum <= 0) {
         throw new BadRequestException(`Quantity for item '${item.item_code}' must be a positive number.`);

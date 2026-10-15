@@ -259,10 +259,10 @@ export default function AnimalPanel() {
     api.get(`/stage?limit=100`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/reason${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/item${qs}`).then((r) => {
+    api.get(`/item${qs.replace(/^\?/, "?isActive=true&isBlocked=false&")}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
       setItems(all);
-      setMedItems(all.filter((i: Row) => ["MEDICINE", "VACCINE"].includes(i.item_type)));
+      setMedItems(all.filter((i: Row) => !i.is_blocked && i.is_active !== false && ["MEDICINE", "VACCINE"].includes(i.item_type)));
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

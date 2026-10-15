@@ -977,6 +977,7 @@ export class FeedRequisitionService implements OnModuleInit {
       eq(schema.itemMaster.company_id, companyId),
       itemKindCondition('FEED', tenantId, companyId), // this path already knows its company
       eq(schema.itemMaster.is_active, true),
+      eq(schema.itemMaster.is_blocked, false),
       isNull(schema.itemMaster.deleted_at),
     )!;
   }

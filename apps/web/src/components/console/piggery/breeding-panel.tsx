@@ -214,9 +214,9 @@ export function BreedingPanel() {
       setSemenBatches(unwrap<Row[]>(sRes) || []);
       setAnimals(unwrap<Row[]>(aRes) || []);
       setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
-      api.get("/item?itemType=LIVESTOCK&isActive=true&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset))).catch(() => setPigletItems([]));
+      api.get("/item?itemType=LIVESTOCK&isActive=true&isBlocked=false&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset && !i.is_blocked && i.is_active !== false))).catch(() => setPigletItems([]));
       api.get("/stage?limit=100").then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => setStages([]));
-      api.get("/item?isActive=true&limit=200").then((r) => setSemenItems(unwrap<Row[]>(r) || [])).catch(() => setSemenItems([]));
+      api.get("/item?isActive=true&isBlocked=false&limit=200").then((r) => setSemenItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => setSemenItems([]));
     } catch (e: any) {
       setError(e.message || t("brpErrorLoadFailed"));
     } finally {

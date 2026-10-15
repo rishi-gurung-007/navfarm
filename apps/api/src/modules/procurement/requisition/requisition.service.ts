@@ -345,7 +345,7 @@ export class RequisitionService {
         .from(schema.itemMaster)
         .where(and(
           eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, companyId),
-          eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at),
+          eq(schema.itemMaster.is_active, true), eq(schema.itemMaster.is_blocked, false), isNull(schema.itemMaster.deleted_at),
           inArray(schema.itemMaster.item_id, itemIds),
         ));
       const found = new Map(rows.map((r) => [r.item_id, r]));
@@ -499,7 +499,7 @@ export class RequisitionService {
         is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
       })
       .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), eq(schema.itemMaster.is_blocked, false), isNull(schema.itemMaster.deleted_at)))
       .orderBy(schema.itemMaster.item_code);
     // MySQL hands these back as tinyint 1/0; the editor branches on them, so
     // they cross the wire as real booleans rather than truthy numbers.

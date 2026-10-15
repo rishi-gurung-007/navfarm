@@ -197,8 +197,8 @@ export default function MortalityHealthPanel() {
         for (const itemType of ["MEDICINE", "VACCINE"]) {
           let offset = 0;
           while (true) {
-            const res = await api.get(`/item?companyId=${companyId}&itemType=${itemType}&isActive=true&limit=100&offset=${offset}`);
-            const rows = res?.data ?? [];
+            const res = await api.get(`/item?companyId=${companyId}&itemType=${itemType}&isActive=true&isBlocked=false&limit=100&offset=${offset}`);
+            const rows = (res?.data ?? []).filter((it: any) => !it.is_blocked && it.is_active !== false);
             items.push(...rows);
             offset += rows.length;
             if (!rows.length || offset >= Number(res.total ?? rows.length)) break;

@@ -72,7 +72,7 @@ export default function PacksPanel() {
     if (companyId) params.set("companyId", companyId);
     params.set("limit", "500");
     const qs = params.toString();
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => { });
+    api.get(`/item?${qs}&isActive=true&isBlocked=false`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => { });
     api.get(`/batch?${qs}`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => { });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -206,7 +206,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     if (header.lob_id) params.set("lobId", header.lob_id);
     params.set("limit", "500");
     const qs = params.toString();
-    if (!itemsProp) api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => setItems([]));
+    if (!itemsProp) api.get(`/item?${qs}&isActive=true&isBlocked=false`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => setItems([]));
     if (!resourcesProp) api.get(`/resource?${qs}`).then((r) => setResources(unwrap<Row[]>(r) || [])).catch(() => setResources([]));
     api.get(`/activity?isActive=true&limit=500`).then((r) => setActivities(unwrap<Row[]>(r) || [])).catch(() => setActivities([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps

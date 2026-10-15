@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested, IsIn } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
 export const FEED_FORMS = ['BULK', 'BAGGED'] as const;
@@ -484,9 +484,15 @@ export class QueryItemDto extends MasterListQueryDto {
 
   @ApiProperty({ description: 'Filter by active status', required: false })
   @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === true || value === 1 || value === '1' ? true : value === 'false' || value === false || value === 0 || value === '0' ? false : value))
   @IsBoolean()
-  @Type(() => Boolean)
-  isActive?: boolean;
+  isActive?: any;
+
+  @ApiProperty({ description: 'Filter by blocked status', required: false })
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === true || value === 1 || value === '1' ? true : value === 'false' || value === false || value === 0 || value === '0' ? false : value))
+  @IsBoolean()
+  isBlocked?: any;
 
   @ApiProperty({ description: 'Filter by item template code (supports trailing * wildcard)', required: false })
   @IsOptional()

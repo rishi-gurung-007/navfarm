@@ -175,8 +175,13 @@ export default function StockAdjustmentPanel() {
     if (companyId) params.set("companyId", companyId);
     params.set("limit", "500");
     const qs = params.toString();
+    const itemParams = new URLSearchParams();
+    if (companyId) itemParams.set("companyId", companyId);
+    itemParams.set("limit", "500");
+    itemParams.set("isActive", "true");
+    itemParams.set("isBlocked", "false");
     api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
+    api.get(`/item?${itemParams.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -486,7 +491,9 @@ export default function StockAdjustmentPanel() {
 
   // Searchable select options for items
   const itemOptions = useMemo(() => {
-    return items.map((it) => {
+    return items
+      .filter((it) => !it.is_blocked && it.is_active !== false)
+      .map((it) => {
       const bal = balances[it.item_id];
       const stockQty = bal ? bal.on_hand_qty : 0;
       return {

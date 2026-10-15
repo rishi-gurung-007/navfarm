@@ -447,8 +447,8 @@ export default function BatchPanel() {
       .then((r) => setSheds(unwrap<Row[]>(r) || []))
       .catch(() => setSheds([]));
     api
-      .get(`/item?${qs}`)
-      .then((r) => setItems(unwrap<Row[]>(r) || []))
+      .get(`/item?${qs}&isActive=true&isBlocked=false`)
+      .then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false)))
       .catch(() => setItems([]));
     api
       .get(`/location?${qs}`)

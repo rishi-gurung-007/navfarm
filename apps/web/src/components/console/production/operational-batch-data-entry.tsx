@@ -282,14 +282,16 @@ export default function OperationalBatchDataEntry() {
   >([]);
   useEffect(() => {
     api
-      .get('/item?isActive=true&limit=500')
+      .get('/item?isActive=true&isBlocked=false&limit=500')
       .then((res: any) =>
         setOutputItemOptions(
-          (unwrap<Row[]>(res) || []).map((i: Row) => ({
-            value: i.item_id,
-            label: i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_name,
-            bio: Boolean(i.is_biological_asset),
-          })),
+          (unwrap<Row[]>(res) || [])
+            .filter((i: Row) => !i.is_blocked && i.is_active !== false)
+            .map((i: Row) => ({
+              value: i.item_id,
+              label: i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_name,
+              bio: Boolean(i.is_biological_asset),
+            })),
         ),
       )
       .catch(() => setOutputItemOptions([]));

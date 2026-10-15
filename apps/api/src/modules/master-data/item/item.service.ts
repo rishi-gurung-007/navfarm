@@ -580,7 +580,12 @@ export class ItemService {
       conditions.push(eq(schema.itemMaster.lob_id, query.lobId));
     }
     if (query.isActive !== undefined) {
-      conditions.push(eq(schema.itemMaster.is_active, query.isActive));
+      const activeVal = String(query.isActive) === 'true' || query.isActive === true;
+      conditions.push(eq(schema.itemMaster.is_active, activeVal));
+    }
+    if (query.isBlocked !== undefined) {
+      const blockedVal = String(query.isBlocked) === 'true' || query.isBlocked === true;
+      conditions.push(eq(schema.itemMaster.is_blocked, blockedVal));
     }
     if (query.search) {
       conditions.push(

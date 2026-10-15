@@ -236,8 +236,10 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     const itemParams = new URLSearchParams();
     if (companyId) itemParams.set("companyId", companyId);
     itemParams.set("limit", "500");
+    itemParams.set("isActive", "true");
+    itemParams.set("isBlocked", "false");
     api.get(`/item?${itemParams.toString()}`)
-      .then((res) => setItems(unwrap<Row[]>(res) || []))
+      .then((res) => setItems((unwrap<Row[]>(res) || []).filter((i) => !i.is_blocked && i.is_active !== false)))
       .catch(() => setItems([]));
 
     api.get(`/resource?${itemParams.toString()}`)

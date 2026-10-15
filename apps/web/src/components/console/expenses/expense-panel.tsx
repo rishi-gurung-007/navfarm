@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Loader2, Inbox, FileText } from "lucide-react";
+import { Plus, Loader2, Inbox, FileText, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
 import { Toast } from "@/components/ui/toast";
@@ -29,6 +29,36 @@ const S = {
 const unwrap = (res: any): any => (Array.isArray(res) ? res : res?.data ?? res);
 const accountParts = (a: Row) => [String(a.account_code), String(a.account_name)];
 
+type ExpenseSortKey = "document_no" | "posting_date" | "location" | "sub_location" | "description" | "bal_acc_no" | "amount" | "status" | "journal_no";
+
+/** A column header button that sorts the list with directional indicators. */
+function SortButton({
+  label,
+  active,
+  dir,
+  onClick,
+  alignEnd = false,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+  alignEnd?: boolean;
+}) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 uppercase ${alignEnd ? "ml-auto" : ""}`}
+      style={active ? { color: "var(--text-primary)" } : undefined}
+    >
+      <span>{label}</span>
+      <Icon className="h-3 w-3" style={{ opacity: active ? 1 : 0.45 }} />
+    </button>
+  );
+}
+
 /**
  * The manager's voucher entry format (15 Oct): Posting Date, Transaction Type, Voucher Type (GL), Voucher No.,
  * Description, Location (the farm), Sub-Location (a shed of it), Amount (negative = payment, positive = receipt),
@@ -47,6 +77,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [sort, setSort] = useState<{ key: ExpenseSortKey; dir: "asc" | "desc" }>({ key: "document_no", dir: "desc" });
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -75,7 +106,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [search, docType]);
-  useEffect(() => { setPage(1); }, [search, pageSize, docType]);
+  useEffect(() => { setPage(1); }, [search, pageSize, docType, sort]);
   useEffect(() => {
     const params = new URLSearchParams();
     if (companyId) params.set("companyId", companyId);
@@ -93,6 +124,60 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
   const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || "—";
   const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || "—";
   const locName = (id: string) => [...farms, ...sheds].find((l) => l.location_id === id)?.location_name || "—";
+
+  const toggleSort = (key: ExpenseSortKey) =>
+    setSort((cur) =>
+      cur.key === key
+        ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: key === "document_no" || key === "posting_date" ? "desc" : "asc" }
+    );
+
+  const sortedRows = useMemo(() => {
+    const list = [...rows];
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sort.key) {
+        case "document_no":
+          cmp = String(a.document_no ?? "").localeCompare(String(b.document_no ?? ""), undefined, { numeric: true });
+          break;
+        case "posting_date":
+          cmp =
+            String(a.posting_date ?? "").localeCompare(String(b.posting_date ?? "")) ||
+            String(a.document_no ?? "").localeCompare(String(b.document_no ?? ""), undefined, { numeric: true });
+          break;
+        case "location":
+          cmp = locName(a.location_id).localeCompare(locName(b.location_id));
+          break;
+        case "sub_location":
+          cmp = locName(a.sub_location_id).localeCompare(locName(b.sub_location_id));
+          break;
+        case "description":
+          cmp = String(a.description ?? "").localeCompare(String(b.description ?? ""));
+          break;
+        case "bal_acc_no": {
+          const codeA = accountCode(a.expense_gl_account_id);
+          const codeB = accountCode(b.expense_gl_account_id);
+          cmp =
+            codeA.localeCompare(codeB, undefined, { numeric: true }) ||
+            accountName(a.expense_gl_account_id).localeCompare(accountName(b.expense_gl_account_id));
+          break;
+        }
+        case "amount":
+          cmp = (Number(a.amount) || 0) - (Number(b.amount) || 0);
+          break;
+        case "status":
+          cmp = String(a.status ?? "").localeCompare(String(b.status ?? ""));
+          break;
+        case "journal_no":
+          cmp = String(a.journal_no ?? "").localeCompare(String(b.journal_no ?? ""), undefined, { numeric: true });
+          break;
+        default:
+          cmp = 0;
+      }
+      return sort.dir === "desc" ? -cmp : cmp;
+    });
+    return list;
+  }, [rows, sort, glAccounts, farms, sheds]);
 
   const openAccountingPreview = async (row: Row) => {
     setViewingEntry(row);
@@ -141,7 +226,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
     }
   };
 
-  const paged = rows.slice((page - 1) * pageSize, page * pageSize);
+  const paged = sortedRows.slice((page - 1) * pageSize, page * pageSize);
   const cols = posts ? 10 : 9;
   const readOnly = (value: string) => <input value={value} readOnly disabled className="nf-input" style={S.input} />;
   const accountSelect = (key: string, label: string, onPick: (id: string) => void, required = false) => (
@@ -165,22 +250,42 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader>
               <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
-                <TableHead className="whitespace-nowrap">{t("expDocumentNo")}</TableHead>
-                <TableHead className="whitespace-nowrap">{t("jpPostingDate")}</TableHead>
-                <TableHead>{t("expLocation")}</TableHead>
-                <TableHead>{t("expSubLocation")}</TableHead>
-                <TableHead>{t("jpDescription")}</TableHead>
-                <TableHead>{t("expBalanceAccount")}</TableHead>
-                <TableHead className="text-right">{t("expAmount")}</TableHead>
+                <TableHead className="whitespace-nowrap">
+                  <SortButton label={t("expDocNo")} active={sort.key === "document_no"} dir={sort.dir} onClick={() => toggleSort("document_no")} />
+                </TableHead>
+                <TableHead className="whitespace-nowrap">
+                  <SortButton label={t("jpPostingDate")} active={sort.key === "posting_date"} dir={sort.dir} onClick={() => toggleSort("posting_date")} />
+                </TableHead>
+                <TableHead>
+                  <SortButton label={t("expLocation")} active={sort.key === "location"} dir={sort.dir} onClick={() => toggleSort("location")} />
+                </TableHead>
+                <TableHead>
+                  <SortButton label={t("expSubLocation")} active={sort.key === "sub_location"} dir={sort.dir} onClick={() => toggleSort("sub_location")} />
+                </TableHead>
+                <TableHead>
+                  <SortButton label={t("jpDescription")} active={sort.key === "description"} dir={sort.dir} onClick={() => toggleSort("description")} />
+                </TableHead>
+                <TableHead className="whitespace-nowrap">
+                  <SortButton label={t("expBalAccNo")} active={sort.key === "bal_acc_no"} dir={sort.dir} onClick={() => toggleSort("bal_acc_no")} />
+                </TableHead>
+                <TableHead className="text-right whitespace-nowrap">
+                  <SortButton label={t("expAmount")} active={sort.key === "amount"} dir={sort.dir} onClick={() => toggleSort("amount")} alignEnd />
+                </TableHead>
                 <TableHead>{t("expRemarks")}</TableHead>
-                <TableHead className="text-right">{t("jpStatus")}</TableHead>
-                {posts && <TableHead className="whitespace-nowrap">{t("jpJournalNo")}</TableHead>}
+                <TableHead className="text-right whitespace-nowrap">
+                  <SortButton label={t("jpStatus")} active={sort.key === "status"} dir={sort.dir} onClick={() => toggleSort("status")} alignEnd />
+                </TableHead>
+                {posts && (
+                  <TableHead className="whitespace-nowrap">
+                    <SortButton label={t("jpJournalNo")} active={sort.key === "journal_no"} dir={sort.dir} onClick={() => toggleSort("journal_no")} />
+                  </TableHead>
+                )}
               </tr>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <tr><TableCell colSpan={cols} className="py-10 text-center" style={S.sub}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("jpLoading")}</TableCell></tr>
-              ) : rows.length === 0 ? (
+              ) : sortedRows.length === 0 ? (
                 <tr><TableCell colSpan={cols} className="py-10 text-center" style={S.sub}><Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> {t("expNoneYet")}</TableCell></tr>
               ) : paged.map((r) => (
                 <TableRow key={r.expense_id}>
@@ -199,7 +304,22 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                   <TableCell style={S.primary}>{r.location_id ? locName(r.location_id) : "—"}</TableCell>
                   <TableCell style={S.primary}>{r.sub_location_id ? locName(r.sub_location_id) : "—"}</TableCell>
                   <TableCell style={S.sub}>{r.description || "—"}</TableCell>
-                  <TableCell style={S.primary}>{r.expense_gl_account_id ? accountName(r.expense_gl_account_id) : "—"}</TableCell>
+                  <TableCell style={S.primary}>
+                    {r.expense_gl_account_id ? (
+                      accountCode(r.expense_gl_account_id) !== "—" ? (
+                        <div className="flex flex-col">
+                          <span className="font-semibold">{accountCode(r.expense_gl_account_id)}</span>
+                          {accountName(r.expense_gl_account_id) !== "—" && (
+                            <span className="text-xs" style={S.sub}>{accountName(r.expense_gl_account_id)}</span>
+                          )}
+                        </div>
+                      ) : (
+                        accountName(r.expense_gl_account_id)
+                      )
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell
                     className="whitespace-nowrap text-right font-medium"
                     style={{
@@ -238,9 +358,9 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
             </TableBody>
           </table>
         </div>
-        {!loading && rows.length > 0 && (
+        {!loading && sortedRows.length > 0 && (
           <div className="border-t px-2" style={{ borderColor: "var(--border)" }}>
-            <Pagination page={page} pageSize={pageSize} total={rows.length} onPageChange={setPage} onPageSizeChange={setPageSize} />
+            <Pagination page={page} pageSize={pageSize} total={sortedRows.length} onPageChange={setPage} onPageSizeChange={setPageSize} />
           </div>
         )}
       </div>

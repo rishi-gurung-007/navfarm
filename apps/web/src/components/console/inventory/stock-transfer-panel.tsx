@@ -279,7 +279,12 @@ export default function StockTransferPanel() {
     api.get(`/location?locationType=FARM&rootOnly=true&isActive=true`).then((r) => setFarms(unwrap<Row[]>(r) || [])).catch(() => {
       // ignore
     });
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {
+    const itemParams = new URLSearchParams();
+    if (companyId) itemParams.set("companyId", companyId);
+    itemParams.set("limit", "500");
+    itemParams.set("isActive", "true");
+    itemParams.set("isBlocked", "false");
+    api.get(`/item?${itemParams.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {
       // ignore
     });
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {
@@ -1147,7 +1152,9 @@ export default function StockTransferPanel() {
   const itemOptions = useMemo(() => {
     if (!header.from_warehouse_id) return [];
 
-    const list = items.map((it) => {
+    const list = items
+      .filter((it) => !it.is_blocked && it.is_active !== false)
+      .map((it) => {
       const bal = sourceBalances[it.item_id];
       const stockQty = bal?.on_hand_qty || 0;
       const uom = bal?.uom || it.uom_primary || it.uom || "";

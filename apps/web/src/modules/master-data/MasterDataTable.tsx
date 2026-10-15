@@ -1290,7 +1290,8 @@ export function MasterDataTable({
         const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
-        setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));
+        const unblocked = Array.isArray(list) ? list.filter((r) => !r.is_blocked && r.is_active !== false) : [];
+        setEntityOptions((prev) => ({ ...prev, [ep]: unblocked }));
       } catch {
         setEntityOptions((prev) => ({ ...prev, [ep]: prev[ep] || [] }));
       }
@@ -1437,7 +1438,8 @@ export function MasterDataTable({
         const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
-        setEntityOptions((prev) => ({ ...prev, [ep]: Array.isArray(list) ? list : [] }));
+        const unblocked = Array.isArray(list) ? list.filter((r) => !r.is_blocked && r.is_active !== false) : [];
+        setEntityOptions((prev) => ({ ...prev, [ep]: unblocked }));
       } catch {
         setEntityOptions((prev) => ({ ...prev, [ep]: [] }));
       }

@@ -236,6 +236,10 @@ export default function GoodsReceiptPanel() {
   const [warehouses, setWarehouses] = useState<Row[]>([]);
   const [suppliers, setSuppliers] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
+  const selectableItems = useMemo(
+    () => items.filter((it) => !it.is_blocked && it.is_active !== false),
+    [items]
+  );
   const [uoms, setUoms] = useState<Row[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -301,9 +305,14 @@ export default function GoodsReceiptPanel() {
     if (companyId) params.set("companyId", companyId);
     params.set("limit", "500");
     const qs = params.toString();
+    const itemParams = new URLSearchParams();
+    if (companyId) itemParams.set("companyId", companyId);
+    itemParams.set("limit", "500");
+    itemParams.set("isActive", "true");
+    itemParams.set("isBlocked", "false");
     api.get(`/warehouse?${qs}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/supplier?${qs}`).then((r) => setSuppliers(unwrap<Row[]>(r) || [])).catch(() => {});
-    api.get(`/item?${qs}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
+    api.get(`/item?${itemParams.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/uom?${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -733,11 +742,11 @@ export default function GoodsReceiptPanel() {
                       {/* Item Description: SearchableSelect */}
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
                         <SearchableSelect
-                          options={items}
+                          options={selectableItems}
                           value={line.item_id}
                           valueKey="item_id"
                           onChange={(val) => setLineField(idx, "item_id", val)}
-                          placeholder={t("grpSelectItemOptions", { count: items.length })}
+                          placeholder={t("grpSelectItemOptions", { count: selectableItems.length })}
                           searchPlaceholder="Search item description…"
                           columnHeaders={["Description", "Tracking"]}
                           getLabelParts={(itemRow: any) => [

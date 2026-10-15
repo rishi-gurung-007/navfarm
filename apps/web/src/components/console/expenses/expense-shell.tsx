@@ -14,7 +14,7 @@ import ExpensePanel from "./expense-panel";
  * Exported so the sidebar builds its flyout from the same list.
  */
 export const EXPENSE_SECTIONS = [
-  { key: "EXPENSE", href: "/expenses/expense", labelKey: "expExpense", posts: true },
+  { key: "EXPENSE", href: "/expenses/expense", labelKey: "expExpenseVoucher", posts: true },
 ] as const;
 
 export type ExpenseDocType = (typeof EXPENSE_SECTIONS)[number]["key"];
