@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { and } from 'drizzle-orm';
-import { animalScopeConditions, batchReferenceScopeConditions, batchScopeConditions, farmScope, resolveFarmScope, restrictedScopeConditions, requisitionFarmLobCondition, UNRESTRICTED_FARM_SCOPE, type FarmScope } from './farm-scope';
+import { animalScopeConditions, batchReferenceScopeConditions, batchScopeConditions, farmLocationScopeConditions, farmScope, nullableFarmScopeConditions, resolveFarmScope, restrictedScopeConditions, requisitionFarmLobCondition, UNRESTRICTED_FARM_SCOPE, type FarmScope } from './farm-scope';
 import * as schema from '../core/database/schema';
 
 const dialect = new MySqlDialect();
@@ -24,7 +24,7 @@ const input = (userType: string, over: Record<string, unknown> = {}) => ({
 describe('resolveFarmScope', () => {
   it('fixes a standard user to their assigned farm', async () => {
     const scope = await resolveFarmScope(dbWith({ location_id: 'farm-g' }), input('STANDARD_USER', { user: { farmId: 'farm-g' } }));
-    expect(scope).toEqual({ farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    expect(scope).toEqual({ farmId: 'farm-g', restricted: true, farmBound: true, companyId: 'co-1', lobId: 'lob-pig' });
   });
 
   it('refuses a standard user with no assigned farm', async () => {
@@ -38,7 +38,7 @@ describe('resolveFarmScope', () => {
 
   it('fixes a farm manager to their assigned farm and rejects a cross-farm header', async () => {
     const own = await resolveFarmScope(dbWith({ location_id: 'farm-g' }), input('FARM_MANAGER', { user: { farmId: 'farm-g' } }));
-    expect(own).toEqual({ farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    expect(own).toEqual({ farmId: 'farm-g', restricted: true, farmBound: true, companyId: 'co-1', lobId: 'lob-pig' });
 
     const crossFarm = input('FARM_MANAGER', { user: { farmId: 'farm-g' }, headers: { 'x-active-farm-id': 'farm-k' } });
     await expect(resolveFarmScope(dbWith({ location_id: 'farm-g' }), crossFarm))
@@ -52,13 +52,18 @@ describe('resolveFarmScope', () => {
 
   it('gives an operational admin every farm, bounded by LOB, when none is selected', async () => {
     const scope = await resolveFarmScope(dbWith(undefined), input('OPERATIONAL_ADMIN'));
-    expect(scope).toEqual({ farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    expect(scope).toEqual({ farmId: null, restricted: true, farmBound: false, companyId: 'co-1', lobId: 'lob-pig' });
   });
 
   it('narrows an admin to a selected farm of the active company', async () => {
     const req = input('COMPANY_ADMIN', { activeArea: undefined, headers: { 'x-active-farm-id': 'farm-k' } });
     const scope = await resolveFarmScope(dbWith({ location_id: 'farm-k' }), req);
-    expect(scope).toEqual({ farmId: 'farm-k', restricted: false, companyId: 'co-1', lobId: null });
+    expect(scope).toEqual({ farmId: 'farm-k', restricted: false, farmBound: false, companyId: 'co-1', lobId: null });
+  });
+
+  it('keeps an admin on the active LOB when All farms is selected', async () => {
+    const scope = await resolveFarmScope(dbWith(undefined), input('COMPANY_ADMIN'));
+    expect(scope).toEqual({ farmId: null, restricted: false, farmBound: false, companyId: 'co-1', lobId: 'lob-pig' });
   });
 
   it('keeps a company admin inside its assigned company when the header is omitted', async () => {
@@ -76,6 +81,15 @@ describe('resolveFarmScope', () => {
 });
 
 describe('farm conditions', () => {
+  it('follows the canonical parent-location hierarchy for location-owned rows', () => {
+    const { sql } = render(farmLocationScopeConditions(
+      { farmId: 'farm-g', restricted: false, farmBound: false, companyId: 'co-1', lobId: null },
+      schema.locationMaster.location_id,
+    ));
+    expect(sql).toContain('WITH RECURSIVE farm_location_tree');
+    expect(sql).toContain('child.parent_location_id = parent.location_id');
+  });
+
   it('reads as unrestricted when the guard set nothing', () => {
     expect(farmScope({ get: () => undefined } as any)).toEqual(UNRESTRICTED_FARM_SCOPE);
   });
@@ -108,6 +122,17 @@ describe('farm conditions', () => {
     expect(sql).toContain('`animal_register`.`lob_id` = ?');
     expect(sql).toContain('`animal_register`.`company_id` = ?');
     expect(params).toEqual(['lob-pig', 'co-1']);
+  });
+
+  it('matches an animal by either current location or current batch', () => {
+    const { sql } = render(animalScopeConditions({
+      farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig',
+    }));
+    expect(sql).toContain('`animal_register`.`animal_id` IN');
+    expect(sql).toContain('af.current_location_id IN');
+    expect(sql).toContain('WITH RECURSIVE farm_location_tree');
+    expect(sql).toContain('af.current_batch_id IN');
+    expect(sql).not.toContain('af.current_location_id IS NULL');
   });
 });
 
@@ -163,6 +188,28 @@ describe('restrictedScopeConditions', () => {
     const { sql } = render(restrictedScopeConditions({ farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' }, both));
     expect(sql).not.toContain('farm_id');
     expect(sql).not.toContain('farm-g');
+  });
+});
+
+describe('nullableFarmScopeConditions', () => {
+  it('hides default/null farm rows from assigned users', () => {
+    const { sql, params } = render(nullableFarmScopeConditions(
+      { farmId: 'farm-g', restricted: true, farmBound: true, companyId: 'co-1', lobId: 'lob-pig' },
+      schema.breedLifecycleStages.farm_id,
+    ));
+    expect(sql).toContain('`breed_lifecycle_stages`.`farm_id` = ?');
+    expect(sql).not.toContain('IS NULL');
+    expect(params).toEqual(['farm-g']);
+  });
+
+  it('keeps default/null rows visible to an administrator selecting a farm', () => {
+    const { sql, params } = render(nullableFarmScopeConditions(
+      { farmId: 'farm-g', restricted: true, farmBound: false, companyId: 'co-1', lobId: 'lob-pig' },
+      schema.breedLifecycleStages.farm_id,
+    ));
+    expect(sql).toContain('`breed_lifecycle_stages`.`farm_id` = ?');
+    expect(sql).toContain('is null');
+    expect(params).toEqual(['farm-g']);
   });
 });
 

@@ -20,7 +20,7 @@ prints before running the step that writes.
    *only* those nothing references. It probes all 30 referencing columns and
    prints a DELETABLE / IN USE verdict per item first.
 
-Both scripts: read-only steps first, writes inside a transaction, and the
+All three scripts: read-only steps first, writes inside a transaction, and the
 working tables dropped at the end.
 
 ### Things worth knowing
@@ -42,3 +42,43 @@ working tables dropped at the end.
 - **Deleting is not what the app does.** Dispose (animals) and the soft delete
   (items) are the supported routes, and they keep the accounting straight. A
   hard delete suits a throwaway test database only.
+
+## 2026-10-15 — purge disabled locations
+
+**`2026-10-15-purge-disabled-locations.sql`** — the same shape as the item
+script, for the eleven rows the Locations grid shows with the toggle off. It
+runs on its own; it does not depend on the two above.
+
+`location_master` is referenced far more widely than `item_master` — 49 columns
+across 28 tables — and, unlike the items, not all of those references are
+RESTRICT. That is the thing to watch:
+
+- **35 RESTRICT** block the delete. STEP 2 probes every one and prints a
+  DELETABLE / IN USE verdict per location; STEP 2A says where the kept ones are
+  still referenced.
+- **11 SET NULL** do not block and do not warn. A requisition that pointed at a
+  deleted farm keeps its lines and quantities and silently loses its `farm_id`.
+- **3 CASCADE** delete rows you did not ask to delete: `feed_alert` rows for the
+  farm, and both sides of `silo_shed_link`.
+
+STEP 2B counts all fourteen before STEP 3 runs, so read it.
+
+### Things worth knowing
+
+- **Four of the RESTRICT columns are `location_master` pointing at itself**
+  (`parent_location_id`, `farm_id`, `shed_id`, `warehouse_id`). A disabled
+  parent is blocked only by a child that *survives* — a child being deleted in
+  the same pass releases it. That is circular, so the self-reference probe runs
+  three times, deeper than FARM > SHED > PEN goes. The delete is then ordered
+  `location_level DESC` so children go first.
+- **Some columns hold a location id with no foreign key at all** —
+  `batch_header.sub_location_id`, `batch_stage_log.from/to_location_id`,
+  `feed_schedule_log.farm_id`, `inventory_ledger_line.warehouse_id`,
+  `semen_batch.warehouse_id`, `approval_request.farm_id`. Nothing blocks the
+  delete and nothing repairs them; they are left dangling. STEP 2C lists
+  whatever is actually in the database rather than trusting that list.
+- **`location_code` is not unique** either. Match on `location_id`.
+- **Deleting is not what the app does.** The soft delete
+  (`is_active=0, status='INACTIVE', deleted_at=NOW()`) is the supported route
+  and it is what every one of these eleven rows already carries. A hard delete
+  suits a throwaway test database only.

@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryFarmDto } from './dto/farm.dto';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { farmLocationScopeConditions, farmScope } from '../../../common/farm-scope';
 
 /**
  * Read-only projection of `location_master` for the FARM type.
@@ -54,6 +55,7 @@ export class FarmService {
     ];
 
     conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
+    conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
     if (query.isActive !== undefined) conditions.push(eq(schema.locationMaster.is_active, query.isActive));
     if (query.search) {
       conditions.push(
@@ -78,7 +80,7 @@ export class FarmService {
     const [row] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, id), eq(schema.locationMaster.location_type, 'FARM')))
+      .where(and(eq(schema.locationMaster.location_id, id), eq(schema.locationMaster.location_type, 'FARM'), ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id)))
       .limit(1);
 
     if (!row) throw new NotFoundException(`Farm with ID '${id}' not found.`);

@@ -5,11 +5,11 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { AlertRuleService } from './alert-rule.service';
 import { CreateAlertRuleDto, QueryAlertRuleDto, UpdateAlertRuleDto } from './alert-rule.dto';
+import { FarmScoped } from '../../../common/farm-scope';
 
-// A company master (Master Setup §4). A rule's farm_id is a filter on which
-// farms it applies to, not an access boundary — exempt from farm scope.
 @ApiTags('Alerts and Notifications Master') @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('alert-rule')
 export class AlertRuleController {
   constructor(private readonly rules: AlertRuleService) {}

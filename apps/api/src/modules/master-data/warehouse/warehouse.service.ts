@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryWarehouseDto } from './dto/warehouse.dto';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { farmLocationScopeConditions, farmScope } from '../../../common/farm-scope';
 import { WAREHOUSE_LOCATION_TYPES } from '../location/location.service';
 
 /**
@@ -63,6 +64,7 @@ export class WarehouseService {
     ];
 
     conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
+    conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
     if (query.farmId) conditions.push(eq(schema.locationMaster.farm_id, query.farmId));
     if (query.warehouseType) conditions.push(eq(schema.locationMaster.location_type, query.warehouseType));
     if (query.isActive !== undefined) conditions.push(eq(schema.locationMaster.is_active, query.isActive));
@@ -90,7 +92,7 @@ export class WarehouseService {
     const [row] = await this.db
       .select()
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, id), inArray(schema.locationMaster.location_type, WAREHOUSE_LOCATION_TYPES)))
+      .where(and(eq(schema.locationMaster.location_id, id), inArray(schema.locationMaster.location_type, WAREHOUSE_LOCATION_TYPES), ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id)))
       .limit(1);
 
     if (!row) throw new NotFoundException(`Location with ID '${id}' not found.`);

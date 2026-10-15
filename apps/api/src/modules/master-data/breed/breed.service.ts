@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { validateFeedLines, linesOf, siblingKey, type FeedLine } from './lifecycle-feed-lines';
 import { feedQtyToKg } from '../../production/lifecycle/feed-qty-kg';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne, inArray, isNotNull, sql, getTableColumns, count, asc, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -25,6 +25,7 @@ import { listFilterConditions, listOrderBy } from '../../../common/master-list-q
 import {
   assertLobInScope,
   farmScope,
+  nullableFarmScopeConditions,
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
 import { findEffectiveOverlap } from '../../production/lifecycle/lifecycle-effective.rules';
@@ -871,6 +872,10 @@ export class BreedService {
 
   /** Master Setup r30/r39: a farm override must name a FARM location of the breed's own company. */
   private async assertFarmOverride(farmId: string | null | undefined, companyId: string | null | undefined, tenantId: string) {
+    const scope = farmScope(this.cls);
+    if (scope.farmBound && !farmId) throw new ForbiddenException('A farm override is required for your assigned farm.');
+    if (scope.farmId && farmId && scope.farmId !== farmId) throw new ForbiddenException('Farm override is outside the active farm.');
+    if (scope.farmBound && farmId !== scope.farmId) throw new ForbiddenException('Farm override is outside your assigned farm.');
     if (!farmId) return;
     const [farm] = await this.db
       .select({ location_id: schema.locationMaster.location_id, company_id: schema.locationMaster.company_id, location_type: schema.locationMaster.location_type })
@@ -1147,7 +1152,10 @@ export class BreedService {
       .from(schema.breedLifecycleStages)
       .leftJoin(schema.stageMaster, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
       .leftJoin(schema.breedMaster, eq(schema.breedLifecycleStages.breed_id, schema.breedMaster.breed_id))
-      .where(eq(schema.breedLifecycleStages.lifecycle_id, id))
+      .where(and(
+        eq(schema.breedLifecycleStages.lifecycle_id, id),
+        ...nullableFarmScopeConditions(farmScope(this.cls), schema.breedLifecycleStages.farm_id),
+      ))
       .limit(1);
 
     if (!lifecycleStage) {
@@ -1168,6 +1176,7 @@ export class BreedService {
 
   async findAllLifecycleStages(query: QueryBreedLifecycleStageDto, tenantId: string) {
     const conditions: any[] = [eq(schema.breedLifecycleStages.tenant_id, tenantId)];
+    conditions.push(...nullableFarmScopeConditions(farmScope(this.cls), schema.breedLifecycleStages.farm_id));
     const scopeConditions = masterScopeConditions(this.cls, schema.breedMaster);
     if (scopeConditions.length) {
       conditions.push(inArray(schema.breedLifecycleStages.breed_id,

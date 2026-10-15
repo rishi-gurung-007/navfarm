@@ -1,8 +1,9 @@
 import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
+import { farmLocationScopeConditions, farmScope } from '../../../common/farm-scope';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 import { assertDepartmentIdentity } from '../../../common/department-identity';
-import { Injectable, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
 import { eq, ne, and, like, or, isNull, not, sql, inArray } from 'drizzle-orm';
@@ -1088,6 +1089,10 @@ export class LocationService {
     const companyId = dto.company_id;
     const locationType = await this.resolveLocationType(dto.location_type, tenantId, companyId);
     const typeCode = locationType.type_code;
+    const activeFarmScope = farmScope(this.cls);
+    if (typeCode === 'FARM' && (activeFarmScope.farmBound || activeFarmScope.farmId)) {
+      throw new ForbiddenException('Create a new farm from the All Farms workspace.');
+    }
     const configuredParentTypes = this.allowedParentTypes(locationType.allowed_parent_types);
     const allowedParentTypes = typeCode === 'MILL' ? [] : typeCode === 'BIN' ? ['MILL'] : configuredParentTypes;
 
@@ -1109,6 +1114,7 @@ export class LocationService {
         eq(schema.locationMaster.tenant_id, tenantId),
         eq(schema.locationMaster.company_id, companyId),
         isNull(schema.locationMaster.deleted_at),
+        ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id),
       )).limit(1);
       if (!parent) throw new NotFoundException(`Parent Location '${dto.parent_location_id}' not found.`);
       if (typeCode === 'MILL') {
@@ -1260,6 +1266,7 @@ export class LocationService {
       .where(and(
         eq(schema.locationMaster.location_id, id),
         eq(schema.locationMaster.tenant_id, tenantId),
+        ...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id),
       ))
       .limit(1);
 
@@ -1283,6 +1290,11 @@ export class LocationService {
     ];
 
     conditions.push(...masterScopeConditions(this.cls, schema.locationMaster, query.companyId));
+    const scope = farmScope(this.cls);
+    const administrativeFarmPicker = query.farmPicker === true && !scope.farmBound;
+    if (!administrativeFarmPicker) {
+      conditions.push(...farmLocationScopeConditions(scope, schema.locationMaster.location_id));
+    }
     if (query.nobId) {
       conditions.push(eq(schema.locationMaster.nob_id, query.nobId));
     }
@@ -1857,6 +1869,8 @@ export class LocationService {
         )
       );
     }
+    const scope = farmScope(this.cls);
+    conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
 
     // The parent's name comes from the parent location itself. This used to
     // left-join farm_master and shed_master and fall back farm -> shed, which
@@ -1882,6 +1896,9 @@ export class LocationService {
     ];
     if (companyId) {
       animalConditions.push(eq(schema.animalRegister.company_id, companyId));
+    }
+    if (scope.farmId) {
+      animalConditions.push(sql`(${schema.animalRegister.current_location_id} IN (SELECT lf.location_id FROM location_master lf WHERE lf.location_id = ${scope.farmId} OR lf.farm_id = ${scope.farmId}) OR (${schema.animalRegister.current_location_id} IS NULL AND ${schema.animalRegister.current_batch_id} IN (SELECT bf.batch_id FROM batch_header bf WHERE bf.farm_id = ${scope.farmId})))`);
     }
 
     const animals = await this.db

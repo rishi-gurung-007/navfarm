@@ -4,6 +4,7 @@ import { ShedService } from './shed.service';
 import { QueryShedDto } from './dto/shed.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { FarmScoped } from '../../../common/farm-scope';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 
 /**
@@ -15,6 +16,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiTags('Shed Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('shed')
 export class ShedController {
   constructor(private readonly shedService: ShedService) {}

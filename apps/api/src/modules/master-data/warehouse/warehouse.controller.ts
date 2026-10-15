@@ -4,6 +4,7 @@ import { WarehouseService } from './warehouse.service';
 import { QueryWarehouseDto } from './dto/warehouse.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
+import { FarmScoped } from '../../../common/farm-scope';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 
 /**
@@ -15,6 +16,7 @@ import { RequirePermission } from '../../../common/decorators/require-permission
 @ApiTags('Location Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('warehouse')
 export class WarehouseController {
   constructor(private readonly warehouseService: WarehouseService) {}

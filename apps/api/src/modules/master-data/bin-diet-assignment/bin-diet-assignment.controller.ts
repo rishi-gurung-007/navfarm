@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../common/farm-scope';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { BinDietAssignmentService } from './bin-diet-assignment.service';
@@ -9,6 +10,7 @@ import { CreateBinDietAssignmentDto, QueryBinDietAssignmentDto, UpdateBinDietAss
 @ApiTags('BIN Diet Assignment Master')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('bin-diet-assignment')
 export class BinDietAssignmentController {
   constructor(private readonly assignments: BinDietAssignmentService) {}
