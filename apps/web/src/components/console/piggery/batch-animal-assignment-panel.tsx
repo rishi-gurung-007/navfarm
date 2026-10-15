@@ -347,6 +347,9 @@ export default function BatchAnimalAssignmentPanel() {
       if (!regForm.breed_id) throw new Error(t("anpErrBreedRequired"));
       if (!regForm.item_id) throw new Error(t("anpErrItemRequired"));
       if (!regForm.acquisition_cost) throw new Error(t("anpErrAcquisitionCostRequired"));
+      // Every registered animal stands in a stage (animal.dto.ts), and here the stage is the batch's. A batch with
+      // no stage would otherwise be refused by the API with a validation error that does not say which field.
+      if (!currentBatch?.stageId) throw new Error("This batch has no production stage, so an animal cannot be registered into it. Set the batch's stage first.");
 
       const res = await api.post("/animal", {
         company_id: companyId,
@@ -367,7 +370,7 @@ export default function BatchAnimalAssignmentPanel() {
         status: regForm.status || "ACTIVE",
         current_batch_id: selectedBatchId || undefined,
         current_location_id: currentBatch?.locationId || undefined,
-        current_stage_id: currentBatch?.stageId || undefined,
+        current_stage_id: currentBatch.stageId,
       });
       const created = unwrap<Row>(res);
 

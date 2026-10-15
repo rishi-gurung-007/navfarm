@@ -34,11 +34,6 @@ const DISPOSAL_STATUS_MAP: Record<string, string | undefined> = {
   CULLED: 'CULLED',
 };
 
-// BBP §6: "teat count < 15 is a hard block at selection" — regardless of TSI score. There is no
-// dedicated gilt-selection endpoint in this codebase yet, so this guards every path that can set
-// no_of_teats on a GILT (create and update) rather than a selection action that does not exist.
-const MIN_GILT_TEATS = 15;
-
 /**
  * Statuses that mean the animal has left the herd. Only dispose() may set
  * these, because only dispose() does the work they imply: for SLAUGHTERED it
@@ -116,6 +111,17 @@ export function resolveAgeAtEntryWeeks(
     );
   }
   return typed;
+}
+
+/** A boar is male; a sow or gilt is female. Other types are not tied to a sex here. */
+export function assertTypeFitsGender(animalType: string | undefined, gender: string | undefined | null): void {
+  if (!animalType || !gender) return;
+  const required = animalType === 'BOAR' ? 'M' : animalType === 'SOW' || animalType === 'GILT' ? 'F' : null;
+  if (required && gender !== required) {
+    throw new BadRequestException(
+      `A ${animalType.toLowerCase()} must be ${required === 'M' ? 'male' : 'female'}; this animal's gender is ${gender === 'M' ? 'male' : 'female'}.`,
+    );
+  }
 }
 
 function assertGiltTeatCount(animalType: string | undefined, noOfTeats: number | undefined | null): void {
@@ -509,6 +515,7 @@ export class AnimalService {
     // Number issuance, the Animal row, its IAS 41 opening ledger entry, and
     // audit are one creation. Any failure must roll the whole operation back.
     return withTenantTransaction(this.cls, async () => {
+    assertTypeFitsGender(dto.animal_type, dto.gender);
     assertGiltTeatCount(dto.animal_type, dto.no_of_teats);
     // Resolved here, beside the other cheap guards, rather than down at the
     // insert: generateAnimalCode() consumes a number series, and a create that

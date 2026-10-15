@@ -114,7 +114,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'PURCHASED_IMPORTED' }, 'tenant-123'),
+        service.create({ ...baseDto, entry_type: 'PURCHASED_IMPORTED' } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -127,7 +127,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'PURCHASED_LOCAL', acquisition_cost: undefined }, 'tenant-123'),
+        service.create({ ...baseDto, entry_type: 'PURCHASED_LOCAL', acquisition_cost: undefined } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -162,7 +162,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'BORN_ON_FARM' }, 'tenant-123'),
+        service.create({ ...baseDto, entry_type: 'BORN_ON_FARM' } as any, 'tenant-123'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -301,7 +301,7 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'existing-animal', animal_code: 'PIG-2026-0007' }));
 
       await expect(
-        service.create({ ...baseDto, rfid_tag: ' rfid-001 ' }, 'tenant-123'),
+        service.create({ ...baseDto, rfid_tag: ' rfid-001 ' } as any, 'tenant-123'),
       ).rejects.toThrow("RFID tag 'RFID-001' is already assigned to animal PIG-2026-0007.");
       expect(mockDbInsert).not.toHaveBeenCalled();
     });

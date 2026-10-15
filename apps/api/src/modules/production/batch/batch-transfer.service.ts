@@ -511,17 +511,22 @@ export class BatchTransferService {
     await this.shiftClosingQuantity(transfer.to_batch_id, quantity);
 
     // bio_asset_item_id is NOT NULL: the herd item is the batch's first input line.
-    const itemOf = async (batchId: string) => {
-      const [line] = await this.db.select({ item_id: schema.batchInputLine.item_id }).from(schema.batchInputLine).where(eq(schema.batchInputLine.batch_id, batchId)).limit(1);
-      return line?.item_id;
+    const lineOf = async (batchId: string) => {
+      const [line] = await this.db.select({ item_id: schema.batchInputLine.item_id, lot_no: schema.batchInputLine.lot_no }).from(schema.batchInputLine).where(eq(schema.batchInputLine.batch_id, batchId)).limit(1);
+      return line;
     };
-    const sourceItem = await itemOf(transfer.from_batch_id);
+    const itemOf = async (batchId: string) => (await lineOf(batchId))?.item_id;
+    // The lot the head came in as (a farrowing's piglet lot) travels with them, so the ledger can still name it after
+    // they are moved on.
+    const sourceLine = await lineOf(transfer.from_batch_id);
+    const lotNo = sourceLine?.lot_no || null;
+    const sourceItem = sourceLine?.item_id;
     const destItem = (await itemOf(transfer.to_batch_id)) ?? sourceItem;
     const rows: (typeof schema.bioAssetLedger.$inferInsert)[] = [];
     if (sourceItem) {
       rows.push({
         entry_id: randomUUID(), tenant_id: tenantId, company_id: transfer.company_id, bio_asset_item_id: sourceItem,
-        entry_type: 'TRANSFER_OUT', document_no: transfer.transfer_no, posting_date: transfer.transfer_date,
+        entry_type: 'TRANSFER_OUT', document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
         batch_no: source.batch_no, batch_id: source.batch_id, stage: source.current_stage_code || null,
         quantity: (-quantity).toFixed(4), cost_amount: (-value).toFixed(4),
         cost_amount_each_unit: (quantity > 0 ? -value / quantity : 0).toFixed(4),
@@ -531,7 +536,7 @@ export class BatchTransferService {
     if (destItem) {
       rows.push({
         entry_id: randomUUID(), tenant_id: tenantId, company_id: transfer.company_id, bio_asset_item_id: destItem,
-        entry_type: 'TRANSFER_IN', document_no: transfer.transfer_no, posting_date: transfer.transfer_date,
+        entry_type: 'TRANSFER_IN', document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
         batch_no: destination.batch_no, batch_id: destination.batch_id, stage: destination.current_stage_code || null,
         quantity: quantity.toFixed(4), cost_amount: value.toFixed(4),
         cost_amount_each_unit: (quantity > 0 ? value / quantity : 0).toFixed(4),

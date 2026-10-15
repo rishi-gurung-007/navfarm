@@ -32,6 +32,7 @@ import { FeedRequisitionController } from '../modules/procurement/feed-requisiti
 import { ResourceLedgerController } from '../modules/production/resource-ledger/resource-ledger.controller';
 import { FeedStockCountController } from '../modules/inventory/feed-stock-count/feed-stock-count.controller';
 import { FeedSettingsController } from '../modules/inventory/feed-settings/feed-settings.controller';
+import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -66,6 +67,7 @@ const SCOPED = {
   ResourceLedgerController,
   FeedStockCountController,
   FeedSettingsController,
+  PiggeryAnalyticsController,
 };
 
 const EXEMPT: Record<string, string> = {
