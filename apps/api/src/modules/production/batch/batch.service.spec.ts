@@ -1454,6 +1454,60 @@ describe('BatchService', () => {
     });
   });
 
+  describe('transferStage — which stage_master row the move lands on', () => {
+    /**
+     * A stage code exists more than once per LOB: the tenant template row (company_id NULL) and each company's own
+     * copy. The move matched on LOB and code alone and took the first row, so it could land the batch on the
+     * template — a row belonging to no company. BATCH-000012 did exactly that on 15 Oct: batch_header.stage_id and
+     * the scheduler the move created pointed at the template FLUSH while the batch's earlier scheduler pointed at
+     * Blank Test Co's FLUSH, so Data Entry drew two "Flush" stages and the one-scheduler-per-(batch, stage) check
+     * never saw a duplicate.
+     */
+    const stageLookupReturning = (rows: Record<string, unknown>[]) => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }),
+          }),
+        })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+    };
+    const stageIdWritten = () =>
+      (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0].stage_id;
+
+    beforeEach(() => {
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce(activeBatch as any)
+        .mockResolvedValueOnce({ ...activeBatch, current_stage_code: 'FLUSH' } as any);
+    });
+
+    it("takes the batch's own company's row even when the tenant template comes back first", async () => {
+      stageLookupReturning([
+        { stage_id: 'stage-flush-template', company_id: null },
+        { stage_id: 'stage-flush-comp-1', company_id: 'comp-1' },
+      ]);
+      await service.transferStage('batch-1', { to_stage_code: 'FLUSH' } as any, 'tenant-123', { userId: 'user-1' });
+      expect(stageIdWritten()).toBe('stage-flush-comp-1');
+    });
+
+    it('falls back to the tenant template when the company has no copy of its own', async () => {
+      stageLookupReturning([{ stage_id: 'stage-flush-template', company_id: null }]);
+      await service.transferStage('batch-1', { to_stage_code: 'FLUSH' } as any, 'tenant-123', { userId: 'user-1' });
+      expect(stageIdWritten()).toBe('stage-flush-template');
+    });
+
+    it("never takes another company's row", async () => {
+      stageLookupReturning([
+        { stage_id: 'stage-flush-other-co', company_id: 'comp-2' },
+        { stage_id: 'stage-flush-template', company_id: null },
+      ]);
+      await service.transferStage('batch-1', { to_stage_code: 'FLUSH' } as any, 'tenant-123', { userId: 'user-1' });
+      expect(stageIdWritten()).not.toBe('stage-flush-other-co');
+    });
+  });
+
   describe('transferStage', () => {
     it('sets stage_id when a matching stage_master row exists for the batch LOB', async () => {
       jest

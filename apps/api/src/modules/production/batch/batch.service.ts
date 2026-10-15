@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
@@ -1492,10 +1492,18 @@ export class BatchService {
     // the given code, record it alongside current_stage_code. If not (LOB has no
     // Stage Master data, or the code is hand-typed/custom), stage_id just stays
     // null — current_stage_code remains fully authoritative either way.
-    const [matchedStage] = await this.db
+    //
+    // A stage code exists more than once per LOB: the tenant template row (company_id NULL) and each company's own
+    // copy of it. Matching on LOB and code alone took whichever the database returned first, so a move could land
+    // the batch on the template — a row belonging to no company. BATCH-000012 did (15 Oct): the move wrote the
+    // template FLUSH onto the batch while its earlier scheduler held Blank Test Co's FLUSH, so Data Entry drew two
+    // "Flush" stages and the one-scheduler-per-(batch, stage) check never saw a duplicate. Take the batch's own
+    // company's row, and fall back to the template only when the company has no copy of its own.
+    const stageCandidates = await this.db
       .select({
         stage_id: schema.stageMaster.stage_id,
         applicable_gender: schema.stageMaster.applicable_gender,
+        company_id: schema.stageMaster.company_id,
       })
       .from(schema.stageMaster)
       .where(
@@ -1504,9 +1512,17 @@ export class BatchService {
           eq(schema.stageMaster.stage_code, dto.to_stage_code.toUpperCase()),
           eq(schema.stageMaster.is_active, true),
           isNull(schema.stageMaster.deleted_at),
+          batch.company_id
+            ? or(eq(schema.stageMaster.company_id, batch.company_id), isNull(schema.stageMaster.company_id))
+            : undefined,
         ),
       )
-      .limit(1);
+      .limit(5);
+    // The company's own row, else the tenant template — never another company's, whatever order they came back in.
+    const matchedStage = batch.company_id
+      ? (stageCandidates.find((row) => row.company_id === batch.company_id)
+        ?? stageCandidates.find((row) => (row.company_id ?? null) === null))
+      : stageCandidates[0];
 
     // A code that matches nothing, for a LOB that HAS stages configured, is a
     // caller mistake rather than a LOB without stage master data — the batch

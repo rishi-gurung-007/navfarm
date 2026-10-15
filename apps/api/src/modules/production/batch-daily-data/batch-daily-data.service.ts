@@ -29,7 +29,6 @@ import { farmStoreOf } from '../../../common/farm-store';
 import { classifyPostedRow } from '../batch/batch-day-reversal';
 import { animalOutputEvent, outputEventForItem, parsePoolIds, type AnimalOutputEvent } from './animal-output-event';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
-import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
 import { allocateSharesToParts } from './consumption-split';
@@ -109,8 +108,6 @@ export class BatchDailyDataService {
     // the farm's silo levels are re-checked afterwards (checkpoint 12).
     // Optional so a testing module that does not provide it still builds.
     @Optional() private readonly feedAlerts?: FeedAlertService,
-    // Breed lifecycle KPI limits/tolerances, checked alongside the schedule-line limits above. Optional like feedAlerts.
-    @Optional() private readonly lifecycleKpi?: LifecycleKpiEvaluator,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -973,11 +970,8 @@ export class BatchDailyDataService {
       remarks: dailyRemarks,
     });
 
-    // The stage's lifecycle KPIs (limits / tolerance) are checked in addition to the schedule-line limit above.
-    // evaluateSafely never throws, so a failure here cannot undo or block the entry that was just saved.
-    if (this.lifecycleKpi && line.kpi_metric && dto.entered_value != null) {
-      await this.lifecycleKpi.evaluateSafely(batchId, tenantId, dto.entry_date, [line.kpi_metric]);
-    }
+    // KPI alerts come from the scheduler line's own limits (the schedule-limit check above) — the stage's KPIs & Alerts
+    // are filled onto the scheduler as lines when it is created (Rishi, 14 Oct), so the stage is not checked again here.
 
     // CONSUMPTION re-checks the silo levels in postConsumptionGroup. Of the lines that reach here only OUTPUT
     // moves item stock; the rest (overhead, resources, animal transfers) leave every silo where it was. This

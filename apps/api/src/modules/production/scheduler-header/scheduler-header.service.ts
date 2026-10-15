@@ -13,12 +13,9 @@ import {
 } from './dto/scheduler-header.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { syncVaccinationLines } from '../lifecycle/vaccination-sync';
+import { buildStageSchedulerLines, type StageLineDraft } from './stage-scheduler-lines';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { stagesNeedingScheduler } from './occupied-stages';
-import { applySchedulerFeedLines, type WantedFeedLine } from '../lifecycle/refresh-scheduler-feed';
-import { feedQtyToKg } from '../lifecycle/feed-qty-kg';
-import { validateFeedLines, type FeedLine } from '../../master-data/breed/lifecycle-feed-lines';
 
 /** "KPI UOM fetched as per KPI" — the unit a given kpi_metric is captured in isn't a free
  * choice, it's implied by the metric itself. Known metrics auto-derive kpi_uom (overriding
@@ -36,25 +33,6 @@ function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
   return toDateOnly(d);
-}
-
-/** A parsed entry from breed_lifecycle_stages.medication_protocol / vaccination_protocol —
- * `[{ day, medicine|vaccine, dose, route, withdrawal_days? }]`, confirmed against real seeded
- * data (52 rows in tenant_navfarmdev). No real resource_requirements data exists yet to confirm
- * its shape, so that one is parsed defensively with the same {day, name} convention. */
-interface ProtocolEntry { day: number; name: string; }
-
-function parseProtocolEntries(value: unknown, nameKey: string): ProtocolEntry[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') return null;
-      const day = Number((entry as Record<string, unknown>).day);
-      const name = (entry as Record<string, unknown>)[nameKey];
-      if (!Number.isFinite(day) || typeof name !== 'string' || !name.trim()) return null;
-      return { day, name: name.trim() };
-    })
-    .filter((e): e is ProtocolEntry => e !== null);
 }
 
 /** Which scheduler_line columns a given line_type actually uses — the "LINE TYPE REFERENCE"
@@ -84,6 +62,16 @@ export function pickLineFields(line: Record<string, unknown>): Record<string, un
   return Object.fromEntries(SHARED_LINE_KEYS.filter((k) => k in line).map((k) => [k, line[k]]));
 }
 
+/**
+ * A scheduler's activities are set when it is created (Rishi, 14 Oct): filled in from the stage, changed by the user on
+ * the Create Scheduler form if need be, and fixed from then on — no line is added, edited, removed or copied in, and a
+ * later change to the stage does not reach an existing scheduler.
+ */
+export const ACTIVITIES_LOCKED_MESSAGE = "A scheduler's activities are set when it is created and cannot be changed afterwards.";
+function assertActivitiesOpen(): never {
+  throw new BadRequestException(ACTIVITIES_LOCKED_MESSAGE);
+}
+
 @Injectable()
 export class SchedulerHeaderService {
   constructor(
@@ -91,6 +79,7 @@ export class SchedulerHeaderService {
     private readonly auditService: AuditLogService,
     private readonly numberSeries: NumberSeriesService,
   ) {}
+
 
   /**
    * The readable number a new scheduler is shown by (SCH-000001), from the company's SCHEDULER series. A company
@@ -116,34 +105,16 @@ export class SchedulerHeaderService {
   }
 
   /**
-   * Best-effort match of a free-text medicine/vaccine name (from
-   * breed_lifecycle_stages' protocol JSON) against the tenant's real item catalog —
-   * "Ivermectin 1%" -> an item named "Ivermectin 1% Injection", matched on the first
-   * significant word. Returns null (line simply isn't generated) rather than guessing
-   * wrong; a farm manager can always add the line manually afterward.
-   */
-  private async findItemByName(tenantId: string, companyId: string, name: string) {
-    const firstWord = name.split(/[\s(+]/)[0];
-    if (!firstWord) return null;
-    const [item] = await this.db
-      .select()
-      .from(schema.itemMaster)
-      .where(and(
-        eq(schema.itemMaster.tenant_id, tenantId),
-        like(schema.itemMaster.item_name, `%${firstWord}%`),
-        eq(schema.itemMaster.is_active, true),
-      ))
-      .limit(1);
-    return item || null;
-  }
-
-  /**
    * Auto-generates this stage's scheduler_line rows from breed_lifecycle_stages
    * (feed -> CONSUMPTION, mortality -> DESCRIPTIVE, output/weight -> OUTPUT or
    * DESCRIPTIVE, medication/vaccination protocol entries -> CUSTOM-occurrence
    * CONSUMPTION lines). No-ops (header stays empty, for MANUAL lines) when the
    * batch has no breed or the breed has no lifecycle data for this stage —
    * true for most breeds today, per suggestParameterLines()'s own history.
+   */
+  /**
+   * Writes the scheduler's activities from its breed lifecycle stage (Rishi, 14 Oct; stage-scheduler-lines.ts):
+   * feed lines, resources, vaccinations, medication (as needed) and KPIs all as activity lines.
    */
   private async generateLinesFromLifecycle(
     schedulerId: string,
@@ -153,129 +124,70 @@ export class SchedulerHeaderService {
     /** The scheduler's stage entry date (day 1), for vaccinations by age. */
     effectiveFrom?: string | null,
   ) {
-    if (!batch.breed_id) return;
-    // All active rows for this breed+stage, oldest period first — not just one. A stage can
-    // carry several feed standards (R1 then R2, say), each active over its own period_from..
-    // period_to; data entry switches diet mid-stage by having two rows instead of editing one.
-    // Non-feed facts (mortality, output/weight, protocols) still come from a single row, exactly
-    // as before — orderBy makes "the first row" deterministic instead of whatever MySQL happened
-    // to return.
-    const lifecycleRows = await this.db
-      .select()
-      .from(schema.breedLifecycleStages)
-      .where(and(
-        eq(schema.breedLifecycleStages.breed_id, batch.breed_id),
-        eq(schema.breedLifecycleStages.stage_id, stageId),
-        eq(schema.breedLifecycleStages.is_active, true),
-      ))
-      .orderBy(asc(schema.breedLifecycleStages.period_from));
-    if (!lifecycleRows.length) return;
-    const [lifecycle] = lifecycleRows; // first row by period_from — mortality/output/weight/protocols below are unchanged
-
-    let seq = 1;
+    const drafts = await this.stageLineDrafts(batch, stageId, stage, effectiveFrom);
+    if (!drafts.length) return;
     const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
-    const customDaysByLine: Record<string, number[]> = {};
-
-    // One CONSUMPTION line per row that actually carries a feed standard (a row can exist for
-    // its mortality/output/protocol columns alone, with no feed_item_id). Each line's day range
-    // comes from stageDayRange() — the shared rule the forecast engine also imports — so this
-    // scheduler and that engine always agree on which days belong to which diet.
-    // The rate is a decimal column and so a string here: '0.0000' is truthy,
-    // so it is compared as a number — the forecast's loader filters with
-    // gt(rate, '0'), and a zero-rate line scheduled here would be a daily
-    // feed entry the forecast does not know exists.
-    const feedRows = lifecycleRows.filter((row) => row.feed_item_id && Number(row.feed_qty_per_head_per_day_kg) > 0);
-    for (const row of feedRows) {
-      let range: { fromDay: number; toDay: number };
-      try {
-        range = stageDayRange(row.calc_unit, row.period_from, row.period_to);
-      } catch (e) {
-        // Corrupt master data is the caller's to fix in Breed Master, so it is
-        // answered as a 400 naming the stage and the unit — not a bare 500.
-        throw new BadRequestException(
-          `Stage '${stage.stage_name}' of this batch's breed has a feed row with calculation unit '${row.calc_unit}' — ${(e as Error).message}. Fix the row in Breed Master before generating the scheduler.`,
-        );
-      }
-      const { fromDay, toDay } = range;
-      const [feedItem] = await this.db.select({ item_name: schema.itemMaster.item_name, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, row.feed_item_id as string)).limit(1);
-      lines.push({
-        line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
-        activity_name: `${stage.stage_name} Feed — ${feedItem?.item_name ?? 'Unknown Item'}`, stage_id: stageId, occurrence: 'DAILY', start_day: fromDay, end_day: toDay,
-        is_mandatory: true, source: 'AUTO', lifecycle_ref_id: row.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: row.feed_item_id,
-        item_description: feedItem?.item_name ?? null,
-        standard_qty: row.feed_qty_per_head_per_day_kg, qty_basis: 'PER_HEAD',
-        // A lot is asked for only when the item is tracked by lot or serial — the same rule the line form applies.
-        allow_qty_edit: true, lot_required: Boolean(feedItem?.is_lot_tracked || feedItem?.is_serial_tracked),
-      });
-    }
-
-    if (lifecycle.std_mortality_rate_pct) {
-      lines.push({
-        line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'DESCRIPTIVE',
-        activity_name: `${stage.stage_name} Mortality`, stage_id: stageId, occurrence: 'DAILY', start_day: 1, end_day: null,
-        is_mandatory: true, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id,
-        kpi_metric: 'MORTALITY_COUNT', kpi_uom: KPI_METRIC_UOM.MORTALITY_COUNT, capture_per: 'TOTAL',
-        std_value: lifecycle.std_mortality_rate_pct, alert_severity: 'CRITICAL',
-      });
-    }
-
-    if (lifecycle.output_item_id && lifecycle.std_output_qty) {
-      const [outputItem] = await this.db.select({ item_name: schema.itemMaster.item_name }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, lifecycle.output_item_id)).limit(1);
-      lines.push({
-        line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'OUTPUT',
-        activity_name: `${stage.stage_name} Output`, stage_id: stageId, occurrence: 'ONCE', start_day: stage.typical_duration_days || 1, end_day: null,
-        is_mandatory: false, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: lifecycle.output_item_id,
-        item_description: outputItem?.item_name ?? null,
-        standard_qty: lifecycle.std_output_qty, output_basis: 'PER_BATCH',
-        creates_inventory: true, output_lot_auto: true,
-      });
-    } else if (lifecycle.std_body_weight_kg) {
-      lines.push({
-        line_id: randomUUID(), scheduler_id: schedulerId, line_seq: seq++, line_type: 'DESCRIPTIVE',
-        activity_name: `${stage.stage_name} Body Weight Check`, stage_id: stageId, occurrence: 'WEEKLY', start_day: 7, end_day: null,
-        day_of_week: 1, is_mandatory: false, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id,
-        kpi_metric: 'BODY_WEIGHT', kpi_uom: KPI_METRIC_UOM.BODY_WEIGHT, capture_per: 'AVERAGE',
-        std_value: lifecycle.std_body_weight_kg, alert_severity: 'WARNING',
-      });
-    }
-
-    const protocolEntries: Array<{ entry: ProtocolEntry; label: string }> = [
-      ...parseProtocolEntries(lifecycle.medication_protocol, 'medicine').map((entry) => ({ entry, label: 'Medication' })),
-      ...parseProtocolEntries(lifecycle.vaccination_protocol, 'vaccine').map((entry) => ({ entry, label: 'Vaccination' })),
-    ];
-    for (const { entry, label } of protocolEntries) {
-      const item = await this.findItemByName(batch.tenant_id, batch.company_id, entry.name);
-      if (!item) continue; // no matching item in this tenant's catalog — skip rather than guess
+    const customDays: (typeof schema.schedulerLineCustomDays.$inferInsert)[] = [];
+    drafts.forEach((d, i) => {
       const lineId = randomUUID();
       lines.push({
-        line_id: lineId, scheduler_id: schedulerId, line_seq: seq++, line_type: 'CONSUMPTION',
-        activity_name: `${label}: ${entry.name}`, stage_id: stageId, occurrence: 'CUSTOM', start_day: entry.day, end_day: entry.day,
-        is_mandatory: true, source: 'AUTO', lifecycle_ref_id: lifecycle.lifecycle_id,
-        nob_id: batch.nob_id, lob_id: batch.lob_id, item_id: item.item_id,
-        item_description: item.item_name,
-        qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: Boolean(item.is_lot_tracked || item.is_serial_tracked),
+        line_id: lineId, scheduler_id: schedulerId, line_seq: i + 1, line_type: d.line_type,
+        activity_name: d.activity_name, stage_id: stageId, occurrence: d.occurrence,
+        start_day: d.start_day, end_day: d.end_day, day_of_week: d.day_of_week,
+        is_mandatory: d.is_mandatory, source: 'AUTO', lifecycle_ref_id: d.lifecycle_ref_id,
+        nob_id: batch.nob_id, lob_id: batch.lob_id,
+        item_id: d.item_id ?? null, item_description: d.item_description ?? null,
+        standard_qty: d.standard_qty == null ? null : String(d.standard_qty), qty_basis: d.qty_basis ?? null,
+        allow_qty_edit: d.allow_qty_edit ?? true, lot_required: d.lot_required ?? false,
+        creates_inventory: d.creates_inventory ?? false, output_lot_auto: d.output_lot_auto ?? true, output_basis: d.output_basis ?? null,
+        kpi_metric: d.kpi_metric ?? null, kpi_uom: d.kpi_uom ?? null,
+        std_value: d.std_value == null ? null : String(d.std_value),
+        lower_alert_limit: d.lower_alert_limit == null ? null : String(d.lower_alert_limit),
+        upper_alert_limit: d.upper_alert_limit == null ? null : String(d.upper_alert_limit),
+        alert_severity: d.alert_severity ?? null, capture_per: d.capture_per ?? null,
+        resource_id: d.resource_id ?? null, extension_config: d.extension_config ?? null,
       });
-      customDaysByLine[lineId] = [entry.day];
+      for (const day of d.custom_days ?? []) customDays.push({ custom_day_id: randomUUID(), line_id: lineId, day_number: day });
+    });
+    await this.db.insert(schema.schedulerLine).values(lines);
+    if (customDays.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDays);
+  }
+
+  /** The stage's activities as line drafts; a stage row with a corrupt period unit is answered as a 400 naming it. */
+  private async stageLineDrafts(
+    batch: typeof schema.batchHeader.$inferSelect,
+    stageId: string,
+    stage: typeof schema.stageMaster.$inferSelect,
+    effectiveFrom?: string | null,
+  ): Promise<StageLineDraft[]> {
+    try {
+      return await buildStageSchedulerLines(this.db, { batch, stageId, stage, effectiveFrom });
+    } catch (e) {
+      if (e instanceof Error && /calc_unit/.test(e.message)) {
+        throw new BadRequestException(`Stage '${stage.stage_name}' of this batch's breed has a feed row with a bad period unit — ${e.message}. Fix the row in Breed Master before creating the scheduler.`);
+      }
+      throw e;
     }
+  }
 
-    if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
-
-    // AGE_WEEKS vaccinations as stage days, from the batch's date of birth (Rishi, 14 Oct; vaccination-sync.ts).
-    if (effectiveFrom) {
-      await syncVaccinationLines(this.db, {
-        scheduler_id: schedulerId, batch_id: batch.batch_id, stage_id: stageId, effective_from: effectiveFrom, nob_id: batch.nob_id, lob_id: batch.lob_id,
-      }, lifecycle.vaccination_protocol, lifecycle.lifecycle_id);
+  /**
+   * What the Create Scheduler form starts from (Rishi, 14 Oct): the activities a scheduler for this batch and stage
+   * would get — a matching system scheduler's, else the breed lifecycle stage's — for the user to change before
+   * creating it. Nothing is written.
+   */
+  async prefillLines(batchId: string, stageId: string, effectiveFrom: string | undefined, tenantId: string) {
+    const [batch] = await this.db.select().from(schema.batchHeader)
+      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.tenant_id, tenantId), ...batchScopeConditions(farmScope(this.cls))))
+      .limit(1);
+    if (!batch) throw new NotFoundException(`Batch '${batchId}' not found.`);
+    const [stage] = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, stageId)).limit(1);
+    if (!stage) throw new NotFoundException(`Stage '${stageId}' not found.`);
+    const systemScheduler = await this.findMatchingSystemScheduler(batch.company_id, stageId, batch.breed_id);
+    if (systemScheduler) {
+      return { source: 'SYSTEM_SCHEDULER', system_scheduler_id: systemScheduler.system_scheduler_id, lines: null };
     }
-    if (!lines.length) return;
-
-    const customDayRows = Object.entries(customDaysByLine).flatMap(([lineId, days]) =>
-      days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
-    );
-    if (customDayRows.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDayRows);
+    const from = effectiveFrom || batch.start_date || toDateOnly(new Date());
+    return { source: 'BREED_LIFECYCLE', system_scheduler_id: null, lines: await this.stageLineDrafts(batch, stageId, stage, from) };
   }
 
   /**
@@ -361,79 +273,9 @@ export class SchedulerHeaderService {
     return lines.length;
   }
 
-  /**
-   * Fills an empty scheduler with another scheduler's activities — a system
-   * scheduler's, or another batch's — for a header that got none (the user
-   * declined the copy, or no system scheduler existed yet). Refused once the
-   * header has an active line, so it never doubles a plan up. A copy from a
-   * system scheduler records it as the origin, as on auto-create; a copy from
-   * a batch's scheduler is the user's own choice and is marked MANUAL.
-   */
-  async copyLinesInto(headerId: string, dto: CopySchedulerLinesDto, tenantId: string, userPayload?: { userId?: string }) {
-    let copied = 0;
-    // The empty check sits inside the transaction it guards, so a line added
-    // between the check and the copy cannot leave the plan doubled.
-    await withTenantTransaction(this.cls, async () => {
-      const header = await this.findOne(headerId);
-      if (header.lines.some((l) => l.is_active)) {
-        throw new ConflictException('This scheduler already has activities. Copying is offered only while it has none.');
-      }
-      // Removed lines keep their line_seq (it is unique per scheduler), so a copy numbers on after them.
-      const startSeq = header.lines.reduce((max, l) => Math.max(max, l.line_seq), 0) + 1;
-
-      if (dto.source_type === 'SYSTEM') {
-        const [source] = await this.db.select({ system_scheduler_id: schema.systemScheduler.system_scheduler_id })
-          .from(schema.systemScheduler)
-          .where(and(eq(schema.systemScheduler.system_scheduler_id, dto.source_id), eq(schema.systemScheduler.company_id, header.company_id)))
-          .limit(1);
-        if (!source) throw new NotFoundException(`System scheduler '${dto.source_id}' not found.`);
-        copied = await this.copyLinesFromSystemScheduler(headerId, source.system_scheduler_id, header, header.stage_id, startSeq);
-        if (copied) {
-          await this.db.update(schema.schedulerHeader)
-            .set({ system_scheduler_id: source.system_scheduler_id, updated_at: toMysqlTimestamp() })
-            .where(eq(schema.schedulerHeader.scheduler_id, headerId));
-        }
-      } else {
-        if (dto.source_id === headerId) throw new BadRequestException('A scheduler cannot copy its own activities.');
-        const source = await this.findOne(dto.source_id);
-        if (source.company_id !== header.company_id) throw new NotFoundException(`Scheduler '${dto.source_id}' not found.`);
-        const sourceLines = source.lines.filter((l) => l.is_active).sort((a, b) => a.line_seq - b.line_seq);
-        const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
-        const customDayRows: (typeof schema.schedulerLineCustomDays.$inferInsert)[] = [];
-        sourceLines.forEach((line, idx) => {
-          const lineId = randomUUID();
-          lines.push({
-            ...(pickLineFields(line) as Partial<typeof schema.schedulerLine.$inferInsert>),
-            line_type: line.line_type,
-            activity_name: line.activity_name,
-            line_id: lineId,
-            scheduler_id: headerId,
-            line_seq: startSeq + idx,
-            stage_id: header.stage_id,
-            source: 'MANUAL',
-            lifecycle_ref_id: null,
-            nob_id: header.nob_id,
-            lob_id: header.lob_id,
-            is_active: true,
-          });
-          for (const day of line.custom_days) {
-            customDayRows.push({ custom_day_id: randomUUID(), line_id: lineId, day_number: day.day_number });
-          }
-        });
-        if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
-        if (customDayRows.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDayRows);
-        copied = lines.length;
-      }
-      if (!copied) throw new BadRequestException('The chosen scheduler has no activities to copy.');
-
-      await this.auditService.log({
-        tenantId, companyId: header.company_id, userId: userPayload?.userId,
-        action: 'COPY_LINES', entityName: 'scheduler_header', entityId: headerId,
-        newValues: { source_type: dto.source_type, source_id: dto.source_id, lines_copied: copied },
-      });
-    });
-
-    return this.findOne(headerId);
+  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  async copyLinesInto(..._args: unknown[]): Promise<never> {
+    return assertActivitiesOpen();
   }
 
   /**
@@ -916,7 +758,10 @@ export class SchedulerHeaderService {
           end_day: line.end_day ?? null,
           day_of_week: line.day_of_week ?? null,
           is_mandatory: line.is_mandatory ?? false,
-          source: 'MANUAL',
+          // A line carrying a lifecycle ref was filled in from the stage, whether the form sent it back or
+          // generateLinesFromLifecycle wrote it; one without it the user added by hand.
+          source: line.lifecycle_ref_id ? 'AUTO' : 'MANUAL',
+          lifecycle_ref_id: line.lifecycle_ref_id ?? null,
           nob_id: batch.nob_id,
           lob_id: batch.lob_id,
           item_id: line.item_id || null,
@@ -940,6 +785,7 @@ export class SchedulerHeaderService {
           estimated_cost: line.estimated_cost != null ? line.estimated_cost.toString() : null,
           resource_id: line.resource_id || null,
           auto_triggers_stage: line.auto_triggers_stage ?? false,
+          extension_config: line.extension_config ?? null,
           is_active: true,
         });
         // Custom-occurrence day numbers live in scheduler_line_custom_days, not
@@ -1159,55 +1005,9 @@ export class SchedulerHeaderService {
     return { kpis, feed };
   }
 
-  /**
-   * Replace a scheduler's Feed Consumption lines with the set the user edited (Rishi, 14 Oct).
-   *
-   * The same shape and the same rules as the breed lifecycle stage's feed lines: whole stage
-   * days, several feeds may share a day but a feed is on a day once, no gap (validateFeedLines), and a quantity entered
-   * in a weight UOM that is stored as kilograms.
-   *
-   * Days already entered are not rewritten. applySchedulerFeedLines cuts a line with entries
-   * back to its last entered day and starts the new feed the day after, so a posted
-   * batch_daily_data row still reads the item and rate it was posted against.
-   *
-   * The lines it writes carry no lifecycle_ref_id — they are this scheduler's, not the stage's.
-   * The stage stays the standard: changing the stage's feed later brings this scheduler back in
-   * line through the same function, protecting entered days the same way.
-   */
-  async updateFeedLines(id: string, lines: FeedLine[], tenantId: string, userPayload?: any) {
-    const sh = schema.schedulerHeader;
-    const [header] = await this.db.select().from(sh).where(eq(sh.scheduler_id, id)).limit(1);
-    if (!header) throw new NotFoundException(`Scheduler '${id}' not found.`);
-
-    // Same scope gate findOne applies — a scheduler outside the caller's farms is not theirs to edit.
-    const scope = farmScope(this.cls);
-    const [batchInScope] = await this.db
-      .select({ batch_id: schema.batchHeader.batch_id })
-      .from(schema.batchHeader)
-      .where(and(eq(schema.batchHeader.batch_id, header.batch_id), ...batchScopeConditions(scope)))
-      .limit(1);
-    if (!batchInScope) throw new NotFoundException(`Scheduler '${id}' not found.`);
-    if (header.scheduler_status === 'COMPLETED') {
-      throw new BadRequestException('This scheduler is completed; its feed can no longer be changed.');
-    }
-
-    const validated = validateFeedLines(lines);
-    const wanted: WantedFeedLine[] = [];
-    for (const [i, line] of validated.entries()) {
-      const { kg } = await feedQtyToKg(this.db, line.feed_qty_per_head_per_day_kg, line.feed_qty_uom, `Feed line ${i + 1}`);
-      wanted.push({ fromDay: line.period_from, toDay: line.period_to, itemId: line.feed_item_id, qty: kg, lifecycleId: null });
-    }
-
-    const [stage] = await this.db.select({ stage_name: schema.stageMaster.stage_name })
-      .from(schema.stageMaster).where(eq(schema.stageMaster.stage_id, header.stage_id)).limit(1);
-
-    await applySchedulerFeedLines(this.db, {
-      header: { scheduler_id: header.scheduler_id, effective_from: header.effective_from, nob_id: header.nob_id, lob_id: header.lob_id, stage_id: header.stage_id },
-      wanted,
-      stageName: stage?.stage_name ?? null,
-    });
-
-    return this.findOne(id);
+  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  async updateFeedLines(..._args: unknown[]): Promise<never> {
+    return assertActivitiesOpen();
   }
 
   async findOne(id: string) {
@@ -1673,121 +1473,18 @@ export class SchedulerHeaderService {
     return suppliedUom ?? null;
   }
 
-  async addLine(headerId: string, dto: CreateSchedulerLineDto, tenantId: string, userPayload?: { userId?: string }) {
-    const header = await this.findOne(headerId);
-    this.assertLineTypeFields(dto.line_type, dto, dto as unknown as Record<string, unknown>);
-    this.assertNoConflictingLines(dto, header.lines);
-
-    // Unique per scheduler_id (uq_scheduler_line_scheduler_seq); the data-entry
-    // screen groups by line_type and orders by this value within that group.
-    const maxSeq = header.lines.reduce((max, l) => Math.max(max, l.line_seq), 0);
-    const lineId = randomUUID();
-    await this.db.insert(schema.schedulerLine).values({
-      line_id: lineId,
-      scheduler_id: headerId,
-      line_seq: maxSeq + 1,
-      line_type: dto.line_type,
-      activity_name: dto.activity_name,
-      // Auto-flows from the header — every line under one header shares its one stage.
-      stage_id: header.stage_id,
-      occurrence: dto.occurrence || 'DAILY',
-      start_day: dto.start_day ?? 1,
-      end_day: dto.end_day ?? null,
-      day_of_week: dto.day_of_week ?? null,
-      is_mandatory: dto.is_mandatory ?? false,
-      source: 'MANUAL',
-      nob_id: header.nob_id,
-      lob_id: header.lob_id,
-      item_id: dto.item_id || null,
-      item_description: dto.item_description || null,
-      standard_qty: dto.standard_qty?.toString() ?? null,
-      qty_basis: dto.qty_basis || null,
-      allow_qty_edit: dto.allow_qty_edit ?? true,
-      lot_required: dto.lot_required ?? false,
-      creates_inventory: dto.creates_inventory ?? false,
-      output_lot_auto: dto.output_lot_auto ?? true,
-      output_basis: dto.output_basis || null,
-      kpi_metric: dto.kpi_metric || null,
-      kpi_uom: this.resolveKpiUom(dto.kpi_metric, dto.kpi_uom),
-      std_value: dto.std_value?.toString() ?? null,
-      lower_alert_limit: dto.lower_alert_limit?.toString() ?? null,
-      upper_alert_limit: dto.upper_alert_limit?.toString() ?? null,
-      alert_severity: dto.alert_severity || 'WARNING',
-      capture_per: dto.capture_per || null,
-      overhead_category: dto.overhead_category || null,
-      gl_account: dto.gl_account || null,
-      estimated_cost: dto.estimated_cost?.toString() ?? null,
-      resource_id: dto.resource_id || null,
-      auto_triggers_stage: dto.auto_triggers_stage ?? false,
-    });
-
-    if (dto.occurrence === 'CUSTOM' && dto.custom_days?.length) {
-      await this.db.insert(schema.schedulerLineCustomDays).values(
-        dto.custom_days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
-      );
-    }
-
-    await this.auditService.log({
-      tenantId, companyId: header.company_id, userId: userPayload?.userId,
-      action: 'CREATE', entityName: 'scheduler_line', entityId: lineId, newValues: dto,
-    });
-
-    return this.findOne(headerId);
+  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  async addLine(..._args: unknown[]): Promise<never> {
+    return assertActivitiesOpen();
   }
 
-  async updateLine(headerId: string, lineId: string, dto: UpdateSchedulerLineDto, tenantId: string, userPayload?: { userId?: string }) {
-    const header = await this.findOne(headerId);
-    const line = header.lines.find((l) => l.line_id === lineId);
-    if (!line) throw new NotFoundException(`Line '${lineId}' not found on this scheduler.`);
-
-    const effectiveType = dto.line_type ?? line.line_type;
-    const effective = { ...line, ...dto };
-    this.assertLineTypeFields(effectiveType, { ...dto, line_type: effectiveType }, effective as unknown as Record<string, unknown>);
-    const otherLines = header.lines.filter((l) => l.line_id !== lineId);
-    this.assertNoConflictingLines(effective, otherLines);
-
-    const updates: Record<string, unknown> = { };
-    for (const [key, value] of Object.entries(dto)) {
-      if (value === undefined || key === 'custom_days') continue;
-      updates[key] = typeof value === 'number' ? value.toString() : value;
-    }
-    if ('kpi_metric' in updates || 'kpi_uom' in updates) {
-      updates.kpi_uom = this.resolveKpiUom((updates.kpi_metric as string) ?? line.kpi_metric, (updates.kpi_uom as string) ?? line.kpi_uom);
-    }
-
-    if (Object.keys(updates).length) {
-      await this.db.update(schema.schedulerLine).set(updates).where(eq(schema.schedulerLine.line_id, lineId));
-    }
-
-    if (dto.custom_days) {
-      await this.db.delete(schema.schedulerLineCustomDays).where(eq(schema.schedulerLineCustomDays.line_id, lineId));
-      if (dto.custom_days.length) {
-        await this.db.insert(schema.schedulerLineCustomDays).values(
-          dto.custom_days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
-        );
-      }
-    }
-
-    await this.auditService.log({
-      tenantId, companyId: header.company_id, userId: userPayload?.userId,
-      action: 'UPDATE', entityName: 'scheduler_line', entityId: lineId, oldValues: line, newValues: dto,
-    });
-
-    return this.findOne(headerId);
+  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  async updateLine(..._args: unknown[]): Promise<never> {
+    return assertActivitiesOpen();
   }
 
-  async removeLine(headerId: string, lineId: string, tenantId: string, userPayload?: { userId?: string }) {
-    const header = await this.findOne(headerId);
-    const line = header.lines.find((l) => l.line_id === lineId);
-    if (!line) throw new NotFoundException(`Line '${lineId}' not found on this scheduler.`);
-
-    await this.db.update(schema.schedulerLine).set({ is_active: false }).where(eq(schema.schedulerLine.line_id, lineId));
-
-    await this.auditService.log({
-      tenantId, companyId: header.company_id, userId: userPayload?.userId,
-      action: 'DELETE', entityName: 'scheduler_line', entityId: lineId, oldValues: line,
-    });
-
-    return this.findOne(headerId);
+  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  async removeLine(..._args: unknown[]): Promise<never> {
+    return assertActivitiesOpen();
   }
 }

@@ -10,7 +10,6 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
-import { LifecycleKpiEvaluator } from '../lifecycle/lifecycle-kpi.evaluator';
 
 import { BreedingService } from '../../piggery/breeding/breeding.service';
 const breedingMock = { recordFarrowing: jest.fn(), recordWeaning: jest.fn(), recordSemenCollection: jest.fn() };
@@ -90,7 +89,6 @@ describe('BatchDailyDataService', () => {
 
   const siloFeedService = { currentItems: jest.fn() };
   const feedAlerts = { evaluateLevelsSafely: jest.fn() };
-  const lifecycleKpi = { evaluateSafely: jest.fn() };
 
   const consumptionLine = {
     line_id: 'line-1',
@@ -107,7 +105,6 @@ describe('BatchDailyDataService', () => {
     mockDbInsert.mockReset();
     siloFeedService.currentItems.mockReset();
     feedAlerts.evaluateLevelsSafely.mockReset().mockResolvedValue(undefined);
-    lifecycleKpi.evaluateSafely.mockReset().mockResolvedValue(0);
     mockDbInsert.mockReturnValue({
       values: jest.fn().mockReturnValue({
         onDuplicateKeyUpdate: jest.fn().mockResolvedValue({}),
@@ -142,7 +139,6 @@ describe('BatchDailyDataService', () => {
         },
         { provide: SiloFeedService, useValue: siloFeedService },
         { provide: FeedAlertService, useValue: feedAlerts },
-        { provide: LifecycleKpiEvaluator, useValue: lifecycleKpi },
       ],
     }).compile();
 
@@ -510,33 +506,21 @@ describe('BatchDailyDataService', () => {
     expect(mockDbInsert).toHaveBeenCalledTimes(3);
   });
 
-  // Lifecycle KPI limits/tolerance run alongside (not instead of) the schedule-line limit check.
-  describe.each([
-    ['a KPI line breaching its schedule limit', 'BODY_WEIGHT', '1', true],
-    ['a KPI line within its schedule limit', 'BODY_WEIGHT', '100', false],
-    ['a DESCRIPTIVE line with no kpi_metric', null, '1', false],
-  ])('lifecycle KPI evaluation for %s', (_label, kpiMetric, upperLimit, expectCall) => {
-    it(expectCall ? 'checks the lifecycle KPI after the schedule check, which still alerts' : 'follows the rule', async () => {
-      const single = (row: unknown[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row) }) }) });
-      mockDbSelect
-        .mockReturnValueOnce(single([{ line_id: 'line-kpi', scheduler_id: 'sched-1', is_active: true, line_type: 'DESCRIPTIVE', item_id: null, lot_required: false, kpi_metric: kpiMetric, activity_name: 'Weight', lower_alert_limit: null, upper_alert_limit: upperLimit, alert_severity: 'WARNING', std_value: null }]))
-        .mockReturnValueOnce(single([header]))
-        .mockReturnValueOnce(single([{ tracking_mode: 'BATCH_WISE' }]))
-        .mockReturnValueOnce(single([]))
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+  // KPI alerts come from the scheduler line's own limits (Rishi, 14 Oct): the stage's KPIs & Alerts are filled onto the
+  // scheduler as lines when it is created, so a breach is one alert — the line's — and the stage is not checked again.
+  it('a KPI line breaching its own limit writes the alert from the line', async () => {
+    const single = (row: unknown[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row) }) }) });
+    mockDbSelect
+      .mockReturnValueOnce(single([{ line_id: 'line-kpi', scheduler_id: 'sched-1', is_active: true, line_type: 'DESCRIPTIVE', item_id: null, lot_required: false, kpi_metric: 'BODY_WEIGHT', activity_name: 'Weight', lower_alert_limit: null, upper_alert_limit: '1', alert_severity: 'WARNING', std_value: null }]))
+      .mockReturnValueOnce(single([header]))
+      .mockReturnValueOnce(single([{ tracking_mode: 'BATCH_WISE' }]))
+      .mockReturnValueOnce(single([]))
+      .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
 
-      await service.postEntry('batch-1', { line_id: 'line-kpi', entry_date: '2026-09-08', entered_value: 3 } as any, 'tenant-123');
+    await service.postEntry('batch-1', { line_id: 'line-kpi', entry_date: '2026-09-08', entered_value: 3 } as any, 'tenant-123');
 
-      if (expectCall) {
-        expect(lifecycleKpi.evaluateSafely).toHaveBeenCalledWith('batch-1', 'tenant-123', '2026-09-08', ['BODY_WEIGHT']);
-        // the schedule-line KPI_DEVIATION alert is still written (notification_alert_log, batch_daily_data, ledger)
-        expect(mockDbInsert).toHaveBeenCalledTimes(3);
-      } else if (kpiMetric) {
-        expect(lifecycleKpi.evaluateSafely).toHaveBeenCalled(); // still evaluated: lifecycle limits are independent of the schedule limit
-      } else {
-        expect(lifecycleKpi.evaluateSafely).not.toHaveBeenCalled();
-      }
-    });
+    // the line's KPI_DEVIATION alert (notification_alert_log), batch_daily_data and the ledger
+    expect(mockDbInsert).toHaveBeenCalledTimes(3);
   });
 
   describe('ANIMAL_WISE batches', () => {
