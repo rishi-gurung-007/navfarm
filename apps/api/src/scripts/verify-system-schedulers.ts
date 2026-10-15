@@ -58,11 +58,15 @@ async function scenario(ctx: DemoContext) {
   // lifecycle uses; step 5 then tries the stage's other id.
   const farm = ctx.demoFarms[0];
   if (!farm) throw new Error('No demo farm in this run.');
+  // A stage code exists more than once per LOB: the tenant template row (company_id NULL), and each company's own
+  // copy. Take this company's own row, else the template — the same order a stage transfer resolves (batch.service.ts,
+  // 15 Oct), so step 6 looks for the destination scheduler on the row the transfer actually writes.
   const stageIdOf = async (code: string) => {
-    const [row] = await db.select({ stage_id: schema.stageMaster.stage_id }).from(schema.stageMaster)
+    const rows = await db.select({ stage_id: schema.stageMaster.stage_id, company_id: schema.stageMaster.company_id })
+      .from(schema.stageMaster)
       .innerJoin(schema.breedLifecycleStages, eq(schema.breedLifecycleStages.stage_id, schema.stageMaster.stage_id))
-      .where(and(eq(schema.stageMaster.lob_id, PIGGERY_LOB_ID), eq(schema.stageMaster.stage_code, code), isNull(schema.stageMaster.deleted_at), eq(schema.breedLifecycleStages.is_active, true)))
-      .limit(1);
+      .where(and(eq(schema.stageMaster.lob_id, PIGGERY_LOB_ID), eq(schema.stageMaster.stage_code, code), isNull(schema.stageMaster.deleted_at), eq(schema.breedLifecycleStages.is_active, true)));
+    const row = rows.find((r) => r.company_id === ctx.companyId) ?? rows.find((r) => (r.company_id ?? null) === null) ?? rows[0];
     if (!row) throw new Error(`No Piggery stage ${code} with a breed lifecycle row.`);
     return row.stage_id;
   };
