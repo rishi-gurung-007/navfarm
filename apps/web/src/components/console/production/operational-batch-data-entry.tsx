@@ -109,13 +109,10 @@ const outputEventLabel = (event: Row, bioItemChosen?: boolean): string => {
   const onHand = event.piglets_on_hand != null ? ` — ${event.piglets_on_hand} on hand` : '';
   return `Posts as the weaning of litter ${event.litter}${lot}${onHand}: losses are recorded as mortality.`;
 };
-/** A feed line of the daily entry (its item type is a feed type). */
-const isFeedLine = (line: Row) => line.line_type === 'CONSUMPTION' && /FEED/i.test(String(line.item_type || ''));
 /** A line that issues stock names the lot or serial it draws from. An output does not: its lot is made when it posts,
- *  so it is never asked for one (a lot-tracked output item used to show the issue picker and send an old lot). Nor
- *  does a lot-tracked feed (Rishi, 14 Oct): its lots are taken nearest expiry first when the day posts. */
+ *  so it is never asked for one (a lot-tracked output item used to show the issue picker and send an old lot). */
 const drawsFromLots = (line: Row) =>
-  line.line_type !== 'OUTPUT' && Boolean(line.is_serial_tracked || (!isFeedLine(line) && (line.lot_required || line.is_lot_tracked)));
+  line.line_type !== 'OUTPUT' && Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
 const isTextCapture = (line: Row) =>
   line.line_type === 'DESCRIPTIVE' &&
   !!line.kpi_uom &&

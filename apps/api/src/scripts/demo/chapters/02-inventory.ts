@@ -156,7 +156,14 @@ const DEMO_OPERATIONS = {
 // applyFifo refuses it as short. Stocking two of 53 silos left 28 of them empty
 // and chapter 04 died on the first shed that owned one.
 
+function dateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
 const TODAY = () => new Date().toISOString().slice(0, 10);
+
 
 /**
  * Look an item up by its NAME — the one property of a seeded item that code
@@ -232,7 +239,7 @@ export const inventoryChapter: DemoChapter = {
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('02-inventory: tenantDb is not set — run through the harness.');
 
-    const postingDate = TODAY();
+    const postingDate = dateDaysAgo(2);
 
     for (const farm of ctx.demoFarms) {
       const tag = tagOf(farm);

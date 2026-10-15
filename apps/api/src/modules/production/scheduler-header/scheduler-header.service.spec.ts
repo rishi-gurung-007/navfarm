@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { ACTIVITIES_LOCKED_MESSAGE, SchedulerHeaderService } from './scheduler-header.service';
+import { SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { FarmScope } from '../../../common/farm-scope';
@@ -563,11 +563,52 @@ describe('SchedulerHeaderService', () => {
     });
   });
 
-  describe('a created scheduler\'s activities are fixed (Rishi, 14 Oct)', () => {
-    it.each(['addLine', 'updateLine', 'removeLine', 'copyLinesInto', 'updateFeedLines'] as const)('%s is refused', async (method) => {
-      await expect((service as any)[method]('sched-1', {}, 'tenant-123')).rejects.toThrow(ACTIVITIES_LOCKED_MESSAGE);
-      expect(mockDbInsert).not.toHaveBeenCalled();
-      expect(mockDbUpdate).not.toHaveBeenCalled();
+  describe('addLine', () => {
+    it('rejects a CONSUMPTION line missing item_id/standard_qty/qty_basis', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1', batch_id: 'batch-1', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) }) }) // findOne: header
+        .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: lines (no line ids -> custom days skipped)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch_no lookup (no location_id -> silo stock skipped)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }); // findOne: stage_name lookup (no breed_id -> breed lookup skipped)
+
+      await expect(
+        service.addLine('sched-1', { line_type: 'CONSUMPTION', activity_name: 'Evening Feed' } as any, 'tenant-123'),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rejects a line with the same item and overlapping time period', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ scheduler_id: 'sched-1', batch_id: 'batch-1', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) }) }) // findOne: header
+        .mockReturnValueOnce(batchInScopeRow('batch-1')) // findOne: farm-scope batch check
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([
+          {
+            line_id: 'line-1',
+            line_type: 'CONSUMPTION',
+            activity_name: 'Booster Vaccine',
+            item_id: 'item-100',
+            occurrence: 'DAILY',
+            start_day: 1,
+            end_day: null,
+          }
+        ]) }) }) // findOne: lines
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }) // findOne: customDays
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) }) // findOne: batch
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ stage_name: 'Weaner' }]) }) }) }) // findOne: stage
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ item_id: 'item-100', item_name: 'Booster Premix', uom_primary: 'KG', withdrawal_days: null }]) }) }); // findOne: items
+
+      await expect(
+        service.addLine('sched-1', {
+          line_type: 'CONSUMPTION',
+          activity_name: 'Booster Vaccine',
+          item_id: 'item-100',
+          occurrence: 'DAILY',
+          start_day: 1,
+          end_day: null,
+          standard_qty: 1.5,
+          qty_basis: 'PER_HEAD',
+        } as any, 'tenant-123'),
+      ).rejects.toThrow('Schedule conflict: Item');
     });
   });
 });

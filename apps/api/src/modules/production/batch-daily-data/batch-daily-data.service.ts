@@ -1977,6 +1977,5 @@ export function lotMustBeNamed(
 ): boolean {
   if (!itemId) return true;
   if (tracked?.serial) return true;
-  if (!tracked?.lot) return false;
-  return !(lineType === 'CONSUMPTION' && isFeedTypeCode(tracked.item_type));
+  return Boolean(tracked?.lot);
 }

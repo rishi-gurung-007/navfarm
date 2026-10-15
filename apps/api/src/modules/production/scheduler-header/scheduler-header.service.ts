@@ -273,9 +273,79 @@ export class SchedulerHeaderService {
     return lines.length;
   }
 
-  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
-  async copyLinesInto(..._args: unknown[]): Promise<never> {
-    return assertActivitiesOpen();
+  /**
+   * Fills an empty scheduler with another scheduler's activities — a system
+   * scheduler's, or another batch's — for a header that got none (the user
+   * declined the copy, or no system scheduler existed yet). Refused once the
+   * header has an active line, so it never doubles a plan up. A copy from a
+   * system scheduler records it as the origin, as on auto-create; a copy from
+   * a batch's scheduler is the user's own choice and is marked MANUAL.
+   */
+  async copyLinesInto(headerId: string, dto: CopySchedulerLinesDto, tenantId: string, userPayload?: { userId?: string }) {
+    let copied = 0;
+    // The empty check sits inside the transaction it guards, so a line added
+    // between the check and the copy cannot leave the plan doubled.
+    await withTenantTransaction(this.cls, async () => {
+      const header = await this.findOne(headerId);
+      if (header.lines.some((l) => l.is_active)) {
+        throw new ConflictException('This scheduler already has activities. Copying is offered only while it has none.');
+      }
+      // Removed lines keep their line_seq (it is unique per scheduler), so a copy numbers on after them.
+      const startSeq = header.lines.reduce((max, l) => Math.max(max, l.line_seq), 0) + 1;
+
+      if (dto.source_type === 'SYSTEM') {
+        const [source] = await this.db.select({ system_scheduler_id: schema.systemScheduler.system_scheduler_id })
+          .from(schema.systemScheduler)
+          .where(and(eq(schema.systemScheduler.system_scheduler_id, dto.source_id), eq(schema.systemScheduler.company_id, header.company_id)))
+          .limit(1);
+        if (!source) throw new NotFoundException(`System scheduler '${dto.source_id}' not found.`);
+        copied = await this.copyLinesFromSystemScheduler(headerId, source.system_scheduler_id, header, header.stage_id, startSeq);
+        if (copied) {
+          await this.db.update(schema.schedulerHeader)
+            .set({ system_scheduler_id: source.system_scheduler_id, updated_at: toMysqlTimestamp() })
+            .where(eq(schema.schedulerHeader.scheduler_id, headerId));
+        }
+      } else {
+        if (dto.source_id === headerId) throw new BadRequestException('A scheduler cannot copy its own activities.');
+        const source = await this.findOne(dto.source_id);
+        if (source.company_id !== header.company_id) throw new NotFoundException(`Scheduler '${dto.source_id}' not found.`);
+        const sourceLines = source.lines.filter((l) => l.is_active).sort((a, b) => a.line_seq - b.line_seq);
+        const lines: (typeof schema.schedulerLine.$inferInsert)[] = [];
+        const customDayRows: (typeof schema.schedulerLineCustomDays.$inferInsert)[] = [];
+        sourceLines.forEach((line, idx) => {
+          const lineId = randomUUID();
+          lines.push({
+            ...(pickLineFields(line) as Partial<typeof schema.schedulerLine.$inferInsert>),
+            line_type: line.line_type,
+            activity_name: line.activity_name,
+            line_id: lineId,
+            scheduler_id: headerId,
+            line_seq: startSeq + idx,
+            stage_id: header.stage_id,
+            source: 'MANUAL',
+            lifecycle_ref_id: null,
+            nob_id: header.nob_id,
+            lob_id: header.lob_id,
+            is_active: true,
+          });
+          for (const day of line.custom_days) {
+            customDayRows.push({ custom_day_id: randomUUID(), line_id: lineId, day_number: day.day_number });
+          }
+        });
+        if (lines.length) await this.db.insert(schema.schedulerLine).values(lines);
+        if (customDayRows.length) await this.db.insert(schema.schedulerLineCustomDays).values(customDayRows);
+        copied = lines.length;
+      }
+      if (!copied) throw new BadRequestException('The chosen scheduler has no activities to copy.');
+
+      await this.auditService.log({
+        tenantId, companyId: header.company_id, userId: userPayload?.userId,
+        action: 'COPY_LINES', entityName: 'scheduler_header', entityId: headerId,
+        newValues: { source_type: dto.source_type, source_id: dto.source_id, lines_copied: copied },
+      });
+    });
+
+    return this.findOne(headerId);
   }
 
   /**
@@ -1473,18 +1543,121 @@ export class SchedulerHeaderService {
     return suppliedUom ?? null;
   }
 
-  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
-  async addLine(..._args: unknown[]): Promise<never> {
-    return assertActivitiesOpen();
+  async addLine(headerId: string, dto: CreateSchedulerLineDto, tenantId: string, userPayload?: { userId?: string }) {
+    const header = await this.findOne(headerId);
+    this.assertLineTypeFields(dto.line_type, dto, dto as unknown as Record<string, unknown>);
+    this.assertNoConflictingLines(dto, header.lines);
+
+    // Unique per scheduler_id (uq_scheduler_line_scheduler_seq); the data-entry
+    // screen groups by line_type and orders by this value within that group.
+    const maxSeq = header.lines.reduce((max, l) => Math.max(max, l.line_seq), 0);
+    const lineId = randomUUID();
+    await this.db.insert(schema.schedulerLine).values({
+      line_id: lineId,
+      scheduler_id: headerId,
+      line_seq: maxSeq + 1,
+      line_type: dto.line_type,
+      activity_name: dto.activity_name,
+      // Auto-flows from the header — every line under one header shares its one stage.
+      stage_id: header.stage_id,
+      occurrence: dto.occurrence || 'DAILY',
+      start_day: dto.start_day ?? 1,
+      end_day: dto.end_day ?? null,
+      day_of_week: dto.day_of_week ?? null,
+      is_mandatory: dto.is_mandatory ?? false,
+      source: 'MANUAL',
+      nob_id: header.nob_id,
+      lob_id: header.lob_id,
+      item_id: dto.item_id || null,
+      item_description: dto.item_description || null,
+      standard_qty: dto.standard_qty?.toString() ?? null,
+      qty_basis: dto.qty_basis || null,
+      allow_qty_edit: dto.allow_qty_edit ?? true,
+      lot_required: dto.lot_required ?? false,
+      creates_inventory: dto.creates_inventory ?? false,
+      output_lot_auto: dto.output_lot_auto ?? true,
+      output_basis: dto.output_basis || null,
+      kpi_metric: dto.kpi_metric || null,
+      kpi_uom: this.resolveKpiUom(dto.kpi_metric, dto.kpi_uom),
+      std_value: dto.std_value?.toString() ?? null,
+      lower_alert_limit: dto.lower_alert_limit?.toString() ?? null,
+      upper_alert_limit: dto.upper_alert_limit?.toString() ?? null,
+      alert_severity: dto.alert_severity || 'WARNING',
+      capture_per: dto.capture_per || null,
+      overhead_category: dto.overhead_category || null,
+      gl_account: dto.gl_account || null,
+      estimated_cost: dto.estimated_cost?.toString() ?? null,
+      resource_id: dto.resource_id || null,
+      auto_triggers_stage: dto.auto_triggers_stage ?? false,
+    });
+
+    if (dto.occurrence === 'CUSTOM' && dto.custom_days?.length) {
+      await this.db.insert(schema.schedulerLineCustomDays).values(
+        dto.custom_days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
+      );
+    }
+
+    await this.auditService.log({
+      tenantId, companyId: header.company_id, userId: userPayload?.userId,
+      action: 'CREATE', entityName: 'scheduler_line', entityId: lineId, newValues: dto,
+    });
+
+    return this.findOne(headerId);
   }
 
-  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
-  async updateLine(..._args: unknown[]): Promise<never> {
-    return assertActivitiesOpen();
+  async updateLine(headerId: string, lineId: string, dto: UpdateSchedulerLineDto, tenantId: string, userPayload?: { userId?: string }) {
+    const header = await this.findOne(headerId);
+    const line = header.lines.find((l) => l.line_id === lineId);
+    if (!line) throw new NotFoundException(`Line '${lineId}' not found on this scheduler.`);
+
+    const effectiveType = dto.line_type ?? line.line_type;
+    const effective = { ...line, ...dto };
+    this.assertLineTypeFields(effectiveType, { ...dto, line_type: effectiveType }, effective as unknown as Record<string, unknown>);
+    const otherLines = header.lines.filter((l) => l.line_id !== lineId);
+    this.assertNoConflictingLines(effective, otherLines);
+
+    const updates: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(dto)) {
+      if (value === undefined || key === 'custom_days') continue;
+      updates[key] = typeof value === 'number' ? value.toString() : value;
+    }
+    if ('kpi_metric' in updates || 'kpi_uom' in updates) {
+      updates.kpi_uom = this.resolveKpiUom((updates.kpi_metric as string) ?? line.kpi_metric, (updates.kpi_uom as string) ?? line.kpi_uom);
+    }
+
+    if (Object.keys(updates).length) {
+      await this.db.update(schema.schedulerLine).set(updates).where(eq(schema.schedulerLine.line_id, lineId));
+    }
+
+    if (dto.custom_days) {
+      await this.db.delete(schema.schedulerLineCustomDays).where(eq(schema.schedulerLineCustomDays.line_id, lineId));
+      if (dto.custom_days.length) {
+        await this.db.insert(schema.schedulerLineCustomDays).values(
+          dto.custom_days.map((day) => ({ custom_day_id: randomUUID(), line_id: lineId, day_number: day }))
+        );
+      }
+    }
+
+    await this.auditService.log({
+      tenantId, companyId: header.company_id, userId: userPayload?.userId,
+      action: 'UPDATE', entityName: 'scheduler_line', entityId: lineId, oldValues: line, newValues: dto,
+    });
+
+    return this.findOne(headerId);
   }
 
-  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
-  async removeLine(..._args: unknown[]): Promise<never> {
-    return assertActivitiesOpen();
+  async removeLine(headerId: string, lineId: string, tenantId: string, userPayload?: { userId?: string }) {
+    const header = await this.findOne(headerId);
+    const line = header.lines.find((l) => l.line_id === lineId);
+    if (!line) throw new NotFoundException(`Line '${lineId}' not found on this scheduler.`);
+
+    await this.db.update(schema.schedulerLine).set({ is_active: false }).where(eq(schema.schedulerLine.line_id, lineId));
+
+    await this.auditService.log({
+      tenantId, companyId: header.company_id, userId: userPayload?.userId,
+      action: 'DELETE', entityName: 'scheduler_line', entityId: lineId, oldValues: line,
+    });
+
+    return this.findOne(headerId);
   }
 }

@@ -265,29 +265,40 @@ export async function bootstrap() {
 
     // Same again — state_province.country_id has to reference the row that is
     // really there, not the id this run happened to generate.
+    // Country IDs in master and tenant databases may differ if a tenant migration already inserted rows.
+    const masterCountryIdByIso2 = new Map<string, string>();
     for (const row of await masterDb.select().from(master.countryMaster)) {
-      countryIdByIso2.set(row.iso2, row.country_id);
+      masterCountryIdByIso2.set(row.iso2, row.country_id);
+    }
+    const tenantCountryIdByIso2 = new Map<string, string>();
+    for (const row of await tenantDb.select().from(tenant.countryMaster)) {
+      tenantCountryIdByIso2.set(row.iso2, row.country_id);
     }
 
     // India's states specifically — matching this codebase's existing India-centric
     // defaults (INR, Hindi, Asia/Kolkata) — not every country's states, too much for a
     // starter set.
-    const indiaId = countryIdByIso2.get('IN')!;
-    const indiaStates: Array<typeof master.stateProvince.$inferInsert> = [
+    const indiaStateDefs = [
       ['MH', 'Maharashtra'], ['PB', 'Punjab'], ['HR', 'Haryana'], ['UP', 'Uttar Pradesh'],
       ['KA', 'Karnataka'], ['TN', 'Tamil Nadu'], ['GJ', 'Gujarat'], ['RJ', 'Rajasthan'],
       ['WB', 'West Bengal'], ['TS', 'Telangana'], ['AP', 'Andhra Pradesh'], ['KL', 'Kerala'],
       ['MP', 'Madhya Pradesh'], ['BR', 'Bihar'], ['OR', 'Odisha'], ['AS', 'Assam'], ['DL', 'Delhi'],
-    ].map(([code, name]) => ({
-      state_id: randomUUID(),
-      country_id: indiaId,
-      state_code: code,
-      state_name: name,
-    }));
+    ];
 
-    for (const state of indiaStates) {
-      await masterDb.insert(master.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
-      await tenantDb.insert(tenant.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
+    const masterIndiaId = masterCountryIdByIso2.get('IN');
+    if (masterIndiaId) {
+      for (const [code, name] of indiaStateDefs) {
+        const state = { state_id: randomUUID(), country_id: masterIndiaId, state_code: code, state_name: name };
+        await masterDb.insert(master.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
+      }
+    }
+
+    const tenantIndiaId = tenantCountryIdByIso2.get('IN');
+    if (tenantIndiaId) {
+      for (const [code, name] of indiaStateDefs) {
+        const state = { state_id: randomUUID(), country_id: tenantIndiaId, state_code: code, state_name: name };
+        await tenantDb.insert(tenant.stateProvince).values(state).onDuplicateKeyUpdate({ set: withoutId(state, 'state_id') });
+      }
     }
 
     // STANDARD / BIO_ASSET are the two methods actually implemented in batch.service.ts —
