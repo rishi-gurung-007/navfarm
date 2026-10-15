@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { SchedulerHeaderService } from './scheduler-header.service';
+import { FEED_LINES_RETIRED_MESSAGE, SchedulerHeaderService } from './scheduler-header.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { FarmScope } from '../../../common/farm-scope';
@@ -609,6 +609,14 @@ describe('SchedulerHeaderService', () => {
           qty_basis: 'PER_HEAD',
         } as any, 'tenant-123'),
       ).rejects.toThrow('Schedule conflict: Item');
+    });
+  });
+
+  describe('the feed endpoint a scheduler no longer has', () => {
+    it('refuses updateFeedLines — a feed line is edited as an activity line', async () => {
+      await expect(service.updateFeedLines('sched-1', [] as any, 'tenant-123')).rejects.toThrow(FEED_LINES_RETIRED_MESSAGE);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
 });

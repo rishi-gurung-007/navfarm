@@ -56,8 +56,6 @@ describe('GoodsReceiptService', () => {
   // The other branch of the same re-read: a SILO destination routes through
   // SiloFeedService instead of short-circuiting.
   const siloWarehouse = () => found({ location_id: 'wh-1', location_type: 'SILO', location_name: 'Feed Silo 01' });
-  // Checkpoint 47: the item-kind read a SILO destination makes (select .. leftJoin .. where, no limit).
-  const itemTypes = (...rows: any[]) => ({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }) });
   const mockAssertCanReceive = jest.fn();
   const mockWritePositiveEntry = jest.fn();
 
@@ -170,7 +168,6 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
-      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'CONS-1', type_code: 'CONSUMABLE', type_name: 'Consumable' }));
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
@@ -186,16 +183,23 @@ describe('GoodsReceiptService', () => {
       expect(result.status).toBe('POSTED');
     });
 
-    it('refuses a GRN of a FEED item into a SILO, before the item-per-silo check or any posting (checkpoint 47)', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any);
+    // 16 Oct: feed no longer has to come from the mill. A GRN of a FEED item
+    // straight into a silo posts, guarded only by D9 (assertCanReceive).
+    it('posts a GRN of a FEED item into a SILO, through the item-per-silo check', async () => {
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null } as any)
+        .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
-      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'FEED-R1', type_code: 'FEED-001', type_name: 'Feed' }));
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
 
-      await expect(service.post('gr-3', 'tenant-123', { userId: 'user-1' })).rejects.toThrow(/feed item.*only through the Transfer Order receipt/);
-      expect(mockAssertCanReceive).not.toHaveBeenCalled();
-      expect(mockDbUpdate).not.toHaveBeenCalled();
-      expect(mockWritePositiveEntry).not.toHaveBeenCalled();
+      const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+
+      expect(mockAssertCanReceive).toHaveBeenCalledWith(
+        expect.objectContaining({ siloId: 'wh-1', itemIds: ['item-1'], documentLabel: 'GRN' }),
+      );
+      expect(result.status).toBe('POSTED');
+      expect(mockWritePositiveEntry).toHaveBeenCalled();
     });
 
     it('aborts the post before the DRAFT -> POSTED claim when SiloFeedService refuses the item', async () => {
@@ -203,7 +207,6 @@ describe('GoodsReceiptService', () => {
 
       mockDbSelect.mockReturnValueOnce(activeWarehouse());
       mockDbSelect.mockReturnValueOnce(siloWarehouse());
-      mockDbSelect.mockReturnValueOnce(itemTypes({ item_code: 'CONS-1', type_code: 'CONSUMABLE', type_name: 'Consumable' }));
       mockAssertCanReceive.mockRejectedValue(new BadRequestException(
         "Cannot post this GRN — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
       ));

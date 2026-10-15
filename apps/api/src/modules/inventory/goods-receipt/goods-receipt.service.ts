@@ -11,7 +11,6 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { hasSerial } from '../inventory-ledger/serial-utils';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { itemKindOf } from '../../../common/item-kinds';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -72,6 +71,11 @@ export class GoodsReceiptService {
    * posted transfer) a silo's contents can change. Checked at post(), same
    * as stock-transfer's own guard, since a draft's numbers say nothing about
    * what the silo will hold by the time it posts.
+   *
+   * Feed may be received straight into a silo (16 Oct): the mill Transfer
+   * Order is no longer the only way in, so a bought-in feed delivery is a
+   * GRN on the silo. D9 still holds — one feed item per silo, no shed drawing
+   * the same item from two silos — and `assertCanReceive` is what holds it.
    */
   private async assertSiloDestination(
     receipt: { company_id: string; warehouse_id: string; external_reference_no?: string | null; remarks?: string | null },
@@ -664,4 +668,3 @@ export class GoodsReceiptService {
     return posted;
   }
 }
-

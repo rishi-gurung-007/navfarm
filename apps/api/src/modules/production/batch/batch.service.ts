@@ -4355,46 +4355,11 @@ export class BatchService {
     }
     const batchSchedulers = Array.from(schedulersByCode.values());
 
-    // Auto-create schedulers for any live animal stages that have scheduler_auto_create enabled
-    for (const [stgId] of stageGroups.entries()) {
-      const stageRow =
-        schedulerStageMap.get(stgId) ||
-        animalStageRows.find((s) => s.stage_id === stgId) ||
-        (
-          await this.db
-            .select()
-            .from(schema.stageMaster)
-            .where(eq(schema.stageMaster.stage_id, stgId))
-            .limit(1)
-        )[0];
-
-      const alreadyScheduled = batchSchedulers.some(
-        (s) =>
-          s.stage_id === stgId ||
-          (stageRow?.stage_code && s.stage_code === stageRow.stage_code),
-      );
-
-      if (!alreadyScheduled) {
-        if (
-          stageRow &&
-          stageRow.scheduler_auto_create !== false &&
-          Boolean(stageRow.scheduler_auto_create)
-        ) {
-          const created = await this.schedulerHeaderService.createForStage(
-            batch.batch_id,
-            stgId,
-            batch.tenant_id,
-          );
-          if (created?.scheduler_id) {
-            batchSchedulers.push({
-              scheduler_id: created.scheduler_id,
-              stage_id: stgId,
-              stage_code: stageRow.stage_code || null,
-            });
-          }
-        }
-      }
-    }
+    // A scheduler is never created from here (Rishi, 15 Oct). Reading this screen used to open one for every stage
+    // the batch's live animals stood in, so creating a scheduler for one batch and stage was followed by schedulers
+    // for all the others. A scheduler is created where the user asks for one: the Create Scheduler form, batch
+    // creation, or a stage transfer. A stage with none simply has no data entry here — it is not in batchSchedulers,
+    // and only stages that have a scheduler are read below.
 
     const scheduledStageIds = [
       ...new Set(batchSchedulers.map((s) => s.stage_id)),
