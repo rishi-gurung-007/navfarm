@@ -60,6 +60,7 @@ import { StockTransferModule } from './modules/inventory/stock-transfer/stock-tr
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
 import { InventorySetupModule } from './modules/inventory/inventory-setup/inventory-setup.module';
 import { JournalModule } from './modules/finance/journal/journal.module';
+import { ExpenseModule } from './modules/finance/expense/expense.module';
 import { FinancialReportsModule } from './modules/finance/financial-reports/financial-reports.module';
 import { BatchModule } from './modules/production/batch/batch.module';
 import { ParameterModule } from './modules/production/parameter/parameter.module';
@@ -161,6 +162,7 @@ import { SystemController } from './system/system.controller';
     StockAdjustmentModule,
     InventorySetupModule,
     JournalModule,
+    ExpenseModule,
     FinancialReportsModule,
     BatchModule,
     ParameterModule,

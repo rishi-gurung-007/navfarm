@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   Package,
   CalendarClock,
+  Receipt,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -363,6 +364,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
+      { label: t("navExpenses"), href: "/expenses/expense", icon: Receipt, activePrefix: "/expenses" },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
       // Requisitions — D24 puts the feed alerts on the Alerts page and D25
@@ -439,6 +441,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       // WP1g (decisions.md 2026-10-05): Requisition is its own item — common kinds only.
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
+      { label: t("navExpenses"), href: "/expenses/expense", icon: Receipt, activePrefix: "/expenses" },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },
       { label: t("approvals"), href: "/approvals", icon: CheckSquare, activePrefix: "/approvals" },

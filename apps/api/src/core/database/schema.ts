@@ -2320,6 +2320,40 @@ export const journalLineRelations = relations(journalLine, ({ one }) => ({
   costCenter: one(costCenterMaster, { fields: [journalLine.cost_center_id], references: [costCenterMaster.cost_center_id] }),
 }));
 
+// Expense Voucher and Expense share one table, told apart by doc_type. An EXPENSE_VOUCHER is only recorded
+// and listed — it never touches the ledger (Arun, 15 Oct). An EXPENSE posts a
+// balanced journal (Dr expense account, Cr payment/petty-cash account) when it is created, and keeps its journal_id.
+export const expenseDocument = mysqlTable('expense_document', {
+  expense_id: varchar('expense_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  doc_type: varchar('doc_type', { length: 20 }).notNull(), // EXPENSE_VOUCHER, EXPENSE
+  document_no: varchar('document_no', { length: 30 }).notNull(),
+  posting_date: date('posting_date', { mode: 'string' }).notNull(),
+  payee: varchar('payee', { length: 200 }),
+  description: text('description'),
+  amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+  expense_gl_account_id: varchar('expense_gl_account_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  payment_gl_account_id: varchar('payment_gl_account_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  cost_center_id: varchar('cost_center_id', { length: 36 }).references(() => costCenterMaster.cost_center_id, { onDelete: 'restrict' }),
+  // The manager's voucher entry format (15 Oct): Voucher Type and Balance Account Type default to GL. expense_gl_account_id
+  // is the Balance Account No.; payment_gl_account_id is the account the money moves through. Location is the farm,
+  // Sub-Location the shed. amount is signed: negative = payment, positive = receipt.
+  voucher_type: varchar('voucher_type', { length: 10 }).default('GL').notNull(),
+  balance_account_type: varchar('balance_account_type', { length: 10 }).default('GL').notNull(),
+  location_id: varchar('location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  sub_location_id: varchar('sub_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  remarks: text('remarks'),
+  journal_id: varchar('journal_id', { length: 36 }).references(() => journalHeader.journal_id, { onDelete: 'restrict' }),
+  status: varchar('status', { length: 20 }).default('RECORDED').notNull(), // RECORDED (voucher), POSTED (expense, petty cash)
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+}, (table) => [
+  uniqueIndex('uq_expense_document_company_no').on(table.company_id, table.document_no),
+]);
+
 // ==========================================
 // 11. PRODUCTION ENGINE (Phase 5) — STANDARD/FIFO batches only.
 // Bio-asset (IAS41) batch accounting is a separate, deferred model.

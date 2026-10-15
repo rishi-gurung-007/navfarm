@@ -133,6 +133,7 @@ export async function seedDefaultCompanyRoles(
   await tx.insert(schema.rolePermissions).values([
     row(accountantRoleId, { module: 'FINANCE', resource: 'JOURNAL', view: true, create: true, edit: true, approve: true }),
     row(accountantRoleId, { module: 'FINANCE', resource: 'REPORTS', view: true }),
+    row(accountantRoleId, { module: 'FINANCE', resource: 'EXPENSE', view: true, create: true }),
     row(accountantRoleId, { module: 'FINANCE', resource: 'STOCK_VARIANCE', view: true, approve: true }),
     ...INVENTORY_RESOURCES.map((r) => row(accountantRoleId, { module: 'INVENTORY', resource: r, view: true })),
     row(accountantRoleId, { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, approve: true }),

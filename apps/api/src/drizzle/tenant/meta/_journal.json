@@ -1380,6 +1380,20 @@
       "when": 1792000000065,
       "tag": "0197_lifecycle_retired_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "5",
+      "when": 1792000000066,
+      "tag": "0198_expense_document",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "5",
+      "when": 1792000000067,
+      "tag": "0199_expense_voucher_fields",
+      "breakpoints": true
     }
   ]
 }

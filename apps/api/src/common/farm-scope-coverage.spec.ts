@@ -120,6 +120,7 @@ const EXEMPT: Record<string, string> = {
   'finance/gl-account/gl-account.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/gl-mapping/gl-mapping.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/expense/expense.controller.ts': 'Company-level finance expense documents; finance is not farm-scoped (decided 2026-09-14).',
 
   // system — tenant/system administration and reference data
   'inventory/feed-scheduler/feed-scheduler.controller.ts': 'Admin-only test trigger and run log for the feed scheduler; jobs run each farm as system work, like the timer.',
