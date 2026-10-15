@@ -159,19 +159,19 @@ export class CreateFarrowingDto {
   @IsDateString()
   farrowing_date: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   piglets_born_live: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   piglets_stillborn?: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   piglets_mummified?: number;
@@ -193,13 +193,13 @@ export class CreateFarrowingDto {
   farrowing_status?: FarrowingStatus;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   foster_received?: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   fostered_out?: number;
@@ -221,7 +221,7 @@ export class UpdateWeaningDto {
   @IsDateString()
   weaning_date: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   piglets_weaned: number;
@@ -305,7 +305,7 @@ export class CreateSemenCollectionDto {
   @Type(() => Number)
   overhead_cost_period?: number;
 
-  @IsNumber()
+  @IsInt()
   @Min(0.01)
   @Type(() => Number)
   doses_collected: number;

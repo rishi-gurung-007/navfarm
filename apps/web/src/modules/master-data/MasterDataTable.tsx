@@ -1676,6 +1676,13 @@ export function MasterDataTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.apiBase, config.idKey, rows]);
 
+  /** The message a field's own `validate` gives for its current value, shown under the field as soon as the value is chosen. */
+  const fieldRuleError = (f: MasterDataField): string | undefined => {
+    const v = form[f.key];
+    if (!f.validate || v === "" || v === undefined || v === null) return undefined;
+    return f.validate(v, form) ?? undefined;
+  };
+
   const setField = (key: string, value: any) => {
     if (key === numbering.codeKey) {
       codeFieldTouchedRef.current = true;
@@ -1790,6 +1797,11 @@ export function MasterDataTable({
         if (isEmpty && isFieldRequired(f, form) && !isManagedCode) {
           missing.push({ label: tLabel(currentLabel(f, form)), section: f.section || "Identification", isCode: f.key === numbering.codeKey });
           continue;
+        }
+        const ruleMessage = !isEmpty && f.validate ? f.validate(v, form) : null;
+        if (ruleMessage) {
+          setActiveFormTab(f.section || "Identification");
+          throw new Error(ruleMessage);
         }
         // A field with a character-format whitelist (f.pattern) is tested over
         // its whole value at save — the HTML pattern attribute alone only
@@ -3747,6 +3759,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
+                      error={fieldRuleError(f)}
                       hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
@@ -3828,6 +3841,7 @@ export function MasterDataTable({
                       label={tLabel(currentLabel(f, form))}
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
+                      error={fieldRuleError(f)}
                       hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
                       tooltip={f.helpText}
                       className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}

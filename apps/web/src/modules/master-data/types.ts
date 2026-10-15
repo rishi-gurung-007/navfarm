@@ -41,6 +41,8 @@ export interface MasterDataField {
    * conditions (or all of `allOf`'s conditions) currently matches the form's live values.
    */
   requiredWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
+  /** Live check against the form's values: returns the message to show under the field (and to block saving with), or null. */
+  validate?: (value: any, form: Record<string, any>) => string | null;
   /** Render and submit only while condition matches. Supports anyOf or allOf. */
   visibleWhen?: { anyOf?: RequiredCondition[]; allOf?: RequiredCondition[] };
   /** With visibleWhen: stay hidden on edit even when the record already holds a value (it is kept, not sent). */

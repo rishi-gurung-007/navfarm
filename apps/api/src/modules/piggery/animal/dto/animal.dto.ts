@@ -148,10 +148,10 @@ export class CreateAnimalDto {
   @IsOptional()
   acquisition_cost?: number;
 
-  @ApiProperty({ description: 'Current production stage UUID', required: false })
+  @ApiProperty({ description: 'Current production stage UUID — every registered animal stands in a stage' })
   @IsUUID()
-  @IsOptional()
-  current_stage_id?: string;
+  @IsNotEmpty()
+  current_stage_id: string;
 
   @ApiProperty({ description: 'Batch UUID this animal is currently in', required: false })
   @IsUUID()

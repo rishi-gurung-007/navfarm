@@ -3,7 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, desc, asc, gte, lte, inArray, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, FarmScope } from '../../../common/farm-scope';
+import { farmScope, FarmScope, animalScopeConditions, batchScopeConditions, animalOnFarm } from '../../../common/farm-scope';
 import { PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
 
 @Injectable()
@@ -79,6 +79,7 @@ export class PiggeryAnalyticsService {
     const animalConditions = [
       eq(schema.animalRegister.tenant_id, tenantId),
       activeCompanyId ? eq(schema.animalRegister.company_id, activeCompanyId) : undefined,
+      ...animalScopeConditions(scope),
     ].filter(Boolean) as any[];
 
     const animals = await this.db
@@ -139,6 +140,7 @@ export class PiggeryAnalyticsService {
     const farrowConditions = [
       eq(schema.farrowingRecord.tenant_id, tenantId),
       activeCompanyId ? eq(schema.farrowingRecord.company_id, activeCompanyId) : undefined,
+      scope.farmId ? animalOnFarm(schema.farrowingRecord.sow_animal_id, scope.farmId) : undefined,
     ].filter(Boolean) as any[];
 
     if (query.dateFrom && query.dateTo) {
@@ -186,6 +188,7 @@ export class PiggeryAnalyticsService {
     const breedingConditions = [
       eq(schema.breedingRecord.tenant_id, tenantId),
       activeCompanyId ? eq(schema.breedingRecord.company_id, activeCompanyId) : undefined,
+      scope.farmId ? animalOnFarm(schema.breedingRecord.sow_animal_id, scope.farmId) : undefined,
     ].filter(Boolean) as any[];
 
     if (query.dateFrom && query.dateTo) {
@@ -222,6 +225,7 @@ export class PiggeryAnalyticsService {
       eq(schema.batchHeader.tenant_id, tenantId),
       activeCompanyId ? eq(schema.batchHeader.company_id, activeCompanyId) : undefined,
       eq(schema.batchHeader.status, 'ACTIVE'),
+      ...batchScopeConditions(scope),
     ].filter(Boolean) as any[];
 
     const batches = await this.db
@@ -297,6 +301,7 @@ export class PiggeryAnalyticsService {
           eq(schema.locationMaster.tenant_id, tenantId),
           eq(schema.locationMaster.location_type, 'FARM'),
           activeCompanyId ? eq(schema.locationMaster.company_id, activeCompanyId) : undefined,
+          scope.farmId ? eq(schema.locationMaster.location_id, scope.farmId) : undefined,
         )
       );
 

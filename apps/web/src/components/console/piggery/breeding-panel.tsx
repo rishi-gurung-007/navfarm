@@ -22,6 +22,24 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import AnimalDetailsModal from "./animal-details-modal";
 import { formatQuantity } from "@/lib/utils";
+import { BatchPicker, EntryModal, Field, ImpactCard, Step, inputStyle } from "./breeding-form-parts";
+import {
+  addDays,
+  checkFarrowing,
+  checkMating,
+  checkSemen,
+  daysBetween,
+  daysSinceCollection,
+  errorsOf,
+  isBreedingBatch,
+  isLiveBoar,
+  isLiveSow,
+  lotState,
+  openMatingOf,
+  todayIso,
+  whyNotFarrowing,
+  whyNotServed,
+} from "./breeding-rules";
 
 type Row = Record<string, any>;
 
@@ -126,10 +144,11 @@ export function BreedingPanel() {
     notes: "",
   });
 
-  const [farrowForm, setFarrowForm] = useState({
+  const emptyFarrowForm = () => ({
+    batch_id: "",
     sow_animal_id: "",
     breeding_id: "",
-    farrowing_date: new Date().toISOString().slice(0, 10),
+    farrowing_date: todayIso(),
     piglets_born_live: "",
     piglets_stillborn: "",
     piglets_mummified: "",
@@ -142,6 +161,7 @@ export function BreedingPanel() {
     piglet_stage_id: "",
     notes: "",
   });
+  const [farrowForm, setFarrowForm] = useState(emptyFarrowForm);
 
   const [weanForm, setWeanForm] = useState({
     weaning_date: new Date().toISOString().slice(0, 10),
@@ -154,11 +174,13 @@ export function BreedingPanel() {
   });
 
   // No pre-filled figures: doses and costs are whatever was collected and spent, entered by whoever knows.
-  const [semenForm, setSemenForm] = useState({
+  const emptySemenForm = () => ({
+    // The batch is chosen first; its boars are the only ones offered.
+    batch_id: "",
     // The boars the lot is collected from, in the order chosen: the first is its main boar, and with more than one the
     // semen is pooled — mixed into one lot.
     boar_animal_ids: [] as string[],
-    collection_date: new Date().toISOString().slice(0, 10),
+    collection_date: todayIso(),
     doses_collected: "",
     output_item_id: "",
     amortisation_period: "",
@@ -170,6 +192,7 @@ export function BreedingPanel() {
     concentration_m_per_ml: "",
     notes: "",
   });
+  const [semenForm, setSemenForm] = useState(emptySemenForm);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -205,12 +228,10 @@ export function BreedingPanel() {
     loadData();
   }, []);
 
-  const sows = animals.filter(
-    (a) => a.animal_type === "SOW" || a.animal_type === "GILT" || a.gender === "F"
-  );
-  const boars = animals.filter(
-    (a) => a.animal_type === "BOAR" || a.gender === "M"
-  );
+  // A sow is a live SOW or GILT that is female; a boar a live BOAR that is male. (Both tests used to be "or", so a BOAR
+  // recorded female was offered as a sow, and any male as a boar.)
+  const sows = animals.filter(isLiveSow);
+  const boars = animals.filter(isLiveBoar);
 
   // Prefill from the API, which owns the rules: the sow's breed gestation
   // days (116 when the breed has none), check at +28, sow parity from her
@@ -240,6 +261,15 @@ export function BreedingPanel() {
     return () => { cancelled = true; };
   }, [showMatingModal, matingForm.sow_animal_id, matingForm.mating_date, matingForm.boar_animal_id, matingForm.semen_lot_id]);
 
+  const openFarrowModal = () => {
+    setFarrowForm({ ...emptyFarrowForm(), piglet_item_id: pigletItems.length === 1 ? pigletItems[0].item_id : "" });
+    setShowFarrowModal(true);
+  };
+  const openSemenModal = () => {
+    setSemenForm(emptySemenForm());
+    setShowSemenModal(true);
+  };
+
   const openMatingModal = () => {
     editedMatingFields.current = new Set();
     setGestationDays(null);
@@ -250,6 +280,7 @@ export function BreedingPanel() {
   // Handlers
   const handleCreateMating = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (errorsOf(matingIssues).length) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -299,16 +330,18 @@ export function BreedingPanel() {
 
   const handleCreateFarrowing = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (errorsOf(farrowIssues).length) return;
     setSubmitting(true);
     setError(null);
     try {
       const num = (v: string) => (v === "" ? undefined : Number(v));
       const res: any = await api.post("/piggery/breeding/farrowing", {
+        batch_id: farrowForm.batch_id,
         sow_animal_id: farrowForm.sow_animal_id,
-        breeding_id: farrowForm.breeding_id || undefined,
+        breeding_id: farrowMating?.breeding_id || farrowForm.breeding_id || undefined,
         farrowing_date: farrowForm.farrowing_date,
         farrowing_status: farrowForm.farrowing_status,
-        piglets_born_live: Number(farrowForm.piglets_born_live) || 0,
+        piglets_born_live: Number(farrowForm.piglets_born_live),
         piglets_stillborn: num(farrowForm.piglets_stillborn),
         piglets_mummified: num(farrowForm.piglets_mummified),
         // A weight is sent only when someone measured it; a blank used to become 1.4 kg.
@@ -361,20 +394,18 @@ export function BreedingPanel() {
 
   const handleCreateSemen = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!semenForm.boar_animal_ids.length) {
-      setError("Choose at least one boar.");
-      return;
-    }
+    if (errorsOf(semenIssues).length) return;
     setSubmitting(true);
     setError(null);
     try {
       const num = (v: string) => (v === "" ? undefined : Number(v));
       const [mainBoar, ...pooled] = semenForm.boar_animal_ids;
       const res: any = await api.post("/piggery/breeding/semen-collection", {
+        boar_batch_id: semenForm.batch_id,
         boar_animal_id: mainBoar,
         ...(pooled.length ? { pool_boar_animal_ids: pooled } : {}),
         collection_date: semenForm.collection_date,
-        doses_collected: Number(semenForm.doses_collected) || 1,
+        doses_collected: Number(semenForm.doses_collected),
         output_item_id: semenForm.output_item_id || undefined,
         amortisation_period: num(semenForm.amortisation_period),
         feed_cost_period: num(semenForm.feed_cost_period),
@@ -387,7 +418,7 @@ export function BreedingPanel() {
       });
       setSuccess(res?.data?.message || res?.message || t("brpSuccessSemenLogged"));
       setShowSemenModal(false);
-      setSemenForm((f) => ({ ...f, boar_animal_ids: [] }));
+      setSemenForm(emptySemenForm());
       await loadData();
     } catch (err: any) {
       setError(err.message || t("brpErrorSemenFailed"));
@@ -418,6 +449,48 @@ export function BreedingPanel() {
     0
   );
 
+  // ── Batch-first entry: what each form offers, and the checks it shows ──
+  const breedingBatches = batches.filter(isBreedingBatch);
+  const inBatch = (list: Row[], batchId: string) => list.filter((a) => a.current_batch_id === batchId);
+
+  const matingSows = inBatch(sows, matingForm.batch_id);
+  const matingSow = sows.find((a) => a.animal_id === matingForm.sow_animal_id);
+  const matingBoar = boars.find((a) => a.animal_id === matingForm.boar_animal_id);
+  const matingLot = semenBatches.find((l) => l.semen_batch_id === matingForm.semen_lot_id);
+  const matingIssues = checkMating({ form: matingForm, sow: matingSow, boar: matingBoar, lot: matingLot, matings, gestationDays });
+  const pickMatingBatch = (batchId: string) => {
+    editedMatingFields.current.add("batch_id");
+    setMatingForm((f) => ({
+      ...f,
+      batch_id: batchId,
+      // A sow of another batch is no longer offered, so she cannot stay chosen.
+      sow_animal_id: sows.some((a) => a.animal_id === f.sow_animal_id && a.current_batch_id === batchId) ? f.sow_animal_id : "",
+    }));
+  };
+  const pickMatingLot = (lotId: string) => {
+    const lot = semenBatches.find((l) => l.semen_batch_id === lotId);
+    setMatingForm((f) => ({
+      ...f,
+      semen_lot_id: lotId,
+      // A lot from one boar names its sire; a pooled lot leaves the sire to the pool, or unrecorded.
+      boar_animal_id: !lot ? f.boar_animal_id : lot.pooled ? ((lot.boars || []).some((b: Row) => b.boar_id === f.boar_animal_id) ? f.boar_animal_id : "") : lot.boar_id,
+    }));
+  };
+
+  const farrowSows = inBatch(sows, farrowForm.batch_id);
+  const farrowSow = sows.find((a) => a.animal_id === farrowForm.sow_animal_id);
+  const farrowMating = farrowSow ? openMatingOf(farrowSow.animal_id, matings) : undefined;
+  const farrowIssues = checkFarrowing({ form: farrowForm, sow: farrowSow, mating: farrowMating });
+  const farrowLive = Number(farrowForm.piglets_born_live) || 0;
+  const farrowTotalBorn = farrowLive + (Number(farrowForm.piglets_stillborn) || 0) + (Number(farrowForm.piglets_mummified) || 0);
+  const farrowNetLitter = Math.max(0, farrowLive + (Number(farrowForm.foster_received) || 0) - (Number(farrowForm.fostered_out) || 0));
+  const pigletItem = pigletItems.find((i) => i.item_id === farrowForm.piglet_item_id);
+
+  const semenBatchBoars = inBatch(boars, semenForm.batch_id);
+  const semenChosenBoars = boars.filter((b) => semenForm.boar_animal_ids.includes(b.animal_id));
+  const semenIssues = checkSemen({ form: semenForm, boars: semenChosenBoars, lots: semenBatches });
+  const semenItem = semenItems.find((i) => i.item_id === semenForm.output_item_id);
+
   return (
     <div className="space-y-6">
       {/* ── Top Header ── */}
@@ -436,8 +509,8 @@ export function BreedingPanel() {
             size="sm"
             onClick={() => {
               if (subTab === "mating") openMatingModal();
-              else if (subTab === "farrowing") setShowFarrowModal(true);
-              else setShowSemenModal(true);
+              else if (subTab === "farrowing") openFarrowModal();
+              else openSemenModal();
             }}
           >
             <Plus className="w-4 h-4 mr-1.5" />
@@ -822,227 +895,236 @@ export function BreedingPanel() {
       {/* MODAL: RECORD MATING */}
       {/* ========================================================================= */}
       {showMatingModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-                <Heart className="w-5 h-5" style={S.accent} /> {t("brpModalMatingTitle")}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowMatingModal(false)}
-                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
-                aria-label={t("close")}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateMating} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-sow">{t("brpLabelSowGilt")}</label>
+        <EntryModal
+          title={t("brpModalMatingTitle")}
+          icon={<Heart className="w-5 h-5" style={S.accent} />}
+          onClose={() => setShowMatingModal(false)}
+          onSubmit={handleCreateMating}
+          submitting={submitting}
+          submitLabel={t("brpBtnSaveMating")}
+          savingLabel={t("brpBtnRecording")}
+          issues={matingIssues}
+          summary={
+            <ImpactCard
+              title="When you save"
+              rows={[
+                ["Filed under batch", batches.find((b) => b.batch_id === matingForm.batch_id)?.batch_no ?? "—"],
+                ["Sow", matingSow?.animal_code ?? "—"],
+                ["Sire", matingBoar?.animal_code ?? (matingLot?.pooled ? "pooled — not one boar" : "—")],
+                [
+                  "Semen from stock",
+                  matingForm.mating_type === "AI" && matingLot
+                    ? `−${Number(matingForm.semen_dose_qty) || 0} dose (${lotState(matingLot, matingForm.mating_date).left - (Number(matingForm.semen_dose_qty) || 0)} left in ${matingLot.lot_no ?? "lot"})`
+                    : "none",
+                ],
+                ["Expected farrowing", matingForm.expected_farrowing_date || "—"],
+                ["Sow status", matingForm.conception_result === "CONFIRMED" ? "becomes PREGNANT" : "unchanged until the check"],
+              ]}
+              note="An AI service that names a lot takes its doses out of inventory in the same save."
+            />
+          }
+        >
+          <Step n={1} title="Batch" hint="Breeding is recorded batch by batch — pick the batch, then its sow." done={!!matingForm.batch_id}>
+            <BatchPicker
+              id="mating-batch"
+              batches={breedingBatches}
+              value={matingForm.batch_id}
+              onChange={pickMatingBatch}
+              countOf={(id) => inBatch(sows, id).length}
+              noun="sow"
+              issues={matingIssues}
+            />
+          </Step>
+
+          <Step n={2} title="Sow or gilt" hint="Only the females of that batch. A sow that is pregnant, nursing or already served is shown but cannot be chosen." done={!!matingSow && !matingIssues.some((i) => i.field === "sow_animal_id" && i.level === "error")}>
+            <Field label={t("brpLabelSowGilt")} htmlFor="mating-sow" issues={matingIssues} name="sow_animal_id" required>
+              <SearchableSelect
+                id="mating-sow"
+                value={matingForm.sow_animal_id}
+                onChange={(val) => setMatingForm({ ...matingForm, sow_animal_id: String(val) })}
+                placeholder={matingForm.batch_id ? t("brpSelectSow") : "Choose the batch first"}
+                disabled={!matingForm.batch_id}
+                options={matingSows.map((a) => {
+                  const why = whyNotServed(a, matings);
+                  return {
+                    value: a.animal_id,
+                    label: `${a.animal_code} · ${a.animal_type} · parity ${a.parity_count ?? 0} · ${why ?? "ready to serve"}`,
+                    disabled: !!why,
+                  };
+                })}
+                columnHeaders={false}
+              />
+            </Field>
+          </Step>
+
+          <Step n={3} title="Service" done={!!matingForm.mating_date && !matingIssues.some((i) => ["mating_date", "boar_animal_id", "semen_lot_id", "semen_dose_qty", "second_mating_date"].includes(i.field) && i.level === "error")}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("brpLabelMatingType")} htmlFor="mating-type" issues={matingIssues} name="mating_type">
                 <SearchableSelect
-                  id="mating-sow"
-                  value={matingForm.sow_animal_id}
-                  onChange={(val) => setMatingForm({ ...matingForm, sow_animal_id: String(val) })}
-                  placeholder={t("brpSelectSow")}
-                  options={sows.map((s) => ({
-                    value: s.animal_id,
-                    label: t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count }),
-                  }))}
+                  id="mating-type"
+                  value={matingForm.mating_type}
+                  onChange={(val) => setMatingForm({ ...matingForm, mating_type: String(val), ...(String(val) === "NATURAL_MATING" ? { semen_lot_id: "" } : {}) })}
+                  options={[
+                    { value: "AI", label: t("brpOptionAi") },
+                    { value: "NATURAL_MATING", label: t("brpOptionNaturalMating") },
+                  ]}
                   columnHeaders={false}
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-type">{t("brpLabelMatingType")}</label>
-                  <SearchableSelect
-                    id="mating-type"
-                    value={matingForm.mating_type}
-                    onChange={(val) => setMatingForm({ ...matingForm, mating_type: String(val) })}
-                    options={[
-                      { value: "AI", label: t("brpOptionAi") },
-                      { value: "NATURAL_MATING", label: t("brpOptionNaturalMating") },
-                    ]}
-                    columnHeaders={false}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelMatingDate")}</label>
-                  <input
-                    type="date"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={matingForm.mating_date}
-                    onChange={(e) => setMatingForm({ ...matingForm, mating_date: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* The boar is asked for AI too, and optional there: his parity on
-                  this service needs him. An AI dose picked from a semen lot
-                  names its boar by itself. */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-boar">
-                    {matingForm.mating_type === "NATURAL_MATING" ? t("brpLabelBoarAnimal") : t("brpLabelBoarOptional")}
-                  </label>
-                  <SearchableSelect
-                    id="mating-boar"
-                    value={matingForm.boar_animal_id}
-                    onChange={(val) => setMatingForm({ ...matingForm, boar_animal_id: String(val) })}
-                    placeholder={t("brpSelectBoar")}
-                    options={boars.map((b) => ({
-                      value: b.animal_id,
-                      label: t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") }),
-                    }))}
-                    columnHeaders={false}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-batch">{t("brpLabelBatch")}</label>
-                  <SearchableSelect
-                    id="mating-batch"
-                    value={matingForm.batch_id}
-                    onChange={(val) => editMating("batch_id", String(val))}
-                    placeholder={t("brpSelectBatch")}
-                    options={batches.map((b) => ({
-                      value: b.batch_id,
-                      label: b.batch_no,
-                    }))}
-                    columnHeaders={false}
-                  />
-                </div>
-              </div>
-
-              {matingForm.mating_type === "AI" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-semen-lot">{t("brpLabelSemenLotId")}</label>
-                    {/* A select of logged collections, not free text: the API
-                        accepts only a semen_batch id, so a typed lot name was
-                        always refused. */}
-                    <SearchableSelect
-                      id="mating-semen-lot"
-                      value={matingForm.semen_lot_id}
-                      onChange={(val) => setMatingForm({ ...matingForm, semen_lot_id: String(val) })}
-                      placeholder={t("brpSelectSemenLot")}
-                      options={semenBatches.map((sb) => {
-                        const left = Number(sb.doses_collected) - Number(sb.doses_used_internal || 0) - Number(sb.doses_sold || 0);
-                        return {
-                          value: sb.semen_batch_id,
-                          label: `${t("brpSemenLotOptionLabel", { boar: sb.pooled ? (sb.boars || []).map((b: Row) => b.boar_code).join(" + ") : sb.boar_code, date: sb.collection_date })}${sb.pooled ? " · pooled" : ""} · ${sb.lot_no ?? "no lot"} · ${left} doses left`,
-                          disabled: left <= 0,
-                        };
-                      })}
-                      columnHeaders={false}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelDoseQuantity")}</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      className="nf-input w-full text-sm"
-                      style={S.input}
-                      value={matingForm.semen_dose_qty}
-                      onChange={(e) => setMatingForm({ ...matingForm, semen_dose_qty: e.target.value })}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSecondInsemination")}</label>
+              </Field>
+              <Field label={t("brpLabelMatingDate")} issues={matingIssues} name="mating_date" required>
                 <input
                   type="date"
                   className="nf-input w-full text-sm"
-                  style={S.input}
-                  value={matingForm.second_mating_date}
-                  onChange={(e) => setMatingForm({ ...matingForm, second_mating_date: e.target.value })}
+                  style={inputStyle(matingIssues, "mating_date")}
+                  value={matingForm.mating_date}
+                  max={todayIso()}
+                  onChange={(e) => setMatingForm({ ...matingForm, mating_date: e.target.value })}
                 />
-              </div>
+              </Field>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelExpectedFarrowingDate")}</label>
-                  <input
-                    type="date"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={matingForm.expected_farrowing_date}
-                    min={matingForm.mating_date}
-                    onChange={(e) => editMating("expected_farrowing_date", e.target.value)}
-                  />
-                  {gestationDays != null && (
-                    <p className="text-[11px] mt-1" style={S.muted}>{t("brpHintGestationDays", { days: gestationDays })}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelPregCheckDate")}</label>
-                  <input
-                    type="date"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={matingForm.preg_check_date}
-                    min={matingForm.mating_date}
-                    onChange={(e) => editMating("preg_check_date", e.target.value)}
-                  />
-                  <p className="text-[11px] mt-1" style={S.muted}>{t("brpValue28DaysPostMating")}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="mating-conception-result">{t("brpLabelResultShort")}</label>
+            {matingForm.mating_type === "AI" && (
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_7rem] gap-3">
+                <Field
+                  label={t("brpLabelSemenLotId")}
+                  htmlFor="mating-semen-lot"
+                  issues={matingIssues}
+                  name="semen_lot_id"
+                  hint="Pick the lot the doses come from: they are taken out of inventory when you save, and the sire is traced from it."
+                >
                   <SearchableSelect
-                    id="mating-conception-result"
-                    value={matingForm.conception_result}
-                    onChange={(val) => editMating("conception_result", String(val))}
-                    options={CONCEPTION_RESULTS.map((r) => ({
-                      value: r,
-                      label: t(`brpResult${r}`),
-                    }))}
+                    id="mating-semen-lot"
+                    value={matingForm.semen_lot_id}
+                    onChange={(val) => pickMatingLot(String(val))}
+                    placeholder={t("brpSelectSemenLot")}
+                    options={semenBatches.map((sb) => {
+                      const st = lotState(sb, matingForm.mating_date);
+                      const who = sb.pooled ? `${(sb.boars || []).map((b: Row) => b.boar_code).join(" + ")} · pooled` : sb.boar_code;
+                      return {
+                        value: sb.semen_batch_id,
+                        label: `${sb.lot_no ?? "no lot"} · ${who} · ${st.usable ? `${st.left} doses left` : st.why}${sb.expiry_date && st.usable ? ` · exp ${String(sb.expiry_date).slice(0, 10)}` : ""}`,
+                        disabled: !st.usable,
+                      };
+                    })}
                     columnHeaders={false}
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelSowParity")}</label>
+                </Field>
+                <Field label={t("brpLabelDoseQuantity")} issues={matingIssues} name="semen_dose_qty">
                   <input
                     type="number"
-                    min="0"
+                    min="1"
                     step="1"
                     className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={matingForm.parity_number}
-                    onChange={(e) => editMating("parity_number", e.target.value)}
+                    style={inputStyle(matingIssues, "semen_dose_qty")}
+                    value={matingForm.semen_dose_qty}
+                    onChange={(e) => setMatingForm({ ...matingForm, semen_dose_qty: e.target.value })}
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelBoarParity")}</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={matingForm.boar_parity_number}
-                    disabled={!matingForm.boar_animal_id && !matingForm.semen_lot_id}
-                    onChange={(e) => editMating("boar_parity_number", e.target.value)}
-                  />
-                </div>
+                </Field>
               </div>
+            )}
 
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? t("brpBtnRecording") : t("brpBtnSaveMating")}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label={matingForm.mating_type === "NATURAL_MATING" ? t("brpLabelBoarAnimal") : t("brpLabelBoarOptional")}
+                htmlFor="mating-boar"
+                issues={matingIssues}
+                name="boar_animal_id"
+                required={matingForm.mating_type === "NATURAL_MATING"}
+                hint={matingLot && !matingLot.pooled ? "Named by the semen lot." : undefined}
+              >
+                <SearchableSelect
+                  id="mating-boar"
+                  value={matingForm.boar_animal_id}
+                  onChange={(val) => setMatingForm({ ...matingForm, boar_animal_id: String(val) })}
+                  placeholder={t("brpSelectBoar")}
+                  disabled={!!matingLot && !matingLot.pooled}
+                  options={boars
+                    .filter((b) => !matingLot?.pooled || (matingLot.boars || []).some((x: Row) => x.boar_id === b.animal_id))
+                    .map((b) => ({
+                      value: b.animal_id,
+                      label: `${b.animal_code} · ${b.rfid_tag || t("brpNa")} · ${batches.find((x) => x.batch_id === b.current_batch_id)?.batch_no ?? "no batch"}`,
+                    }))}
+                  columnHeaders={false}
+                />
+              </Field>
+              <Field label={t("brpLabelSecondInsemination")} issues={matingIssues} name="second_mating_date" hint="Optional — within a week of the first.">
+                <input
+                  type="date"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, "second_mating_date")}
+                  value={matingForm.second_mating_date}
+                  min={matingForm.mating_date}
+                  max={matingForm.mating_date ? addDays(matingForm.mating_date, 7) : undefined}
+                  onChange={(e) => setMatingForm({ ...matingForm, second_mating_date: e.target.value })}
+                />
+              </Field>
+            </div>
+          </Step>
+
+          <Step n={4} title="Dates and result" hint="Filled in from the sow's breed — change any of them if you know better.">
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label={t("brpLabelExpectedFarrowingDate")}
+                issues={matingIssues}
+                name="expected_farrowing_date"
+                hint={gestationDays != null ? t("brpHintGestationDays", { days: gestationDays }) : undefined}
+              >
+                <input
+                  type="date"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, "expected_farrowing_date")}
+                  value={matingForm.expected_farrowing_date}
+                  min={matingForm.mating_date}
+                  onChange={(e) => editMating("expected_farrowing_date", e.target.value)}
+                />
+              </Field>
+              <Field label={t("brpLabelPregCheckDate")} issues={matingIssues} name="preg_check_date" hint={t("brpValue28DaysPostMating")}>
+                <input
+                  type="date"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, "preg_check_date")}
+                  value={matingForm.preg_check_date}
+                  min={matingForm.mating_date}
+                  onChange={(e) => editMating("preg_check_date", e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label={t("brpLabelResultShort")} htmlFor="mating-conception-result" issues={matingIssues} name="conception_result">
+                <SearchableSelect
+                  id="mating-conception-result"
+                  value={matingForm.conception_result}
+                  onChange={(val) => editMating("conception_result", String(val))}
+                  options={CONCEPTION_RESULTS.map((r) => ({ value: r, label: t(`brpResult${r}`) }))}
+                  columnHeaders={false}
+                />
+              </Field>
+              <Field label={t("brpLabelSowParity")} issues={matingIssues} name="parity_number">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, "parity_number")}
+                  value={matingForm.parity_number}
+                  onChange={(e) => editMating("parity_number", e.target.value)}
+                />
+              </Field>
+              <Field label={t("brpLabelBoarParity")} issues={matingIssues} name="boar_parity_number">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, "boar_parity_number")}
+                  value={matingForm.boar_parity_number}
+                  disabled={!matingForm.boar_animal_id && !matingForm.semen_lot_id}
+                  onChange={(e) => editMating("boar_parity_number", e.target.value)}
+                />
+              </Field>
+            </div>
+          </Step>
+        </EntryModal>
       )}
 
       {/* ========================================================================= */}
@@ -1128,176 +1210,170 @@ export function BreedingPanel() {
       {/* MODAL: RECORD FARROWING */}
       {/* ========================================================================= */}
       {showFarrowModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-                <Baby className="w-5 h-5" style={S.accent} /> {t("brpModalFarrowingTitle")}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowFarrowModal(false)}
-                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
-                aria-label={t("close")}
+        <EntryModal
+          title={t("brpModalFarrowingTitle")}
+          icon={<Baby className="w-5 h-5" style={S.accent} />}
+          onClose={() => setShowFarrowModal(false)}
+          onSubmit={handleCreateFarrowing}
+          submitting={submitting}
+          submitLabel={t("brpBtnSaveFarrowing")}
+          savingLabel={t("brpBtnSaving")}
+          issues={farrowIssues}
+          summary={
+            <ImpactCard
+              title="When you save"
+              rows={[
+                ["Filed under batch", batches.find((b) => b.batch_id === farrowForm.batch_id)?.batch_no ?? "—"],
+                ["Born", `${farrowTotalBorn} (${farrowLive} live)`],
+                ["Piglet lot", farrowNetLitter > 0 ? `${farrowNetLitter} × ${pigletItem?.item_name ?? "item not chosen"}` : "none"],
+                ["Sow", farrowSow ? `${farrowSow.animal_code} → LACTATING` : "—"],
+                ["Litter no.", farrowSow ? `${(Number(farrowSow.parity_count) || 0) + 1} (parity completes at weaning)` : "—"],
+                ["Weaning planned", farrowForm.farrowing_date ? addDays(farrowForm.farrowing_date, 28) : "—"],
+              ]}
+              note="The live piglets become a head-count lot in a new batch, at nil value — the value of births is not decided yet — and no inventory ledger line is written for them."
+            />
+          }
+        >
+          <Step n={1} title="Batch" hint="Pick the batch, then the sow that farrowed in it." done={!!farrowForm.batch_id}>
+            <BatchPicker
+              id="farrow-batch"
+              batches={breedingBatches}
+              value={farrowForm.batch_id}
+              onChange={(id) =>
+                setFarrowForm((f) => ({
+                  ...f,
+                  batch_id: id,
+                  sow_animal_id: sows.some((a) => a.animal_id === f.sow_animal_id && a.current_batch_id === id) ? f.sow_animal_id : "",
+                }))
+              }
+              countOf={(id) => inBatch(sows, id).length}
+              noun="sow"
+              issues={farrowIssues}
+            />
+          </Step>
+
+          <Step n={2} title="Sow and her mating" hint="A litter comes from a mating, so only sows with an open mating can farrow." done={!!farrowSow && !!farrowMating && farrowSow.status !== "LACTATING"}>
+            <Field label={t("brpLabelSowRequired")} htmlFor="farrow-sow" issues={farrowIssues} name="sow_animal_id" required>
+              <SearchableSelect
+                id="farrow-sow"
+                value={farrowForm.sow_animal_id}
+                onChange={(val) => setFarrowForm({ ...farrowForm, sow_animal_id: String(val) })}
+                placeholder={farrowForm.batch_id ? t("brpSelectSow") : "Choose the batch first"}
+                disabled={!farrowForm.batch_id}
+                options={farrowSows.map((a) => {
+                  const why = whyNotFarrowing(a, matings);
+                  const m = openMatingOf(a.animal_id, matings);
+                  return {
+                    value: a.animal_id,
+                    label: `${a.animal_code} · parity ${a.parity_count ?? 0} · ${why ?? `served ${String(m!.mating_date).slice(0, 10)}, due ${String(m!.expected_farrowing_date).slice(0, 10)}`}`,
+                    disabled: !!why,
+                  };
+                })}
+                columnHeaders={false}
+              />
+            </Field>
+            {farrowSow && farrowMating && (
+              <div className="rounded-[var(--radius-md)] border px-3 py-2 text-[11px] grid grid-cols-2 sm:grid-cols-4 gap-2" style={S.raised}>
+                <div><span style={S.muted}>Mating</span><div className="font-semibold" style={S.primary}>{String(farrowMating.mating_date).slice(0, 10)} · {farrowMating.mating_type === "AI" ? "AI" : "natural"}</div></div>
+                <div><span style={S.muted}>Sire</span><div className="font-semibold" style={S.primary}>{farrowMating.boar_code ?? (farrowMating.semen_lot_id ? "pooled lot" : "not recorded")}</div></div>
+                <div><span style={S.muted}>Due</span><div className="font-semibold" style={S.primary}>{String(farrowMating.expected_farrowing_date).slice(0, 10)}</div></div>
+                <div><span style={S.muted}>Pregnancy check</span><div className="font-semibold" style={S.primary}>{farrowMating.conception_result ?? "PENDING"}</div></div>
+              </div>
+            )}
+          </Step>
+
+          <Step n={3} title="The litter" done={!!farrowForm.piglets_born_live && !farrowIssues.some((i) => i.level === "error" && ["farrowing_date", "piglets_born_live", "piglets_stillborn", "piglets_mummified", "foster_received", "fostered_out"].includes(i.field))}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label={t("brpLabelFarrowingDate")}
+                issues={farrowIssues}
+                name="farrowing_date"
+                required
+                hint={farrowMating ? `${Math.max(0, daysBetween(String(farrowMating.mating_date), farrowForm.farrowing_date || todayIso()))} days after the mating` : undefined}
               >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateFarrowing} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="farrow-sow">{t("brpLabelSowRequired")}</label>
+                <input
+                  type="date"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(farrowIssues, "farrowing_date")}
+                  value={farrowForm.farrowing_date}
+                  max={todayIso()}
+                  min={farrowMating ? addDays(String(farrowMating.mating_date).slice(0, 10), 1) : undefined}
+                  onChange={(e) => setFarrowForm({ ...farrowForm, farrowing_date: e.target.value })}
+                />
+              </Field>
+              <Field label={t("brpLabelFarrowingStatus")} htmlFor="farrow-status" issues={farrowIssues} name="farrowing_status">
                 <SearchableSelect
-                  id="farrow-sow"
-                  value={farrowForm.sow_animal_id}
-                  onChange={(val) => setFarrowForm({ ...farrowForm, sow_animal_id: String(val) })}
-                  placeholder={t("brpSelectSow")}
-                  options={sows.map((s) => ({
-                    value: s.animal_id,
-                    label: t("brpAnimalOptionLabel", { code: s.animal_code, tag: s.rfid_tag || t("brpNa"), parity: s.parity_count }),
-                  }))}
+                  id="farrow-status"
+                  value={farrowForm.farrowing_status}
+                  onChange={(val) => setFarrowForm({ ...farrowForm, farrowing_status: String(val) })}
+                  options={[
+                    { value: "NORMAL", label: t("brpOptionNormalUnassisted") },
+                    { value: "ASSISTED", label: t("brpOptionAssistedDelivery") },
+                    { value: "C_SECTION", label: t("brpOptionCaesareanSection") },
+                    { value: "COMPLICATIONS", label: t("brpOptionComplications") },
+                  ]}
                   columnHeaders={false}
                 />
-              </div>
+              </Field>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelFarrowingDate")}</label>
-                  <input
-                    type="date"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={farrowForm.farrowing_date}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, farrowing_date: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="farrow-status">{t("brpLabelFarrowingStatus")}</label>
-                  <SearchableSelect
-                    id="farrow-status"
-                    value={farrowForm.farrowing_status}
-                    onChange={(val) => setFarrowForm({ ...farrowForm, farrowing_status: String(val) })}
-                    options={[
-                      { value: "NORMAL", label: t("brpOptionNormalUnassisted") },
-                      { value: "ASSISTED", label: t("brpOptionAssistedDelivery") },
-                      { value: "C_SECTION", label: t("brpOptionCaesareanSection") },
-                      { value: "COMPLICATIONS", label: t("brpOptionComplications") },
-                    ]}
-                    columnHeaders={false}
-                  />
-                </div>
-              </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label={t("brpLabelBornLive")} issues={farrowIssues} name="piglets_born_live" required>
+                <input type="number" min="0" step="1" inputMode="numeric" className="nf-input w-full text-sm font-bold" style={inputStyle(farrowIssues, "piglets_born_live")} value={farrowForm.piglets_born_live} onChange={(e) => setFarrowForm({ ...farrowForm, piglets_born_live: e.target.value })} />
+              </Field>
+              <Field label={t("brpLabelStillborn")} issues={farrowIssues} name="piglets_stillborn">
+                <input type="number" min="0" step="1" inputMode="numeric" className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "piglets_stillborn")} value={farrowForm.piglets_stillborn} onChange={(e) => setFarrowForm({ ...farrowForm, piglets_stillborn: e.target.value })} />
+              </Field>
+              <Field label={t("brpLabelMummified")} issues={farrowIssues} name="piglets_mummified">
+                <input type="number" min="0" step="1" inputMode="numeric" className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "piglets_mummified")} value={farrowForm.piglets_mummified} onChange={(e) => setFarrowForm({ ...farrowForm, piglets_mummified: e.target.value })} />
+              </Field>
+            </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.success}>{t("brpLabelBornLive")}</label>
-                  <input
-                    type="number"
-                    min="0"
-                    className="nf-input w-full text-sm font-bold"
-                    style={S.input}
-                    value={farrowForm.piglets_born_live}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, piglets_born_live: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.danger}>{t("brpLabelStillborn")}</label>
-                  <input
-                    type="number"
-                    min="0"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={farrowForm.piglets_stillborn}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, piglets_stillborn: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelMummified")}</label>
-                  <input
-                    type="number"
-                    min="0"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={farrowForm.piglets_mummified}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, piglets_mummified: e.target.value })}
-                  />
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Fostered in" issues={farrowIssues} name="foster_received" hint="Piglets received from another sow">
+                <input type="number" min="0" step="1" inputMode="numeric" className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "foster_received")} value={farrowForm.foster_received} onChange={(e) => setFarrowForm({ ...farrowForm, foster_received: e.target.value })} />
+              </Field>
+              <Field label="Fostered out" issues={farrowIssues} name="fostered_out" hint="Piglets given to another sow">
+                <input type="number" min="0" step="1" inputMode="numeric" className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "fostered_out")} value={farrowForm.fostered_out} onChange={(e) => setFarrowForm({ ...farrowForm, fostered_out: e.target.value })} />
+              </Field>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelAvgBirthWeight")}</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder={t("brpPlaceholderAvgBirthWeight")}
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={farrowForm.avg_birth_weight_kg}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, avg_birth_weight_kg: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelTotalLitterWeight")}</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder={t("brpPlaceholderAutoCalc")}
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={farrowForm.total_litter_weight_kg}
-                    onChange={(e) => setFarrowForm({ ...farrowForm, total_litter_weight_kg: e.target.value })}
-                  />
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("brpLabelAvgBirthWeight")} issues={farrowIssues} name="avg_birth_weight_kg">
+                <input type="number" min="0" step="0.01" placeholder={t("brpPlaceholderAvgBirthWeight")} className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "avg_birth_weight_kg")} value={farrowForm.avg_birth_weight_kg} onChange={(e) => setFarrowForm({ ...farrowForm, avg_birth_weight_kg: e.target.value })} />
+              </Field>
+              <Field label={t("brpLabelTotalLitterWeight")} issues={farrowIssues} name="total_litter_weight_kg">
+                <input type="number" min="0" step="0.01" placeholder={t("brpPlaceholderAutoCalc")} className="nf-input w-full text-sm" style={inputStyle(farrowIssues, "total_litter_weight_kg")} value={farrowForm.total_litter_weight_kg} onChange={(e) => setFarrowForm({ ...farrowForm, total_litter_weight_kg: e.target.value })} />
+              </Field>
+            </div>
+          </Step>
 
-              <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={S.surface}>
-                <p className="text-xs font-semibold" style={S.primary}>Piglet lot</p>
-                <p className="text-[11px]" style={S.sub}>
-                  The live piglets are held as a lot of a bio-asset item in a batch of their own, which you can move on to any stage or batch. Leave the item empty to record the litter only.
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-item">Piglet item</label>
-                    <SearchableSelect
-                      id="piglet-item"
-                      value={farrowForm.piglet_item_id}
-                      onChange={(val) => setFarrowForm({ ...farrowForm, piglet_item_id: String(val) })}
-                      placeholder="No piglet lot"
-                      options={pigletItems.map((i) => ({
-                        value: i.item_id,
-                        label: i.item_name,
-                      }))}
-                      columnHeaders={false}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="piglet-stage">Piglets start in stage</label>
-                    <SearchableSelect
-                      id="piglet-stage"
-                      value={farrowForm.piglet_stage_id}
-                      onChange={(val) => setFarrowForm({ ...farrowForm, piglet_stage_id: String(val) })}
-                      disabled={!farrowForm.piglet_item_id}
-                      placeholder="The sow’s own stage"
-                      options={stages.map((st) => ({
-                        value: st.stage_id,
-                        label: st.stage_name,
-                      }))}
-                      columnHeaders={false}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? t("brpBtnSaving") : t("brpBtnSaveFarrowing")}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
+          <Step n={4} title="Piglet lot" hint="The live piglets are held as a lot of a bio-asset item in a batch of their own, which you can later move on to any stage or batch." done={farrowNetLitter === 0 || !!farrowForm.piglet_item_id}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Piglet item" htmlFor="piglet-item" issues={farrowIssues} name="piglet_item_id" required={farrowNetLitter > 0}>
+                <SearchableSelect
+                  id="piglet-item"
+                  value={farrowForm.piglet_item_id}
+                  onChange={(val) => setFarrowForm({ ...farrowForm, piglet_item_id: String(val) })}
+                  placeholder="Choose the piglet item"
+                  options={pigletItems.map((i) => ({ value: i.item_id, label: i.item_name }))}
+                  columnHeaders={false}
+                />
+              </Field>
+              <Field label="Piglets start in stage" htmlFor="piglet-stage" issues={farrowIssues} name="piglet_stage_id" hint="Empty: the sow's own stage.">
+                <SearchableSelect
+                  id="piglet-stage"
+                  value={farrowForm.piglet_stage_id}
+                  onChange={(val) => setFarrowForm({ ...farrowForm, piglet_stage_id: String(val) })}
+                  disabled={!farrowForm.piglet_item_id}
+                  placeholder="The sow’s own stage"
+                  options={stages.map((st) => ({ value: st.stage_id, label: st.stage_name }))}
+                  columnHeaders={false}
+                />
+              </Field>
+            </div>
+          </Step>
+        </EntryModal>
       )}
 
       {/* ========================================================================= */}
@@ -1419,164 +1495,159 @@ export function BreedingPanel() {
       {/* MODAL: LOG SEMEN COLLECTION */}
       {/* ========================================================================= */}
       {showSemenModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="rounded-[var(--radius-lg)] border max-w-lg w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
-                <FlaskConical className="w-5 h-5" style={S.accent} /> {t("brpModalSemenTitle")}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowSemenModal(false)}
-                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] transition-colors cursor-pointer"
-                aria-label={t("close")}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateSemen} className="space-y-3">
-              {/* One or several boars, picked like any master: several pool their semen into one lot. */}
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="semen-boars">{t("brpLabelBoarAnimal")}</label>
-                <EntityLookupField
-                  id="semen-boars"
-                  label="Boars"
-                  options={boars.map((b) => ({
+        <EntryModal
+          title={t("brpModalSemenTitle")}
+          icon={<FlaskConical className="w-5 h-5" style={S.accent} />}
+          onClose={() => setShowSemenModal(false)}
+          onSubmit={handleCreateSemen}
+          submitting={submitting}
+          submitLabel={t("brpBtnSaveCollectionBatch")}
+          savingLabel={t("brpBtnCalculatingSaving")}
+          issues={semenIssues}
+          summary={
+            <ImpactCard
+              title="When you save"
+              rows={[
+                ["Filed under batch", batches.find((b) => b.batch_id === semenForm.batch_id)?.batch_no ?? "—"],
+                ["Boars", semenChosenBoars.length ? semenChosenBoars.map((b) => b.animal_code).join(" + ") : "—"],
+                ["Lot", semenChosenBoars.length > 1 ? "one pooled lot" : semenChosenBoars.length ? "single-boar lot" : "—"],
+                ["Into inventory", semenItem && Number(semenForm.doses_collected) > 0 ? `+${Number(semenForm.doses_collected)} × ${semenItem.item_name}` : "nothing — no item chosen"],
+                ["Expires", semenItem?.shelf_life_days && semenForm.collection_date ? addDays(semenForm.collection_date, Number(semenItem.shelf_life_days)) : "no shelf life on the item"],
+                ["Cost per dose", "worked out on save"],
+              ]}
+              note="Doses enter the boar's farm store at nil value (the cost per dose is kept on the lot), with a lot number and a QR tied to the batch."
+            />
+          }
+        >
+          <Step n={1} title="Batch" hint="Pick the batch, then its boar or boars." done={!!semenForm.batch_id}>
+            <BatchPicker
+              id="semen-batch"
+              batches={breedingBatches}
+              value={semenForm.batch_id}
+              onChange={(id) =>
+                setSemenForm((f) => ({
+                  ...f,
+                  batch_id: id,
+                  // Boars of another batch are no longer offered, so none of them can stay chosen.
+                  boar_animal_ids: f.boar_animal_ids.filter((b) => boars.some((x) => x.animal_id === b && x.current_batch_id === id)),
+                }))
+              }
+              countOf={(id) => inBatch(boars, id).length}
+              noun="boar"
+              issues={semenIssues}
+            />
+          </Step>
+
+          <Step n={2} title="Boar or boars" hint="Only the boars of that batch. Choose several to mix their semen into one pooled lot." done={semenForm.boar_animal_ids.length > 0}>
+            <Field label={t("brpLabelBoarAnimal")} htmlFor="semen-boars" issues={semenIssues} name="boar_animal_ids" required>
+              <EntityLookupField
+                id="semen-boars"
+                label="Boars"
+                options={semenBatchBoars.map((b) => {
+                  const since = daysSinceCollection(b.animal_id, semenBatches, semenForm.collection_date || todayIso());
+                  return {
                     animal_id: b.animal_id,
                     code: b.animal_code,
-                    name: t("brpBoarOptionLabel", { code: b.animal_code, tag: b.rfid_tag || t("brpNa") }),
-                  }))}
-                  value={semenForm.boar_animal_ids}
-                  valueKey="animal_id"
-                  labelKeys={["code", "name"]}
-                  onChange={(next) => setSemenForm({ ...semenForm, boar_animal_ids: Array.isArray(next) ? next : next ? [next] : [] })}
-                  multiple
-                  placeholder={t("brpSelectBoar")}
-                />
+                    name: `${b.rfid_tag || t("brpNa")} · ${since == null ? "never collected" : `collected ${since} d ago`}`,
+                  };
+                })}
+                value={semenForm.boar_animal_ids}
+                valueKey="animal_id"
+                labelKeys={["code", "name"]}
+                onChange={(next) => setSemenForm({ ...semenForm, boar_animal_ids: Array.isArray(next) ? next : next ? [next] : [] })}
+                multiple
+                disabled={!semenForm.batch_id}
+                placeholder={semenForm.batch_id ? t("brpSelectBoar") : "Choose the batch first"}
+              />
+              {semenForm.boar_animal_ids.length > 1 && (
                 <p className="text-[11px] mt-1" style={S.muted}>
-                  {semenForm.boar_animal_ids.length > 1
-                    ? `One pooled lot from ${semenForm.boar_animal_ids.length} boars: the doses entered below are the whole mix, and the cost is what every one of them cost. The first boar chosen is the lot's main boar.`
-                    : "Choose one boar, or several to mix their semen into one lot."}
+                  One pooled lot from {semenForm.boar_animal_ids.length} boars: the doses entered below are the whole mix, and the cost is what every one of them cost. The first boar chosen is the lot's main boar.
                 </p>
-              </div>
+              )}
+            </Field>
+          </Step>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.sub}>{t("brpLabelCollectionDate")}</label>
-                  <input
-                    type="date"
-                    className="nf-input w-full text-sm"
-                    style={S.input}
-                    value={semenForm.collection_date}
-                    onChange={(e) => setSemenForm({ ...semenForm, collection_date: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={S.accent}>{t("brpLabelDosesCollected")}</label>
+          <Step n={3} title="Collection" done={!!semenForm.doses_collected && !semenIssues.some((i) => i.level === "error" && ["collection_date", "doses_collected", "output_item_id"].includes(i.field))}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("brpLabelCollectionDate")} issues={semenIssues} name="collection_date" required>
+                <input
+                  type="date"
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(semenIssues, "collection_date")}
+                  value={semenForm.collection_date}
+                  max={todayIso()}
+                  onChange={(e) => setSemenForm({ ...semenForm, collection_date: e.target.value })}
+                />
+              </Field>
+              <Field label={t("brpLabelDosesCollected")} issues={semenIssues} name="doses_collected" required>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="numeric"
+                  className="nf-input w-full text-sm font-bold"
+                  style={inputStyle(semenIssues, "doses_collected")}
+                  value={semenForm.doses_collected}
+                  onChange={(e) => setSemenForm({ ...semenForm, doses_collected: e.target.value })}
+                />
+              </Field>
+            </div>
+
+            <Field
+              label="Semen item"
+              htmlFor="semen-item"
+              issues={semenIssues}
+              name="output_item_id"
+              required
+              hint="The doses are posted to the boar's farm store as a lot of this item, with a QR (boar, batch, lot number, collection date, doses, expiry) — that is what an AI mating later draws from."
+            >
+              <SearchableSelect
+                id="semen-item"
+                value={semenForm.output_item_id}
+                onChange={(val) => setSemenForm({ ...semenForm, output_item_id: String(val) })}
+                placeholder="Choose the semen item"
+                options={semenItems.map((i) => ({ value: i.item_id, label: i.item_name }))}
+                columnHeaders={false}
+              />
+            </Field>
+          </Step>
+
+          <Step n={4} title="Quality" hint="Read at collection; kept on the lot and printed on its QR. Optional.">
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Volume (ml)" issues={semenIssues} name="volume_ml">
+                <input id="semen-volume" type="number" min="0" step="0.1" className="nf-input w-full text-sm" style={inputStyle(semenIssues, "volume_ml")} value={semenForm.volume_ml} onChange={(e) => setSemenForm({ ...semenForm, volume_ml: e.target.value })} />
+              </Field>
+              <Field label="Motility (%)" issues={semenIssues} name="motility_pct">
+                <input id="semen-motility" type="number" min="0" max="100" step="0.1" className="nf-input w-full text-sm" style={inputStyle(semenIssues, "motility_pct")} value={semenForm.motility_pct} onChange={(e) => setSemenForm({ ...semenForm, motility_pct: e.target.value })} />
+              </Field>
+              <Field label="Concentration (M/ml)" issues={semenIssues} name="concentration_m_per_ml">
+                <input id="semen-concentration" type="number" min="0" step="1" className="nf-input w-full text-sm" style={inputStyle(semenIssues, "concentration_m_per_ml")} value={semenForm.concentration_m_per_ml} onChange={(e) => setSemenForm({ ...semenForm, concentration_m_per_ml: e.target.value })} />
+              </Field>
+            </div>
+          </Step>
+
+          <Step n={5} title={t("brpLabelPeriodRunningCosts")} hint="Leave these empty to have them worked out from what was posted for the boar since his last collection: his own feed and medicine, his overheads and his share of his batch's, and his amortisation.">
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                ["amortisation_period", t("brpLabelAmortisation")],
+                ["feed_cost_period", t("brpLabelFeedCost")],
+                ["drug_cost_period", t("brpLabelDrugsMed")],
+                ["overhead_cost_period", t("brpLabelLabOverhead")],
+              ] as const).map(([key, label]) => (
+                <Field key={key} label={label} issues={semenIssues} name={key}>
                   <input
                     type="number"
-                    min="1"
-                    className="nf-input w-full text-sm font-bold"
-                    style={S.input}
-                    value={semenForm.doses_collected}
-                    onChange={(e) => setSemenForm({ ...semenForm, doses_collected: e.target.value })}
-                    required
+                    min="0"
+                    className="nf-input w-full text-sm"
+                    style={inputStyle(semenIssues, key)}
+                    value={semenForm[key]}
+                    onChange={(e) => setSemenForm({ ...semenForm, [key]: e.target.value })}
                   />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="semen-item">Semen item</label>
-                <SearchableSelect
-                  id="semen-item"
-                  value={semenForm.output_item_id}
-                  onChange={(val) => setSemenForm({ ...semenForm, output_item_id: String(val) })}
-                  placeholder="Record the collection only"
-                  options={semenItems.map((i) => ({
-                    value: i.item_id,
-                    label: i.item_name,
-                  }))}
-                  columnHeaders={false}
-                />
-                <p className="text-[11px] mt-1" style={S.muted}>
-                  Choosing an item posts the doses to the boar’s farm store as a lot of it, with a QR for the lot (boar, batch, lot number, collection date, doses and expiry).
-                </p>
-              </div>
-
-              {/* Quality read at collection (G8): kept on the lot and printed on its QR. */}
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-volume">Volume (ml)</label>
-                  <input id="semen-volume" type="number" min="0" step="0.1" className="nf-input w-full text-xs" style={S.input} value={semenForm.volume_ml} onChange={(e) => setSemenForm({ ...semenForm, volume_ml: e.target.value })} />
-                </div>
-                <div>
-                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-motility">Motility (%)</label>
-                  <input id="semen-motility" type="number" min="0" max="100" step="0.1" className="nf-input w-full text-xs" style={S.input} value={semenForm.motility_pct} onChange={(e) => setSemenForm({ ...semenForm, motility_pct: e.target.value })} />
-                </div>
-                <div>
-                  <label className="block text-[11px]" style={S.muted} htmlFor="semen-concentration">Concentration (M/ml)</label>
-                  <input id="semen-concentration" type="number" min="0" step="1" className="nf-input w-full text-xs" style={S.input} value={semenForm.concentration_m_per_ml} onChange={(e) => setSemenForm({ ...semenForm, concentration_m_per_ml: e.target.value })} />
-                </div>
-              </div>
-
-              <div className="p-3 rounded-[var(--radius-md)] border space-y-2" style={S.raised}>
-                <div className="text-xs font-semibold" style={S.primary}>{t("brpLabelPeriodRunningCosts")}</div>
-                <p className="text-[11px]" style={S.muted}>
-                  Leave these empty to have them worked out from what was posted for the boar since his last collection: his own feed and medicine, his overheads and his share of his batch's, and his amortisation.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px]" style={S.muted}>{t("brpLabelAmortisation")}</label>
-                    <input
-                      type="number"
-                      className="nf-input w-full text-xs"
-                      style={S.input}
-                      value={semenForm.amortisation_period}
-                      onChange={(e) => setSemenForm({ ...semenForm, amortisation_period: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px]" style={S.muted}>{t("brpLabelFeedCost")}</label>
-                    <input
-                      type="number"
-                      className="nf-input w-full text-xs"
-                      style={S.input}
-                      value={semenForm.feed_cost_period}
-                      onChange={(e) => setSemenForm({ ...semenForm, feed_cost_period: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px]" style={S.muted}>{t("brpLabelDrugsMed")}</label>
-                    <input
-                      type="number"
-                      className="nf-input w-full text-xs"
-                      style={S.input}
-                      value={semenForm.drug_cost_period}
-                      onChange={(e) => setSemenForm({ ...semenForm, drug_cost_period: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px]" style={S.muted}>{t("brpLabelLabOverhead")}</label>
-                    <input
-                      type="number"
-                      className="nf-input w-full text-xs"
-                      style={S.input}
-                      value={semenForm.overhead_cost_period}
-                      onChange={(e) => setSemenForm({ ...semenForm, overhead_cost_period: e.target.value })}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? t("brpBtnCalculatingSaving") : t("brpBtnSaveCollectionBatch")}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
+                </Field>
+              ))}
+            </div>
+          </Step>
+        </EntryModal>
       )}
 
       {/* ── ANIMAL DETAILS POPUP ── */}

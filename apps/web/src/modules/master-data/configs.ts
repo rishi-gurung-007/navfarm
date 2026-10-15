@@ -523,6 +523,13 @@ const animal: MasterDataConfig = {
     {
       key: "gender", label: "Gender", type: "select", required: true, createOnly: true, section: "Identification",
       options: [{ value: "F", label: "Female" }, { value: "M", label: "Male" }],
+      // A boar is male; a sow or gilt is female. Shown the moment the gender is chosen, and refused by the API as well.
+      validate: (value, form) => {
+        const type = String(form.animal_type ?? "");
+        if (type === "BOAR" && value !== "M") return "Wrong gender selection: a boar must be male.";
+        if ((type === "SOW" || type === "GILT") && value !== "F") return `Wrong gender selection: a ${type.toLowerCase()} must be female.`;
+        return null;
+      },
     },
     { key: "dob", label: "Date of Birth", type: "date", helpText: "Leave blank if born on this farm and unknown, or imported/unknown.", section: "Identification" },
     { key: "rfid_tag", label: "RFID", type: "text", maxLength: 50, helpText: "The only tag an animal carries. Each animal needs its own RFID; a tag already used by another animal is refused.", section: "Identification" },
@@ -621,13 +628,13 @@ const animal: MasterDataConfig = {
     { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
     { key: "disposal_type", label: "Disposal Type", type: "text", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
-    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 1, max: 99, maxLength: 2, helpText: "Count of functional teats (1–99).", visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, requiredWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
+    { key: "no_of_teats", label: "No. of Teats", type: "number", min: 1, max: 99, maxLength: 2, helpText: "Count of functional teats (1–99).", visibleWhen: { allOf: [{ key: "gender", equals: "F" }, { key: "animal_type", equals: ["SOW", "GILT"] }] }, requiredWhen: { allOf: [{ key: "gender", equals: "F" }, { key: "animal_type", equals: ["SOW", "GILT"] }] }, section: "Bio-Asset" },
     { key: "tsi", label: "TSI", type: "number", step: "0.01", min: 0, max: 999, helpText: "Total Sow Index score.", section: "Bio-Asset" },
     // Grading is a whole number 0–99, typed rather than picked: the old
     // three-option select (1/2/3) could not record any other grade. Stored as
     // text in the varchar(20) column; the API DTO validates the same range.
     { key: "grading", label: "Grading", type: "number", min: 0, max: 99, step: "1", maxLength: 2, helpText: "Whole number from 0 to 99.", section: "Bio-Asset" },
-    { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
+    { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
     { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
     // Not a column: it only narrows the Current Location list to Sheds or Pens.
     { key: "location_type", label: "Location Type", type: "select", filterOnly: true, createOnly: true, defaultValue: "PEN", options: [{ value: "SHED", label: "Shed" }, { value: "PEN", label: "Pen" }], helpText: "Choose whether the animal is kept in a whole Shed or in a Pen.", section: "Current Position" },
