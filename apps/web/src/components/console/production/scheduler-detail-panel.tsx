@@ -370,7 +370,6 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   const lineType = lineForm.line_type;
   // Copying is offered while the scheduler has no active activity — removed ones stay listed, greyed.
-  // Only a system scheduler (a template) can be filled from another: a batch scheduler's activities are fixed.
   const canCopy = !(header.lines || []).some((l: Row) => l.is_active !== false);
 
   return (
@@ -488,10 +487,10 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
       {/*
         A scheduler has no separate feed list and no separate KPI list any more (Rishi, 14 Oct): everything the
-        stage says the batch should do — its feed, resources, vaccinations, medication and KPIs — is an activity
-        line below, written when the scheduler is created and fixed from then on. The feed editor and the stage-KPI
-        table that used to sit here were the old two-list model; the API refuses to change a batch scheduler's
-        activities (scheduler-header.service.ts, ACTIVITIES_LOCKED_MESSAGE).
+        stage says the batch should do — its feed, resources, vaccinations, medication and KPIs — is one activity
+        line below. The feed editor and the stage-KPI table that used to sit here were the old two-list model; a
+        feed line is now added, edited and removed in the activity table like any other, on a batch scheduler as
+        on a system one.
       */}
 
       {/* Collapsible Lines Section */}
@@ -507,12 +506,10 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
             </span>
           </div>
           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            {isSystem && canCopy && (
+            {canCopy && (
               <Button size="sm" variant="outline" onClick={() => setCopyOpen(true)} className="gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
             )}
-            {isSystem && (
-              <Button size="sm" variant="outline" onClick={openAddLine} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("scAddLine")}</Button>
-            )}
+            <Button size="sm" variant="outline" onClick={openAddLine} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("scAddLine")}</Button>
             <button
               type="button"
               className="p-1 rounded hover:bg-(--surface) text-[var(--text-secondary)] transition-transform"
@@ -537,15 +534,13 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                   <TableHead className="h-auto px-3 py-2">{t("scColQty")}</TableHead>
                   <TableHead className="h-auto px-3 py-2">UOM</TableHead>
                   {!isSystem && <TableHead className="h-auto px-3 py-2">{t("scColSource")}</TableHead>}
-                  {isSystem && <TableHead className="h-auto px-3 py-2"></TableHead>}
+                  <TableHead className="h-auto px-3 py-2"></TableHead>
                 </tr></TableHeader>
                 <TableBody>
                   {(header.lines || []).length === 0 ? (
-                    <tr><TableCell colSpan={7} className="py-6 text-center" style={S.sub}>
-                      <p>{isSystem ? t("scCopyEmptyHint") : "This scheduler has no activities. Its stage had none to fill in when it was created, and a scheduler's activities cannot be changed afterwards."}</p>
-                      {isSystem && (
-                        <Button size="sm" onClick={() => setCopyOpen(true)} className="mt-3 gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
-                      )}
+                    <tr><TableCell colSpan={isSystem ? 7 : 8} className="py-6 text-center" style={S.sub}>
+                      <p>{t("scCopyEmptyHint")}</p>
+                      <Button size="sm" onClick={() => setCopyOpen(true)} className="mt-3 gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
                     </TableCell></tr>
                   ) : (header.lines || []).map((line: Row) => {
                     const itemObj = items.find((i) => i.item_id === line.item_id);
@@ -603,16 +598,14 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                         </TableCell>
                         <TableCell className="px-3 py-2 font-mono" style={S.sub}>{lineUom || "—"}</TableCell>
                         {!isSystem && <TableCell className="px-3 py-2" style={S.sub}>{line.source}</TableCell>}
-                        {isSystem && (
-                          <TableCell className="px-2 py-1.5">
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => openEditLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scEditLine")}><Pencil className="h-3.5 w-3.5" style={S.sub} /></button>
-                              {line.is_active !== false && (
-                                <button onClick={() => deactivateLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scDeactivateLine")}><Trash2 className="h-3.5 w-3.5" style={{ color: "var(--danger)" }} /></button>
-                              )}
-                            </div>
-                          </TableCell>
-                        )}
+                        <TableCell className="px-2 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openEditLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scEditLine")}><Pencil className="h-3.5 w-3.5" style={S.sub} /></button>
+                            {line.is_active !== false && (
+                              <button onClick={() => deactivateLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scDeactivateLine")}><Trash2 className="h-3.5 w-3.5" style={{ color: "var(--danger)" }} /></button>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     );
                   })}

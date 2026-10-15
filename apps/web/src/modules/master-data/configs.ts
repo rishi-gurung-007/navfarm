@@ -61,7 +61,7 @@ const location: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, createOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
-      key: "location_type", label: "Location Type", type: "select-entity", required: true,
+      key: "location_type", label: "Location Type", type: "select-entity", required: true, searchable: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     { key: "location_name", label: "Name", labelWhen: { key: "location_type", labels: { MILL: "Mill Name", BIN: "Bin Name" } }, type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
