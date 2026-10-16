@@ -2,6 +2,7 @@ import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../..
 import { Injectable, NotFoundException, ConflictException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns, count, inArray } from 'drizzle-orm';
+import { AnyMySqlTable } from 'drizzle-orm/mysql-core';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -42,6 +43,17 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * a shortcut that can disagree with it.
  */
 const SELF_CODED_MASTERS = new Set(['ANIMAL', 'LOCATION']);
+
+export const DOCUMENT_TABLES: Record<string, AnyMySqlTable> = {
+  batch: schema.batchHeader,
+  scheduler: schema.schedulerHeader,
+  requisition: schema.requisition,
+  'item-application': schema.inventoryApplication,
+  application: schema.inventoryApplication,
+};
+
+export const resolveSeriesTable = (key: string): AnyMySqlTable | undefined =>
+  MASTER_TABLES[key] ?? DOCUMENT_TABLES[key];
 
 /**
  * Fields that hold a reference rather than a value, and the code to read in
@@ -305,10 +317,10 @@ export class NumberSeriesService {
   ) {
     const master = series.document_type?.toUpperCase() ?? '';
     const field = MASTER_CODE_COLUMNS[master];
-    const table = MASTER_TABLES[master.toLowerCase().replaceAll('_', '-')];
+    const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
     const columns = table ? getTableColumns(table) : undefined;
     const occupied = new Set<string>();
-    if (field && columns?.[field]) {
+    if (table && field && columns?.[field]) {
       const occupiedConditions = scopeKeyConditions(columns, tenantId, companyId);
       const rows = await executor.select({ code: columns[field] }).from(table).where(and(...occupiedConditions));
       for (const row of rows) occupied.add(String(row.code).toUpperCase());
@@ -590,7 +602,8 @@ export class NumberSeriesService {
         if (!locationType) throw new BadRequestException('Select a location type first.');
         prefix = locationType.code_prefix;
       }
-      const table = MASTER_TABLES[query.master.toLowerCase().replaceAll('_', '-')];
+      const table = resolveSeriesTable(query.master.toLowerCase().replaceAll('_', '-'));
+      if (!table) throw new BadRequestException(`No master table configured for '${query.master}'.`);
       const columns = getTableColumns(table);
       const conditions = [eq(columns.tenant_id, tenantId), companyCondition(columns.company_id, companyId), eq(columns[childParent], query.parentId)];
       if (query.master === 'LOCATION') conditions.push(eq(columns.location_type, query.type!));
@@ -781,7 +794,7 @@ export class NumberSeriesService {
     const settings = await this.resolveCodeSettings(master, type, tenantId, companyId);
     if (settings.generated && !settings.allowManual) throw new BadRequestException('This number series does not allow manual entry.');
     const code = supplied.trim().toUpperCase();
-    const table = MASTER_TABLES[master.toLowerCase().replaceAll('_', '-')];
+    const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
     if (!table || !MASTER_CODE_COLUMNS[master]) throw new BadRequestException('Unsupported master code.');
     const columns = getTableColumns(table);
     const column = columns[MASTER_CODE_COLUMNS[master]];
@@ -840,7 +853,7 @@ export class NumberSeriesService {
     const code = supplied.trim().toUpperCase();
     if (code === current) return null;
 
-    const table = MASTER_TABLES[master.toLowerCase().replaceAll('_', '-')];
+    const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
     if (!table || !MASTER_CODE_COLUMNS[master]) throw new BadRequestException('Unsupported master code.');
     const columns = getTableColumns(table);
     const column = columns[MASTER_CODE_COLUMNS[master]];
@@ -1153,7 +1166,7 @@ export class NumberSeriesService {
   private async masterHasRecords(master: string | null | undefined, tenantId: string | null | undefined, companyId: string | null | undefined): Promise<boolean> {
     const key = normalizeMaster(master);
     if (!key || key === 'ITEM' || !tenantId) return false;
-    const table = MASTER_TABLES[key.toLowerCase().replaceAll('_', '-')];
+    const table = resolveSeriesTable(key.toLowerCase().replaceAll('_', '-'));
     if (!table) return false;
     const columns = getTableColumns(table);
     if (!columns.tenant_id) return false;

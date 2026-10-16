@@ -17,9 +17,9 @@ const database = process.env.DEV_TENANT_DATABASE || 'nf_devco';
 const VERIFY_ROLLBACK = Symbol('seed-porta-feed-planning-data:verify-rollback');
 
 const FEED_ITEMS = [
-  { code: 'DG-001', silo: 'PDSD-02', previousSilo: 'POR100/PDS2/SILO-DG001', bin: 'PORTA-FEED-MILL/BIN-DG001', name: 'Dry Gilt Feed', siloCapacityKg: 5800, stockKg: 2400, binStockKg: 30000 },
+  { code: 'DG-001', silo: 'PDSD-02', previousSilo: 'POR100/PDS2/SILO-DG001', bin: 'PORTA-FEED-MILL/BIN-DG001', name: 'Dry Gilt Feed', siloCapacityKg: 5800, stockKg: 5000, binStockKg: 30000 },
   { code: 'DS-001', silo: 'POR100/PDS2/SILO-DS001', previousSilo: null, bin: 'PORTA-FEED-MILL/BIN-DS001', name: 'Dry Sow Feed', siloCapacityKg: 30000, stockKg: 30000, binStockKg: 30000 },
-  { code: 'FEED-SF', silo: 'PFHLG-12', previousSilo: 'POR100/PFH1/SILO-SF001', bin: 'PORTA-FEED-MILL/BIN-SF001', name: 'Super Flush', siloCapacityKg: 5800, stockKg: 2400, binStockKg: 30000 },
+  { code: 'FEED-SF', silo: 'PFHLG-12', previousSilo: 'POR100/PFH1/SILO-SF001', bin: 'PORTA-FEED-MILL/BIN-SF001', name: 'Super Flush', siloCapacityKg: 5800, stockKg: 5000, binStockKg: 30000 },
 ] as const;
 
 const SILO_TO_SHED = [
@@ -228,15 +228,15 @@ async function run() {
              (ledger_id, tenant_id, company_id, item_id, item_code, item_description, document_type, document_no,
               posting_date, entry_type, transaction_type, quantity, remaining_quantity, uom, rate, amount,
               location_id, warehouse_id, nob_id, lob_id, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', ?, CURRENT_DATE, 'POSITIVE', 'PURCHASE',
+           VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', ?, '2024-01-01', 'POSITIVE', 'PURCHASE',
                    ?, ?, 'KG', 0, 0, ?, ?, ?, ?, ?, NOW())`,
           [randomUUID(), scope.tenant_id, scope.company_id, itemId, item.code, item.name, documentNo,
             item.stockKg, item.stockKg, locations.get(item.silo), locations.get(item.silo), scope.nob_id, scope.lob_id, actorId],
         );
       } else if (write) {
         await db.query(
-          'UPDATE inventory_ledger SET quantity = ?, remaining_quantity = ? WHERE tenant_id = ? AND company_id = ? AND document_no = ?',
-          [item.stockKg, item.stockKg, scope.tenant_id, scope.company_id, documentNo],
+          'UPDATE inventory_ledger SET quantity = ?, remaining_quantity = ?, posting_date = ? WHERE tenant_id = ? AND company_id = ? AND document_no = ?',
+          [item.stockKg, item.stockKg, '2024-01-01', scope.tenant_id, scope.company_id, documentNo],
         );
       }
 
@@ -258,8 +258,8 @@ async function run() {
         );
         if (existingBinStock) {
           await db.query(
-            'UPDATE inventory_ledger SET quantity = quantity + ?, remaining_quantity = remaining_quantity + ? WHERE ledger_id = ?',
-            [binShortfall, binShortfall, existingBinStock.ledger_id],
+            'UPDATE inventory_ledger SET quantity = quantity + ?, remaining_quantity = remaining_quantity + ?, posting_date = ? WHERE ledger_id = ?',
+            [binShortfall, binShortfall, '2024-01-01', existingBinStock.ledger_id],
           );
         } else {
           await db.query(
@@ -267,7 +267,7 @@ async function run() {
                (ledger_id, tenant_id, company_id, item_id, item_code, item_description, document_type, document_no,
                 posting_date, entry_type, transaction_type, quantity, remaining_quantity, uom, rate, amount,
                 location_id, warehouse_id, nob_id, lob_id, created_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', ?, CURRENT_DATE, 'POSITIVE', 'PURCHASE',
+             VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', ?, '2024-01-01', 'POSITIVE', 'PURCHASE',
                      ?, ?, 'KG', 0, 0, ?, ?, ?, ?, ?, NOW())`,
             [randomUUID(), scope.tenant_id, scope.company_id, itemId, item.code, item.name, binDocumentNo,
               binShortfall, binShortfall, binId, binId, scope.nob_id, scope.lob_id, actorId],

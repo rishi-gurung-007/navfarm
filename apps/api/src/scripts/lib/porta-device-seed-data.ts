@@ -82,8 +82,12 @@ export const PORTA_DEVICE_BATCHES = [
 
 export const PORTA_DEVICE_SCHEDULERS = [
   { no: 'SCH-000001', batch: 'BATCH-000001', stage: 'PRODUCTIVE_SOW', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'TN70' },
-  { no: 'SCH-000002', batch: 'BATCH-000001', stage: 'GESTATION', shed: 'PDS2', from: '2026-09-01', to: null, count: '1.0000', breed: 'L-Line' },
-  { no: 'SCH-000003', batch: 'BATCH-000002', stage: 'LACTATION', shed: 'PFH1', from: '2026-09-01', to: null, count: '1.0000', breed: 'Tempo' },
-  { no: 'SCH-000004', batch: 'BATCH-000001', stage: 'GILT_REARING', shed: 'PDS2', from: '2026-09-01', to: null, count: '1.0000', breed: 'Z-Line' },
-  { no: 'SCH-000005', batch: 'BATCH-000002', stage: 'FARROWING', shed: 'PFH1', from: '2026-10-14', to: null, count: '1.0000', breed: 'Tempo' },
+  { no: 'SCH-000002', batch: 'BATCH-000001', stage: 'GESTATION', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'L-Line' },
+  { no: 'SCH-000003', batch: 'BATCH-000002', stage: 'LACTATION', shed: 'PFH1', from: '2024-03-01', to: null, count: '1.0000', breed: 'Tempo' },
+  { no: 'SCH-000004', batch: 'BATCH-000001', stage: 'GILT_REARING', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'Z-Line' },
+  { no: 'SCH-000005', batch: 'BATCH-000002', stage: 'FARROWING', shed: 'PFH1', from: '2024-03-01', to: null, count: '1.0000', breed: 'Tempo' },
+  { no: 'SCH-000006', batch: 'BATCH-000001', stage: 'QUARANTINE', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'TN70' },
+  { no: 'SCH-000007', batch: 'BATCH-000001', stage: 'INSEMINATION', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'TN70' },
+  { no: 'SCH-000008', batch: 'BATCH-000001', stage: 'FLUSH', shed: 'PDS2', from: '2026-03-01', to: null, count: '1.0000', breed: 'Z-Line' },
 ] as const;
+

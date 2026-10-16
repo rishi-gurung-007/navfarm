@@ -21,4 +21,6 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   // MASTER_TABLES entry on purpose — that map also drives master-scope guards.
   ITEM_APPLICATION: 'application_no', APPLICATION: 'application_no',
   REQUISITION: 'req_no',
+  BATCH: 'batch_no',
+  SCHEDULER: 'scheduler_no',
 };
