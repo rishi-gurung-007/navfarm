@@ -68,6 +68,8 @@ export interface MasterDataField {
   entityValueKey?: string;
   /** Fields on the related record to join (" — ") for the option label */
   entityLabelKeys?: string[];
+  /** Display only the related record's business code instead of its name (IDs remain internal). */
+  entityDisplay?: "name" | "code";
   /** Select multiple related values with checkboxes (submitted as an array). */
   multiple?: boolean;
   /**

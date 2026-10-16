@@ -1034,6 +1034,21 @@ describe('LocationService canonical hierarchy', () => {
     expect(result.deleted_at).toBeNull();
   });
 
+  it('restores an inactive location even when legacy data has no deleted_at', async () => {
+    selectResults.push(
+      [{ location_id: 'store-1', company_id: 'comp-1', location_type: 'STORE', is_active: false, deleted_at: null }],
+      [{ location_id: 'store-1', company_id: 'comp-1', location_type: 'STORE', is_active: true, deleted_at: null }],
+    );
+
+    const result = await service.restore('store-1', 'tenant-1', { userId: 'user-1' });
+
+    expect(txUpdate).toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'RESTORE', entityName: 'location_master', entityId: 'store-1',
+    }));
+    expect(result.is_active).toBe(true);
+  });
+
   it('stores a silo low and high feed level in kilograms (Master Setup §1 rows 10 and 12)', async () => {
     selectResults.push(
       [company], [siloType], [farmParent()], [uom], [series],

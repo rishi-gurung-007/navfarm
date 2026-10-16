@@ -1,5 +1,5 @@
 /**
- * Seeds the 57 Reason Master Template catalog rows from DOCUMENTED_REASONS
+ * Seeds the coded rows from the GM's Proposed Reason Master workbook
  * into reason_master for active companies.
  *
  *   pnpm nx run api:db-seed-documented-reasons            # read-only plan
@@ -57,7 +57,9 @@ async function main() {
     }
 
     await conn.beginTransaction();
-    const created = await seedDocumentedReasons(conn, tenant.tenant_id, DOCUMENTED_REASONS);
+    const created = await seedDocumentedReasons(conn, tenant.tenant_id, DOCUMENTED_REASONS.map((r) => ({
+      ...r,
+    })));
     console.log(`Inserted ${created} reason rows.`);
 
     if (mode === '--apply') {

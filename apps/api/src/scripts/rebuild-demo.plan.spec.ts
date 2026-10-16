@@ -34,6 +34,25 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(scripts(MASTER_STEPS)).not.toContain('seed-nine-farm-demo.ts');
   });
 
+  it('keeps the Porta seed limited to workbook-backed farm masters', () => {
+    const list = scripts(buildPlan({ chaptersOnly: false, skipReset: false, preset: 'porta' }));
+    expect(list).toContain('seed-farm-locations.ts');
+    expect(list).toContain('seed-farm-masters.ts');
+    expect(list).toContain('seed-porta-breed-lifecycles.ts');
+    expect(list).toContain('seed-porta-device-data.ts');
+    expect(list.indexOf('seed-porta-breed-lifecycles.ts')).toBeGreaterThan(list.indexOf('seed-farm-masters.ts'));
+    expect(list.indexOf('seed-porta-device-data.ts')).toBeGreaterThan(list.indexOf('seed-porta-breed-lifecycles.ts'));
+    expect(list.indexOf('seed-porta-breed-lifecycles.ts')).toBeLessThan(list.indexOf('stamp-master-nob-lob.ts'));
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    expect(list).not.toContain('seed-demo-item-catalog.ts');
+    expect(list).not.toContain('demo-chapters.ts');
+  });
+
+  it('keeps Porta lifecycle data out of the other presets', () => {
+    expect(scripts(buildPlan({ chaptersOnly: false, skipReset: false }))).not.toContain('seed-porta-breed-lifecycles.ts');
+    expect(scripts(buildPlan({ chaptersOnly: false, skipReset: false, preset: 'small' }))).not.toContain('seed-porta-breed-lifecycles.ts');
+  });
+
   it('keeps operational chapters out of the master-only chain', () => {
     const list = scripts(MASTER_STEPS);
     for (const operational of ['demo-chapters.ts', 'seed-piggery-complete-data.ts', 'seed-demo-full-coverage.ts', 'seed-animals.ts']) {

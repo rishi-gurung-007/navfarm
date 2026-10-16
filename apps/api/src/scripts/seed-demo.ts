@@ -92,7 +92,9 @@ async function fillDemoDetail() {
   try {
     const [[tenant]] = await conn.query<any[]>('SELECT tenant_id FROM company_master LIMIT 1');
     if (!tenant) return;
-    const reasons = await seedDocumentedReasons(conn, tenant.tenant_id, DOCUMENTED_REASONS);
+    const reasons = await seedDocumentedReasons(conn, tenant.tenant_id, DOCUMENTED_REASONS.map((r) => ({
+      ...r,
+    })));
     const filled = await enrichDemoMasters(conn, tenant.tenant_id);
     const total = filled.reduce((sum, r) => sum + r.rows, 0);
     console.log(`  seeded ${reasons} documented reasons; filled ${total} optional field values across ${filled.length} passes.`);

@@ -3,9 +3,10 @@
  * FARM only. Extracted from the Resource Master and Breed Master templates in
  * `MASTER TEMPLATES - TRIPLE C SUBMISSIONS/`.
  *
- * Partial, for the same reason the locations are: 28 of 44 resource rows and 2
- * of 4 breed rows are missing a value the template marks mandatory. Every one
- * is listed in `docs/triple-c-location-code-queries.md`. Nothing is guessed.
+ * Resource rows whose Resource Type is blank are imported as EQUIPMENT when
+ * they still have a unique Resource Code and name. Rows without a code, or
+ * with a code repeated across multiple rows, remain excluded. Nothing else is
+ * guessed.
  *
  * Two breed columns are deliberately absent. Farrowing Rate % and Boar Doses
  * Per Week have template examples of 85.00 and 4.00; both farms wrote 0.9/0.93
@@ -48,6 +49,8 @@ export interface FarmBreedSeedRow {
   avgLitterSizeBorn?: number;
   avgLitterSizeWeaned?: number;
   avgWeaningWeightKg?: number;
+  farrowingRatePct?: number;
+  boarDosesPerWeek?: number;
   boarProductiveLifeMonths?: number;
   /** Reads "accounts" in both templates — who decides it, not a number. */
   residualValuePct?: number;
@@ -70,9 +73,25 @@ export const FARM_RESOURCE_SEED: FarmResourceSeedRow[] = [
   { farm: "PORTA", code: "PWH - 04", name: "Heaters", type: "EQUIPMENT", quantity: 1, costElement: "Diesel", glCostAccount: "5205", costCentre: "280", department: "Farm Operations", assetCode: "FA-PE000008890", capacity: 80.0, capacityUom: "KW", nextServiceDate: "2027-01-03" },
   { farm: "PORTA", code: "PWH - 05", name: "Heaters", type: "EQUIPMENT", quantity: 1, costElement: "Diesel", glCostAccount: "5205", costCentre: "280", department: "Farm Operations", assetCode: "FA-PE000008891", capacity: 80.0, capacityUom: "KW", nextServiceDate: "2027-01-03" },
   { farm: "PORTA", code: "PWH - 06", name: "Heaters", type: "EQUIPMENT", quantity: 1, costElement: "Diesel", glCostAccount: "5205", costCentre: "280", department: "Farm Operations", assetCode: "FA-PE000008892", capacity: 80.0, capacityUom: "KW", nextServiceDate: "2027-01-03" },
+  { farm: "PORTA", code: "PCP1", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PCP2", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PCP3", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PCP4", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PCP5", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PCP6", name: "Cooling Pad", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "TRACTOR", name: "Tractor", type: "EQUIPMENT", quantity: 1, costElement: "Diesel", glCostAccount: "5135", costCentre: "280" },
+  { farm: "PORTA", code: "PS1", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PS2", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PS3", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PS4", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PS5", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PS6", name: "Scales", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "PUVS", name: "UV System", type: "EQUIPMENT", quantity: 1 },
+  { farm: "PORTA", code: "MANPOWER", name: "Manpower", type: "EQUIPMENT", quantity: 60, costCentre: "280" },
 ];
 
 export const FARM_BREED_SEED: FarmBreedSeedRow[] = [
   { farm: "MULTIPLIER", code: "Z-Line-Sow", name: "Z-Line-Sow", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 46, productiveLifeCycles: 10, avgLitterSizeBorn: 15.0, avgLitterSizeWeaned: 13.8, avgWeaningWeightKg: 7.5, boarProductiveLifeMonths: 29 },
-  { farm: "PORTA", code: "TN-70-Sow", name: "TN-70-Sow", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 42, productiveLifeCycles: 8, avgLitterSizeBorn: 16.3306, avgLitterSizeWeaned: 15.3508, avgWeaningWeightKg: 8.0, boarProductiveLifeMonths: 29 },
+  { farm: "PORTA", code: "TN-70-Sow", name: "TN-70-Sow", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 42, productiveLifeCycles: 8, avgLitterSizeBorn: 16.3306, avgLitterSizeWeaned: 15.3508, avgWeaningWeightKg: 8.0, farrowingRatePct: 93, boarDosesPerWeek: 74, boarProductiveLifeMonths: 29 },
+  { farm: "PORTA", code: "Teaser-Boar", name: "Teaser Boar" },
 ];

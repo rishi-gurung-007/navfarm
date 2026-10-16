@@ -26,7 +26,7 @@
  *   question if stage-level reason filtering needs to key off animal type too.
  */
 export const REASON_CATEGORIES = [
-  'MORTALITY', 'CULL', 'RETURN', 'SELECTION', 'DISPOSAL', 'TRANSFER', 'SCAN', 'ADJUSTMENT', 'REQUISITION',
+  'MORTALITY', 'CULL', 'RETURN', 'SELECTION', 'DISPOSAL', 'TRANSFER', 'SCAN', 'ADJUSTMENT', 'REQUISITION', 'HEAT', 'SERVICING',
 ] as const;
 export type ReasonCategory = typeof REASON_CATEGORIES[number];
 
@@ -41,7 +41,7 @@ export interface DocumentedReason {
   mandatory_weight: boolean;
 }
 
-export const DOCUMENTED_REASONS: DocumentedReason[] = [
+const LEGACY_DOCUMENTED_REASONS: DocumentedReason[] = [
   { reason_code: 'MRT-001', reason_name: 'Respiratory Disease (PRRS/APP/Pneumonia)', category: 'MORTALITY', sub_category: 'Disease', applicable_stages: null, stage_filter_note: 'ALL', mandatory_comment: false, mandatory_weight: false },
   { reason_code: 'MRT-002', reason_name: 'Enteric Disease (PED/Rotavirus/Scours)', category: 'MORTALITY', sub_category: 'Disease', applicable_stages: ['WEANING', 'LACTATION'], stage_filter_note: 'WEANER / LACTATION', mandatory_comment: false, mandatory_weight: false },
   { reason_code: 'MRT-003', reason_name: 'Reproductive Failure (MMA/Metritis)', category: 'MORTALITY', sub_category: 'Disease', applicable_stages: ['LACTATION', 'GESTATION'], stage_filter_note: 'LACTATION / GESTATION', mandatory_comment: false, mandatory_weight: false },
@@ -100,3 +100,9 @@ export const DOCUMENTED_REASONS: DocumentedReason[] = [
   { reason_code: 'REQ-002', reason_name: 'Medicine / Vaccine Requisition', category: 'REQUISITION', sub_category: 'Medicine', applicable_stages: null, stage_filter_note: 'N/A', mandatory_comment: false, mandatory_weight: false },
   { reason_code: 'REQ-003', reason_name: 'Service / Overhead Requisition (non-inventory)', category: 'REQUISITION', sub_category: 'Service', applicable_stages: null, stage_filter_note: 'N/A', mandatory_comment: false, mandatory_weight: false },
 ];
+
+// The current seed source is the GM's proposed workbook, not this superseded
+// 2026-09-21 catalog. Keep the legacy transcription in this file for history
+// and compatibility with old imports, but expose the workbook rows to all
+// seed consumers.
+export { PROPOSED_REASONS as DOCUMENTED_REASONS } from './proposed-reason-code-seed';

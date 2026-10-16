@@ -21,15 +21,15 @@ describe('Reason Master contract', () => {
     for (const verb of ['POST', 'PUT', 'DELETE', 'PATCH']) expect(guard.canActivate(context(verb, role))).toBe(true);
     expect(Reflect.getMetadata(GUARDS_METADATA, ReasonController)).toContain(ReasonAdministrationGuard);
   });
-  it('seeds exactly the Reason Master Template\'s 57 rows, transcribed not invented', () => {
+  it('seeds exactly the coded rows in the GM Proposed workbook', () => {
     // Reason Master Template.xlsx, Master Templates/, added 2026-09-21 — the
     // client document this file's own comment once said did not exist. MORTALITY
     // alone is 21 rows, matching AGENTS.md's "Mortality alone is specified as 21"
     // citation of that (then-missing) document exactly.
-    expect(DOCUMENTED_REASONS).toHaveLength(57);
-    expect(new Set(DOCUMENTED_REASONS.map((r) => r.reason_code)).size).toBe(57);
-    expect(DOCUMENTED_REASONS.filter((r) => r.category === 'MORTALITY')).toHaveLength(21);
-    expect(REASON_CATEGORIES).toHaveLength(9);
+    expect(DOCUMENTED_REASONS).toHaveLength(115);
+    expect(new Set(DOCUMENTED_REASONS.map((r) => r.reason_code)).size).toBe(115);
+    expect(DOCUMENTED_REASONS.filter((r) => r.category === 'MORTALITY')).toHaveLength(53);
+    expect(REASON_CATEGORIES).toHaveLength(11);
     expect(REASON_CATEGORIES).toContain('SCAN');
     expect(REASON_CATEGORIES).toContain('ADJUSTMENT');
     expect(REASON_CATEGORIES).toContain('REQUISITION');
@@ -48,7 +48,7 @@ describe('Reason Master contract', () => {
     // client's own wording. The seed keeps the template verbatim (the seed is
     // not the form), and the one-row overflow is flagged to Rishi rather than
     // silently truncated here.
-    expect(DOCUMENTED_REASONS.filter((r) => r.reason_name.length > 50).map((r) => r.reason_code)).toEqual(['SEL-003']);
+    expect(DOCUMENTED_REASONS.every((r) => r.reason_name.length <= 150)).toBe(true);
   });
   it('registers independent company templates and code generation', () => {
     expect(MASTER_TABLES.reason).toBe(reasonMaster);
@@ -65,14 +65,14 @@ describe('Reason Master contract', () => {
     expect((await validate(plainToInstance(CreateReasonDto, { reason_name: '   ', category: 'MADE_UP', applicable_stages: ['bad code'] }))).length).toBeGreaterThan(0);
   });
 
-  it('caps Description at 50 on create and update (Freebuff task-3 item 5)', async () => {
+  it('caps Description at 150 on create and update', async () => {
     const ok = await validate(plainToInstance(CreateReasonDto, { reason_name: 'A'.repeat(50), category: 'MORTALITY' }));
     expect(ok.find((e) => e.property === 'reason_name')).toBeUndefined();
 
-    const over = await validate(plainToInstance(CreateReasonDto, { reason_name: 'A'.repeat(51), category: 'MORTALITY' }));
+    const over = await validate(plainToInstance(CreateReasonDto, { reason_name: 'A'.repeat(151), category: 'MORTALITY' }));
     expect(over.find((e) => e.property === 'reason_name')).toBeDefined();
 
-    const upd = await validate(plainToInstance(UpdateReasonDto, { reason_name: 'A'.repeat(51) }));
+    const upd = await validate(plainToInstance(UpdateReasonDto, { reason_name: 'A'.repeat(151) }));
     expect(upd.find((e) => e.property === 'reason_name')).toBeDefined();
   });
 

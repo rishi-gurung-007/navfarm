@@ -145,12 +145,19 @@
           "command": "node --import tsx src/scripts/seed-farm-locations.ts"
         }
       },
-"db-seed-farm-masters": {
+      "db-seed-farm-masters": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
           "cwd": "apps/api",
           "command": "node --import tsx src/scripts/seed-farm-masters.ts"
+        }
+      },
+      "db-seed-porta-breed-lifecycles": {
+        "executor": "nx:run-commands",
+        "options": {
+          "command": "node --import tsx src/scripts/seed-porta-breed-lifecycles.ts",
+          "cwd": "apps/api"
         }
       },
 "db-align-production-permissions": {
@@ -616,7 +623,7 @@
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
-          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=small",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=porta",
           "cwd": "apps/api"
         }
       },

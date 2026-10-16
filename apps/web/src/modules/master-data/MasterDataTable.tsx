@@ -90,7 +90,8 @@ function unwrap<T = any>(res: any): T {
 function entityLabel(row: Row, field: MasterDataField): string {
   const keys = field.entityLabelKeys || [];
   const text = keys.map((k) => row[k]).filter(Boolean).join(" — ");
-  return text || row[field.entityValueKey || "id"];
+  const fallback = String(row[field.entityValueKey || "id"] ?? "");
+  return text || (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(fallback) ? "Reference unavailable" : fallback);
 }
 
 /**
