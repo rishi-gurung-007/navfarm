@@ -40,8 +40,10 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list).toContain('seed-farm-masters.ts');
     expect(list).toContain('seed-porta-breed-lifecycles.ts');
     expect(list).toContain('seed-porta-device-data.ts');
+    expect(list).toContain('seed-porta-feed-planning-data.ts');
     expect(list.indexOf('seed-porta-breed-lifecycles.ts')).toBeGreaterThan(list.indexOf('seed-farm-masters.ts'));
     expect(list.indexOf('seed-porta-device-data.ts')).toBeGreaterThan(list.indexOf('seed-porta-breed-lifecycles.ts'));
+    expect(list.indexOf('seed-porta-feed-planning-data.ts')).toBeGreaterThan(list.indexOf('seed-porta-device-data.ts'));
     expect(list.indexOf('seed-porta-breed-lifecycles.ts')).toBeLessThan(list.indexOf('stamp-master-nob-lob.ts'));
     expect(list).not.toContain('seed-four-farm-feed-demo.ts');
     expect(list).not.toContain('seed-demo-item-catalog.ts');

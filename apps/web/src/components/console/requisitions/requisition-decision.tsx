@@ -77,11 +77,16 @@ export function RequisitionDecision({
       t("rhRejectedMsg", { docNo: target.docNo }),
     );
 
-  // A display hint only, the same grant the /approval approve and reject
-  // endpoints require (PRODUCTION / APPROVAL / approve); the server stays the
-  // authority and still refuses anyone it should. The feed tab is the drafters'
-  // screen, so without this a submitter would be offered buttons they cannot use.
-  if (!hasPermission(getStoredUser(), "PRODUCTION", "APPROVAL", "can_approve")) return null;
+  // A display hint only. Requisition approval is granted by
+  // PROCUREMENT/REQUISITION; the generic approval controller accepts that
+  // grant (or the legacy PRODUCTION/APPROVAL grant) and the server remains the
+  // authority. Without this, Feed Mill Managers had no Approve action even
+  // though they were correctly granted requisition approval.
+  const currentUser = getStoredUser();
+  const canApproveRequisition =
+    hasPermission(currentUser, "PROCUREMENT", "REQUISITION", "can_approve") ||
+    hasPermission(currentUser, "PRODUCTION", "APPROVAL", "can_approve");
+  if (!canApproveRequisition) return null;
 
   if (rejecting) {
     return (

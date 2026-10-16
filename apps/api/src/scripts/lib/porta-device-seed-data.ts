@@ -67,6 +67,8 @@ export const PORTA_DEVICE_BATCHES = [
 
 export const PORTA_DEVICE_SCHEDULERS = [
   { no: 'SCH-000001', batch: 'BATCH-000001', stage: 'PRODUCTIVE_SOW', shed: 'PDS2', from: '2026-03-01', to: null, count: '2.0000' },
-  { no: 'SCH-000002', batch: 'BATCH-000001', stage: 'GESTATION', shed: 'PDS2', from: '2026-03-01', to: '2026-06-25', count: '2.0000' },
-  { no: 'SCH-000003', batch: 'BATCH-000002', stage: 'WEANING', shed: 'PFH1', from: '2024-03-01', to: null, count: '1.0000' },
+  // Keep the fixture's active feed-bearing stages inside the seeded lifecycle
+  // windows so the default 16 Oct 2026 forecast has rows to calculate.
+  { no: 'SCH-000002', batch: 'BATCH-000001', stage: 'GESTATION', shed: 'PDS2', from: '2026-10-13', to: null, count: '2.0000' },
+  { no: 'SCH-000003', batch: 'BATCH-000002', stage: 'WEANING', shed: 'PFH1', from: '2026-10-14', to: null, count: '1.0000' },
 ] as const;

@@ -133,6 +133,8 @@ export const PORTA_PRESET = { farm: 'PORTA' } as const;
 const FOUR_FARM_STEP_SCRIPT = 'seed-four-farm-feed-demo.ts';
 const PORTA_LIFECYCLE_STEP: Step = { label: "Porta's source breed lifecycle stages and feed references", script: 'seed-porta-breed-lifecycles.ts', args: ['--apply'] };
 const PORTA_DEVICE_STEP: Step = { label: "Porta's device-entered animals and operational records", script: 'seed-porta-device-data.ts', args: ['--apply'] };
+const PORTA_FEED_STEP: Step = { label: "Porta's feed forecast topology, stock, mill and BIN fixture", script: 'seed-porta-feed-planning-data.ts', args: ['--apply'] };
+const PORTA_REQUISITION_HISTORY_STEP: Step = { label: "Porta's batch-based historical feed requisitions", script: 'seed-porta-requisition-history.ts', args: ['--apply'] };
 const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and lifecycles for the small preset farms', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
 
 /**
@@ -166,6 +168,10 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
     portaMasters.splice(alignIndex < 0 ? portaMasters.length : alignIndex, 0, PORTA_LIFECYCLE_STEP);
     const lifecycleIndex = portaMasters.findIndex((step) => step.script === PORTA_LIFECYCLE_STEP.script);
     portaMasters.splice(lifecycleIndex + 1, 0, PORTA_DEVICE_STEP);
+    const deviceIndex = portaMasters.findIndex((step) => step.script === PORTA_DEVICE_STEP.script);
+    portaMasters.splice(deviceIndex + 1, 0, PORTA_FEED_STEP);
+    const feedIndex = portaMasters.findIndex((step) => step.script === PORTA_FEED_STEP.script);
+    portaMasters.splice(feedIndex + 1, 0, PORTA_REQUISITION_HISTORY_STEP);
     steps.push(...portaMasters);
     return steps;
   }
