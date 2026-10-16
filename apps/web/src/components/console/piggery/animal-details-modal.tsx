@@ -15,6 +15,7 @@ import {
   ExternalLink,
   ChevronRight,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,8 @@ interface AnimalDetailsModalProps {
   animalId: string | null;
   onClose: () => void;
   onOpenStageTransition?: (animal: Row) => void;
+  onOpenDispose?: (animal: Row) => void;
+  onOpenOutOfProduction?: (animal: Row) => void;
 }
 
 type TabKey =
@@ -92,6 +95,8 @@ export default function AnimalDetailsModal({
   animalId,
   onClose,
   onOpenStageTransition,
+  onOpenDispose,
+  onOpenOutOfProduction,
 }: AnimalDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
@@ -488,6 +493,34 @@ export default function AnimalDetailsModal({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            {onOpenOutOfProduction && animal && animal.is_active && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onOpenOutOfProduction(animal);
+                }}
+                className="gap-1.5 text-xs font-semibold"
+              >
+                Out of Production
+              </Button>
+            )}
+            {onOpenDispose && animal && (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!animal.is_active}
+                onClick={() => {
+                  onClose();
+                  onOpenDispose(animal);
+                }}
+                className="gap-1.5 text-xs font-semibold"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {animal.is_active ? 'Dispose' : 'Disposed'}
+              </Button>
+            )}
             {onOpenStageTransition && animal && animal.is_active && (
               <Button
                 variant="outline"

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Search, Loader2, Inbox, Eye, Trash2, Pill, AlertCircle, ChevronRight, Scan, ArrowRight,
+  Search, Loader2, Inbox, Eye, AlertCircle, ChevronRight, Scan,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -15,13 +15,12 @@ import type { TranslationKeys } from "@/utils/translations";
 import { StatusBadge } from "@/components/ui/status-badge";
 import RfidScannerModal from "@/components/console/piggery/rfid-scanner-modal";
 import AnimalStageTransitionModal from "@/components/console/piggery/animal-stage-transition-modal";
+import AnimalDetailsModal from "@/components/console/piggery/animal-details-modal";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from "@/components/ui/table";
-import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import { formatQuantity } from "@/lib/utils";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -67,13 +66,6 @@ const ANIMAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   COMMERCIAL_PIG: "anpTypeCommercialPig",
 };
 
-const ENTRY_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
-  PURCHASED_IMPORTED: "anpEntryPurchasedImported",
-  PURCHASED_LOCAL: "anpEntryPurchasedLocal",
-  BORN_ON_FARM: "anpEntryBornOnFarm",
-  TRANSFERRED_IN: "anpEntryTransferredIn",
-};
-
 const DISPOSAL_TYPES = ["SOLD", "SLAUGHTERED", "DIED", "TRANSFERRED", "CULLED"] as const;
 const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   SOLD: "anpDisposalSold",
@@ -81,13 +73,6 @@ const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
   DIED: "anpDisposalDied",
   TRANSFERRED: "anpDisposalTransferred",
   CULLED: "anpDisposalCulled",
-};
-
-const LEDGER_ENTRY_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
-  ACQUISITION: "anpLedgerAcquisition",
-  AMORTIZATION: "anpLedgerAmortization",
-  TRANSFORMATION: "anpLedgerTransformation",
-  DISPOSAL: "anpLedgerDisposal",
 };
 
 function formatDate(d?: string | null) {
@@ -133,16 +118,13 @@ function WithdrawalWarning({ message, t }: { message: string; t: (key: Translati
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function AnimalPanel() {
-  const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
   const companyId = getActiveCompanyId();
 
   const genderLabel = (g?: string) => (g === "F" ? t("anpGenderFemale") : g === "M" ? t("anpGenderMale") : g || "");
   const statusLabel = (s?: string) => (s && STATUS_LABEL_KEY[s] ? t(STATUS_LABEL_KEY[s]) : (s || "").replace(/_/g, " "));
   const animalTypeLabel = (v?: string) => (v && ANIMAL_TYPE_LABEL_KEY[v] ? t(ANIMAL_TYPE_LABEL_KEY[v]) : (v || "").replace(/_/g, " "));
-  const entryTypeLabel = (v?: string) => (v && ENTRY_TYPE_LABEL_KEY[v] ? t(ENTRY_TYPE_LABEL_KEY[v]) : (v || "").replace(/_/g, " "));
   const disposalTypeLabel = (v?: string) => (v && DISPOSAL_TYPE_LABEL_KEY[v] ? t(DISPOSAL_TYPE_LABEL_KEY[v]) : (v || ""));
-  const ledgerEntryTypeLabel = (v?: string) => (v && LEDGER_ENTRY_TYPE_LABEL_KEY[v] ? t(LEDGER_ENTRY_TYPE_LABEL_KEY[v]) : (v || "").replace(/_/g, " "));
 
   // ── List state ──────────────────────────────────────────────────────────────
   const [rows, setRows]         = useState<Row[]>([]);
@@ -158,9 +140,7 @@ export default function AnimalPanel() {
   // Company-wide breed lookup for the list table, loaded once on mount.
   const [breedLookup, setBreedLookup] = useState<Record<string, string>>({});
   const breedName = (id?: string | null) => (id && breedLookup[id]) || id || "—";
-  const [items, setItems]     = useState<Row[]>([]);
   const [medItems, setMedItems] = useState<Row[]>([]); // MEDICINE + VACCINE filtered
-  const [uoms, setUoms]       = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages]   = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
@@ -174,27 +154,8 @@ export default function AnimalPanel() {
   const [transitionAnimal, setTransitionAnimal] = useState<Row | null>(null);
 
   // ── Detail modal ────────────────────────────────────────────────────────────
-  const [viewing, setViewing]     = useState<Row | null>(null);
-  const [detailTab, setDetailTab] = useState<"overview" | "medications" | "valuation">("overview");
-
-  // ── Medication log ──────────────────────────────────────────────────────────
-  const [medLogs, setMedLogs]         = useState<Row[]>([]);
-  const [medLoading, setMedLoading]   = useState(false);
-  const [medError, setMedError]       = useState("");
-
-  // ── Bio-Asset Ledger ────────────────────────────────────────────────────────
-  const [ledgerEntries, setLedgerEntries] = useState<Row[]>([]);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [ledgerError, setLedgerError]     = useState("");
-
-  // ── Log dose modal ──────────────────────────────────────────────────────────
-  const [doseOpen, setDoseOpen]       = useState(false);
-  const [doseSaving, setDoseSaving]   = useState(false);
-  const [doseError, setDoseError]     = useState("");
-  const [doseForm, setDoseForm]       = useState<Row>({
-    item_id: "", administered_date: new Date().toISOString().slice(0, 10),
-    dose_qty: "", uom: "", administered_by: "", notes: "",
-  });
+  const [detailsAnimalId, setDetailsAnimalId] = useState<string | null>(null);
+  const [viewing, setViewing]                 = useState<Row | null>(null);
 
   // ── Out of production (BBP-1: before a cull) ──────────────────────────────────
   const [oopOpen, setOopOpen] = useState(false);
@@ -254,14 +215,12 @@ export default function AnimalPanel() {
   // Reference data — loaded once on mount
   useEffect(() => {
     const qs = companyId ? `?companyId=${companyId}&limit=500` : "?limit=500";
-    api.get(`/uom${qs}`).then((r) => setUoms(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/batch${qs}`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/stage?limit=100`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/reason${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/item${qs.replace(/^\?/, "?isActive=true&isBlocked=false&")}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
-      setItems(all);
       setMedItems(all.filter((i: Row) => !i.is_blocked && i.is_active !== false && ["MEDICINE", "VACCINE"].includes(i.item_type)));
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -279,74 +238,10 @@ export default function AnimalPanel() {
       .catch(() => setBreedLookup({}));
   }, [companyId]);
 
-  // Medication logs — loaded when opening the medications tab
-  const loadMedLogs = async (animalId: string) => {
-    setMedLoading(true);
-    setMedError("");
-    try {
-      const res = await api.get(`/animal/${animalId}/medications`);
-      setMedLogs(unwrap<Row[]>(res) || []);
-    } catch (err: any) {
-      setMedError(err?.message || t("anpErrLoadMedications"));
-    } finally {
-      setMedLoading(false);
-    }
-  };
-
-  // Bio-Asset Ledger entries — loaded when opening the valuation tab
-  const loadBioAssetLedger = async (animalId: string) => {
-    setLedgerLoading(true);
-    setLedgerError("");
-    try {
-      const res = await api.get(`/animal/${animalId}/bio-asset-ledger`);
-      setLedgerEntries(unwrap<Row[]>(res) || []);
-    } catch (err: any) {
-      setLedgerError(err?.message || t("anpErrLoadLedger"));
-    } finally {
-      setLedgerLoading(false);
-    }
-  };
-
   // ── Handlers ────────────────────────────────────────────────────────────────
 
-  const openView = async (row: Row) => {
-    const res = await api.get(`/animal/${row.animal_id}`);
-    setViewing(unwrap<Row>(res));
-    setDetailTab("overview");
-    setMedLogs([]);
-    setLedgerEntries([]);
-  };
-
-  const handleDetailTabChange = (tab: "overview" | "medications" | "valuation") => {
-    setDetailTab(tab);
-    if (tab === "medications" && viewing) loadMedLogs(viewing.animal_id);
-    if (tab === "valuation" && viewing) loadBioAssetLedger(viewing.animal_id);
-  };
-
-
-  const handleLogDose = async () => {
-    if (!viewing) return;
-    setDoseSaving(true);
-    setDoseError("");
-    try {
-      if (!doseForm.item_id) throw new Error(t("anpErrSelectMedicine"));
-      if (!doseForm.administered_date) throw new Error(t("anpErrAdministeredDateRequired"));
-      await api.post(`/animal/${viewing.animal_id}/medications`, {
-        item_id: doseForm.item_id,
-        administered_date: doseForm.administered_date,
-        dose_qty: doseForm.dose_qty ? Number(doseForm.dose_qty) : undefined,
-        uom: doseForm.uom || undefined,
-        administered_by: doseForm.administered_by || undefined,
-        notes: doseForm.notes || undefined,
-      });
-      setDoseOpen(false);
-      setDoseForm({ item_id: "", administered_date: new Date().toISOString().slice(0, 10), dose_qty: "", uom: "", administered_by: "", notes: "" });
-      loadMedLogs(viewing.animal_id);
-    } catch (err: any) {
-      setDoseError(err?.message || t("anpErrLogDose"));
-    } finally {
-      setDoseSaving(false);
-    }
+  const openView = (row: Row) => {
+    setDetailsAnimalId(row.animal_id);
   };
 
   const handleDispose = async () => {
@@ -510,345 +405,40 @@ export default function AnimalPanel() {
 
 
 
-      {/* ═══ Detail modal ═════════════════════════════════════════════════════ */}
-      {viewing && (
-        <Dialog
-          open={!!viewing}
-          onClose={() => setViewing(null)}
-          title={t("anpAnimalDetailTitle", { code: viewing.animal_code })}
-          description={`${animalTypeLabel(viewing.animal_type)} · ${genderLabel(viewing.gender)}`}
-          maxWidth="xl"
-          footer={
-            <div className="flex w-full items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Button
-                  id="animal-dispose-btn"
-                  variant="destructive"
-                  size="sm"
-                  disabled={!viewing.is_active}
-                  onClick={() => {
-                    setDisposeForm({
-                      disposal_type: "SOLD",
-                      disposal_date: new Date().toISOString().slice(0, 10),
-                      disposal_value: "",
-                      disposal_reason_id: "",
-                      exit_weight_kg: "",
-                      disposal_destination: "",
-                      out_of_production_date: viewing.out_of_production_date ? String(viewing.out_of_production_date).slice(0, 10) : "",
-                      notes: "",
-                    });
-                    setDisposeError("");
-                    setDisposeIsWithdrawal(false);
-                    setDisposeOpen(true);
-                  }}
-                >
-                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  {viewing.is_active ? t("anpDispose") : t("anpDisposed")}
-                </Button>
-
-                {viewing.is_active && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setOopDate(viewing.out_of_production_date ? String(viewing.out_of_production_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
-                      setOopError("");
-                      setOopOpen(true);
-                    }}
-                  >
-                    {t("anpOutOfProduction")}
-                    {viewing.out_of_production_date ? ` · ${formatDate(viewing.out_of_production_date)}` : ""}
-                  </Button>
-                )}
-
-                {viewing.is_active && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setTransitionAnimal(viewing);
-                      setTransitionOpen(true);
-                    }}
-                  >
-                    <ArrowRight className="mr-1.5 h-3.5 w-3.5" />
-                    {t("anpTransferStagePen")}
-                  </Button>
-                )}
-              </div>
-            </div>
-          }
-        >
-          {/* Tabs */}
-          <div className="mb-5 flex gap-1 rounded-[var(--radius-sm)] p-1 text-sm" style={{ backgroundColor: "var(--surface-raised)" }}>
-            {(["overview", "medications", "valuation"] as const).map((tab) => (
-              <button
-                key={tab}
-                id={`animal-detail-tab-${tab}`}
-                onClick={() => handleDetailTabChange(tab)}
-                className="flex-1 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold transition-colors"
-                style={detailTab === tab
-                  ? { backgroundColor: "var(--surface)", color: "var(--text-primary)", boxShadow: "var(--shadow-sm)" }
-                  : { color: "var(--text-secondary)" }}
-              >
-                {tab === "overview" ? t("anpTabOverview") : tab === "medications" ? t("anpTabMedicationLog") : t("anpTabValuationLedger")}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Overview tab ── */}
-          {detailTab === "overview" && (
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm sm:grid-cols-3">
-              {[
-                [t("anpFieldAnimalCode"), viewing.animal_code],
-                [t("anpFieldType"), animalTypeLabel(viewing.animal_type)],
-                [t("anpFieldGender"), genderLabel(viewing.gender)],
-                [t("anpFieldStatus"), statusLabel(viewing.status)],
-                [t("anpFieldEntryType"), entryTypeLabel(viewing.entry_type)],
-                [t("anpFieldEntryDate"), formatDate(viewing.entry_date)],
-                [t("anpFieldDateOfBirth"), formatDate(viewing.dob)],
-                [t("anpFieldRfidTag"), viewing.rfid_tag || "—"],
-                [t("anpFieldAcquisitionCost"), viewing.acquisition_cost ? formatMoney(Number(viewing.acquisition_cost)) : "—"],
-                [t("anpFieldBookValue"), viewing.book_value ? formatMoney(Number(viewing.book_value)) : "—"],
-                [t("anpFieldDisposalDate"), viewing.is_active ? "—" : formatDate(viewing.disposal_date)],
-                [t("anpFieldDisposalType"), viewing.disposal_type ? disposalTypeLabel(viewing.disposal_type) : "—"],
-                [t("anpFieldDisposalValue"), viewing.disposal_value ? formatMoney(Number(viewing.disposal_value)) : "—"],
-                [t("anpFieldGainLossOnDisposal"), viewing.gain_loss_on_disposal ? formatMoney(Number(viewing.gain_loss_on_disposal)) : "—"],
-              ].map(([label, val]) => (
-                <div key={label as string}>
-                  <p className="text-xs uppercase tracking-wide" style={S.muted}>{label as string}</p>
-                  <p className="mt-0.5 font-medium" style={S.primary}>{val as string}</p>
-                </div>
-              ))}
-              {viewing.notes && (
-                <div className="col-span-2 sm:col-span-3">
-                  <p className="text-xs uppercase tracking-wide" style={S.muted}>{t("anpNotes")}</p>
-                  <p className="mt-0.5 text-sm" style={S.sub}>{viewing.notes}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Medications tab ── */}
-          {detailTab === "medications" && (
-            <div>
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-sm font-semibold" style={S.primary}>{t("anpMedicationHistory")}</p>
-                {viewing.is_active && (
-                  <Button
-                    id="animal-log-dose-btn"
-                    size="sm"
-                    onClick={() => {
-                      setDoseForm({ item_id: "", administered_date: new Date().toISOString().slice(0, 10), dose_qty: "", uom: "", administered_by: "", notes: "" });
-                      setDoseError("");
-                      setDoseOpen(true);
-                    }}
-                  >
-                    <Pill className="mr-1.5 h-3.5 w-3.5" /> {t("anpLogDose")}
-                  </Button>
-                )}
-              </div>
-
-              <Toast variant="danger" message={medError} onClose={() => setMedError("")} />
-
-              {medLoading ? (
-                <div className="py-10 text-center">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" style={S.muted} />
-                </div>
-              ) : medLogs.length === 0 ? (
-                <div className="py-12 text-center">
-                  <Pill className="mx-auto h-7 w-7 mb-2" style={S.muted} />
-                  <p className="text-sm" style={S.sub}>{t("anpNoDosesRecorded")}</p>
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
-                  <table className="w-full text-sm">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t("anpColDate")}</TableHead>
-                        <TableHead>{t("anpColItem")}</TableHead>
-                        <TableHead>{t("anpColQty")}</TableHead>
-                        <TableHead>{t("anpColAdministeredBy")}</TableHead>
-                        <TableHead>{t("anpColNotes")}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {medLogs.map((log) => (
-                        <TableRow key={log.log_id}>
-                          <TableCell style={S.sub}>{formatDate(log.administered_date)}</TableCell>
-                          <TableCell style={S.primary} className="font-medium">{
-                            items.find((i) => i.item_id === log.item_id)?.item_name || log.item_id
-                          }</TableCell>
-                          <TableCell style={S.muted}>
-                            {log.dose_qty ? `${formatQuantity(log.dose_qty)}${log.uom ? " " + log.uom : ""}` : "—"}
-                          </TableCell>
-                          <TableCell style={S.muted}>{log.administered_by || "—"}</TableCell>
-                          <TableCell style={S.muted}>{log.notes || "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Valuation & Bio-Asset Ledger tab ── */}
-          {detailTab === "valuation" && (
-            <div>
-              {/* Valuation KPIs */}
-              <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-[var(--radius-md)] border p-3" style={S.raised}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide" style={S.muted}>{t("anpKpiNbv")}</p>
-                  <p className="mt-1 text-lg font-bold" style={S.primary}>
-                    {formatMoney(viewing.book_value ? Number(viewing.book_value) : viewing.acquisition_cost ? Number(viewing.acquisition_cost) : "0")}
-                  </p>
-                </div>
-                <div className="rounded-[var(--radius-md)] border p-3" style={S.raised}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide" style={S.muted}>{t("anpKpiOpeningAssetValue")}</p>
-                  <p className="mt-1 text-lg font-bold" style={S.primary}>
-                    {formatMoney(viewing.total_opening_asset_value ? Number(viewing.total_opening_asset_value) : viewing.acquisition_cost ? Number(viewing.acquisition_cost) : "0")}
-                  </p>
-                </div>
-                <div className="rounded-[var(--radius-md)] border p-3" style={S.raised}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide" style={S.muted}>{t("anpKpiTotalAmortized")}</p>
-                  <p className="mt-1 text-lg font-bold" style={S.primary}>
-                    {formatMoney(viewing.total_amortised ? Number(viewing.total_amortised) : "0")}
-                  </p>
-                </div>
-                <div className="rounded-[var(--radius-md)] border p-3" style={S.raised}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide" style={S.muted}>{t("anpKpiMonthlyAmortization")}</p>
-                  <p className="mt-1 text-lg font-bold" style={S.primary}>
-                    {viewing.amortisation_monthly ? formatMoney(Number(viewing.amortisation_monthly)) : "—"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm font-semibold" style={S.primary}>{t("anpIas41Ledger")}</p>
-                <span className="text-xs" style={S.muted}>{t("anpTransactionCount", { count: ledgerEntries.length })}</span>
-              </div>
-
-              <Toast variant="danger" message={ledgerError} onClose={() => setLedgerError("")} />
-
-              {ledgerLoading ? (
-                <div className="py-10 text-center">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" style={S.muted} />
-                </div>
-              ) : ledgerEntries.length === 0 ? (
-                <div className="py-12 text-center">
-                  <p className="text-sm" style={S.sub}>{t("anpNoLedgerEntries")}</p>
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
-                  <table className="w-full text-sm">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t("anpColPostingDate")}</TableHead>
-                        <TableHead>{t("anpColEntryType")}</TableHead>
-                        <TableHead>{t("anpColDocNo")}</TableHead>
-                        <TableHead>{t("anpColHeadcount")}</TableHead>
-                        <TableHead className="text-right">{t("anpColCostAmount")}</TableHead>
-                        <TableHead>{t("anpColStatus")}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {ledgerEntries.map((entry) => (
-                        <TableRow key={entry.entry_id}>
-                          <TableCell style={S.sub}>{formatDate(entry.posting_date)}</TableCell>
-                          <TableCell>
-                            <StatusBadge
-                              status={entry.entry_type}
-                              label={ledgerEntryTypeLabel(entry.entry_type)}
-                            />
-                          </TableCell>
-                          <TableCell style={S.primary} className="font-mono text-xs">{entry.document_no || "—"}</TableCell>
-                          <TableCell style={S.muted}>{entry.quantity ? Number(entry.quantity).toFixed(0) : "1"}</TableCell>
-                          <TableCell className="text-right font-medium" style={Number(entry.cost_amount) < 0 ? S.danger : S.primary}>
-                            {formatMoney(Number(entry.cost_amount))}
-                          </TableCell>
-                          <TableCell style={S.muted}>{entry.status ? statusLabel(entry.status) : t("anpStatusActive")}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </Dialog>
-      )}
+      {/* ═══ Animal Details Modal (7-Tab Card: Overview, Lineage, Health, Weight, Breeding [Farrowing & Insemination], Movement, Costing) ═══ */}
+      <AnimalDetailsModal
+        animalId={detailsAnimalId}
+        onClose={() => setDetailsAnimalId(null)}
+        onOpenStageTransition={(anim) => {
+          setTransitionAnimal(anim);
+          setTransitionOpen(true);
+        }}
+        onOpenDispose={(anim) => {
+          setViewing(anim);
+          setDisposeForm({
+            disposal_type: "SOLD",
+            disposal_date: new Date().toISOString().slice(0, 10),
+            disposal_value: "",
+            disposal_reason_id: "",
+            exit_weight_kg: "",
+            disposal_destination: "",
+            out_of_production_date: anim.out_of_production_date ? String(anim.out_of_production_date).slice(0, 10) : "",
+            notes: "",
+          });
+          setDisposeError("");
+          setDisposeIsWithdrawal(false);
+          setDisposeOpen(true);
+        }}
+        onOpenOutOfProduction={(anim) => {
+          setViewing(anim);
+          setOopDate(anim.out_of_production_date ? String(anim.out_of_production_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+          setOopError("");
+          setOopOpen(true);
+        }}
+      />
 
 
-      {/* ═══ Log Dose Modal ════════════════════════════════════════════════════ */}
-      <Dialog
-        open={doseOpen}
-        onClose={() => setDoseOpen(false)}
-        title={t("anpLogDoseTitle")}
-        description={t("anpLogDoseDesc")}
-        maxWidth="sm"
-        footer={
-          <Button id="animal-dose-save-btn" onClick={handleLogDose} disabled={doseSaving}>
-            {doseSaving ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{t("anpSaving")}</> : t("anpLogDose")}
-          </Button>
-        }
-      >
-        <Toast variant="danger" message={doseError} onClose={() => setDoseError("")} />
 
-        <div className="space-y-4">
-          <div>
-            <label className="nf-label" htmlFor="dose-item">{t("anpMedicineVaccine")}</label>
-            <SearchableSelect
-              id="dose-item"
-              ariaLabel={t("anpMedicineVaccine")}
-              value={doseForm.item_id}
-              onChange={(val) => setDoseForm((f) => ({ ...f, item_id: val }))}
-              options={medItems.map((i) => ({
-                value: i.item_id,
-                label: `${i.item_name}${i.withdrawal_days != null ? t("anpWithdrawalDaysSuffix", { days: i.withdrawal_days }) : ""}`,
-              }))}
-              placeholder={t("anpSelectPlaceholder")}
-              columnHeaders={false}
-            />
-            {medItems.length === 0 && (
-              <p className="mt-1 text-xs" style={S.muted}>{t("anpNoMedItemsHint")}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="nf-label" htmlFor="dose-date">{t("anpDateAdministered")}</label>
-            <input id="dose-date" type="date" className={inputCls} value={doseForm.administered_date} onChange={(e) => setDoseForm((f) => ({ ...f, administered_date: e.target.value }))} />
-          </div>
-
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="nf-label" htmlFor="dose-qty">{t("anpQuantity")}</label>
-              <input id="dose-qty" type="number" min="0" step="0.001" className={inputCls} placeholder={t("anpQuantityPlaceholder")} value={doseForm.dose_qty} onChange={(e) => setDoseForm((f) => ({ ...f, dose_qty: e.target.value }))} />
-            </div>
-            <div className="w-28">
-              <label className="nf-label" htmlFor="dose-uom">{t("anpUom")}</label>
-              <SearchableSelect
-                id="dose-uom"
-                ariaLabel={t("anpUom")}
-                value={doseForm.uom}
-                onChange={(val) => setDoseForm((f) => ({ ...f, uom: val }))}
-                options={uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))}
-                placeholder="—"
-                columnHeaders={false}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="nf-label" htmlFor="dose-by">{t("anpAdministeredBy")}</label>
-            <input id="dose-by" type="text" className={inputCls} placeholder={t("anpAdministeredByPlaceholder")} value={doseForm.administered_by} onChange={(e) => setDoseForm((f) => ({ ...f, administered_by: e.target.value }))} />
-          </div>
-
-          <div>
-            <label className="nf-label" htmlFor="dose-notes">{t("anpNotes")}</label>
-            <textarea id="dose-notes" className={inputCls} rows={2} value={doseForm.notes} onChange={(e) => setDoseForm((f) => ({ ...f, notes: e.target.value }))} />
-          </div>
-        </div>
-      </Dialog>
 
       {/* ═══ Dispose Modal ═════════════════════════════════════════════════════ */}
       <Dialog
@@ -976,6 +566,7 @@ export default function AnimalPanel() {
         onClose={() => setScannerOpen(false)}
         onAnimalUpdated={load}
         medItems={medItems}
+        onOpenAnimalDetails={(animalId) => setDetailsAnimalId(animalId)}
       />
 
       {/* ── Animal Stage & Pen Transition Modal ── */}
@@ -986,6 +577,7 @@ export default function AnimalPanel() {
         onSuccess={() => {
           load();
           setViewing(null);
+          setDetailsAnimalId(null);
         }}
         stages={stages}
         locations={locations}
