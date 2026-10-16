@@ -198,6 +198,12 @@ async function run() {
         }
       }
     }
+    if (write && PORTA_DEVICE_BATCHES.length > 0) {
+      await db.query(
+        "UPDATE no_series SET current_seq = ?, last_no_used = ?, updated_at = NOW() WHERE tenant_id = ? AND (company_id = ? OR company_id IS NULL) AND code = 'BATCH'",
+        [PORTA_DEVICE_BATCHES.length, PORTA_DEVICE_BATCHES[PORTA_DEVICE_BATCHES.length - 1].no, scope.tenant_id, scope.company_id],
+      );
+    }
 
     const animalIds = new Map<string, string>();
     for (const animal of PORTA_DEVICE_ANIMALS) {
@@ -268,6 +274,10 @@ async function run() {
         const feedCode = scheduler.stage === 'GESTATION' ? 'DG-001'
           : scheduler.stage === 'PRODUCTIVE_SOW' ? 'DS-001'
           : scheduler.stage === 'GILT_REARING' ? 'DGDW-001'
+          : scheduler.stage === 'QUARANTINE' ? 'DGDW-001'
+          : scheduler.stage === 'INSEMINATION' ? 'FEED-SF'
+          : scheduler.stage === 'FLUSH' ? 'FEED-SF'
+          : scheduler.stage === 'FARROWING' ? 'FEED-SF'
           : scheduler.stage === 'LACTATION' ? 'FEED-SF'
           : 'FEED-SF';
         const feedItemId = itemIds.get(feedCode) ?? itemIds.get('FEED-SF');
@@ -276,13 +286,40 @@ async function run() {
              (line_id, scheduler_id, line_seq, line_type, activity_name, stage_id, occurrence, start_day, end_day,
               is_mandatory, source, nob_id, lob_id, item_id, standard_qty, qty_basis,
               allow_qty_edit, creates_inventory, output_lot_auto, item_description, auto_triggers_stage, is_active)
-           VALUES (?, ?, 1, 'CONSUMPTION', ?, ?, 'DAILY', 1, 30, 1, 'AUTO', ?, ?, ?,
+           VALUES (?, ?, 1, 'CONSUMPTION', ?, ?, 'DAILY', 1, NULL, 1, 'AUTO', ?, ?, ?,
                    2.500000, 'PER_HEAD', 1, 0, 1, ?, 0, 1)`,
           [lineId, id, `${scheduler.stage} Feed Consumption`, stageIds.get(scheduler.stage),
             scope.nob_id, scope.lob_id, feedItemId, `${feedCode} Daily Feed`],
         );
       }
     }
+    if (write && PORTA_DEVICE_SCHEDULERS.length > 0) {
+      await db.query(
+        "UPDATE no_series SET current_seq = ?, last_no_used = ?, updated_at = NOW() WHERE tenant_id = ? AND (company_id = ? OR company_id IS NULL) AND code = 'SCHEDULER'",
+        [PORTA_DEVICE_SCHEDULERS.length, PORTA_DEVICE_SCHEDULERS[PORTA_DEVICE_SCHEDULERS.length - 1].no, scope.tenant_id, scope.company_id],
+      );
+    }
+
+    // Ensure Porta Farm Store (POR100/STORE-001) exists under farm POR100
+    const [portaStoreRows] = await db.query<RowDataPacket[]>(
+      "SELECT location_id FROM location_master WHERE tenant_id = ? AND company_id = ? AND location_code = 'POR100/STORE-001' LIMIT 1",
+      [scope.tenant_id, scope.company_id],
+    );
+    let portaStoreId = portaStoreRows[0]?.location_id as string | undefined;
+    if (!portaStoreId) {
+      portaStoreId = randomUUID();
+      if (write) {
+        await db.query(
+          `INSERT INTO location_master
+             (location_id, tenant_id, company_id, nob_id, lob_id, location_code, location_name, location_level, location_type,
+              storage_type, parent_location_id, farm_id, is_active, status, created_by, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, 'POR100/STORE-001', 'Porta Farm Store', 2, 'STORE', 'STORE', ?, ?, 1, 'ACTIVE', ?, NOW(), NOW())`,
+          [portaStoreId, scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id,
+           locationIds.get('POR100'), locationIds.get('POR100'), actorId],
+        );
+      }
+    }
+    locationIds.set('POR100/STORE-001', portaStoreId);
 
     // 1 Month (30 days) Data Entry hitting Inventory Ledger and Bio Asset Ledger
     const storeLocationId = locationIds.get('LOC-001/STORE-001')!;
@@ -290,28 +327,44 @@ async function run() {
     let dailyEntriesPosted = 0;
 
     if (write) {
-      // 1. Establish positive opening stock for consumable feed items in inventory_ledger
-      for (const feedCode of ['DG-001', 'DS-001', 'DGDW-001', 'FEED-SF']) {
-        const fItemId = itemIds.get(feedCode);
-        if (!fItemId) continue;
-        const opLedgerId = randomUUID();
-        openingStockLedgerIds.set(feedCode, opLedgerId);
-        await db.query(
-          `INSERT INTO inventory_ledger
-             (ledger_id, tenant_id, company_id, item_id, item_code, item_description,
-              document_type, document_no, posting_date, entry_type, transaction_type,
-              quantity, remaining_quantity, uom, rate, amount, warehouse_id, nob_id, lob_id, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', 'GR-OPENING-FEED', '2026-09-01', 'POSITIVE', 'PURCHASE',
-                   50000.0000, 50000.0000, 'KG', 0.500000, 25000.0000, ?, ?, ?, ?, NOW())`,
-          [opLedgerId, scope.tenant_id, scope.company_id, fItemId, feedCode, `${feedCode} Opening Stock`,
-           storeLocationId, scope.nob_id, scope.lob_id, actorId],
-        );
-        await db.query(
-          `INSERT INTO inventory_ledger_line
-             (line_id, tenant_id, company_id, ledger_id, line_no, item_id, warehouse_id, quantity, created_at)
-           VALUES (?, ?, ?, ?, 1, ?, ?, 50000.0000, NOW())`,
-          [randomUUID(), scope.tenant_id, scope.company_id, opLedgerId, fItemId, storeLocationId],
-        );
+      // 1. Establish positive opening stock for consumable feed and medicine items in inventory_ledger dated 2024-01-01
+      const targetStoreIds = [portaStoreId, storeLocationId].filter(Boolean);
+      for (const storeId of targetStoreIds) {
+        for (const feedCode of ['DG-001', 'DS-001', 'DGDW-001', 'FEED-SF', 'MED-001', 'VAC-001']) {
+          const fItemId = itemIds.get(feedCode);
+          if (!fItemId) continue;
+          const opLedgerId = randomUUID();
+          if (storeId === portaStoreId) {
+            openingStockLedgerIds.set(feedCode, opLedgerId);
+          }
+          const [existingLedger] = await db.query<RowDataPacket[]>(
+            'SELECT ledger_id FROM inventory_ledger WHERE tenant_id = ? AND company_id = ? AND warehouse_id = ? AND item_id = ? AND document_no = ? LIMIT 1',
+            [scope.tenant_id, scope.company_id, storeId, fItemId, `GR-OPENING-${feedCode}`],
+          );
+          if (existingLedger[0]) {
+            await db.query(
+              'UPDATE inventory_ledger SET quantity = 50000.0000, remaining_quantity = 50000.0000, posting_date = ? WHERE ledger_id = ?',
+              ['2024-01-01', existingLedger[0].ledger_id],
+            );
+          } else {
+            await db.query(
+              `INSERT INTO inventory_ledger
+                 (ledger_id, tenant_id, company_id, item_id, item_code, item_description,
+                  document_type, document_no, posting_date, entry_type, transaction_type,
+                  quantity, remaining_quantity, uom, rate, amount, warehouse_id, nob_id, lob_id, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'GOODS_RECEIPT', ?, '2024-01-01', 'POSITIVE', 'PURCHASE',
+                       50000.0000, 50000.0000, 'KG', 0.500000, 25000.0000, ?, ?, ?, ?, NOW())`,
+              [opLedgerId, scope.tenant_id, scope.company_id, fItemId, feedCode, `${feedCode} Opening Stock`,
+               `GR-OPENING-${feedCode}`, storeId, scope.nob_id, scope.lob_id, actorId],
+            );
+            await db.query(
+              `INSERT INTO inventory_ledger_line
+                 (line_id, tenant_id, company_id, ledger_id, line_no, item_id, warehouse_id, quantity, created_at)
+               VALUES (?, ?, ?, ?, 1, ?, ?, 50000.0000, NOW())`,
+              [randomUUID(), scope.tenant_id, scope.company_id, opLedgerId, fItemId, storeId],
+            );
+          }
+        }
       }
 
       // 2. Generate 30 consecutive calendar days of daily entries
@@ -355,7 +408,7 @@ async function run() {
                      ?, 0.0000, 'KG', ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [dailyLedgerId, scope.tenant_id, scope.company_id, fItemId, planItem.feedCode, `${planItem.feedCode} Daily Consumption`,
              planItem.batchNo, date, -dailyQty, planItem.rate, -costAmount,
-             storeLocationId, scope.nob_id, scope.lob_id, planItem.batchNo, actorId],
+             portaStoreId, scope.nob_id, scope.lob_id, planItem.batchNo, actorId],
           );
 
           // 2. Inventory Ledger Line
@@ -363,7 +416,7 @@ async function run() {
             `INSERT INTO inventory_ledger_line
                (line_id, tenant_id, company_id, ledger_id, line_no, item_id, warehouse_id, quantity, created_at)
              VALUES (?, ?, ?, ?, 1, ?, ?, ?, NOW())`,
-            [randomUUID(), scope.tenant_id, scope.company_id, dailyLedgerId, fItemId, storeLocationId, -dailyQty],
+            [randomUUID(), scope.tenant_id, scope.company_id, dailyLedgerId, fItemId, portaStoreId, -dailyQty],
           );
 
           // 3. Inventory Application (FIFO application matching positive stock)
@@ -393,7 +446,7 @@ async function run() {
                      ?, 'COST_ACCUMULATION', 'KG', ?, ?, ?, ?)`,
             [randomUUID(), scope.tenant_id, scope.company_id, fItemId, planItem.batchNo,
              bId, aId, stgId, date, dailyQty, costAmount,
-             planItem.rate, storeLocationId, scope.nob_id, scope.lob_id, actorId],
+             planItem.rate, portaStoreId, scope.nob_id, scope.lob_id, actorId],
           );
 
           // 6. Update Batch Bio Asset State book value
