@@ -7,6 +7,11 @@ import type { MasterDataField } from "./types";
 import { entityDisplayText, nameOrCode } from "@/utils/code-name";
 import { formatDecimal } from "@/lib/utils";
 
+function safeReferenceDisplay(value: unknown): string {
+  const text = String(value ?? "");
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text) ? "Reference unavailable" : text;
+}
+
 export function formatMasterValue(value: unknown, field?: MasterDataField): string {
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
     return field.emptyMultipleLabel ?? "All (no restriction)";
@@ -99,7 +104,10 @@ export function MasterFieldValue({ field, value, record }: {
 
     const extractLabel = (row: any): string => {
       if (!row || typeof row !== "object") return "";
-      const text = entityDisplayText(row, field?.entityLabelKeys || [], field?.entityValueKey);
+      const labelKeys = field?.entityDisplay === "code"
+        ? (field?.entityLabelKeys || []).filter((key) => /(^|_)(code|no|number|key)$/i.test(key))
+        : field?.entityLabelKeys || [];
+      const text = entityDisplayText(row, labelKeys, field?.entityValueKey);
       if (text) return text;
       return row.code || row.name || row.title || row.label || "";
     };
@@ -128,9 +136,9 @@ export function MasterFieldValue({ field, value, record }: {
                   .get(`${base}/${encodeURIComponent(id)}`)
                   .then((res) => {
                     const rowData = res?.data ?? res;
-                    return extractLabel(rowData) || id;
+                    return extractLabel(rowData) || safeReferenceDisplay(id);
                   })
-                  .catch(() => id);
+                  .catch(() => safeReferenceDisplay(id));
               }),
             ).then((allLabels) => {
               if (!cancelled) {
@@ -149,7 +157,7 @@ export function MasterFieldValue({ field, value, record }: {
                   const rowData = res?.data ?? res;
                   return extractLabel(rowData) || id;
                 })
-                .catch(() => id),
+                .catch(() => safeReferenceDisplay(id)),
             ),
           ).then((allLabels) => {
             if (!cancelled) {
@@ -182,7 +190,7 @@ export function MasterFieldValue({ field, value, record }: {
   }, [canFetch, endpoint, usesList, cacheKey, rawIdsStr, field]);
 
   if (isEntity) {
-    if (!canFetch) return <>{rawIds.join(", ")}</>;
+    if (!canFetch) return <>{rawIds.map(safeReferenceDisplay).join(", ")}</>;
     if (resolved?.request === cacheKey) {
       return <>{resolved.label || "Reference unavailable"}</>;
     }

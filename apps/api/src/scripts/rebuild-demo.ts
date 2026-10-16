@@ -24,7 +24,7 @@
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
 import { assertSafeRebuildTarget, parseRebuildArgs } from './lib/rebuild-guards';
-import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX } from '../core/database/database-names';
+import { DEFAULT_MASTER_DATABASE, DEFAULT_SYSTEM_DATABASE, NAVFARM_DB_PREFIX, NEVER_DROP_DATABASES } from '../core/database/database-names';
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -128,7 +128,13 @@ const CHAPTERS_STEP: Step = { label: 'Post demo operational chapters (Task 2)', 
  * silos, pens and lifecycle stages), restricted to these farms through DEMO_FARMS.
  */
 export const SMALL_PRESET = { farms: 'MUL100,POR100', volume: 'light' } as const;
+/** pnpm seed rebuilds only the reviewed Porta master sources. */
+export const PORTA_PRESET = { farm: 'PORTA' } as const;
 const FOUR_FARM_STEP_SCRIPT = 'seed-four-farm-feed-demo.ts';
+const PORTA_LIFECYCLE_STEP: Step = { label: "Porta's source breed lifecycle stages and feed references", script: 'seed-porta-breed-lifecycles.ts', args: ['--apply'] };
+const PORTA_DEVICE_STEP: Step = { label: "Porta's device-entered animals and operational records", script: 'seed-porta-device-data.ts', args: ['--apply'] };
+const PORTA_FEED_STEP: Step = { label: "Porta's feed forecast topology, stock, mill and BIN fixture", script: 'seed-porta-feed-planning-data.ts', args: ['--apply'] };
+const PORTA_REQUISITION_HISTORY_STEP: Step = { label: "Porta's batch-based historical feed requisitions", script: 'seed-porta-requisition-history.ts', args: ['--apply'] };
 const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and lifecycles for the small preset farms', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
 
 /**
@@ -149,6 +155,26 @@ const FULL_FARM_STEP: Step = { label: 'Nine-farm demo masters (farms, sheds/pens
 const VERIFY_STEP: Step = { label: 'Reconcile batches, inventory, transfers and outputs against each other', script: 'verify-demo-flow.ts', args: [] };
 
 export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string }): Step[] {
+  if (opts.preset === 'porta') {
+    if (opts.chaptersOnly) return [];
+    const steps: Step[] = [];
+    if (!opts.skipReset) steps.push(RESET_STEP);
+    // The Porta preset is workbook-backed master data only. The item catalog
+    // is a fixed demo fixture and has no source row in the supplied workbooks,
+    // so it must not be part of `pnpm seed`.
+    const portaMasters = MASTER_STEPS.filter((step) =>
+      step.script !== FOUR_FARM_STEP_SCRIPT && step.script !== 'seed-demo-item-catalog.ts');
+    const alignIndex = portaMasters.findIndex((step) => step.script === 'stamp-master-nob-lob.ts');
+    portaMasters.splice(alignIndex < 0 ? portaMasters.length : alignIndex, 0, PORTA_LIFECYCLE_STEP);
+    const lifecycleIndex = portaMasters.findIndex((step) => step.script === PORTA_LIFECYCLE_STEP.script);
+    portaMasters.splice(lifecycleIndex + 1, 0, PORTA_DEVICE_STEP);
+    const deviceIndex = portaMasters.findIndex((step) => step.script === PORTA_DEVICE_STEP.script);
+    portaMasters.splice(deviceIndex + 1, 0, PORTA_FEED_STEP);
+    const feedIndex = portaMasters.findIndex((step) => step.script === PORTA_FEED_STEP.script);
+    portaMasters.splice(feedIndex + 1, 0, PORTA_REQUISITION_HISTORY_STEP);
+    steps.push(...portaMasters);
+    return steps;
+  }
   // --volume=<full|standard|light> sizes the chapters' data; left out, the chapters use their own default.
   // The small preset seeds no batches or schedulers (`--no-batches`): the person using the app creates them.
   const extra = [
@@ -174,19 +200,17 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
 export interface ResetTargets {
   masterDatabase: string;
   systemDatabase: string;
-  tenantPrefix: string;
+  demoTenantDatabase: string;
 }
 
 /**
  * Derives the databases setup-fresh-database.ts is actually about to drop —
  * by the same rule, from the same env vars (DATABASE_NAME, SYSTEM_TENANT_DATABASE),
  * not by re-filtering SHOW DATABASES through the guard's own naming regex.
- * Filtering by that regex first and only then asserting on what survived the
- * filter meant the assert could never see a name the regex had already
- * excluded — which is exactly the case that matters: DATABASE_NAME or
- * SYSTEM_TENANT_DATABASE pointed at a navcrm_* database by mistake. Deriving
- * the target list the same way the real drop does, and asserting on THAT
- * before any subprocess runs, closes that gap.
+ * The reset is deliberately limited to the demo databases. A local MySQL
+ * commonly contains retained integration/UAT databases whose names also
+ * begin with `nf_`; treating the whole prefix as disposable would make
+ * `pnpm seed` destroy unrelated test data.
  *
  * setup-fresh-database.ts also supports a `piggery_*` isolated naming mode
  * (masterDatabase.startsWith('piggery_')) that assertSafeRebuildTarget's
@@ -205,9 +229,9 @@ export function deriveResetTargets(env: NodeJS.ProcessEnv): ResetTargets {
       'missing what setup-fresh-database.ts would drop under that naming.',
     );
   }
-  const tenantPrefix = NAVFARM_DB_PREFIX;
   const systemDatabase = env.SYSTEM_TENANT_DATABASE || DEFAULT_SYSTEM_DATABASE;
-  return { masterDatabase, systemDatabase, tenantPrefix };
+  const demoTenantDatabase = env.DEMO_TENANT_DATABASE || `${NAVFARM_DB_PREFIX}devco`;
+  return { masterDatabase, systemDatabase, demoTenantDatabase };
 }
 
 export async function listResetTargetDatabases(targets: ResetTargets): Promise<string[]> {
@@ -216,7 +240,11 @@ export async function listResetTargetDatabases(targets: ResetTargets): Promise<s
     const [rows] = await conn.query<mysql.RowDataPacket[]>('SHOW DATABASES');
     return (rows as Array<{ Database: string }>)
       .map((r) => r.Database)
-      .filter((name) => name === targets.masterDatabase || name === targets.systemDatabase || name.startsWith(targets.tenantPrefix));
+      .filter((name) => new Set([
+        targets.masterDatabase,
+        targets.systemDatabase,
+        targets.demoTenantDatabase,
+      ]).has(name) && !NEVER_DROP_DATABASES.includes(name as (typeof NEVER_DROP_DATABASES)[number]));
   } finally {
     await conn.end();
   }
@@ -253,6 +281,7 @@ async function main() {
   // The preset implies its volume unless one was given, and scopes every child step to its farms.
   const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
   if (args.preset === 'small' || args.preset === 'lean') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  if (args.preset === 'porta') process.env.SEED_SOURCE_FARM = PORTA_PRESET.farm;
   const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 
   // The real target list, derived the same way setup-fresh-database.ts

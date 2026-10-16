@@ -43,6 +43,11 @@ function stringValue(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
+function safeReferenceDisplay(value: unknown): string {
+  const text = stringValue(value);
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text) ? "Reference unavailable" : text;
+}
+
 function lookupColumns(labelKeys: string[]): { codeKey?: string; nameKey?: string } {
   const codeKey = labelKeys.find((key) => /(^|_)(code|no|number|key)$/i.test(key)) || labelKeys[0];
   const nameKey = labelKeys.find((key) => key !== codeKey && /(^|_)(name|description|label|title)$/i.test(key))
@@ -62,7 +67,7 @@ function rowValues(row: LookupRow, labelKeys: string[]): { code: string; name: s
 function selectedRowLabel(row: LookupRow, labelKeys: string[], valueKey: string): string {
   // The name; a UOM or currency its code (Rishi, 14 Oct).
   const { code, name } = rowValues(row, labelKeys);
-  return entityDisplayText(row, labelKeys, valueKey) || name || code || stringValue(row[valueKey]);
+  return entityDisplayText(row, labelKeys, valueKey) || name || code || safeReferenceDisplay(row[valueKey]);
 }
 
 export function EntityLookupDialog({

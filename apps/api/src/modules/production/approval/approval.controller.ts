@@ -4,7 +4,7 @@ import { ApprovalService } from './approval.service';
 import { ApproveApprovalDto, CreateApprovalRequestDto, DecideApprovalDto, QueryApprovalDto } from './dto/approval.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { RequireAnyPermission, RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 
 @ApiTags('Operational Approvals')
@@ -16,7 +16,10 @@ export class ApprovalController {
   constructor(private readonly approvalService: ApprovalService) {}
 
   @Get()
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'view' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'view' },
+  )
   @ApiOperation({ summary: 'List approval requests' })
   async findAll(@Query() query: QueryApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -25,7 +28,10 @@ export class ApprovalController {
   }
 
   @Get('counts')
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'view' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'view' },
+  )
   @ApiOperation({ summary: 'Pending / approved / rejected counts for the tab badges' })
   async counts(@Query() query: QueryApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -34,7 +40,10 @@ export class ApprovalController {
   }
 
   @Get('counts-requisitions')
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'view' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'view' },
+  )
   @ApiOperation({ summary: 'Pending requisition approvals — the inbox card that links to the Requisitions hub (WP1b)' })
   async countsRequisitions(@Query() query: QueryApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
@@ -43,7 +52,10 @@ export class ApprovalController {
   }
 
   @Get(':id')
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'view')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'view' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'view' },
+  )
   async findOne(@Param('id') id: string, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.approvalService.findOne(id, tenantId, req.user?.userType);
@@ -60,7 +72,10 @@ export class ApprovalController {
   }
 
   @Post(':id/approve')
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'approve')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'approve' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'approve' },
+  )
   async approve(@Param('id') id: string, @Body() dto: ApproveApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.approvalService.approve(id, tenantId, req.user, dto?.remarks);
@@ -68,7 +83,10 @@ export class ApprovalController {
   }
 
   @Post(':id/reject')
-  @RequirePermission('PRODUCTION', 'APPROVAL', 'approve')
+  @RequireAnyPermission(
+    { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'approve' },
+    { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'approve' },
+  )
   async reject(@Param('id') id: string, @Body() dto: DecideApprovalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.approvalService.reject(id, dto, tenantId, req.user);

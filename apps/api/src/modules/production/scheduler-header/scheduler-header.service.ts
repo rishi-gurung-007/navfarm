@@ -63,14 +63,11 @@ export function pickLineFields(line: Record<string, unknown>): Record<string, un
 }
 
 /**
- * A scheduler's activities are set when it is created (Rishi, 14 Oct): filled in from the stage, changed by the user on
- * the Create Scheduler form if need be, and fixed from then on — no line is added, edited, removed or copied in, and a
- * later change to the stage does not reach an existing scheduler.
+ * The Feed Consumption lines of a scheduler are its activity lines like any other (Rishi, 14 Oct): there is no second
+ * feed list to replace, so PUT :id/feed-lines has nothing left to do and is refused.
  */
-export const ACTIVITIES_LOCKED_MESSAGE = "A scheduler's activities are set when it is created and cannot be changed afterwards.";
-function assertActivitiesOpen(): never {
-  throw new BadRequestException(ACTIVITIES_LOCKED_MESSAGE);
-}
+export const FEED_LINES_RETIRED_MESSAGE =
+  "A scheduler's feed is edited as its Feed Consumption activity lines, not through this endpoint.";
 
 @Injectable()
 export class SchedulerHeaderService {
@@ -492,8 +489,9 @@ export class SchedulerHeaderService {
       .from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, batchId)).limit(1);
     if (batch?.tracking_mode !== 'ANIMAL_WISE') return;
 
-    // Every stage the animals now hold gets an open scheduler, or the animals there have no data entry.
-    if (batch.status === 'ACTIVE') await this.openOccupiedStageSchedulers(batch);
+    // A stage whose scheduler was completed when its last animal left is reopened when animals come back to it.
+    // No scheduler is created here (Rishi, 15 Oct) — see reopenOccupiedStageSchedulers.
+    if (batch.status === 'ACTIVE') await this.reopenOccupiedStageSchedulers(batch);
 
     const headers = await this.db
       .select({ scheduler_id: schema.schedulerHeader.scheduler_id, stage_code: schema.stageMaster.stage_code })
@@ -520,8 +518,18 @@ export class SchedulerHeaderService {
     }
   }
 
-  /** Opens a scheduler — new, or the stage's completed one — for each stage an animal-wise batch's live animals hold. */
-  private async openOccupiedStageSchedulers(batch: typeof schema.batchHeader.$inferSelect): Promise<void> {
+  /**
+   * Reopens the completed scheduler of a stage an animal-wise batch's live animals have come back to — a batch has one
+   * scheduler per stage, so it is reopened rather than duplicated.
+   *
+   * It no longer *creates* one for a stage that has none (Rishi, 15 Oct; reverses the 9 Oct "every stage a live animal
+   * holds has a scheduler"): every death, transfer and stage move ends here, so an animal moving into a stage opened a
+   * scheduler there behind the user's back — creating one scheduler for one batch and stage was followed by schedulers
+   * for every other stage the batch's animals stood in. A scheduler is created where the user asks for one (the Create
+   * Scheduler form, batch creation, a stage transfer). The cost of the reversal: animals at a stage that never had a
+   * scheduler have no data entry until someone creates it.
+   */
+  private async reopenOccupiedStageSchedulers(batch: typeof schema.batchHeader.$inferSelect): Promise<void> {
     const occupied = await this.db
       .selectDistinct({ stage_id: schema.animalRegister.current_stage_id, stage_code: schema.stageMaster.stage_code })
       .from(schema.animalRegister)
@@ -538,7 +546,9 @@ export class SchedulerHeaderService {
       .innerJoin(schema.stageMaster, eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id))
       .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
 
-    const { create, reopen } = stagesNeedingScheduler(
+    // `create` — the stages holding animals that have no scheduler at all — is deliberately not acted on; those are
+    // the user's to create. stagesNeedingScheduler still reports them for callers that ask the question.
+    const { reopen } = stagesNeedingScheduler(
       occupied.flatMap((s) => (s.stage_id ? [{ stage_id: s.stage_id, stage_code: s.stage_code }] : [])),
       schedulers,
     );
@@ -546,9 +556,6 @@ export class SchedulerHeaderService {
       await this.db.update(schema.schedulerHeader)
         .set({ scheduler_status: 'ACTIVE', actual_end_date: null, updated_at: toMysqlTimestamp() })
         .where(eq(schema.schedulerHeader.scheduler_id, schedulerId));
-    }
-    for (const stageId of create) {
-      await this.createForAuthorizedBatchStage(batch, stageId, batch.tenant_id);
     }
   }
 
@@ -1075,9 +1082,9 @@ export class SchedulerHeaderService {
     return { kpis, feed };
   }
 
-  /** Refused (ACTIVITIES_LOCKED_MESSAGE): a scheduler's activities are set when it is created. */
+  /** Refused (FEED_LINES_RETIRED_MESSAGE): a feed line is edited as an activity line. */
   async updateFeedLines(..._args: unknown[]): Promise<never> {
-    return assertActivitiesOpen();
+    throw new BadRequestException(FEED_LINES_RETIRED_MESSAGE);
   }
 
   async findOne(id: string) {

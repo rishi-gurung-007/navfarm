@@ -370,7 +370,6 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   const lineType = lineForm.line_type;
   // Copying is offered while the scheduler has no active activity — removed ones stay listed, greyed.
-  // Only a system scheduler (a template) can be filled from another: a batch scheduler's activities are fixed.
   const canCopy = !(header.lines || []).some((l: Row) => l.is_active !== false);
 
   return (
@@ -488,10 +487,10 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
       {/*
         A scheduler has no separate feed list and no separate KPI list any more (Rishi, 14 Oct): everything the
-        stage says the batch should do — its feed, resources, vaccinations, medication and KPIs — is an activity
-        line below, written when the scheduler is created and fixed from then on. The feed editor and the stage-KPI
-        table that used to sit here were the old two-list model; the API refuses to change a batch scheduler's
-        activities (scheduler-header.service.ts, ACTIVITIES_LOCKED_MESSAGE).
+        stage says the batch should do — its feed, resources, vaccinations, medication and KPIs — is one activity
+        line below. The feed editor and the stage-KPI table that used to sit here were the old two-list model; a
+        feed line is now added, edited and removed in the activity table like any other, on a batch scheduler as
+        on a system one.
       */}
 
       {/* Collapsible Lines Section */}

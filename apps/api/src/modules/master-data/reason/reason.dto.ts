@@ -8,12 +8,7 @@ import { MasterListQueryDto } from '../../../common/master-list-query';
 export class CreateReasonDto {
   @IsOptional() @IsUUID() company_id?: string;
   @IsOptional() @IsString() @MaxLength(50) reason_code?: string;
-  // Description (the reason_name column) is capped at 50 (Freebuff task-3,
-  // item 5), matching the web form's maxLength — it was 150, which the form
-  // never mirrored. One transcribed template row exceeds this (SEL-003, 51
-  // chars) — flagged to Rishi; the master is empty in nf_devco, so nothing
-  // existing breaks.
-  @IsString() @IsNotEmpty() @Matches(/\S/) @MaxLength(50) reason_name!: string;
+  @IsString() @IsNotEmpty() @Matches(/\S/) @MaxLength(150) reason_name!: string;
   @IsIn(REASON_CATEGORIES) category!: ReasonCategory;
   // Reason Master Template column C — free text, e.g. "Disease", "Trauma",
   // "Reproductive". No sub-category master exists; the template gives a value

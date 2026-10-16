@@ -54,4 +54,9 @@ describe('rebuild guards', () => {
   it('refuses a NavCRM database even if it happens to match the NAVFarm naming shape', () => {
     expect(() => assertSafeRebuildTarget(local, ['nf_navcrm_x'])).toThrow('Refusing to drop nf_navcrm_x');
   });
+
+  it('refuses the protected PortaTestNavFarm tenant database', () => {
+    expect(() => assertSafeRebuildTarget(local, ['nf_portatestnavfarm']))
+      .toThrow('Refusing to drop protected database nf_portatestnavfarm');
+  });
 });

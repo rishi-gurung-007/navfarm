@@ -21,6 +21,9 @@ export const NAVFARM_DB_PREFIX = 'nf_';
 export const DEFAULT_MASTER_DATABASE = `${NAVFARM_DB_PREFIX}master`;
 export const DEFAULT_SYSTEM_DATABASE = `${NAVFARM_DB_PREFIX}system`;
 
+/** Databases that must never be removed by any demo reset or seed command. */
+export const NEVER_DROP_DATABASES = ['nf_portatestnavfarm'] as const;
+
 /** Tenant codes whose database name would collide with a non-tenant database. */
 export const RESERVED_TENANT_CODES = ['master'];
 

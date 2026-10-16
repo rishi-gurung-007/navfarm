@@ -1,0 +1,79 @@
+TENANT_DB=YOUR_TENANT_DB
+mysql -u root -p "$TENANT_DB" --table <<'SQL'
+SELECT
+  DATABASE() AS tenant_database,
+  @@hostname AS mysql_host;
+
+SELECT
+  company_id,
+  company_code,
+  company_name,
+  tenant_id
+FROM company_master;
+
+SELECT
+  location_id,
+  location_code,
+  location_name,
+  location_type,
+  parent_location_id,
+  is_active,
+  status,
+  silo_capacity_kg,
+  bin_capacity_kg,
+  bin_feed_type
+FROM location_master
+WHERE location_type IN ('SILO', 'MILL', 'BIN')
+  AND deleted_at IS NULL
+ORDER BY location_type, location_code;
+
+SELECT
+  l.location_code,
+  l.location_type,
+  il.item_id,
+  il.item_code,
+  il.item_description,
+  il.uom,
+  SUM(il.remaining_quantity) AS current_stock_kg,
+  COUNT(*) AS ledger_layers
+FROM location_master l
+JOIN inventory_ledger il
+  ON il.warehouse_id = l.location_id
+WHERE l.location_type IN ('SILO', 'BIN')
+  AND l.deleted_at IS NULL
+  AND il.entry_type IN ('POSITIVE', 'TRANSFER')
+  AND il.remaining_quantity > 0
+GROUP BY
+  l.location_id, l.location_code, l.location_type,
+  il.item_id, il.item_code, il.item_description, il.uom
+ORDER BY l.location_code, il.item_code;
+
+SELECT
+  b.location_code AS bin_code,
+  b.location_name AS bin_name,
+  a.production_date,
+  i.item_id,
+  i.item_code,
+  i.item_name,
+  a.production_slot_id,
+  a.diet_priority
+FROM bin_diet_assignment a
+JOIN location_master b
+  ON b.location_id = a.bin_location_id
+JOIN item_master i
+  ON i.item_id = a.feed_item_id
+WHERE b.location_type = 'BIN'
+  AND a.is_active = 1
+  AND a.status = 'ACTIVE'
+  AND a.deleted_at IS NULL
+  AND b.deleted_at IS NULL
+ORDER BY b.location_code, a.production_date DESC;
+
+SELECT
+  s.location_code AS silo_code,
+  h.location_code AS shed_code
+FROM silo_shed_link x
+JOIN location_master s ON s.location_id = x.silo_id
+JOIN location_master h ON h.location_id = x.shed_id
+ORDER BY s.location_code, h.location_code;
+SQL

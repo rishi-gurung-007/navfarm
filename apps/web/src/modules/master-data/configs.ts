@@ -61,7 +61,7 @@ const location: MasterDataConfig = {
     { key: "company_id", label: "Company", type: "text", hideInForm: true },
     { key: "location_code", label: "Code", labelWhen: { key: "location_type", labels: { MILL: "Mill Code", BIN: "Bin Code" } }, type: "text", readOnly: true, createOnly: true, helpText: "Generated from the selected Location Type prefix and kept permanently.", section: "Identification" },
     {
-      key: "location_type", label: "Location Type", type: "select-entity", required: true,
+      key: "location_type", label: "Location Type", type: "select-entity", required: true, searchable: true,
       entityEndpoint: "/location-type", entityValueKey: "type_code", entityLabelKeys: ["type_code", "type_name"], section: "Identification",
     },
     { key: "location_name", label: "Name", labelWhen: { key: "location_type", labels: { MILL: "Mill Name", BIN: "Bin Name" } }, type: "text", required: true, maxLength: 100, placeholder: "Porta Farm", section: "Identification" },
@@ -1321,7 +1321,7 @@ const breedLifecycleStage: MasterDataConfig = {
     { key: "lifecycle_code", label: "Code", type: "text", createOnly: true, placeholder: "BLS-001", helpText: "Optional. Leave blank until the numbering convention is agreed; a series can generate it later." },
     // breed_id is set at creation and is immutable — UpdateBreedLifecycleStageDto does not
     // accept it. createOnly: true allows picking it on creation and disables it on edit.
-    { key: "breed_id", label: "Breed", type: "select-entity", required: true, createOnly: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code", "breed_name"] },
+    { key: "breed_id", label: "Breed", type: "select-entity", required: true, createOnly: true, searchable: true, entityEndpoint: "/breed", entityValueKey: "breed_id", entityLabelKeys: ["breed_code"], entityDisplay: "code" },
     { key: "stage_id", label: "Stage", type: "select-entity", required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"] },
     {
       key: "category", label: "Category", type: "select",
@@ -1506,10 +1506,7 @@ const kpiMetric: MasterDataConfig = {
 const reason: MasterDataConfig = {
   key: "reason", label: "Reasons", singular: "Reason", apiBase: "/reason", idKey: "reason_id",
   group: "Livestock & Health", isPrimary: true, businessAdminOnly: true,
-  description: "Shared company reasons for mortality, culling, returns, selection, disposal, transfers, scans, adjustments and requisitions — the client's Reason Master Template, verbatim: Reason Code, Category, Sub-Category, Description, Stage Filter, Mandatory Comment, Blocked.",
-  // "Blocked" is the row's own Active/Inactive toggle (is_active/status) —
-  // every master in this app surfaces it that way, not as a data column, so
-  // it isn't repeated here as a field.
+  description: "Shared company reasons for mortality, culling, returns, selection, disposal, transfers, scans, adjustments and requisitions — the client's Reason Master Template: Reason Code, Category, Sub-Category, Description, Stage Filter and Mandatory Comment.",
   columns: [
     { key: "reason_code", label: "Code" }, { key: "category", label: "Category" }, { key: "sub_category", label: "Sub-Category" },
     { key: "reason_name", label: "Description" }, { key: "applicable_stages", label: "Stage Filter" }, { key: "mandatory_comment", label: "Mandatory Comment" },
@@ -1522,13 +1519,13 @@ const reason: MasterDataConfig = {
     { key: "reason_code", label: "Code", type: "text", createOnly: true, required: true },
     {
       key: "category", label: "Category", type: "select", required: true,
-      options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER", "SCAN", "ADJUSTMENT", "REQUISITION"].map((value) => ({ value, label: value })),
+      options: ["MORTALITY", "CULL", "RETURN", "SELECTION", "DISPOSAL", "TRANSFER", "SCAN", "ADJUSTMENT", "REQUISITION", "HEAT", "SERVICING"].map((value) => ({ value, label: value })),
     },
     { key: "sub_category", label: "Sub-Category", type: "text", maxLength: 50, placeholder: "Disease" },
     // Template column D is "Description"; the schema/API field is reason_name
     // (entrenched elsewhere — unique index, seed scripts, tests) — relabelled
     // here rather than renamed, so this is the only place the word "Name" is gone.
-    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 50 },
+    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 150 },
     // Multi-select over real stage_master rows, with an "All Stages" option
     // standing in for "no restriction" (the column's own meaning when empty —
     // see allOption in types.ts). This is what reason.service.ts actually

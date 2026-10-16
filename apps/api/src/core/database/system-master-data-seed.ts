@@ -129,7 +129,7 @@ export const SYSTEM_LOCATION_TYPE_SEED: Array<{
   allowed_parent_types: string[];
 }> = [
   { type_code: 'FARM', type_name: 'Farm', code_prefix: 'FARM', allowed_parent_types: [] },
-  { type_code: 'SHED', type_name: 'Shed / House', code_prefix: 'SHED', allowed_parent_types: ['FARM'] },
+  { type_code: 'SHED', type_name: 'Shed', code_prefix: 'SHED', allowed_parent_types: ['FARM'] },
   { type_code: 'PEN', type_name: 'Pen', code_prefix: 'PEN', allowed_parent_types: ['SHED'] },
   // Porta's Location Master has 89 rows of type CRATE — farrowing and
   // service-line crates, under its houses, capacity 1. Not folded into CAGE,
@@ -237,7 +237,7 @@ export const SYSTEM_BREED_SEED: Array<{
   { nob_code: 'LIVESTOCK', lob_code: 'LVS_GOAT_SHEEP', breed_code: 'BOER-GOAT', breed_name: 'Boer Goat', species_code: 'GOAT', breed_type: 'MEAT' },
   { nob_code: 'AQUA', lob_code: 'AQA_FISH', breed_code: 'ROHU', breed_name: 'Rohu', species_code: 'FISH', breed_type: 'FISH' },
   { nob_code: 'INSECT', lob_code: 'INS_BEE', breed_code: 'ITALIAN-BEE', breed_name: 'Italian Honey Bee', species_code: 'BEE', breed_type: 'DUAL_PURPOSE' },
-];
+].filter((row) => !new Set(['LANDRACE', 'LARGE_WHITE', 'YORKSHIRE', 'DUROC']).has(row.breed_code));
 
 /**
  * A couple of representative items per LOB (input + main output), scoped by
@@ -629,7 +629,9 @@ const LEGACY_BREED_LIFECYCLE_SEED: Array<{
 
 /** Preserve illustrative feed benchmarks only where the BBP stage identity is
  * unambiguous. Do not split the old combined flushing/service profile by guess. */
-export const SYSTEM_BREED_LIFECYCLE_SEED: typeof LEGACY_BREED_LIFECYCLE_SEED = LEGACY_BREED_LIFECYCLE_SEED.flatMap((row) => {
+export const SYSTEM_BREED_LIFECYCLE_SEED: typeof LEGACY_BREED_LIFECYCLE_SEED = LEGACY_BREED_LIFECYCLE_SEED
+  .filter((row) => !new Set(['LANDRACE', 'LARGE_WHITE', 'YORKSHIRE', 'DUROC']).has(row.breed_code))
+  .flatMap((row) => {
   const code = BBP_STAGE_RENAMES[row.stage_code] || row.stage_code;
   const stage = SYSTEM_STAGE_SEED.find((entry) => entry.stage_code === code);
   if (!stage) return [];

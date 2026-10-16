@@ -171,7 +171,9 @@ async function run() {
     // keyed on location_code so a re-run updates in place.
     const LEVEL: Record<string, number> = { FARM: 1, SHED: 2, PEN: 3, CRATE: 3, CAGE: 3 };
     const order = (r: FarmLocationSeedRow) => LEVEL[r.type] ?? 9;
-    const sorted = [...FARM_LOCATION_SEED].sort((a, b) => order(a) - order(b));
+    const sourceFarm = process.env.SEED_SOURCE_FARM;
+    const sourceRows = sourceFarm ? FARM_LOCATION_SEED.filter((row) => row.farm === sourceFarm) : FARM_LOCATION_SEED;
+    const sorted = [...sourceRows].sort((a, b) => order(a) - order(b));
     const idByCode = new Map<string, string>();
     const farmIdByFarm = new Map<string, string>();
     let inserted = 0;
@@ -238,10 +240,10 @@ async function run() {
       }
     }
     plan.locations = {
-      fromTemplates: FARM_LOCATION_SEED.length,
+      fromTemplates: sourceRows.length,
       inserted, updated,
-      byFarm: ['MULTIPLIER', 'PORTA'].map((f) => ({
-        farm: f, rows: FARM_LOCATION_SEED.filter((r) => r.farm === f).length,
+      byFarm: [...new Set(sourceRows.map((r) => r.farm))].map((f) => ({
+        farm: f, rows: sourceRows.filter((r) => r.farm === f).length,
       })),
       blockedAwaitingTripleC: 'docs/triple-c-location-code-queries.md — 453 of 703 rows',
     };
@@ -254,7 +256,10 @@ async function run() {
     const [synthetic] = await db.query<RowDataPacket[]>(
       `SELECT location_id, location_code, location_name FROM location_master
         WHERE tenant_id = ? AND is_active = 1
-          AND (location_code = 'FARM-001' OR location_code LIKE 'FARM-001/%')`,
+          AND (
+            location_code = 'FARM-001' OR location_code LIKE 'FARM-001/%'
+            ${sourceFarm === 'PORTA' ? "OR location_code = 'MUL100' OR location_code LIKE 'MUL100/%' OR location_code = 'LOC-001' OR (location_code LIKE 'LOC-001/%' AND location_code <> 'LOC-001/STORE-001')" : ''}
+          )`,
       [scope.tenant_id]);
 
     // Counted, not deleted: this is what would have been stranded.
@@ -279,19 +284,22 @@ async function run() {
     };
 
     // ---- Point the operational area at a farm that exists -------------------
-    const multiplierId = farmIdByFarm.get('MULTIPLIER') ?? null;
+    const selectedFarmId = sourceFarm === 'PORTA'
+      ? farmIdByFarm.get('PORTA') ?? null
+      : farmIdByFarm.get('MULTIPLIER') ?? null;
+    const selectedFarmLabel = sourceFarm === 'PORTA' ? 'PORTA' : 'MULTIPLIER';
     const [areas] = await db.query<RowDataPacket[]>(
       'SELECT area_id, area_code, farm_id FROM operational_area_master WHERE tenant_id = ?', [scope.tenant_id]);
     const repointed: string[] = [];
     for (const a of areas) {
-      if (!multiplierId || a.farm_id === multiplierId) continue;
+      if (!selectedFarmId || a.farm_id === selectedFarmId) continue;
       if (write) {
         await db.query('UPDATE operational_area_master SET farm_id = ?, updated_at = NOW() WHERE area_id = ?',
-          [multiplierId, a.area_id]);
+          [selectedFarmId, a.area_id]);
       }
-      repointed.push(`${a.area_code} → MULTIPLIER`);
+      repointed.push(`${a.area_code} → ${selectedFarmLabel}`);
     }
-    plan.operationalAreas = repointed.length ? repointed : 'already pointing at MULTIPLIER';
+    plan.operationalAreas = repointed.length ? repointed : `already pointing at ${selectedFarmLabel}`;
 
     const [after] = await db.query<RowDataPacket[]>(
       `SELECT location_type, COUNT(*) n, SUM(is_active = 1) active FROM location_master

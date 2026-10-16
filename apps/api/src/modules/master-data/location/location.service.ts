@@ -1825,7 +1825,10 @@ export class LocationService {
       throw new NotFoundException(`Location with ID '${id}' not found.`);
     }
 
-    if (!location.deleted_at) {
+    // Some legacy/reconciled locations are inactive without a soft-delete
+    // timestamp. They are still restorable: the UI uses is_active as the
+    // source of truth for whether the row is inactive.
+    if (location.is_active !== false && !location.deleted_at) {
       return location;
     }
 

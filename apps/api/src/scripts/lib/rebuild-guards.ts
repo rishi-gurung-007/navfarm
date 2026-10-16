@@ -5,6 +5,8 @@
  * are no longer ours to drop — on a shared MySQL, tenant_* may well be someone
  * else's.
  */
+import { NEVER_DROP_DATABASES } from '../../core/database/database-names';
+
 const NAVFARM_DATABASE = /^nf_[a-z0-9_]+$/;
 
 export function assertSafeRebuildTarget(env: Record<string, string | undefined>, databases: string[]): void {
@@ -13,12 +15,15 @@ export function assertSafeRebuildTarget(env: Record<string, string | undefined>,
     throw new Error(`Demo rebuild only runs against a local MySQL; DATABASE_HOST is ${host}.`);
   }
   for (const name of databases) {
+    if (NEVER_DROP_DATABASES.includes(name as (typeof NEVER_DROP_DATABASES)[number])) {
+      throw new Error(`Refusing to drop protected database ${name}.`);
+    }
     if (name.includes('navcrm') || !NAVFARM_DATABASE.test(name)) throw new Error(`Refusing to drop ${name}.`);
   }
 }
 
 const VOLUMES = ['full', 'standard', 'light'];
-const PRESETS = ['small', 'full', 'lean'];
+const PRESETS = ['porta', 'small', 'full', 'lean'];
 
 export function parseRebuildArgs(argv: string[]): { apply: boolean; chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string } {
   const known = new Set(['--apply', '--chapters-only', '--skip-reset']);

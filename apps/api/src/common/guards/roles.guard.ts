@@ -6,7 +6,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../core/database/schema';
-import { REQUIRE_PERMISSION_KEY, RequiredPermission } from '../decorators/require-permission.decorator';
+import { REQUIRE_ANY_PERMISSION_KEY, REQUIRE_PERMISSION_KEY, RequiredPermission } from '../decorators/require-permission.decorator';
 import { grantsAny, isAdminUserType, loadUserPermissions } from '../permissions';
 import { CODE_PREVIEW_PERMISSION_KEY, codePreviewPermissions } from '../decorators/require-code-preview-permission.decorator';
 import { FARM_SCOPED_KEY, FARM_SCOPE_KEY, resolveFarmScope } from '../farm-scope';
@@ -60,6 +60,10 @@ export class RolesGuard implements CanActivate {
       REQUIRE_PERMISSION_KEY,
       [context.getHandler(), context.getClass()],
     );
+    const requiredAnyPermissions = this.reflector.getAllAndOverride<RequiredPermission[]>(
+      REQUIRE_ANY_PERMISSION_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
     if (isAdminUserType(user.userType)) {
       return true;
@@ -67,7 +71,13 @@ export class RolesGuard implements CanActivate {
 
     const previewPermission = this.reflector.getAllAndOverride<boolean>(CODE_PREVIEW_PERMISSION_KEY, [context.getHandler(), context.getClass()]);
     const masterParam = request.query?.master || request.query?.masterType;
-    const requiredPermissions = previewPermission ? codePreviewPermissions(masterParam) : requiredPermission ? [requiredPermission] : [];
+    const requiredPermissions = previewPermission
+      ? codePreviewPermissions(masterParam)
+      : requiredAnyPermissions?.length
+        ? requiredAnyPermissions
+        : requiredPermission
+          ? [requiredPermission]
+          : [];
 
     if (!requiredPermissions.length) {
       return true;

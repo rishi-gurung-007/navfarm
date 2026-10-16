@@ -4,7 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { RolesGuard } from './roles.guard';
 import { CODE_PREVIEW_PERMISSION_KEY } from '../decorators/require-code-preview-permission.decorator';
 import { FARM_SCOPED_KEY } from '../farm-scope';
-import { REQUIRE_PERMISSION_KEY } from '../decorators/require-permission.decorator';
+import { REQUIRE_ANY_PERMISSION_KEY, REQUIRE_PERMISSION_KEY } from '../decorators/require-permission.decorator';
 
 describe('RolesGuard stock-count permission boundary', () => {
   const permissions = jest.fn();
@@ -186,6 +186,14 @@ describe('RolesGuard document actions, persona constraints and explicit grants',
       { get: () => ({ select }), set: jest.fn() } as unknown as ClsService,
     );
 
+  const buildGuardForAnyPermission = (permissionsToTry: { moduleCode: string; resource: string; action: string }[]) =>
+    new RolesGuard(
+      {
+        getAllAndOverride: (key: string) => key === REQUIRE_ANY_PERMISSION_KEY ? permissionsToTry : undefined,
+      } as unknown as Reflector,
+      { get: () => ({ select }), set: jest.fn() } as unknown as ClsService,
+    );
+
   const context = (userType: string, userId = 'user-1') =>
     ({
       switchToHttp: () => ({
@@ -251,6 +259,17 @@ describe('RolesGuard document actions, persona constraints and explicit grants',
     });
     permissions.mockResolvedValue([{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]);
     await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+  });
+
+  it('allows a shared approval route when either workflow permission is present', async () => {
+    const guard = buildGuardForAnyPermission([
+      { moduleCode: 'PRODUCTION', resource: 'APPROVAL', action: 'approve' },
+      { moduleCode: 'PROCUREMENT', resource: 'REQUISITION', action: 'approve' },
+    ]);
+    permissions.mockResolvedValue([{ moduleCode: 'PROCUREMENT', resource: 'REQUISITION', canApprove: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).resolves.toBe(true);
+    permissions.mockResolvedValue([{ moduleCode: 'INVENTORY', resource: 'LEDGER', canApprove: true }]);
+    await expect(guard.canActivate(context('STANDARD_USER'))).rejects.toThrow('Insufficient permissions');
   });
 
   it('allows staged transfer shipment/receipt when INVENTORY/STOCK_TRANSFER edit grant is present', async () => {

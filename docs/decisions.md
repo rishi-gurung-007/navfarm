@@ -4132,3 +4132,32 @@ switcher:
 This decision does not authorize inventing a farm relationship for a master that
 has no farm column or derivable farm-owned transaction relationship. Such a
 master remains company/LOB-wide unless Rishi decides otherwise.
+
+## 15 Oct 2026 — A scheduler is created only where the user asks for one (Rishi)
+
+Rishi created a scheduler for one batch and one stage on the Schedulers page and found schedulers for that batch's
+other stages created too. **Wanted: select a batch and a stage, and only that batch and stage get a scheduler.**
+
+This reverses the 9 Oct decision above ("Every stage a live animal holds has a scheduler", asked by Arun). Two places
+were creating them behind the user's back, both for an animal-wise batch, for every stage its live animals stood in:
+
+- `BatchService.getDataEntryByStage()` — reached by `GET /batch/:id/data-entry`, so merely *opening* the Daily Data
+  Entry screen created a scheduler per occupied stage with `scheduler_auto_create`. A read that writes.
+- `SchedulerHeaderService.syncAnimalWiseCounts()` → `openOccupiedStageSchedulers()` — every death, transfer and stage
+  move ends in the count sync, so an animal moving into a stage opened a scheduler there.
+
+Now: the data-entry screen creates nothing, and the count sync only **reopens** the completed scheduler of a stage
+animals have come back to (a batch has one scheduler per stage, so it is reopened, not duplicated). A scheduler is
+created by the Create Scheduler form, by batch creation, and by a stage transfer — each an action the user took.
+`stagesNeedingScheduler()` still reports which occupied stages have none; nothing acts on that list any more.
+
+**The cost, accepted:** animals at a stage that never had a scheduler have no data entry there until someone creates
+one. That stage simply does not appear on the Daily Data Entry screen (only stages that have a scheduler are read).
+
+Proved against nf_devco through the real services, rolled back — BATCH-000013, animals in Gestation, Lactation and
+Farrowing: creating one scheduler for SOLD added exactly that one; two animals then moved to CULLED and
+PRODUCTIVE_SOW, after which `GET /batch/:id/data-entry` and `syncAnimalWiseCounts` added nothing. Before the fix the
+same run added CULLED and PRODUCTIVE_SOW.
+
+Not changed: the BATCH_WISE data-entry path still auto-creates for the batch's **own current stage** only
+(`batch.service.ts`, gated on `effectiveStageId === batch.stage_id`) — one stage, the one the batch is in.
