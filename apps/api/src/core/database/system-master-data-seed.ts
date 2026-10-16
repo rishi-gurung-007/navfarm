@@ -207,37 +207,33 @@ export const SYSTEM_BREED_SEED: Array<{
   { nob_code: 'POULTRY', lob_code: 'PLT_CB', breed_code: 'COBB-500-CB', breed_name: 'Cobb 500 (Commercial Broiler)', species_code: 'CHICKEN', breed_type: 'BROILER' },
   { nob_code: 'LIVESTOCK', lob_code: 'LVS_MILKING', breed_code: 'HOLSTEIN-FRIESIAN', breed_name: 'Holstein Friesian', species_code: 'CATTLE', breed_type: 'DAIRY' },
   {
-    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'YORKSHIRE', breed_name: 'Yorkshire', species_code: 'PIG', breed_type: 'MEAT',
-    gestation_days: 114, lactation_days: 28, productive_life_months: 36, residual_value_pct: 10.00,
-    productive_life_cycles: 7, avg_litter_size_born: 11.50, avg_litter_size_weaned: 10.00,
-    avg_weaning_weight_kg: 7.000, farrowing_rate_pct: 85.00, boar_doses_per_week: 4.00, boar_productive_life_months: 24,
-  },
-  {
-    // Large White is the European name for the same genetic line as Yorkshire; shares all the same
-    // production standards. Seeded separately because clients may register animals under either name.
-    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'LARGE_WHITE', breed_name: 'Large White', species_code: 'PIG', breed_type: 'MEAT',
-    gestation_days: 114, lactation_days: 28, productive_life_months: 36, residual_value_pct: 10.00,
-    productive_life_cycles: 7, avg_litter_size_born: 11.50, avg_litter_size_weaned: 10.00,
-    avg_weaning_weight_kg: 7.000, farrowing_rate_pct: 85.00, boar_doses_per_week: 4.00, boar_productive_life_months: 24,
-  },
-  {
-    // Landrace: prolific maternal breed, slightly longer gestation, larger litters.
-    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'LANDRACE', breed_name: 'Landrace', species_code: 'PIG', breed_type: 'MEAT',
+    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'TN70', breed_name: 'TN70', species_code: 'PIG', breed_type: 'MEAT',
     gestation_days: 115, lactation_days: 28, productive_life_months: 36, residual_value_pct: 10.00,
-    productive_life_cycles: 7, avg_litter_size_born: 12.00, avg_litter_size_weaned: 10.50,
+    productive_life_cycles: 7, avg_litter_size_born: 14.00, avg_litter_size_weaned: 12.00,
+    avg_weaning_weight_kg: 6.500, farrowing_rate_pct: 88.00, boar_doses_per_week: 4.00, boar_productive_life_months: 24,
+  },
+  {
+    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'L-Line', breed_name: 'L-Line', species_code: 'PIG', breed_type: 'MEAT',
+    gestation_days: 115, lactation_days: 28, productive_life_months: 36, residual_value_pct: 10.00,
+    productive_life_cycles: 7, avg_litter_size_born: 13.00, avg_litter_size_weaned: 11.50,
     avg_weaning_weight_kg: 6.500, farrowing_rate_pct: 87.00, boar_doses_per_week: 4.00, boar_productive_life_months: 24,
   },
   {
-    // Duroc: terminal sire breed, faster growth, high meat yield — lower litter size.
-    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'DUROC', breed_name: 'Duroc', species_code: 'PIG', breed_type: 'MEAT',
+    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'Z-Line', breed_name: 'Z-Line', species_code: 'PIG', breed_type: 'MEAT',
+    gestation_days: 114, lactation_days: 28, productive_life_months: 36, residual_value_pct: 10.00,
+    productive_life_cycles: 7, avg_litter_size_born: 12.50, avg_litter_size_weaned: 11.00,
+    avg_weaning_weight_kg: 6.500, farrowing_rate_pct: 86.00, boar_doses_per_week: 4.00, boar_productive_life_months: 24,
+  },
+  {
+    nob_code: 'LIVESTOCK', lob_code: 'LVS_PIGGERY', breed_code: 'Tempo', breed_name: 'Tempo', species_code: 'PIG', breed_type: 'MEAT',
     gestation_days: 114, lactation_days: 27, productive_life_months: 30, residual_value_pct: 10.00,
-    productive_life_cycles: 6, avg_litter_size_born: 10.00, avg_litter_size_weaned: 8.50,
-    avg_weaning_weight_kg: 7.500, farrowing_rate_pct: 82.00, boar_doses_per_week: 5.00, boar_productive_life_months: 30,
+    productive_life_cycles: 6, avg_litter_size_born: 11.00, avg_litter_size_weaned: 10.00,
+    avg_weaning_weight_kg: 7.000, farrowing_rate_pct: 85.00, boar_doses_per_week: 5.00, boar_productive_life_months: 30,
   },
   { nob_code: 'LIVESTOCK', lob_code: 'LVS_GOAT_SHEEP', breed_code: 'BOER-GOAT', breed_name: 'Boer Goat', species_code: 'GOAT', breed_type: 'MEAT' },
   { nob_code: 'AQUA', lob_code: 'AQA_FISH', breed_code: 'ROHU', breed_name: 'Rohu', species_code: 'FISH', breed_type: 'FISH' },
   { nob_code: 'INSECT', lob_code: 'INS_BEE', breed_code: 'ITALIAN-BEE', breed_name: 'Italian Honey Bee', species_code: 'BEE', breed_type: 'DUAL_PURPOSE' },
-].filter((row) => !new Set(['LANDRACE', 'LARGE_WHITE', 'YORKSHIRE', 'DUROC']).has(row.breed_code));
+];
 
 /**
  * A couple of representative items per LOB (input + main output), scoped by
