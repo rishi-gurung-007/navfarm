@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Scan, Search, Loader2, CheckCircle2, Pill, HeartPulse,
-  RefreshCw, ShieldAlert,
+  RefreshCw, ShieldAlert, Layers, Dna, Calendar, FileText, ChevronRight,
 } from "lucide-react";
 
 import { api } from "@/services/api-client";
@@ -13,11 +13,18 @@ import { Toast } from "@/components/ui/toast";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
+import { formatQuantity } from "@/lib/utils";
+import AnimalDetailsModal from "@/components/console/piggery/animal-details-modal";
 
 type Row = Record<string, any>;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
+}
+
+function formatDate(d?: string | null) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
 const S = {
@@ -37,6 +44,7 @@ interface RfidScannerModalProps {
   onClose: () => void;
   onAnimalUpdated?: () => void;
   medItems: Row[];
+  onOpenAnimalDetails?: (animalId: string) => void;
 }
 
 export default function RfidScannerModal({
@@ -44,6 +52,7 @@ export default function RfidScannerModal({
   onClose,
   onAnimalUpdated,
   medItems,
+  onOpenAnimalDetails,
 }: RfidScannerModalProps) {
   const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
@@ -53,6 +62,11 @@ export default function RfidScannerModal({
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState("");
   const [animal, setAnimal]         = useState<Row | null>(null);
+
+  // Breeding & Reproductive Lifecycle state
+  const [breeding, setBreeding]             = useState<Row | null>(null);
+  const [loadingBreeding, setLoadingBreeding] = useState(false);
+  const [internalDetailsId, setInternalDetailsId] = useState<string | null>(null);
 
   // Quick Action form states
   const [actionTab, setActionTab]   = useState<"none" | "dose" | "status">("none");
@@ -91,8 +105,16 @@ export default function RfidScannerModal({
       const matched = unwrap<Row>(res);
       setAnimal(matched);
       setNewStatus(matched.status || "ACTIVE");
+
+      // Fetch breeding, insemination and farrowing details
+      setLoadingBreeding(true);
+      api.get(`/animal/${matched.animal_id}/breeding`)
+        .then((bRes) => setBreeding(unwrap<Row>(bRes)))
+        .catch(() => setBreeding(null))
+        .finally(() => setLoadingBreeding(false));
     } catch (err: any) {
       setAnimal(null);
+      setBreeding(null);
       setError(err?.message || t("rfmNoAnimalFoundForTag", { tag }));
     } finally {
       setLoading(false);
@@ -148,16 +170,27 @@ export default function RfidScannerModal({
   const handleNextScan = () => {
     setTagInput("");
     setAnimal(null);
+    setBreeding(null);
     setError("");
     setActionSuccess("");
     setActionTab("none");
+    setInternalDetailsId(null);
     setTimeout(() => {
       inputRef.current?.focus();
     }, 50);
   };
 
+  const handleOpenDetails = (animalId: string) => {
+    if (onOpenAnimalDetails) {
+      onOpenAnimalDetails(animalId);
+    } else {
+      setInternalDetailsId(animalId);
+    }
+  };
+
   return (
-    <Dialog
+    <>
+      <Dialog
       open={open}
       onClose={onClose}
       title={t("rfmScannerTitle")}
@@ -200,7 +233,7 @@ export default function RfidScannerModal({
           <div className="space-y-4 animate-in fade-in-50 duration-200">
             {/* Top Identity Card */}
             <div className="rounded-[var(--radius-lg)] border p-4 shadow-sm" style={S.raised}>
-              <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-xl font-bold font-mono" style={S.primary}>
@@ -218,11 +251,23 @@ export default function RfidScannerModal({
                   </p>
                 </div>
 
-                <div className="text-right">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("rfmNetBookValue")}</p>
-                  <p className="text-lg font-bold font-mono" style={S.primary}>
-                    {formatMoney(animal.book_value ? Number(animal.book_value) : animal.acquisition_cost ? Number(animal.acquisition_cost) : "0")}
-                  </p>
+                <div className="flex flex-col items-end gap-2">
+                  <div className="text-right">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("rfmNetBookValue")}</p>
+                    <p className="text-lg font-bold font-mono" style={S.primary}>
+                      {formatMoney(animal.book_value ? Number(animal.book_value) : animal.acquisition_cost ? Number(animal.acquisition_cost) : "0")}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs font-semibold shadow-2xs"
+                    onClick={() => handleOpenDetails(animal.animal_id)}
+                  >
+                    <FileText className="h-3.5 w-3.5" style={S.accent} />
+                    View Full Animal Card
+                    <ChevronRight className="h-3 w-3" style={S.muted} />
+                  </Button>
                 </div>
               </div>
 
@@ -261,6 +306,212 @@ export default function RfidScannerModal({
                 </div>
               </div>
             )}
+
+            {/* ── Breeding, Insemination & Farrowing Details ── */}
+            <div className="rounded-[var(--radius-lg)] border p-4 shadow-sm" style={S.surface}>
+              <div className="flex items-center justify-between pb-3 border-b mb-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4" style={S.accent} />
+                  <h3 className="text-xs font-bold uppercase tracking-wider" style={S.primary}>
+                    Breeding, Insemination & Farrowing
+                  </h3>
+                </div>
+                {loadingBreeding ? (
+                  <span className="flex items-center gap-1 text-[11px]" style={S.muted}>
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading breeding data…
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold" style={S.muted}>
+                    {animal.gender === "M" || animal.animal_type === "BOAR" ? "Sire Performance" : "Sow Lifetime Profile"}
+                  </span>
+                )}
+              </div>
+
+              {/* KPI Grid */}
+              {animal.gender === "M" || animal.animal_type === "BOAR" ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 mb-4">
+                  <div className="rounded-[var(--radius-md)] border p-2.5 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Services Done</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.accent}>
+                      {breeding?.matings?.filter((m: any) => !m.pooled).length ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2.5 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Litters Sired</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.primary}>
+                      {breeding?.farrowings?.length ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2.5 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Sired Born Live</span>
+                    <span className="font-mono text-base font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                      {breeding?.farrowings?.reduce((sum: number, f: any) => sum + (Number(f.piglets_born_live) || 0), 0) ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2.5 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Sired Weaned</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.primary}>
+                      {breeding?.farrowings?.reduce((sum: number, f: any) => sum + (Number(f.piglets_weaned) || 0), 0) ?? 0}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 mb-4">
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Parity</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.primary}>
+                      {animal.parity_count ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Born Live</span>
+                    <span className="font-mono text-base font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                      {breeding?.sow_summary?.total_born_live ?? animal.total_piglets_born_live ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Stillborn</span>
+                    <span className="font-mono text-base font-bold text-amber-600 dark:text-amber-400 mt-0.5 block">
+                      {breeding?.sow_summary?.born_dead_count ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Mummified</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.sub}>
+                      {breeding?.sow_summary?.mummified_count ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Weaned</span>
+                    <span className="font-mono text-base font-bold mt-0.5 block" style={S.accent}>
+                      {breeding?.sow_summary?.total_weaned ?? animal.total_piglets_weaned ?? 0}
+                    </span>
+                  </div>
+                  <div className="rounded-[var(--radius-md)] border p-2 text-center" style={S.raised}>
+                    <span className="text-[10px] uppercase font-bold block" style={S.muted}>Pre-Wean Mort</span>
+                    <span className="font-mono text-base font-bold text-red-500 mt-0.5 block">
+                      {breeding?.sow_summary?.mortality_pct != null ? `${breeding.sow_summary.mortality_pct}%` : "0.0%"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Inseminations & Matings List (Most Recent) */}
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5" style={S.primary}>
+                      <Dna className="h-3.5 w-3.5" style={S.accent} />
+                      Inseminations & Matings
+                    </span>
+                    {breeding?.matings?.length ? (
+                      <span className="text-[10px] font-mono" style={S.muted}>
+                        {breeding.matings.length} total
+                      </span>
+                    ) : null}
+                  </div>
+                  {breeding?.matings && breeding.matings.length > 0 ? (
+                    <div className="overflow-hidden rounded-[var(--radius-sm)] border" style={S.raised}>
+                      <table className="w-full text-left text-[11px] border-collapse">
+                        <thead>
+                          <tr className="border-b text-[9px] uppercase font-bold" style={{ ...S.surface, color: "var(--text-muted)" }}>
+                            <th className="px-2.5 py-1.5">Date</th>
+                            <th className="px-2.5 py-1.5">Type</th>
+                            <th className="px-2.5 py-1.5">{animal.gender === "M" || animal.animal_type === "BOAR" ? "Sow" : "Boar / Semen"}</th>
+                            <th className="px-2.5 py-1.5">Conception</th>
+                            <th className="px-2.5 py-1.5">Expected Due</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border)]">
+                          {breeding.matings.slice(0, 3).map((m: any) => (
+                            <tr key={m.breeding_id} className="hover:bg-[var(--surface)]/50">
+                              <td className="px-2.5 py-1.5 font-mono" style={S.primary}>{formatDate(m.mating_date)}</td>
+                              <td className="px-2.5 py-1.5" style={S.sub}>{m.mating_type || "AI"}</td>
+                              <td className="px-2.5 py-1.5 font-mono font-bold" style={S.accent}>
+                                {animal.gender === "M" || animal.animal_type === "BOAR" ? m.sow_code || "—" : m.boar_code || m.semen_lot_no || "—"}
+                              </td>
+                              <td className="px-2.5 py-1.5">
+                                <span
+                                  className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                                    m.conception_result === "PREGNANT"
+                                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                      : m.conception_result === "OPEN" || m.conception_result === "NOT_PREGNANT"
+                                      ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                                      : "bg-slate-500/10 text-[var(--text-muted)]"
+                                  }`}
+                                >
+                                  {m.conception_result || "PENDING"}
+                                </span>
+                              </td>
+                              <td className="px-2.5 py-1.5 font-mono" style={S.sub}>{formatDate(m.expected_farrowing_date)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] py-1.5 italic" style={S.muted}>No insemination or mating records found.</p>
+                  )}
+                </div>
+
+                {/* Farrowings & Litters List (Most Recent) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5" style={S.primary}>
+                      <Calendar className="h-3.5 w-3.5" style={S.accent} />
+                      Farrowings & Weanings
+                    </span>
+                    {breeding?.farrowings?.length ? (
+                      <span className="text-[10px] font-mono" style={S.muted}>
+                        {breeding.farrowings.length} litters
+                      </span>
+                    ) : null}
+                  </div>
+                  {breeding?.farrowings && breeding.farrowings.length > 0 ? (
+                    <div className="overflow-hidden rounded-[var(--radius-sm)] border" style={S.raised}>
+                      <table className="w-full text-left text-[11px] border-collapse">
+                        <thead>
+                          <tr className="border-b text-[9px] uppercase font-bold" style={{ ...S.surface, color: "var(--text-muted)" }}>
+                            <th className="px-2.5 py-1.5">Farrow Date</th>
+                            <th className="px-2.5 py-1.5">Parity</th>
+                            <th className="px-2.5 py-1.5">Born Live</th>
+                            <th className="px-2.5 py-1.5">Stillborn</th>
+                            <th className="px-2.5 py-1.5">Weaned</th>
+                            <th className="px-2.5 py-1.5">Avg Wean Wt</th>
+                            <th className="px-2.5 py-1.5">Piglet Batch</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border)]">
+                          {breeding.farrowings.slice(0, 3).map((f: any) => (
+                            <tr key={f.farrow_id} className="hover:bg-[var(--surface)]/50">
+                              <td className="px-2.5 py-1.5 font-mono" style={S.primary}>{formatDate(f.farrowing_date)}</td>
+                              <td className="px-2.5 py-1.5 font-mono font-bold" style={S.primary}>#{f.parity_number || "1"}</td>
+                              <td className="px-2.5 py-1.5 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                {f.piglets_born_live || 0}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-mono text-amber-600 dark:text-amber-400">
+                                {f.piglets_stillborn || 0}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-mono font-bold" style={S.accent}>
+                                {f.piglets_weaned || 0}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-mono" style={S.sub}>
+                                {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : "—"}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-mono text-[10px]" style={S.sub}>
+                                {f.piglet_batch_no || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] py-1.5 italic" style={S.muted}>No farrowing litters recorded.</p>
+                  )}
+                </div>
+              </div>
+            </div>
 
             {/* 1-Click Quick Actions Toolbar */}
             <div className="rounded-[var(--radius-lg)] border p-4" style={S.surface}>
@@ -375,5 +626,13 @@ export default function RfidScannerModal({
         )}
       </div>
     </Dialog>
+
+    {internalDetailsId && (
+      <AnimalDetailsModal
+        animalId={internalDetailsId}
+        onClose={() => setInternalDetailsId(null)}
+      />
+    )}
+    </>
   );
 }

@@ -43,6 +43,14 @@ function runStep(title: string, scriptFile: string) {
 }
 
 async function captureProtectedTenantState(server: Awaited<ReturnType<typeof mysql.createConnection>>): Promise<PreservedTenantState> {
+  const [masterDbRows] = await server.query<mysql.RowDataPacket[]>(
+    'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+    [masterDatabase],
+  );
+  if (masterDbRows.length === 0) {
+    return { tenant: null, subscription: null, authIndex: [] };
+  }
+
   const [tenantRows] = await server.query<mysql.RowDataPacket[]>(
     `SELECT * FROM \`${masterDatabase}\`.tenant_master WHERE db_name = ? LIMIT 1`,
     [PROTECTED_TENANT_DATABASE],

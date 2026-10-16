@@ -7,32 +7,20 @@ import { DOCUMENTED_REASONS } from './reason-code-seed';
  * changing a name must not quietly change a duration.
  */
 describe('piggery master stage catalog', () => {
-  it('contains exactly the stages the TDD lists, plus the two the BBP requires', () => {
-    expect(SYSTEM_STAGE_SEED.map((s) => s.stage_code).sort()).toEqual([
-      // TDD row 24, in its own words.
-      'QUARANTINE', 'GILT_GROWER', 'FLUSH', 'DRY_SOW', 'GESTATION', 'FARROWING',
-      'WEANING', 'PRODUCTIVE_SOW', 'BOAR_AI', 'CULLED', 'DEAD', 'SOLD', 'SLAUGHTERED',
-      // Kept from BBP §1.7: the tracker omits INSEMINATION, but the blueprint
-      // specifies it and flush → gestation runs through it; LACTATION is the
-      // 28-day period the blueprint costs the sow's nursing against, which
-      // WEANING (an event) does not replace.
-      'INSEMINATION', 'LACTATION',
-    ].sort());
+  it('contains exactly the 8 piggery stages in sequence', () => {
+    expect(SYSTEM_STAGE_SEED.map((s) => s.stage_code)).toEqual([
+      'QUARANTINE', 'GILT_REARING', 'INSEMINATION', 'GESTATION', 'FARROWING',
+      'LACTATION', 'PRODUCTIVE_SOW', 'FLUSH',
+    ]);
   });
 
   it('keeps the BBP durations even though the names came from the TDD', () => {
     const duration = (code: string) => SYSTEM_STAGE_SEED.find((s) => s.stage_code === code)?.typical_duration_days;
     expect(duration('GESTATION')).toBe(116);
-    expect(duration('GILT_GROWER')).toBe(210); // was GILT_REARING
+    expect(duration('GILT_REARING')).toBe(210);
     expect(duration('LACTATION')).toBe(28);
     expect(duration('QUARANTINE')).toBe(28);
-    // Ranges in the BBP stay ranges: no midpoint is invented as a typical day.
-    for (const code of ['DRY_SOW', 'FLUSH', 'FARROWING']) expect(duration(code)).toBeUndefined();
-  });
-
-  it('gives every disposal state a stage, so status and stage can agree', () => {
-    const disposal = SYSTEM_STAGE_SEED.filter((s) => s.stage_category === 'DISPOSAL').map((s) => s.stage_code).sort();
-    expect(disposal).toEqual(['CULLED', 'DEAD', 'SOLD', 'SLAUGHTERED'].sort());
+    for (const code of ['FLUSH', 'FARROWING']) expect(duration(code)).toBeUndefined();
   });
 
   it('keeps transitions, reason restrictions and seeded profiles inside the catalog', () => {

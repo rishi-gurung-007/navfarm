@@ -91,6 +91,10 @@ export const FARM_RESOURCE_SEED: FarmResourceSeedRow[] = [
 ];
 
 export const FARM_BREED_SEED: FarmBreedSeedRow[] = [
+  { farm: "PORTA", code: "TN70", name: "TN70", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 42, productiveLifeCycles: 8, avgLitterSizeBorn: 16.3306, avgLitterSizeWeaned: 15.3508, avgWeaningWeightKg: 8.0, farrowingRatePct: 93, boarDosesPerWeek: 74, boarProductiveLifeMonths: 29 },
+  { farm: "PORTA", code: "L-Line", name: "L-Line", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 42, productiveLifeCycles: 8, avgLitterSizeBorn: 15.0, avgLitterSizeWeaned: 14.0, avgWeaningWeightKg: 7.5, farrowingRatePct: 90, boarDosesPerWeek: 50, boarProductiveLifeMonths: 29 },
+  { farm: "PORTA", code: "Z-Line", name: "Z-Line", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 46, productiveLifeCycles: 10, avgLitterSizeBorn: 15.0, avgLitterSizeWeaned: 13.8, avgWeaningWeightKg: 7.5, farrowingRatePct: 90, boarDosesPerWeek: 50, boarProductiveLifeMonths: 29 },
+  { farm: "PORTA", code: "Tempo", name: "Tempo", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 36, productiveLifeCycles: 8, avgLitterSizeBorn: 14.0, avgLitterSizeWeaned: 13.0, avgWeaningWeightKg: 8.0, farrowingRatePct: 88, boarDosesPerWeek: 60, boarProductiveLifeMonths: 30 },
   { farm: "MULTIPLIER", code: "Z-Line-Sow", name: "Z-Line-Sow", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 46, productiveLifeCycles: 10, avgLitterSizeBorn: 15.0, avgLitterSizeWeaned: 13.8, avgWeaningWeightKg: 7.5, boarProductiveLifeMonths: 29 },
   { farm: "PORTA", code: "TN-70-Sow", name: "TN-70-Sow", gestationDays: 116, lactationDays: 28, productiveLifeMonths: 42, productiveLifeCycles: 8, avgLitterSizeBorn: 16.3306, avgLitterSizeWeaned: 15.3508, avgWeaningWeightKg: 8.0, farrowingRatePct: 93, boarDosesPerWeek: 74, boarProductiveLifeMonths: 29 },
   { farm: "PORTA", code: "Teaser-Boar", name: "Teaser Boar" },

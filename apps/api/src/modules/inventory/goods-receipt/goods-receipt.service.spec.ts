@@ -43,7 +43,20 @@ describe('GoodsReceiptService', () => {
     lines: [{ line_id: 'line-1', item_id: 'item-1', quantity: '10', uom: 'KG' }],
   };
 
-  const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([row]) }) }) });
+  const createQueryChain = (resolvedValue: any) => {
+    const chain: any = {
+      where: jest.fn().mockReturnValue({
+        limit: jest.fn().mockResolvedValue(resolvedValue),
+        then: (onfulfilled: any) => Promise.resolve(resolvedValue).then(onfulfilled),
+      }),
+      leftJoin: jest.fn().mockImplementation(() => chain),
+      limit: jest.fn().mockResolvedValue(resolvedValue),
+      then: (onfulfilled: any) => Promise.resolve(resolvedValue).then(onfulfilled),
+    };
+    return { from: jest.fn().mockReturnValue(chain) };
+  };
+
+  const found = (row: any) => createQueryChain([row]);
 
   // post() re-reads the warehouse before anything else, so a warehouse taken
   // out of service after the receipt was drafted cannot receive stock. Every
@@ -62,7 +75,7 @@ describe('GoodsReceiptService', () => {
   beforeEach(async () => {
     mockDbSelect.mockReset();
     // Posting looks up which lines are biological assets (14 Oct); unless a test says otherwise, none are.
-    mockDbSelect.mockReturnValue({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+    mockDbSelect.mockReturnValue(createQueryChain([]));
     mockDbUpdate.mockReset();
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
     mockWritePositiveEntry.mockReset().mockResolvedValue({ entry_no: 1 });

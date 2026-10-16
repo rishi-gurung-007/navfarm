@@ -3,15 +3,18 @@
  * Porta Breed Master workbook. Source UUIDs are deliberately not retained:
  * the target seed resolves every relationship by the source code.
  */
-export const PORTA_LIFECYCLE_BREED_CODE = 'TN-70-Sow';
+export const PORTA_LIFECYCLE_BREED_CODES = ['TN70', 'L-Line', 'Z-Line', 'Tempo', 'TN-70-Sow'] as const;
+export const PORTA_LIFECYCLE_BREED_CODE = 'TN70';
 
 export const PORTA_LIFECYCLE_STAGES = [
-  { code: 'GILT REARING', name: 'Gilt Rearing', category: 'PRODUCTIVE', sequence: 1, typicalDays: 168, minDays: 210, trigger: 'MANUAL', form: 'STANDARD' },
-  { code: 'GESTATION', name: 'Gestation', category: 'PRODUCTIVE', sequence: 2, typicalDays: 112, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
-  { code: 'FARROWING', name: 'Farrowing', category: 'PRODUCTIVE', sequence: 4, typicalDays: null, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
-  { code: 'WEANING', name: 'Weaning', category: 'PRODUCTIVE', sequence: 5, typicalDays: null, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
-  { code: 'WEANER', name: 'Weaner', category: 'PRODUCTIVE', sequence: 6, typicalDays: null, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
-  { code: 'GROWER', name: 'Grower', category: 'OUTPUT', sequence: 7, typicalDays: null, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
+  { code: 'QUARANTINE', name: 'Quarantine', category: 'PRE_PRODUCTIVE', sequence: 1, typicalDays: 28, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
+  { code: 'GILT_REARING', name: 'Gilt Rearing', category: 'PRE_PRODUCTIVE', sequence: 2, typicalDays: 210, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
+  { code: 'INSEMINATION', name: 'Insemination', category: 'PRODUCTIVE', sequence: 3, typicalDays: 2, minDays: 0, trigger: 'EVENT_BASED', form: 'STANDARD' },
+  { code: 'GESTATION', name: 'Gestation', category: 'PRODUCTIVE', sequence: 4, typicalDays: 116, minDays: 0, trigger: 'EVENT_BASED', form: 'STANDARD' },
+  { code: 'FARROWING', name: 'Farrowing', category: 'OUTPUT', sequence: 5, typicalDays: 3, minDays: 2, trigger: 'EVENT_BASED', form: 'FARROWING' },
+  { code: 'LACTATION', name: 'Lactation', category: 'PRODUCTIVE', sequence: 6, typicalDays: 28, minDays: 0, trigger: 'EVENT_BASED', form: 'STANDARD' },
+  { code: 'PRODUCTIVE_SOW', name: 'Productive Sow', category: 'PRODUCTIVE', sequence: 7, typicalDays: null, minDays: 0, trigger: 'MANUAL', form: 'STANDARD' },
+  { code: 'FLUSH', name: 'Flush', category: 'PRE_PRODUCTIVE', sequence: 8, typicalDays: 4, minDays: 3, trigger: 'EVENT_BASED', form: 'STANDARD' },
 ] as const;
 
 export const PORTA_LIFECYCLE_ITEMS: readonly {
@@ -85,27 +88,30 @@ const WEANING_KPIS = [
 ] as const;
 
 export const PORTA_LIFECYCLE_ROWS: readonly PortaLifecycleRow[] = [
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 10, to: 11, feed: 'ITEM-004', qty: '1.4000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 11, to: 12, feed: 'ITEM-004', qty: '1.5000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 12, to: 13, feed: 'ITEM-004', qty: '1.6000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 24, to: 25, feed: 'FEED000015', qty: '3.0000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 25, to: 26, feed: 'FEED000015', qty: '3.0000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 26, to: 27, feed: 'FEED000015', qty: '3.3000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
-  { stage: 'GILT REARING', category: 'GILT', farmCode: 'POR100', from: 27, to: 28, feed: 'FEED000015', qty: '3.5000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
-  { stage: 'WEANING', category: 'GILT', farmCode: 'POR100', from: 1, to: 4, feed: 'FEED-SF', qty: '2.0000', form: 'BULK', sourceNote: 'Breed lifecycle stages - reprod: 3rd parity weaning' },
+  // 1. Quarantine
+  { stage: 'QUARANTINE', category: 'GILT', farmCode: 'POR100', from: 1, to: 4, feed: 'DG-001', qty: '1.5000', form: 'BAGGED', sourceNote: 'Quarantine: initial feed ration' },
+  // 2. Gilt Rearing
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 10, to: 11, feed: 'ITEM-004', qty: '1.4000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 11, to: 12, feed: 'ITEM-004', qty: '1.5000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 12, to: 13, feed: 'ITEM-004', qty: '1.6000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 02' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 24, to: 25, feed: 'FEED000015', qty: '3.0000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 25, to: 26, feed: 'FEED000015', qty: '3.0000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 26, to: 27, feed: 'FEED000015', qty: '3.3000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
+  { stage: 'GILT_REARING', category: 'GILT', farmCode: 'POR100', from: 27, to: 28, feed: 'FEED000015', qty: '3.5000', form: 'BAGGED', sourceNote: 'Breed L-cycle stages gilts: PGH 04' },
+  // 3. Insemination
+  { stage: 'INSEMINATION', category: 'GILT', farmCode: 'POR100', from: 1, to: 1, feed: 'FEED-SF', qty: '2.0000', form: 'BULK', sourceNote: 'Insemination service feed ration' },
+  // 4. Gestation
   { stage: 'GESTATION', category: 'GILT', from: 1, to: 6, feed: 'DG-001', qty: '2.5000', form: 'BULK', code: '001' },
   { stage: 'GESTATION', category: 'GILT', from: 7, to: 8, feed: 'DS-001', qty: '4.5000', form: 'BULK', code: null },
   { stage: 'GESTATION', category: 'GILT', from: 9, to: 16, feed: 'DS-001', qty: '2.8000', form: 'BULK', code: null },
-  { stage: 'WEANER', category: 'PIGLET', farmCode: 'POR100', from: 4, to: 4, feed: 'ITM-0002', qty: '0.4800', form: 'BULK', fcr: '1.500', sourceNote: 'Breeder L-cycle stages -WeanGro: 4 weeks' },
-  { stage: 'WEANER', category: 'PIGLET', farmCode: 'POR100', from: 5, to: 6, feed: 'ITM-0005', qty: '0.9400', form: 'BULK', fcr: '1.500', sourceNote: 'Breeder L-cycle stages -WeanGro: 5 to 6 weeks' },
-  { stage: 'WEANER', category: 'PIGLET', farmCode: 'POR100', from: 7, to: 10, feed: 'ITM-0011', qty: '1.1000', form: 'BULK', fcr: '1.500', sourceNote: 'Breeder L-cycle stages -WeanGro: 7 to 10 weeks' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 10, to: 11, feed: 'ITM-0011', qty: '1.6000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 10, to: 11, feed: 'ITM-0011', qty: '1.7000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 14, to: 15, feed: 'FEED000017', qty: '2.6000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 14, to: 15, feed: 'FEED000017', qty: '2.7000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 16, to: 18, feed: 'FEED000018', qty: '2.9000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 17, to: 18, feed: 'FEED000018', qty: '3.1000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
-  { stage: 'GROWER', category: 'PIGLET', farmCode: 'POR100', from: 19, to: 22, feed: 'FEED000019', qty: '3.1000', form: 'BULK', fcr: '2.400', sourceNote: 'Breeder L-cycle stages -WeanGro: PGH-01' },
+  // 5. Farrowing
+  { stage: 'FARROWING', category: 'GILT', farmCode: 'POR100', from: 1, to: 1, feed: 'DS-001', qty: '1.5000', form: 'BULK', sourceNote: 'Farrowing entry feed ration' },
+  // 6. Lactation
+  { stage: 'LACTATION', category: 'GILT', farmCode: 'POR100', from: 1, to: 4, feed: 'FEED-SF', qty: '6.5000', form: 'BULK', sourceNote: 'Lactation sow ration' },
+  // 7. Productive Sow
+  { stage: 'PRODUCTIVE_SOW', category: 'GILT', farmCode: 'POR100', from: 1, to: 4, feed: 'DS-001', qty: '2.5000', form: 'BULK', sourceNote: 'Productive sow maintenance ration' },
+  // 8. Flush
+  { stage: 'FLUSH', category: 'GILT', farmCode: 'POR100', from: 1, to: 1, feed: 'FEED-SF', qty: '3.0000', form: 'BULK', sourceNote: 'Pre-service flush feeding' },
 ];
 
 export const PORTA_LIFECYCLE_SKIPPED = [

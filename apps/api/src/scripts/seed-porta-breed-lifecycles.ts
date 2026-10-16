@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import {
   PORTA_LIFECYCLE_BREED_CODE,
+  PORTA_LIFECYCLE_BREED_CODES,
   PORTA_LIFECYCLE_ITEMS,
   PORTA_LIFECYCLE_ROWS,
   PORTA_LIFECYCLE_SKIPPED,
@@ -50,12 +51,16 @@ async function run() {
     const portaFarmId = farmRows[0]?.location_id as string | undefined;
 
     const [breeds] = await db.query<RowDataPacket[]>(
-      `SELECT breed_id FROM breed_master
-       WHERE tenant_id = ? AND company_id IS NOT NULL AND UPPER(breed_code) = UPPER(?) AND is_active = 1 LIMIT 1`,
-      [scope.tenant_id, PORTA_LIFECYCLE_BREED_CODE],
+      `SELECT breed_id, breed_code FROM breed_master
+       WHERE tenant_id = ? AND company_id IS NOT NULL AND is_active = 1`,
+      [scope.tenant_id],
     );
-    if (!breeds.length) throw new Error(`Breed ${PORTA_LIFECYCLE_BREED_CODE} not found — run db-seed-farm-masters first.`);
-    const breedId = breeds[0].breed_id as string;
+    const targetBreeds = breeds.filter((b) =>
+      (PORTA_LIFECYCLE_BREED_CODES as readonly string[]).some(
+        (code) => code.toUpperCase() === String(b.breed_code).toUpperCase(),
+      ),
+    );
+    if (!targetBreeds.length) throw new Error(`None of the target breeds found — run db-seed-farm-masters first.`);
 
     const itemIds = new Map<string, string>();
     let itemsInserted = 0;
@@ -97,8 +102,9 @@ async function run() {
     for (const stage of PORTA_LIFECYCLE_STAGES) {
       const [existing] = await db.query<RowDataPacket[]>(
         `SELECT stage_id FROM stage_master
-         WHERE tenant_id = ? AND company_id = ? AND lob_id = ? AND stage_code = ? AND is_active = 1 LIMIT 1`,
-        [scope.tenant_id, scope.company_id, scope.lob_id, stage.code],
+         WHERE tenant_id = ? AND (company_id = ? OR company_id IS NULL) AND stage_code = ? AND is_active = 1
+         ORDER BY company_id DESC LIMIT 1`,
+        [scope.tenant_id, scope.company_id, stage.code],
       );
       const stageId = existing[0]?.stage_id as string | undefined;
       if (stageId) {
@@ -124,32 +130,40 @@ async function run() {
     const plan = {
       database,
       mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-      breed: PORTA_LIFECYCLE_BREED_CODE,
+      breeds: targetBreeds.map((b) => b.breed_code),
       items: { source: PORTA_LIFECYCLE_ITEMS.length, inserted: itemsInserted },
       stages: { source: PORTA_LIFECYCLE_STAGES.length, inserted: stagesInserted },
-      lifecycleRows: PORTA_LIFECYCLE_ROWS.length,
+      lifecycleRowsPerBreed: PORTA_LIFECYCLE_ROWS.length,
       lifecycleRowsSkipped: PORTA_LIFECYCLE_SKIPPED,
       farmOverride: portaFarmId ? 'POR100' : 'breed-wide (POR100 not found)',
     };
     console.log(JSON.stringify(plan, null, 2));
     if (write) {
-      await db.query('DELETE FROM breed_lifecycle_stages WHERE breed_id = ?', [breedId]);
-      for (const row of PORTA_LIFECYCLE_ROWS) {
-        const feedItemId = row.feed ? itemIds.get(row.feed) : null;
-        const stageId = stageIds.get(row.stage);
-        if (!stageId) throw new Error(`Unresolved lifecycle stage mapping: ${row.stage}`);
-        await db.query(
-          `INSERT INTO breed_lifecycle_stages
-             (lifecycle_id, tenant_id, company_id, nob_id, lob_id, lifecycle_code, breed_id, stage_id,
-              category, calc_unit, period_from, period_to, feed_item_id, feed_form,
-              feed_qty_per_head_per_day_kg, feed_qty_per_head_per_day, feed_qty_uom, std_fcr,
-              farm_id, kpi_thresholds, kpi_alert_period, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WEEK', ?, ?, ?, ?, ?, ?, 'KGS', ?, ?, ?, 'WEEKLY', ?)`,
-          [randomUUID(), scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id,
-            row.code === undefined ? lifecycleCode(row) : row.code, breedId, stageId, row.category, row.from, row.to, feedItemId, row.form ?? null,
-            row.qty ?? null, row.qty ?? null, row.fcr ?? null, row.farmCode === 'POR100' ? portaFarmId ?? null : null,
-            row.kpiThresholds ? JSON.stringify(row.kpiThresholds) : null, row.sourceNote ?? null],
-        );
+      for (const targetBreed of targetBreeds) {
+        const breedId = targetBreed.breed_id as string;
+        await db.query('DELETE FROM breed_lifecycle_stages WHERE breed_id = ?', [breedId]);
+        for (const row of PORTA_LIFECYCLE_ROWS) {
+          const feedItemId = row.feed ? itemIds.get(row.feed) : null;
+          const stageId = stageIds.get(row.stage);
+          if (!stageId) throw new Error(`Unresolved lifecycle stage mapping: ${row.stage}`);
+          await db.query(
+            `INSERT INTO breed_lifecycle_stages
+               (lifecycle_id, tenant_id, company_id, nob_id, lob_id, lifecycle_code, breed_id, stage_id,
+                category, calc_unit, period_from, period_to, feed_item_id, feed_form,
+                feed_qty_per_head_per_day_kg, feed_qty_per_head_per_day, feed_qty_uom, std_fcr,
+                farm_id, kpi_thresholds, kpi_alert_period, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WEEK', ?, ?, ?, ?, ?, ?, 'KGS', ?, ?, ?, 'WEEKLY', ?)`,
+            [randomUUID(), scope.tenant_id, scope.company_id, scope.nob_id, scope.lob_id,
+              row.code === null
+                ? null
+                : row.code === undefined
+                  ? `${targetBreed.breed_code}-${lifecycleCode(row)}`
+                  : `${targetBreed.breed_code}-${row.code}`,
+              breedId, stageId, row.category, row.from, row.to, feedItemId, row.form ?? null,
+              row.qty ?? null, row.qty ?? null, row.fcr ?? null, row.farmCode === 'POR100' ? portaFarmId ?? null : null,
+              row.kpiThresholds ? JSON.stringify(row.kpiThresholds) : null, row.sourceNote ?? null],
+          );
+        }
       }
     }
     if (verify) throw VERIFY_ROLLBACK;

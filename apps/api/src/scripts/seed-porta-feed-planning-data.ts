@@ -159,14 +159,19 @@ async function run() {
     }
 
     const [stages] = await db.query<RowDataPacket[]>(
-      'SELECT stage_id, stage_code FROM stage_master WHERE tenant_id = ? AND company_id = ? AND stage_code IN (\'GESTATION\', \'WEANING\') AND is_active = 1',
+      "SELECT stage_id, stage_code, company_id FROM stage_master WHERE tenant_id = ? AND (company_id = ? OR company_id IS NULL) AND stage_code IN ('GESTATION', 'LACTATION') AND is_active = 1",
       [scope.tenant_id, scope.company_id],
     );
-    const stageIds = new Map(stages.map((row) => [row.stage_code as string, row.stage_id as string]));
-    for (const code of ['GESTATION', 'WEANING']) if (!stageIds.has(code)) throw new Error(`Stage ${code} is missing.`);
+    const stageIds = new Map<string, string>();
+    for (const r of stages) {
+      if (r.company_id || !stageIds.has(r.stage_code as string)) {
+        stageIds.set(r.stage_code as string, r.stage_id as string);
+      }
+    }
+    for (const code of ['GESTATION', 'LACTATION']) if (!stageIds.has(code)) throw new Error(`Stage ${code} is missing.`);
     if (write) {
       await db.query("UPDATE batch_header SET stage_id = ?, current_stage_code = 'GESTATION', updated_at = NOW() WHERE tenant_id = ? AND company_id = ? AND batch_no = 'BATCH-000001'", [stageIds.get('GESTATION'), scope.tenant_id, scope.company_id]);
-      await db.query("UPDATE batch_header SET stage_id = ?, current_stage_code = 'WEANING', updated_at = NOW() WHERE tenant_id = ? AND company_id = ? AND batch_no = 'BATCH-000002'", [stageIds.get('WEANING'), scope.tenant_id, scope.company_id]);
+      await db.query("UPDATE batch_header SET stage_id = ?, current_stage_code = 'LACTATION', updated_at = NOW() WHERE tenant_id = ? AND company_id = ? AND batch_no = 'BATCH-000002'", [stageIds.get('LACTATION'), scope.tenant_id, scope.company_id]);
     }
 
     const [items] = await db.query<RowDataPacket[]>(
@@ -285,7 +290,7 @@ async function run() {
 
     console.log(JSON.stringify({
       database, mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
-      farm: 'POR100', batches: ['BATCH-000001 → PDS2 → GESTATION', 'BATCH-000002 → PFH1 → WEANING'],
+      farm: 'POR100', batches: ['BATCH-000001 → PDS2 → GESTATION', 'BATCH-000002 → PFH1 → LACTATION'],
       silos: FEED_ITEMS.map((item) => item.silo), mill: millCode, bins: FEED_ITEMS.map((item) => item.bin),
       feedItems: FEED_ITEMS.map((item) => item.code), stockBySiloKg: Object.fromEntries(FEED_ITEMS.map((item) => [item.code, item.stockKg])), stockByBinKg: Object.fromEntries(FEED_ITEMS.map((item) => [item.code, item.binStockKg])), binAssignmentDays: dates.length,
     }, null, 2));
