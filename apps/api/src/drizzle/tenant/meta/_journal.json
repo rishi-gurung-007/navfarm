@@ -1429,6 +1429,13 @@
       "when": 1792000000072,
       "tag": "0204_expense_voucher_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "5",
+      "when": 1792000000073,
+      "tag": "0205_bio_asset_sale_customer",
+      "breakpoints": true
     }
   ]
 }

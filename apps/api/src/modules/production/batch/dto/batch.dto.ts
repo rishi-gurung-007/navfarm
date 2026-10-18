@@ -917,6 +917,11 @@ export class DisposeBioAssetDto {
   @IsNumber()
   @IsOptional()
   sale_proceeds?: number;
+
+  @ApiProperty({ description: 'Customer UUID — who bought the animals on a SOLD exit', required: false })
+  @IsUUID()
+  @IsOptional()
+  customer_id?: string;
 }
 
 export class BulkDailyEntryRowDto {

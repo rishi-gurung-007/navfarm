@@ -279,6 +279,22 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/repair-demo-gl-dimensions.ts"
         }
       },
+      "db-resync-animal-wise-scheduler-counts": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/resync-animal-wise-scheduler-counts.ts"
+        }
+      },
+      "db-close-emptied-bio-asset-batches": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/close-emptied-bio-asset-batches.ts"
+        }
+      },
       "db-align-stages-to-tdd": {
         "executor": "nx:run-commands",
         "cache": false,

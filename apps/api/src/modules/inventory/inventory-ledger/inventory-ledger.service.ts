@@ -1608,7 +1608,7 @@ export class InventoryLedgerService {
         eq(L.tenant_id, tenantId),
         eq(L.company_id, params.companyId),
         inArray(L.warehouse_id, params.siloIds),
-        inArray(L.entry_type, ['POSITIVE', 'NEGATIVE']),
+        inArray(L.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
         lte(L.posting_date, params.postingDate),
         lte(L.created_at, mysqlTimestampFromEpoch(params.countedAtEpochSeconds)),
         ...this.farmConditions(),

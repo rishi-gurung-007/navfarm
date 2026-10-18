@@ -1319,8 +1319,8 @@ export class BatchDailyDataService {
       parent_location_id: schema.locationMaster.parent_location_id,
       farm_id: schema.locationMaster.farm_id,
     };
-    // The farm's own store, which every fallback below ends at.
-    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId);
+    // The farm's store that holds this item, which every fallback below ends at.
+    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId, itemId);
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -1389,9 +1389,9 @@ export class BatchDailyDataService {
     );
   }
 
-  /** The farm's own active store, first by code — the one the feed forecast reports. */
-  private storeOfFarm(farmId: string | null): Promise<string | null> {
-    return farmStoreOf(this.db, farmId);
+  /** The farm's store holding the item drawn — else its first active store by code. */
+  private storeOfFarm(farmId: string | null, itemId?: string): Promise<string | null> {
+    return farmStoreOf(this.db, farmId, itemId);
   }
 
   /**
@@ -1431,7 +1431,7 @@ export class BatchDailyDataService {
       );
     const inSilo = round(Number(held?.total ?? 0));
     if (inSilo >= quantity - 0.0001) return null;
-    const storeId = await this.storeOfFarm(farmId);
+    const storeId = await this.storeOfFarm(farmId, itemId);
     if (!storeId || storeId === warehouseId) return null;
     const [store] = await this.db
       .select({ code: schema.locationMaster.location_code })
