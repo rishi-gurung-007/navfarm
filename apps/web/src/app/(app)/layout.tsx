@@ -25,6 +25,7 @@ import {
   Package,
   CalendarClock,
   Receipt,
+  FileChartColumn,
 } from "lucide-react";
 import {
   getStoredUser,
@@ -52,6 +53,7 @@ import { resolveLobFamily } from "@/lib/lob";
 import { LIVESTOCK_SECTIONS } from "@/components/console/livestock/livestock-page-shell";
 import { FINANCE_SECTIONS } from "@/components/console/finance/finance-page-shell";
 import { EXPENSE_SECTIONS } from "@/components/console/expenses/expense-shell";
+import { REPORT_SECTIONS } from "@/components/console/reports/reports-shell";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
 
 /** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
@@ -303,6 +305,10 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     label: t(section.labelKey),
     href: section.href,
   }));
+  const reportChildren = REPORT_SECTIONS.map((section) => ({
+    label: t(section.labelKey),
+    href: section.href,
+  }));
   const inventoryChildren = [
     { label: t("invStockBalance"), href: "/inventory/balance" },
     { label: t("invGoodsReceipt"), href: "/inventory/goods-receipt" },
@@ -371,6 +377,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
       { label: t("navExpenses"), href: "/expenses/expense", icon: Receipt, activePrefix: "/expenses", children: expenseChildren, flyout: true },
+      { label: t("navReports"), href: "/reports/farrowing", icon: FileChartColumn, activePrefix: "/reports", children: reportChildren, flyout: true },
       // Alerts and Approvals belong here as much as in an area (F1/F2, review
       // I2): a company workspace has Inventory, so it has Feed Forecast and
       // Requisitions — D24 puts the feed alerts on the Alerts page and D25
@@ -448,6 +455,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
       { label: t("navRequisition"), href: "/requisitions", icon: ClipboardList, activePrefix: "/requisitions" },
       { label: t("financeCosting"), href: "/finance/journal", icon: Landmark, activePrefix: "/finance", children: financeChildren },
       { label: t("navExpenses"), href: "/expenses/expense", icon: Receipt, activePrefix: "/expenses", children: expenseChildren, flyout: true },
+      { label: t("navReports"), href: "/reports/farrowing", icon: FileChartColumn, activePrefix: "/reports", children: reportChildren, flyout: true },
       { label: t("navAlerts"), href: "/alerts", icon: AlertTriangle },
       { label: t("navTraceability"), href: "/traceability", icon: Package },
       { label: t("approvals"), href: "/approvals", icon: CheckSquare, activePrefix: "/approvals" },

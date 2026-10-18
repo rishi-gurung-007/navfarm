@@ -4161,3 +4161,29 @@ same run added CULLED and PRODUCTIVE_SOW.
 
 Not changed: the BATCH_WISE data-entry path still auto-creates for the batch's **own current stage** only
 (`batch.service.ts`, gated on `effectiveStageId === batch.stage_id`) — one stage, the one the batch is in.
+
+## 18 Oct 2026 — Reports: R07 Farrowing Report first, built like Voucher (Rishi)
+
+Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
+
+- **Reports** is its own sidebar item with a flyout, in company and operational-area scope, right after Voucher.
+  Each report gets its own view permission (`REPORTS` / `FARROWING` for this one), set in Role Permissions.
+- The page shows nothing until the filters are chosen and **Generate** is pressed. Export is **PDF**.
+- Filters: **Farm** (required), **Date From / Date To** (required — no Week filter), Batch, Parity, Per Sow (one sow's
+  figures). **Parity means parity at farrowing** (the litter number).
+- Week and Month columns and the lone "Day" cell are left out for now.
+- Actuals come from **batch data entry**. Posting a farrowing or weaning in data entry writes `farrowing_record`
+  (and a service writes `breeding_record`), so the report reads those; stillborn, mummified and birth weight come
+  from the Breeding screen onto the same litter.
+- **Targets** come from the breed lifecycle stages' KPI thresholds; none set → "Not available". The report reads
+  metric codes SERVICE_TARGET, FARROWING_TARGET, FARROWING_RATE, TOTAL_BORN, BORN_ALIVE, BORN_DEAD, MUMMIFIED,
+  ACTIVE_WEEK_MORTALITY, PRE_WEAN_MORTALITY, WEANING_WEIGHT, LITTER_MASS (the codes are ours; a target shows as the
+  lower–upper range).
+- **Prior year:** no data → "No data". Batches do not repeat across years, so prior year is the same farm and dates a
+  year earlier and is shown on the farm total row (ours).
+- Left out until the client explains them: Average Wean per Sow, Gilt Maternal Body Loss, Target Gilt Service,
+  2nd Parity Service Target, Prior Year Rate, YoY % Change.
+- **Total Litter Mass "ALL OR ONE"**: All = total mass of all weaned litters; One = the average litter.
+- **Active Week Mortality** = piglet deaths in the current week — taken as the Monday–Sunday week holding Date To (ours).
+- Farrowing Rate % follows the sheet's formula literally: sows farrowed ÷ sows served, both within the dates. Across a
+  date boundary this compares different cohorts (a batch served before Date From shows farrowings and no services).

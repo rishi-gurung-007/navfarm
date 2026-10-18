@@ -35,6 +35,8 @@ const DEFAULT_RESOURCES = [
   { module_code: "FINANCE", resource: "JOURNAL", name: "Journal Entries", nameKey: "jpJournalEntries" },
   { module_code: "FINANCE", resource: "REPORTS", name: "Financial Reports", nameKey: "rolFinancialReports" },
   { module_code: "FINANCE", resource: "EXPENSE", name: "Expense", nameKey: "expExpense" },
+  // REPORTS — one resource per report (reports-shell.tsx REPORT_SECTIONS)
+  { module_code: "REPORTS", resource: "FARROWING", name: "Farrowing Report", nameKey: "rolFarrowingReport" },
   { module_code: "FINANCE", resource: "STOCK_VARIANCE", name: "Stock Variance (Finance approval)", nameKey: "rolStockVariance" },
   // INVENTORY (Phase 3)
   { module_code: "INVENTORY", resource: "GOODS_RECEIPT", name: "GRN", nameKey: "grpTitle" },
