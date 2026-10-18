@@ -2408,7 +2408,7 @@ export const translations = {
     rptNotAvailable: "Not available",
     rptNoData: "No data",
     rptFarmTotal: "Farm total",
-    rptGeneratedAt: "Generated {at}",
+    rptGeneratedAt: "Generated {{at}}",
     rptActual: "Actual",
     rptTarget: "Target",
     rptPriorYear: "Prior YR",
