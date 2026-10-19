@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, ne, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { eq, ne, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL, count } from 'drizzle-orm';
+import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
@@ -4019,7 +4020,13 @@ export class BatchService {
    * form. ANIMAL_WISE batches have no single current stage, so they delegate
    * to getDataEntryByStage() instead — see that method's comment.
    */
+  /** The Data Entry screen's lines, with why the batch takes no entry when it does not (see entry-blocked.ts). */
   async getDataEntry(id: string, dateStr: string, stageId?: string) {
+    const result = await this.getDataEntryLines(id, dateStr, stageId);
+    return { ...result, entry_blocked_reason: await entryBlockedReason(this.db, id) };
+  }
+
+  private async getDataEntryLines(id: string, dateStr: string, stageId?: string) {
     const batch = await this.findOne(id);
     if (batch.tracking_mode === 'ANIMAL_WISE') {
       return this.getDataEntryByStage(batch, dateStr);
@@ -5520,6 +5527,42 @@ export class BatchService {
     return { lines, dayOfStage };
   }
 
+  /**
+   * A user closes a bio-asset batch (Rishi, 19 Oct: a batch is closed by a user, never by a posting). Its value went
+   * out with its animals — by disposal, harvest or transfer — so there is nothing to allocate: it may close only once
+   * it holds no head on its bio-asset state and, for an animal-wise batch, no live animal.
+   */
+  private async closeEmptyBioAsset(batch: Awaited<ReturnType<BatchService['findOne']>>, dto: CloseBatchDto, userPayload?: UserContext) {
+    const [state] = await this.db
+      .select({ current_quantity: schema.batchBioAssetState.current_quantity })
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+      .limit(1);
+    const [{ live }] = await this.db
+      .select({ live: count() })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.current_batch_id, batch.batch_id), eq(schema.animalRegister.is_active, true)));
+    const head = Math.max(Number(state?.current_quantity ?? 0), Number(live));
+    if (head > 1e-9) {
+      throw new BadRequestException(
+        `Batch '${batch.batch_no}' still holds ${head} head. Move, sell or dispose of them before closing it.`,
+      );
+    }
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        status: 'CLOSED',
+        actual_end_date: dto.actual_end_date || new Date().toISOString().slice(0, 10),
+        closing_quantity: '0.0000',
+        closed_at: toMysqlTimestamp(),
+        closed_by: userPayload?.userId || null,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(and(eq(schema.batchHeader.batch_id, batch.batch_id), eq(schema.batchHeader.status, 'ACTIVE')));
+    return this.findOne(batch.batch_id);
+  }
+
   async close(
     id: string,
     dto: CloseBatchDto,
@@ -5528,10 +5571,9 @@ export class BatchService {
   ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
-    if (batch.costing_method === 'BIO_ASSET') {
-      throw new BadRequestException(
-        "BIO_ASSET batches don't close via this action — use the dispose endpoint to exit animals from the herd; the batch closes automatically once the herd is fully disposed.",
-      );
+    if (batch.costing_method === 'BIO_ASSET') return this.closeEmptyBioAsset(batch, dto, userPayload);
+    if (!dto.output_lines?.length) {
+      throw new BadRequestException('Closing a batch needs its output lines, with cost splits adding up to 100.');
     }
 
     const totalSplitPct = dto.output_lines.reduce(
@@ -6342,19 +6384,16 @@ export class BatchService {
       }
     }
 
-    let closedNow = false;
+    // The last head out leaves the batch at nil head, still ACTIVE: a batch is closed by a user, never by a
+    // posting (Rishi, 19 Oct). POST /batch/:id/close accepts a bio-asset batch once it holds no head.
+    const closedNow = false;
     if (newQty <= 0) {
-      closedNow = true;
       await this.db
         .update(schema.batchHeader)
         .set({
-          status: 'CLOSED',
-          actual_end_date: dto.posting_date,
           closing_quantity: '0.0000',
           total_cost: newNca.toString(),
           unit_cost: '0.000000',
-          closed_at: toMysqlTimestamp(),
-          closed_by: userPayload?.userId || null,
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })

@@ -48,6 +48,7 @@ import { BatchShedField } from '@/components/console/production/batch-shed-field
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatAmount, formatQuantity, formatRate, toInputNumber } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { confirmAction } from '@/components/ui/confirm-dialog';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
 
@@ -1237,6 +1238,24 @@ export default function BatchPanel() {
         output_lines: cleanLines,
       });
       setCloseModalOpen(false);
+      await refreshViewing();
+      load();
+    } catch (err: any) {
+      setCloseError(err?.message || t('blErrCloseBatch'));
+    } finally {
+      setActing(false);
+    }
+  };
+
+  // A bio-asset batch is closed by a user once it holds no head (Rishi, 19 Oct) — its value left with its animals,
+  // so there is nothing to allocate and no output lines to enter.
+  const handleCloseEmptyBioAsset = async () => {
+    if (!viewing) return;
+    if (!(await confirmAction({ title: t('blCloseBatchTitle', { batchNo: viewing.batch_no }), message: t('blCloseEmptyBioConfirm') }))) return;
+    setActing(true);
+    setCloseError('');
+    try {
+      await api.post(`/batch/${viewing.batch_id}/close`, { actual_end_date: new Date().toISOString().slice(0, 10) });
       await refreshViewing();
       load();
     } catch (err: any) {
@@ -3409,6 +3428,21 @@ export default function BatchPanel() {
                         </table>
                       </div>
                     </div>
+                  )}
+
+                {viewing.status === 'ACTIVE' &&
+                  viewing.costing_method === 'BIO_ASSET' &&
+                  Number(viewing.bio_asset_state?.current_quantity ?? 0) <= 0 &&
+                  Number(viewing.closing_quantity ?? 0) <= 0 && (
+                    <Button
+                      size="sm"
+                      onClick={handleCloseEmptyBioAsset}
+                      disabled={acting}
+                      style={{ backgroundColor: 'var(--success)', color: '#fff' }}
+                      className="gap-1.5 self-start"
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> {t('blCloseBatch')}
+                    </Button>
                   )}
 
                 {viewing.status === 'ACTIVE' &&

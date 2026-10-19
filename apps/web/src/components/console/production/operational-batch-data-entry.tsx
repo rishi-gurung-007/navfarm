@@ -496,6 +496,8 @@ export default function OperationalBatchDataEntry() {
 
   // Daily data entry mandatory date progression
   const [nextPendingDate, setNextPendingDate] = useState<string>('');
+  // Why this batch takes no entry (no animals in it / a nil head count) — Rishi, 19 Oct. From GET data-entry.
+  const [entryBlocked, setEntryBlocked] = useState<string | null>(null);
 
   // Stage transition & Min Days Before Move validation from backend
   const [stageTransition, setStageTransition] = useState<{
@@ -818,6 +820,7 @@ export default function OperationalBatchDataEntry() {
         const batchData = batchRes?.data ?? batchRes;
         const isAnimalWise = batchData?.tracking_mode === 'ANIMAL_WISE';
 
+        setEntryBlocked(schedData?.entry_blocked_reason || null);
         const npd = schedData?.next_pending_date || '';
         if (npd) {
           setNextPendingDate(npd);
@@ -2831,6 +2834,16 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
 
+            {entryBlocked && (
+              <div
+                role="status"
+                className="rounded-[var(--radius-sm)] border px-3 py-2 text-xs font-semibold"
+                style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-muted)', color: 'var(--warning)' }}
+              >
+                {entryBlocked}
+              </div>
+            )}
+
             {!isAnimalWise && (
               <div className="flex items-center gap-2">
                 {!locked && (
@@ -2839,6 +2852,7 @@ export default function OperationalBatchDataEntry() {
                     variant="outline"
                     onClick={handleSaveAllToDraft}
                     disabled={
+                      !!entryBlocked ||
                       savingAllDraft ||
                       posting ||
                       isFutureDate ||
@@ -2863,6 +2877,7 @@ export default function OperationalBatchDataEntry() {
                   size="sm"
                   onClick={handlePostEntry}
                   disabled={
+                    !!entryBlocked ||
                     posting ||
                     mortalityIncomplete ||
                     locked ||
@@ -2917,7 +2932,7 @@ export default function OperationalBatchDataEntry() {
                       size="sm"
                       variant="outline"
                       onClick={handleSaveAllToDraft}
-                      disabled={savingAllDraft || stageActionBusy || isFutureDate}
+                      disabled={!!entryBlocked || savingAllDraft || stageActionBusy || isFutureDate}
                       title={
                         isFutureDate
                           ? `Cannot save draft for future date (${selectedDate})`

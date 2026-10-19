@@ -12,6 +12,11 @@ import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 import { BreedingService } from '../../piggery/breeding/breeding.service';
+
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('./entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+
 const breedingMock = { recordFarrowing: jest.fn(), recordWeaning: jest.fn(), recordSemenCollection: jest.fn() };
 // The closed-period guard (r32) is its own unit (monthly-stock-take.rules.spec.ts); these
 // tests queue db.select results in order, so the guard's read is stubbed here.

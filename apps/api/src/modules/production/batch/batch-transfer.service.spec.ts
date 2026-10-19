@@ -278,7 +278,6 @@ describe('BatchTransferService', () => {
       jest
         .spyOn(service as any, 'writeLedgerLegs')
         .mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'closeIfEmptied').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'sweepIfEmptied').mockImplementation(async (_t, total) => total);
 
       mockDbSelect
@@ -340,7 +339,6 @@ describe('BatchTransferService', () => {
       jest.spyOn(service as any, 'shiftBioAssetState').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'closeIfEmptied').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'sweepIfEmptied').mockImplementation(async (_t, total) => total);
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
     };
@@ -422,48 +420,6 @@ describe('BatchTransferService', () => {
         service.post('tr-1', 'tenant-123', { userId: 'user-1' }),
       ).rejects.toThrow(BadRequestException);
       expect(mockDbUpdate).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('closeIfEmptied', () => {
-    const rows = (value: unknown[]) => ({
-      from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(value) }) }),
-    });
-    const updateSpy = () => {
-      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
-      mockDbUpdate.mockReturnValue({ set });
-      return set;
-    };
-
-    it('closes a bio-asset sow batch the transfer left with no head and no live animal, on the transfer date', async () => {
-      const set = updateSpy();
-      mockDbSelect
-        .mockReturnValueOnce(rows([{ status: 'ACTIVE', costing_method: 'BIO_ASSET', tracking_mode: 'ANIMAL_WISE' }]))
-        .mockReturnValueOnce(rows([{ current_quantity: '0.0000' }]))
-        .mockReturnValueOnce(rows([]));
-      await (service as any).closeIfEmptied('b-1', '2026-10-19', 'u-1');
-      expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'CLOSED', actual_end_date: '2026-10-19', closing_quantity: '0.0000', closed_by: 'u-1' }));
-    });
-
-    it('leaves the batch open while an animal is still assigned to it', async () => {
-      const set = updateSpy();
-      mockDbSelect
-        .mockReturnValueOnce(rows([{ status: 'ACTIVE', costing_method: 'BIO_ASSET', tracking_mode: 'ANIMAL_WISE' }]))
-        .mockReturnValueOnce(rows([{ current_quantity: '0.0000' }]))
-        .mockReturnValueOnce(rows([{ animal_id: 'a-9' }]));
-      await (service as any).closeIfEmptied('b-1', '2026-10-19');
-      expect(set).not.toHaveBeenCalled();
-    });
-
-    it('leaves a batch with head on hand, and any batch that is not bio-asset costed', async () => {
-      const set = updateSpy();
-      mockDbSelect
-        .mockReturnValueOnce(rows([{ status: 'ACTIVE', costing_method: 'BIO_ASSET', tracking_mode: 'BATCH_WISE' }]))
-        .mockReturnValueOnce(rows([{ current_quantity: '12.0000' }]))
-        .mockReturnValueOnce(rows([{ status: 'ACTIVE', costing_method: 'STANDARD', tracking_mode: 'BATCH_WISE' }]));
-      await (service as any).closeIfEmptied('b-1', '2026-10-19');
-      await (service as any).closeIfEmptied('b-2', '2026-10-19');
-      expect(set).not.toHaveBeenCalled();
     });
   });
 

@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, inArray, or, sql, isNull, isNotNull, gt, lte, like, desc } from 'drizzle-orm';
+import { entryBlockedReason } from './entry-blocked';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import { ModuleRef } from '@nestjs/core';
@@ -201,6 +202,8 @@ export class BatchDailyDataService {
       .from(schema.batchHeader)
       .where(eq(schema.batchHeader.batch_id, batchId))
       .limit(1);
+    const blocked = await entryBlockedReason(this.db, batchId);
+    if (blocked) throw new BadRequestException(blocked);
     if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !dto.animal_id) {
       throw new BadRequestException(
         `Batch '${batchId}' is Animal Wise — choose an animal for data entry.`,
