@@ -180,7 +180,7 @@ export default function DashboardPage() {
         ? (
             await Promise.all(
               companyList.map((c: any) =>
-                fetchAllPages((limit, offset) => api.get(`/animal?companyId=${c.company_id}&limit=${limit}&offset=${offset}`)),
+                fetchAllPages((limit, offset) => api.get(`/animal?limit=${limit}&offset=${offset}`, { asCompany: c.company_id })),
               ),
             )
           ).flat()
