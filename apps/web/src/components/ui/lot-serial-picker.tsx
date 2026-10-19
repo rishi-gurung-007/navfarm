@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Check, Sparkles, RotateCcw, ChevronDown, Layers, Hash } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -282,8 +283,8 @@ function LotSerialPanel({
             const v = String(row[valueKey]);
             const isSelected = multiSelect ? selectedSet.has(v) : v === String(value);
             const isExcluded = !isSelected && excludedSet.has(v);
-            const exp = row.expiry_date ? String(row.expiry_date).slice(0, 10) : "—";
-            const postDate = row.posting_date ? String(row.posting_date).slice(0, 10) : "—";
+            const exp = row.expiry_date ? String(row.expiry_date).slice(0, 10) : NA;
+            const postDate = row.posting_date ? String(row.posting_date).slice(0, 10) : NA;
 
             return (
               <button

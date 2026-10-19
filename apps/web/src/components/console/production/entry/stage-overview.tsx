@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React from "react";
 import { CheckCircle2, CircleSlash, Clock } from "lucide-react";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -51,13 +52,13 @@ export function StageOverview({
               <div className="flex items-center gap-1.5">
                 <Icon size={16} className={`shrink-0 ${tone}`} />
                 <span className="truncate text-sm font-semibold text-(--text-primary)">
-                  {stage.stage_name ?? "—"}
+                  {stage.stage_name ?? NA}
                 </span>
               </div>
               {/* The head count sits under the stage name: it is what the
                   worker counts against when they weigh out the feed. */}
               <p className="mt-2 text-2xl font-semibold leading-none text-(--text-primary)">
-                {stage.animal_count ?? "—"}
+                {stage.animal_count ?? NA}
                 <span className="ml-1.5 text-[11px] font-normal text-(--text-muted)">{t("deWAnimals")}</span>
               </p>
               <p className="mt-1.5 text-[11px] text-(--text-muted)">

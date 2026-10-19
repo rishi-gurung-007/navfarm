@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -226,7 +227,7 @@ export default function AreaSettingsPage() {
       <input
         type="text"
         disabled
-        value={value || "—"}
+        value={value || NA}
         className={`nf-input w-full cursor-not-allowed bg-[var(--surface-raised)] text-[var(--text-muted)] ${mono ? "font-mono" : ""}`}
       />
     </div>

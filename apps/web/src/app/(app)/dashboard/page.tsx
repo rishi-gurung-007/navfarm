@@ -1,5 +1,13 @@
 "use client";
 
+import { NA } from "@/utils/na";
+import {
+  fetchAllPages,
+  biologicalCensus,
+  activeBatches,
+  activeBatchValuation,
+  batchHead,
+} from "./dashboard-counts";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -138,6 +146,7 @@ export default function DashboardPage() {
       // active company's name/id is already in storedUser.companies, so
       // skip both tenant-wide calls instead of syncing data nothing reads.
       const isTenantScope = currentScope === "TENANT";
+      const scopeParam = compId && !isTenantScope ? `companyId=${compId}&` : "";
       const [tenant, compRes, areasRes, batchRes, animalRes] = await Promise.all([
         isTenantScope ? api.get(`/tenant/${tenantId}`).catch(() => null) : Promise.resolve(null),
         isTenantScope ? api.get(`/company/tenant/${tenantId}`).catch(() => []) : Promise.resolve(storedUser.companies || []),
@@ -146,8 +155,9 @@ export default function DashboardPage() {
         // not swallowed into empty arrays: a farm-scoped 403 rendered as
         // "0 herd / no batches recorded yet", which reads as lost data rather
         // than as the wrong-farm refusal it is.
-        api.get(`/batch${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=100` : "?limit=100"}`),
-        api.get(`/animal${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=500` : "?limit=500"}`),
+        // Every page is fetched: a single `?limit=100` counted only the first 100 batches.
+        fetchAllPages((limit, offset) => api.get(`/batch?${scopeParam}limit=${limit}&offset=${offset}`)),
+        fetchAllPages((limit, offset) => api.get(`/animal?${scopeParam}limit=${limit}&offset=${offset}`)),
       ]);
 
       setTenantInfo(tenant);
@@ -160,8 +170,8 @@ export default function DashboardPage() {
       }
       setCompanies(companyList);
       if (Array.isArray(areasRes)) setOperationalAreas(areasRes);
-      setBatches(Array.isArray(batchRes) ? batchRes : (batchRes?.data ?? []));
-      setAnimals(Array.isArray(animalRes) ? animalRes : (animalRes?.data ?? []));
+      setBatches(batchRes);
+      setAnimals(animalRes);
     } catch (e: any) {
       setError(e?.message || t("dashLoadFailed"));
     } finally {
@@ -402,7 +412,7 @@ export default function DashboardPage() {
             <StatCard
               icon={Activity}
               label={t("dashBiologicalCensus")}
-              value={tenantScopedAnimals.length > 0 ? tenantScopedAnimals.length : tenantScopedBatches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0)}
+              value={biologicalCensus(tenantScopedBatches, tenantScopedAnimals)}
               unit={t("dashHeadCount")}
               onClick={() => router.push("/livestock")}
               sub={
@@ -415,7 +425,7 @@ export default function DashboardPage() {
             <StatCard
               icon={Layers}
               label={t("dashActiveBatches")}
-              value={tenantScopedBatches.filter(b => b.status === "ACTIVE" || !b.status).length}
+              value={activeBatches(tenantScopedBatches).length}
               unit={t("dashInProgress")}
               onClick={() => router.push("/batches")}
               sub={
@@ -428,7 +438,7 @@ export default function DashboardPage() {
             <StatCard
               icon={DollarSign}
               label={t("dashGroupBatchValuation")}
-              value={formatMoney(tenantScopedBatches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0))}
+              value={formatMoney(activeBatchValuation(tenantScopedBatches))}
               unit={t("dashWip")}
               onClick={() => router.push("/finance/journal")}
               sub={
@@ -453,7 +463,7 @@ export default function DashboardPage() {
                     return {
                       name: c.company_name?.length > 18 ? `${c.company_name.slice(0, 18)}…` : c.company_name,
                       Batches: cBatches.length,
-                      Population: cAnimals.length > 0 ? cAnimals.length : cBatches.reduce((s, b) => s + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0),
+                      Population: biologicalCensus(cBatches, cAnimals),
                     };
                   })}
                   margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
@@ -509,9 +519,7 @@ export default function DashboardPage() {
                     const compAreas = operationalAreas.filter((a) => a.company_id === comp.company_id);
                     const compAnimals = animals.filter((a) => a.company_id === comp.company_id);
                     const compBatches = batches.filter((b) => b.company_id === comp.company_id);
-                    const compHeadcount = compAnimals.length > 0
-                      ? compAnimals.length
-                      : compBatches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
+                    const compHeadcount = biologicalCensus(compBatches, compAnimals);
 
                     return (
                       <tr key={comp.company_id} className="hover:bg-[var(--surface-raised)] transition-colors">
@@ -602,7 +610,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {animals.length > 0 ? animals.length : batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0)}
+                  {biologicalCensus(batches, animals)}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashHeadCount")}</span>
               </div>
@@ -625,7 +633,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {batches.filter(b => b.status === "ACTIVE" || !b.status).length}
+                  {activeBatches(batches).length}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashBatchesWord")}</span>
               </div>
@@ -648,7 +656,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {formatMoney(batches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0))}
+                  {formatMoney(activeBatchValuation(batches))}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashWip")}</span>
               </div>
@@ -789,11 +797,11 @@ export default function DashboardPage() {
       {/* ========================================================================= */}
       {scope === "OPERATIONAL" && activeLob === "PIGGERY" && (() => {
         const activeBatch = singleBatch || batches.find(b => b.status === "ACTIVE") || batches[0];
-        const aggAssignedHead = batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
+        const aggAssignedHead = biologicalCensus(batches, animals);
         const assignedHead = isAllBatchesView
-          ? (animals.length > 0 ? animals.length : aggAssignedHead)
-          : Number(activeBatch?.closing_quantity) || Number(activeBatch?.opening_quantity) || (animals.length > 0 ? animals.length : 0);
-        const aggWip = batches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0);
+          ? aggAssignedHead
+          : activeBatch ? batchHead(activeBatch) : 0;
+        const aggWip = activeBatchValuation(batches);
 
         const stageBreakdown = Object.entries(
           batches.reduce((acc: Record<string, number>, b) => {
@@ -848,7 +856,7 @@ export default function DashboardPage() {
                   <span className="flex items-center justify-between">
                     {/* Real breed only — this used to fall back to a hardcoded
                         "Large White lineage", which showed on Landrace batches. */}
-                    <span>{activeBatch?.breed_name || "—"}</span>
+                    <span>{activeBatch?.breed_name || NA}</span>
                     <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                   </span>
                 }
@@ -859,7 +867,7 @@ export default function DashboardPage() {
                 // In "all batches" mode this rendered the whole sentence
                 // "All batches (2)" at metric size — a phrase styled as a number,
                 // which broke badly in non-Latin scripts. Show the count.
-                value={isAllBatchesView ? batches.length : (activeBatch?.batch_no || "—")}
+                value={isAllBatchesView ? batches.length : (activeBatch?.batch_no || NA)}
                 onClick={() => router.push("/batches")}
                 sub={
                   <span className="flex items-center justify-between">
@@ -871,7 +879,7 @@ export default function DashboardPage() {
               <StatCard
                 icon={Wheat}
                 label={t("dashActiveBatches")}
-                value={batches.length}
+                value={activeBatches(batches).length}
                 unit={t("dashBatchesWord")}
                 onClick={() => router.push("/batches/records")}
                 sub={

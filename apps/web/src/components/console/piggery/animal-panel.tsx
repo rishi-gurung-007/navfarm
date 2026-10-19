@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import {
   Search, Loader2, Inbox, Eye, AlertCircle, ChevronRight, Scan,
@@ -76,7 +77,7 @@ const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
 };
 
 function formatDate(d?: string | null) {
-  if (!d) return "—";
+  if (!d) return NA;
   return new Date(d).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -139,7 +140,7 @@ export default function AnimalPanel() {
   // ── Reference data ──────────────────────────────────────────────────────────
   // Company-wide breed lookup for the list table, loaded once on mount.
   const [breedLookup, setBreedLookup] = useState<Record<string, string>>({});
-  const breedName = (id?: string | null) => (id && breedLookup[id]) || id || "—";
+  const breedName = (id?: string | null) => (id && breedLookup[id]) || id || NA;
   const [medItems, setMedItems] = useState<Row[]>([]); // MEDICINE + VACCINE filtered
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages]   = useState<Row[]>([]);
@@ -375,7 +376,7 @@ export default function AnimalPanel() {
                   <StatusBadge status={row.status || "ACTIVE"} label={statusLabel(row.status || "ACTIVE")} />
                 </TableCell>
                 <TableCell style={S.muted}>{formatDate(row.entry_date)}</TableCell>
-                <TableCell style={S.muted}>{row.rfid_tag || "—"}</TableCell>
+                <TableCell style={S.muted}>{row.rfid_tag || NA}</TableCell>
                 <TableCell>
                   <button
                     aria-label={t("anpViewAnimal")}

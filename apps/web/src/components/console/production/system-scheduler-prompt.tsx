@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useRef, useState } from "react";
 import { CalendarClock } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -87,7 +88,7 @@ export function useSystemSchedulerPrompt() {
           <li key={m.stage_id} className="flex items-start gap-2.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2.5">
             <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent)]" />
             <div className="min-w-0 text-sm">
-              <p className="font-semibold text-[var(--text-primary)]">{m.stage_name || "—"}</p>
+              <p className="font-semibold text-[var(--text-primary)]">{m.stage_name || NA}</p>
               <p className="text-[var(--text-secondary)]">
                 {m.scheduler_name} · {t("sysSchPromptActivities", { n: m.line_count })}
               </p>

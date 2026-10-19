@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Building2, CalendarDays, CheckCircle2, ChevronLeft } from "lucide-react";
@@ -193,7 +194,7 @@ export default function EntryWorkspace() {
               <span className="mb-1 block text-xs font-medium text-(--text-secondary)">{t("deWorkingDay")}</span>
               <div className="flex h-12 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] px-3 text-sm font-semibold text-(--text-primary)">
                 <CalendarDays size={15} className="text-(--accent)" />
-                {selectedDay || "—"}
+                {selectedDay || NA}
                 {form && form.date === form.today && (
                   <span className="text-xs font-normal text-(--text-secondary)">· {t("deToday")}</span>
                 )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useState, useEffect, useRef } from "react";
 import {
   HeartPulse,
@@ -72,7 +73,7 @@ function parseMortalityRemarks(remarks?: string | null) {
   const head = text.replace(/\[(PM|DISPOSAL):[^\]]*\]/gi, "").trim();
   const withPen = head.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
   return {
-    cause: (withPen ? withPen[1] : head) || "—",
+    cause: (withPen ? withPen[1] : head) || NA,
     pen: withPen?.[2]?.trim() || "",
     postMortem: pm,
     disposal,
@@ -245,7 +246,7 @@ export default function MortalityHealthPanel() {
           e.trigger_type === "AGE_WEEKS" ? `Age ${e.trigger_value} weeks`
             : e.trigger_type === "WEEKS_PREGNANT" ? `${e.trigger_value} weeks pregnant`
               : e.trigger_type === "PER_CYCLE" ? "Every pregnancy cycle"
-                : e.day != null ? `Day ${e.day}` : "—";
+                : e.day != null ? `Day ${e.day}` : NA;
         const breedName = new Map<string, string>(
           (Array.isArray(breeds) ? breeds : (breeds as any)?.data ?? []).map((b: any) => [b.breed_id, b.breed_name || b.breed_code]),
         );
@@ -259,10 +260,10 @@ export default function MortalityHealthPanel() {
           for (const [i, e] of entries.entries()) {
             items.push({
               id: `${row.lifecycle_id}-${i}`,
-              vaccine_name: vaccineName.get(e.vaccine_item_id) ?? e.vaccine ?? "—",
-              target_disease: e.route ?? "—",
+              vaccine_name: vaccineName.get(e.vaccine_item_id) ?? e.vaccine ?? NA,
+              target_disease: e.route ?? NA,
               scheduled_date: whenText(e),
-              target_stage: `${breedName.get(row.breed_id) ?? "—"} · ${stageName.get(row.stage_id) ?? "—"}`,
+              target_stage: `${breedName.get(row.breed_id) ?? NA} · ${stageName.get(row.stage_id) ?? NA}`,
               coverage_pct: 100,
               status: "SCHEDULED",
             });
@@ -311,12 +312,12 @@ export default function MortalityHealthPanel() {
                     batch_no: b.batch_no,
                     rfid_tag: t.animal_rfid_tag || t.animal_code || undefined,
                     animal_id: t.animal_id || undefined,
-                    pen_location: t.pen_location_name || legacy.pen || "—",
+                    pen_location: t.pen_location_name || legacy.pen || NA,
                     head_count: Number(t.quantity || 1),
                     cause_of_death: t.cause_of_death || legacy.cause,
-                    post_mortem_notes: t.post_mortem_notes || legacy.postMortem || "—",
-                    disposal_method: t.disposal_method || legacy.disposal || "—",
-                    recorded_by: t.created_by_name || "—",
+                    post_mortem_notes: t.post_mortem_notes || legacy.postMortem || NA,
+                    disposal_method: t.disposal_method || legacy.disposal || NA,
+                    recorded_by: t.created_by_name || NA,
                   });
                 } else if (
                   t.transaction_type === "CONSUMPTION" &&
@@ -347,15 +348,15 @@ export default function MortalityHealthPanel() {
                     rfid_tag: t.animal_rfid_tag || t.animal_code || "Batch Herd Cohort",
                     animal_id: t.animal_id || undefined,
                     batch_no: b.batch_no,
-                    diagnosis: t.diagnosis || legacy.diagnosis || t.remarks || "—",
-                    medicine_name: t.item_name || t.item_code || legacy.medicine || "—",
+                    diagnosis: t.diagnosis || legacy.diagnosis || t.remarks || NA,
+                    medicine_name: t.item_name || t.item_code || legacy.medicine || NA,
                     dosage: legacy.dosage || (t.item_name && t.remarks?.startsWith(`${t.item_name} — `)
                       ? t.remarks.slice(`${t.item_name} — `.length)
                       : `${formatQuantity(t.quantity, t.uom)} ${t.uom || ""}`.trim()),
-                    route: t.route || legacy.route || "—",
+                    route: t.route || legacy.route || NA,
                     withdrawal_days: withdrawalDays ?? null,
                     status: withdrawalDays == null ? "UNDER_OBSERVATION" : stillWithdrawing ? "ACTIVE" : "RECOVERED",
-                    veterinarian: t.veterinarian || legacy.vet || "—",
+                    veterinarian: t.veterinarian || legacy.vet || NA,
                   });
                 }
               });
@@ -516,13 +517,13 @@ export default function MortalityHealthPanel() {
           rfid_tag: modalAnimals.find((animal) => animal.animal_id === animalId)?.label || animalId,
           animal_id: animalId,
           batch_no: batchObj.no,
-          diagnosis: treatmentDetail.diagnosis || "—",
+          diagnosis: treatmentDetail.diagnosis || NA,
           medicine_name: String(selectedHealthItem.item_name),
           dosage: newTreatment.dosage?.trim() || `${quantity} ${selectedHealthItem.uom_primary}`,
-          route: treatmentDetail.route || "—",
+          route: treatmentDetail.route || NA,
           withdrawal_days: newTreatment.withdrawal_days ?? null,
           status: newTreatment.withdrawal_days == null ? "UNDER_OBSERVATION" : "ACTIVE",
-          veterinarian: treatmentDetail.veterinarian || "—",
+          veterinarian: treatmentDetail.veterinarian || NA,
         }, ...current]);
       }
       setTreatmentDialogOpen(false);
@@ -710,7 +711,7 @@ export default function MortalityHealthPanel() {
                       {m.batch_no}
                       <span className="block text-[10px] font-normal text-[var(--text-secondary)]">{m.pen_location}</span>
                     </TableCell>
-                    <TableCell className="py-2.5 px-3 font-mono">{m.rfid_tag || "—"}</TableCell>
+                    <TableCell className="py-2.5 px-3 font-mono">{m.rfid_tag || NA}</TableCell>
                     <TableCell className="py-2.5 px-3 text-center font-bold text-[var(--danger)]">{m.head_count}</TableCell>
                     <TableCell className="py-2.5 px-3 font-medium text-[var(--text-primary)]">{m.cause_of_death}</TableCell>
                     <TableCell className="py-2.5 px-3 text-[var(--text-secondary)] max-w-xs truncate" title={m.post_mortem_notes}>

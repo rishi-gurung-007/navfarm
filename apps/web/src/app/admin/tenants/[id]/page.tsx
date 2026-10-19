@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
@@ -31,7 +32,7 @@ function InfoRow({ label, value }: { label: string; value?: string | number | nu
   return (
     <div className="px-5 py-3.5 border-b" style={S.border}>
       <div className="nf-text-caption mb-1">{label}</div>
-      <div className="text-sm font-semibold truncate" style={S.primary}>{value ?? "—"}</div>
+      <div className="text-sm font-semibold truncate" style={S.primary}>{value ?? NA}</div>
     </div>
   );
 }
@@ -70,7 +71,7 @@ function MiniCard({ label, value }: { label: string; value?: string | number | n
   return (
     <div className="min-w-0">
       <div className="nf-text-caption mb-1">{label}</div>
-      <div className="text-xs font-semibold truncate" style={S.primary}>{value ?? "—"}</div>
+      <div className="text-xs font-semibold truncate" style={S.primary}>{value ?? NA}</div>
     </div>
   );
 }
@@ -229,7 +230,7 @@ export default function TenantDetailPage() {
 
   const completedCos = companies.filter((c) => c.onboarding_status === "COMPLETED").length;
   const activeUsers  = users.filter((u) => u.is_active).length;
-  const planLabel    = tenant.plan_id?.replace("PLAN_", "") || "—";
+  const planLabel    = tenant.plan_id?.replace("PLAN_", "") || NA;
   const companyMap   = Object.fromEntries(companies.map((c) => [c.company_id, c.company_name]));
   const isSystemTenant = tenant?.tenant_id === "00000000-0000-0000-0000-000000000000" || tenant?.tenant_code === "system";
 
@@ -242,7 +243,7 @@ export default function TenantDetailPage() {
         title={tenant.tenant_name}
         description={
           <span className="flex items-center gap-1.5">
-            <Mail className="w-3.5 h-3.5" /> {tenant.billing_email || "—"}
+            <Mail className="w-3.5 h-3.5" /> {tenant.billing_email || NA}
             <span className="mx-2 opacity-40">·</span>
             <span className="font-mono text-xs">{tenant.tenant_code}</span>
           </span>
@@ -272,8 +273,8 @@ export default function TenantDetailPage() {
         <StatCard icon={Users}    label={t("admUsers")}      value={users.length}
           sub={`${activeUsers} active · ${users.length - activeUsers} inactive`} />
         <StatCard icon={Layers}   label={t("admPlan")}       value={planLabel}
-          sub={tenant.billing_cycle || "—"} />
-        <StatCard icon={Database} label={t("admDatabase")}   value={tenant.db_name || "—"}
+          sub={tenant.billing_cycle || NA} />
+        <StatCard icon={Database} label={t("admDatabase")}   value={tenant.db_name || NA}
           sub={`${tenant.db_host || "localhost"}:${tenant.db_port || 3306}`} />
       </div>
 
@@ -288,16 +289,16 @@ export default function TenantDetailPage() {
           <InfoRow label={t("admTenantCode")}     value={tenant.tenant_code} />
           <InfoRow label={t("btColAnimalType")}            value={tenant.tenant_type || "STANDARD"} />
           <InfoRow label={t("admPlan")}            value={planLabel} />
-          <InfoRow label={t("admBillingCycle")}   value={tenant.billing_cycle || "—"} />
+          <InfoRow label={t("admBillingCycle")}   value={tenant.billing_cycle || NA} />
           <InfoRow label={t("admMaxCompanies")}   value={tenant.max_companies} />
           <InfoRow label={t("admMaxUsers")}       value={tenant.max_users} />
-          <InfoRow label={t("admApiRateLimit")}  value={tenant.api_rate_limit ? `${tenant.api_rate_limit} req/hr` : "—"} />
-          <InfoRow label={t("admPlanStart")}      value={tenant.plan_start_date || "—"} />
+          <InfoRow label={t("admApiRateLimit")}  value={tenant.api_rate_limit ? `${tenant.api_rate_limit} req/hr` : NA} />
+          <InfoRow label={t("admPlanStart")}      value={tenant.plan_start_date || NA} />
           <InfoRow label={t("admPlanEnd")}        value={tenant.plan_end_date || "Ongoing"} />
           <InfoRow label={t("admDbHost")}         value={`${tenant.db_host || "localhost"}:${tenant.db_port || 3306}`} />
-          <InfoRow label={t("admDbName")}         value={tenant.db_name || "—"} />
-          <InfoRow label={t("admBillingEmail")}   value={tenant.billing_email || "—"} />
-          <InfoRow label={t("admCreatedAt")}      value={tenant.created_at ? new Date(tenant.created_at).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—"} />
+          <InfoRow label={t("admDbName")}         value={tenant.db_name || NA} />
+          <InfoRow label={t("admBillingEmail")}   value={tenant.billing_email || NA} />
+          <InfoRow label={t("admCreatedAt")}      value={tenant.created_at ? new Date(tenant.created_at).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : NA} />
         </div>
       </div>
 
@@ -413,9 +414,9 @@ export default function TenantDetailPage() {
                 const isExpanded = expandedCompany === co.company_id;
                 const isLoading  = loadingDetails[co.company_id];
 
-                const regNo      = d?.company?.registration_no  || co.company_reg_no || "—";
-                const country    = d?.company?.country_id        || co.country         || "—";
-                const currency   = d?.company?.base_currency_id  || co.currency_id     || "—";
+                const regNo      = d?.company?.registration_no  || co.company_reg_no || NA;
+                const country    = d?.company?.country_id        || co.country         || NA;
+                const currency   = d?.company?.base_currency_id  || co.currency_id     || NA;
                 const modules    = d?.modules || [];
 
                 const nobCodes   = modules.filter((m: string) => !m.includes("_"));
@@ -455,7 +456,7 @@ export default function TenantDetailPage() {
                             {co.company_code?.substring(0, 2) || "CO"}
                           </div>
                           <div>
-                            <div>{co.company_name || "—"}</div>
+                            <div>{co.company_name || NA}</div>
                             <div className="text-[10px] font-mono" style={S.muted}>{co.company_code}</div>
                           </div>
                         </div>
@@ -473,7 +474,7 @@ export default function TenantDetailPage() {
                                 style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent)", borderColor: "var(--accent)" }}>{n}</span>
                             ))}
                           </div>
-                        ) : <span style={S.muted}>—</span>}
+                        ) : <span style={S.muted}>{NA}</span>}
                       </TableCell>
                       <TableCell className="max-w-[220px]">
                         {resolvedLobs.length > 0 ? (
@@ -486,7 +487,7 @@ export default function TenantDetailPage() {
                               <span className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] border" style={{ ...S.raised, ...S.muted }}>+{resolvedLobs.length - 3}</span>
                             )}
                           </div>
-                        ) : <span style={S.muted}>—</span>}
+                        ) : <span style={S.muted}>{NA}</span>}
                       </TableCell>
                       <TableCell>
                         {co.onboarding_status === "COMPLETED" ? (
@@ -625,18 +626,18 @@ export default function TenantDetailPage() {
                                                     style={{ backgroundColor: "var(--accent)" }}>
                                                     {u.full_name?.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() || "?"}
                                                   </div>
-                                                  {u.full_name || "—"}
+                                                  {u.full_name || NA}
                                                 </div>
                                               </TableCell>
-                                              <TableCell className="py-2.5" style={S.sub}>{u.email || "—"}</TableCell>
-                                              <TableCell className="py-2.5" style={S.sub}>{u.phone || "—"}</TableCell>
+                                              <TableCell className="py-2.5" style={S.sub}>{u.email || NA}</TableCell>
+                                              <TableCell className="py-2.5" style={S.sub}>{u.phone || NA}</TableCell>
                                               <TableCell className="py-2.5">
                                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] border"
                                                   style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent)", borderColor: "var(--accent)" }}>
-                                                  {u.user_type?.replace(/_/g, " ") || "—"}
+                                                  {u.user_type?.replace(/_/g, " ") || NA}
                                                 </span>
                                               </TableCell>
-                                              <TableCell className="py-2.5" style={S.sub}>{u.role_name || u.role_code || "—"}</TableCell>
+                                              <TableCell className="py-2.5" style={S.sub}>{u.role_name || u.role_code || NA}</TableCell>
                                               <TableCell className="py-2.5">
                                                 <Badge color={u.is_active ? "green" : "default"}>
                                                   {u.is_active ? "Active" : "Inactive"}
@@ -694,18 +695,18 @@ export default function TenantDetailPage() {
                         style={{ backgroundColor: "var(--accent)" }}>
                         {u.full_name?.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() || "?"}
                       </div>
-                      {u.full_name || "—"}
+                      {u.full_name || NA}
                     </div>
                   </TableCell>
-                  <TableCell style={S.sub}>{u.email || "—"}</TableCell>
-                  <TableCell style={S.sub}>{u.phone || "—"}</TableCell>
+                  <TableCell style={S.sub}>{u.email || NA}</TableCell>
+                  <TableCell style={S.sub}>{u.phone || NA}</TableCell>
                   <TableCell>
                     <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border"
                       style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent)", borderColor: "var(--accent)" }}>
-                      {u.user_type?.replace(/_/g, " ") || "—"}
+                      {u.user_type?.replace(/_/g, " ") || NA}
                     </span>
                   </TableCell>
-                  <TableCell style={S.sub}>{u.role_name || u.role_code || "—"}</TableCell>
+                  <TableCell style={S.sub}>{u.role_name || u.role_code || NA}</TableCell>
                   <TableCell style={S.sub}>
                     {u.company_id ? (
                       <div>
@@ -715,7 +716,7 @@ export default function TenantDetailPage() {
                     ) : u.user_type === "TENANT_ADMIN" ? (
                       <Badge color="purple">{t("admAllCompanies")}</Badge>
                     ) : (
-                      <span style={S.muted}>—</span>
+                      <span style={S.muted}>{NA}</span>
                     )}
                   </TableCell>
                   <TableCell>

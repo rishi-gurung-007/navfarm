@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { entityDisplayText } from "@/utils/code-name";
 import { ageBetween, formatAge } from "./utils/age";
@@ -222,9 +223,9 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
   const v = row[key];
   if (v === null || v === undefined || v === "") {
     if (key === "stage" || key === "stage_id") {
-      return row.stage || row.stage_name || row.stage_code || "—";
+      return row.stage || row.stage_name || row.stage_code || NA;
     }
-    return "—";
+    return NA;
   }
   const formatted = formatColumnValue(v, col);
   if (formatted !== undefined) return formatted;
@@ -232,7 +233,7 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
   // all, because every object fell through to JSON.stringify.
-  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : "—";
+  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : NA;
   if (typeof v === "object") return JSON.stringify(v);
   // Opt-in only (col.decimals set) — a plain numeric column still prints
   // whatever the API returned, same as always. The stored precision (e.g.

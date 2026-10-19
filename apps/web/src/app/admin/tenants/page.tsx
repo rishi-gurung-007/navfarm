@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -247,11 +248,11 @@ export default function AdminTenantsPage() {
                       <div>{tenant.tenant_name}</div>
                       <div className="text-[10px] font-mono mt-0.5" style={S.muted}>{tenant.tenant_code}</div>
                     </TableCell>
-                    <TableCell className="px-5" style={S.sub}>{tenant.billing_email || "—"}</TableCell>
+                    <TableCell className="px-5" style={S.sub}>{tenant.billing_email || NA}</TableCell>
                     <TableCell className="px-5">
                       {/* Plan tier is neutral metadata, not a status — colouring it
                           brand-red made every row shout for attention. */}
-                      <Badge variant="neutral">{tenant.plan_id?.replace("PLAN_", "") || "—"}</Badge>
+                      <Badge variant="neutral">{tenant.plan_id?.replace("PLAN_", "") || NA}</Badge>
                     </TableCell>
                     <TableCell className="px-5">
                       <span className={`text-[11px] font-semibold border px-2 py-0.5 rounded-[var(--radius-xs)] inline-flex items-center gap-1 ${active ? "bg-(--success-muted) text-(--success) border-(--success)" : "bg-(--surface-raised) text-(--text-secondary) border-(--border)"}`}>

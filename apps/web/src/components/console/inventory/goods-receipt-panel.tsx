@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, Sparkles, ListChecks, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -130,7 +131,7 @@ function TrackingLinesDialog({
           <div className="grid grid-cols-2 gap-3 rounded-[var(--radius-md)] border p-3 sm:grid-cols-3" style={S.raised}>
             <div>
               <span className="block text-[10px] font-semibold uppercase" style={S.muted}>{t("grpTrkItem")}</span>
-              <span className="font-mono font-semibold" style={S.primary}>{item?.item_code || "—"}</span>
+              <span className="font-mono font-semibold" style={S.primary}>{item?.item_code || NA}</span>
               <p className="truncate text-[11px]" style={S.sub}>{item?.item_name || ""}</p>
             </div>
             <div>
@@ -502,10 +503,10 @@ export default function GoodsReceiptPanel() {
     }
   };
 
-  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
+  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || NA;
   // Code and name are two columns (Rishi, 14 Oct).
-  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
-  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || "—";
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || NA;
 
   return (
     <div className="flex flex-col gap-4">
@@ -584,7 +585,7 @@ export default function GoodsReceiptPanel() {
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{row.receipt_no}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{row.posting_date}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{warehouseLabel(row.warehouse_id)}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.external_reference_no || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.external_reference_no || NA}</TableCell>
                     <TableCell className="text-right">
                       <StatusBadge status={row.status} />
                     </TableCell>
@@ -751,7 +752,7 @@ export default function GoodsReceiptPanel() {
                           columnHeaders={["Description", "Tracking"]}
                           getLabelParts={(itemRow: any) => [
                             itemRow.item_name || itemRow.item_code || "",
-                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : "—",
+                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : NA,
                           ]}
                           getLabel={(itemRow: any) =>
                             itemRow
@@ -805,7 +806,7 @@ export default function GoodsReceiptPanel() {
                         />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-32 text-right font-mono" style={S.primary}>
-                        {lineTotal(line) === null ? <span style={S.muted}>—</span> : formatMoney(lineTotal(line))}
+                        {lineTotal(line) === null ? <span style={S.muted}>{NA}</span> : formatMoney(lineTotal(line))}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
                         {isLot || isSerial ? (() => {
@@ -893,7 +894,7 @@ export default function GoodsReceiptPanel() {
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColStatus")}</p><StatusBadge status={viewing.status} className="mt-1" /></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpPostingDate")}</p><p style={S.primary}>{viewing.posting_date}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpWarehouse")}</p><p style={S.primary}>{warehouseLabel(viewing.warehouse_id)}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColReference")}</p><p style={S.primary}>{viewing.external_reference_no || "—"}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColReference")}</p><p style={S.primary}>{viewing.external_reference_no || NA}</p></div>
               {viewing.posted_at && <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpPostedAt")}</p><p style={S.primary}>{viewing.posted_at}</p></div>}
             </div>
 
@@ -917,9 +918,9 @@ export default function GoodsReceiptPanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{itemName(l.item_id)}</TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>{formatQuantity(l.quantity, l.uom)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
-                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>{l.rate != null ? formatMoney(l.rate) : "—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>{l.rate != null ? formatMoney(l.rate) : NA}</TableCell>
                       <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>
-                        {l.amount != null ? formatMoney(l.amount) : l.rate != null ? formatMoney(Number(l.rate) * Number(l.quantity || 0)) : "—"}
+                        {l.amount != null ? formatMoney(l.amount) : l.rate != null ? formatMoney(Number(l.rate) * Number(l.quantity || 0)) : NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono text-xs" style={S.primary}>
                         {l.lot_no ? (
@@ -933,7 +934,7 @@ export default function GoodsReceiptPanel() {
                             {l.serial_no}
                           </span>
                         ) : (
-                          <span style={S.muted}>—</span>
+                          <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
                     </TableRow>

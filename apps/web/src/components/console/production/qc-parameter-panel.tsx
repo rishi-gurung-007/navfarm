@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -197,9 +198,9 @@ export default function QcParameterPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.param_type}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.param_type === "NUMERIC"
-                        ? `${row.min_value != null ? formatQuantity(row.min_value) : "—"} – ${row.max_value != null ? formatQuantity(row.max_value) : "—"} ${row.uom || ""}`
+                        ? `${row.min_value != null ? formatQuantity(row.min_value) : NA} – ${row.max_value != null ? formatQuantity(row.max_value) : NA} ${row.uom || ""}`
                         : row.param_type === "GRADE"
-                        ? (row.grade_scale ? Object.keys(row.grade_scale).join(", ") : "—")
+                        ? (row.grade_scale ? Object.keys(row.grade_scale).join(", ") : NA)
                         : t("qcpTrueFalse")}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>{row.is_mandatory ? t("qcpYes") : t("qcpNo")}</TableCell>

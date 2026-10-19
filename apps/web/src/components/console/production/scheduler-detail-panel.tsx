@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import { Plus, Loader2, Trash2, Pencil, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -380,9 +381,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
         <div className="rounded-[var(--radius-md)] border shadow-2xs p-3.5" style={S.raised}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("sysSchColName")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.scheduler_name}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || "—"}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || NA}</p></div>
             <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || t("sysSchAllBreeds")}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || "—"}</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || NA}</p></div>
             <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStatus")}</p><StatusBadge status={header.is_active ? "ACTIVE" : "INACTIVE"} className="mt-1" /></div>
           </div>
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
@@ -406,7 +407,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
             </span>
             <StatusBadge status={header.scheduler_status} />
             <span className="font-medium text-xs" style={S.sub}>
-              {header.batch_no} • {header.stage_name || "—"} {header.breed_name ? `• ${header.breed_name}` : ""}
+              {header.batch_no} • {header.stage_name || NA} {header.breed_name ? `• ${header.breed_name}` : ""}
             </span>
           </div>
           <button
@@ -427,14 +428,14 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
           <div className="p-3.5 pt-2 border-t border-[var(--border)]">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStatus")}</p><StatusBadge status={header.scheduler_status} className="mt-1" /></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBatch")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.batch_no || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveFrom")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_from || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveTo")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_to || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelAnimalCount")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.animal_count != null ? formatQuantity(header.animal_count, "HEAD") : "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || "—"}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelLocation")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.location_name || "—"}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBatch")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.batch_no || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveFrom")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_from || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveTo")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_to || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelAnimalCount")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.animal_count != null ? formatQuantity(header.animal_count, "HEAD") : NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || NA}</p></div>
+              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelLocation")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.location_name || NA}</p></div>
               <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelAutoGenerated")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.auto_generated ? t("yes") : t("no")}</p></div>
               {header.actual_end_date && (
                 <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelActualEndDate")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.actual_end_date}</p></div>
@@ -584,11 +585,11 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                                 </span>
                               ) : null}
                             </span>
-                          ) : (line.resource_id ? (line.resource_name || resourceLabel(line.resource_id)) : (line.kpi_metric || "—"))}
+                          ) : (line.resource_id ? (line.resource_name || resourceLabel(line.resource_id)) : (line.kpi_metric || NA))}
                         </TableCell>
                         <TableCell className="px-3 py-2 font-semibold" style={S.primary}>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span>{line.standard_qty != null ? formatDecimal(line.standard_qty) : line.std_value != null ? formatDecimal(line.std_value) : "—"}</span>
+                            <span>{line.standard_qty != null ? formatDecimal(line.standard_qty) : line.std_value != null ? formatDecimal(line.std_value) : NA}</span>
                             {lineUom && (
                               <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
                                 {lineUom}
@@ -598,7 +599,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                             {line.output_basis ? <span className="text-[10px] font-normal" style={S.muted}>({line.output_basis})</span> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-3 py-2 font-mono" style={S.sub}>{lineUom || "—"}</TableCell>
+                        <TableCell className="px-3 py-2 font-mono" style={S.sub}>{lineUom || NA}</TableCell>
                         {!isSystem && <TableCell className="px-3 py-2" style={S.sub}>{line.source}</TableCell>}
                         <TableCell className="px-2 py-1.5">
                           <div className="flex items-center gap-1">

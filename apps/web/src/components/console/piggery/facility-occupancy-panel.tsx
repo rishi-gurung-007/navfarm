@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import {
   Loader2, Building2, AlertTriangle, ShieldCheck,
@@ -95,7 +96,7 @@ export default function FacilityOccupancyPanel() {
         <StatCard
           icon={Building2}
           label={t("fopTotalCapacity")}
-          value={totalCapacity > 0 ? totalCapacity.toLocaleString() : "—"}
+          value={totalCapacity > 0 ? totalCapacity.toLocaleString() : NA}
           unit={t("fopHead")}
           sub={t("fopConfiguredLocationsPens", { count: locations.length })}
         />

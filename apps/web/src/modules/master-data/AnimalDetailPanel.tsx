@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ageBetween, formatAge } from "./utils/age";
 import { X, Loader2, ChevronRight } from "lucide-react";
@@ -310,7 +311,7 @@ function BreedingRecordTable({
                     >
                       {values.map((v, i) => (
                         <td key={headers[i]} className={`${cell} ${i === 0 ? "font-mono" : ""}`} style={fmt(v) ? S.primary : S.muted}>
-                          {fmt(v) || "—"}
+                          {fmt(v) || NA}
                         </td>
                       ))}
                     </tr>
@@ -698,13 +699,13 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             {!isMale && (
               <ReadField
                 label="Mortality percentage"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || "—")}
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || NA)}
               />
             )}
             {!isMale && (
               <ReadField
                 label="Total litter mass weaned"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || "—")}
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || NA)}
               />
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />

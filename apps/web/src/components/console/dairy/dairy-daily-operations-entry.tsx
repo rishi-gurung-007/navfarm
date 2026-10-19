@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Calendar, CheckCircle2, Layers, Milk, Save, Activity, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -247,11 +248,11 @@ export default function DairyDailyOperationsEntry() {
         <>
           <StatRow columns={4}>
             <StatCard label={t("dyLactatingCows")} value={milkingHead} unit={t("btColHead")} />
-            <StatCard label={t("dyTodaysTotalMilk")} value={totalLitres ? totalLitres.toLocaleString() : "—"} unit={t("dyLitres")}  />
-            <StatCard label={t("dyAvgYieldPerCow")} value={avgPerCow ?? "—"} unit={avgPerCow ? t("dyLitres") : undefined} />
+            <StatCard label={t("dyTodaysTotalMilk")} value={totalLitres ? totalLitres.toLocaleString() : NA} unit={t("dyLitres")}  />
+            <StatCard label={t("dyAvgYieldPerCow")} value={avgPerCow ?? NA} unit={avgPerCow ? t("dyLitres") : undefined} />
             <StatCard
               label={t("dyUnitCostOfMilk")}
-              value={costPerLitre ? money(costPerLitre) : "—"}
+              value={costPerLitre ? money(costPerLitre) : NA}
               sub={costPerLitre ? t("dyPerLitre") : t("dyNoCostsRecorded")}
             />
           </StatRow>
@@ -269,7 +270,7 @@ export default function DairyDailyOperationsEntry() {
                     <h3 className="text-sm font-semibold">{t("dyMilkingYieldHeader")}</h3>
                   </div>
                   <span className="text-xs font-semibold text-[var(--accent)]">
-                    {totalLitres ? `${totalLitres.toLocaleString()} ${t("dyLitres")}` : "—"}
+                    {totalLitres ? `${totalLitres.toLocaleString()} ${t("dyLitres")}` : NA}
                   </span>
                 </div>
 

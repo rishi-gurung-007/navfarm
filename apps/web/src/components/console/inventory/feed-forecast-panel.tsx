@@ -22,7 +22,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { formatDateShort, todayIso, unwrap } from "./feed-format";
 import { FeedForecastGrid, ReportRow, SourceBalancePoint } from "./feed-forecast-grid";
 import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
-import { businessYearStartOf, forecastQueryString, FORECAST_VIEWS, FORECAST_VIEW_LABEL, ForecastView } from "./feed-forecast-query";
+import { businessYearStartOf, clampToPlanning, forecastQueryString, FORECAST_VIEWS, FORECAST_VIEW_LABEL, ForecastView } from "./feed-forecast-query";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { FeedForecastRunHistory } from "./feed-forecast-run-history";
@@ -380,6 +380,13 @@ function FeedForecastPanelContent() {
   const shownFrom = dateFrom || data?.from || "";
   const shownTo = dateTo || data?.to || "";
   const businessYear = businessYearStartOf(shownPlanning);
+  // Nothing is forecast before the planning date, so a later planning date
+  // pulls any earlier From / To forward with it.
+  function changePlanningDate(value: string) {
+    setPlanningDate(value);
+    if (dateFrom && value && dateFrom < value) setDateFrom(value);
+    if (dateTo && value && dateTo < value) setDateTo(value);
+  }
   const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
   const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
   const fixedLabel = farm.isFixed
@@ -400,7 +407,7 @@ function FeedForecastPanelContent() {
         <div className="w-56 shrink-0"><FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={setFarmId} fixedLabel={fixedLabel} /></div>
         <div>
           <label className={labelCls} htmlFor="ff-planning">{t("ffPlanningDate")}</label>
-          <input id="ff-planning" type="date" value={shownPlanning} onChange={(e) => setPlanningDate(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle}
+          <input id="ff-planning" type="date" value={shownPlanning} onChange={(e) => changePlanningDate(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle}
             title={data ? (data.timeZone ? t("ffTimeZone", { zone: data.timeZone }) : t("ffServerDay")) : undefined} />
         </div>
         <div className="w-36 shrink-0">
@@ -465,13 +472,13 @@ function FeedForecastPanelContent() {
         ) : (
           <div>
             <label className={labelCls} htmlFor="ff-from">{t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")}</label>
-            <input id="ff-from" type="date" value={shownFrom} onChange={(e) => setDateFrom(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle} />
+            <input id="ff-from" type="date" value={shownFrom} min={shownPlanning || undefined} onChange={(e) => setDateFrom(clampToPlanning(e.target.value, shownPlanning))} className="nf-input-sm mt-1.5" style={inputStyle} />
           </div>
         )}
         {view === "CUSTOM" && (
           <div>
             <label className={labelCls} htmlFor="ff-to">{t("ffDateTo")}</label>
-            <input id="ff-to" type="date" value={shownTo} onChange={(e) => setDateTo(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle} />
+            <input id="ff-to" type="date" value={shownTo} min={shownPlanning || undefined} onChange={(e) => setDateTo(clampToPlanning(e.target.value, shownPlanning))} className="nf-input-sm mt-1.5" style={inputStyle} />
           </div>
         )}
         </div>

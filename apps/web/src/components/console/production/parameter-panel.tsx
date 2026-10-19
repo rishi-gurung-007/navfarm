@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -154,11 +155,11 @@ export default function ParameterPanel() {
 
   const itemLabel = (id: string) => {
     const it = items.find((i) => i.item_id === id);
-    return it ? it.item_name || it.item_code : "—";
+    return it ? it.item_name || it.item_code : NA;
   };
   const resourceLabel = (id: string) => {
     const r = resources.find((x) => x.resource_id === id);
-    return r ? r.resource_name || r.resource_code : "—";
+    return r ? r.resource_name || r.resource_code : NA;
   };
 
   return (
@@ -209,10 +210,10 @@ export default function ParameterPanel() {
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{row.parameter_code}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{row.parameter_name}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.parameter_type}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.item_id ? itemLabel(row.item_id) : row.resource_id ? resourceLabel(row.resource_id) : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.item_id ? itemLabel(row.item_id) : row.resource_id ? resourceLabel(row.resource_id) : NA}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.qty_method}</TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>
-                      {row.default_qty_per_unit ? `${formatRate(row.default_qty_per_unit)}/unit` : row.default_qty_per_batch ? `${formatQuantity(row.default_qty_per_batch)}/batch` : "—"} {row.default_uom || ""}
+                      {row.default_qty_per_unit ? `${formatRate(row.default_qty_per_unit)}/unit` : row.default_qty_per_batch ? `${formatQuantity(row.default_qty_per_batch)}/batch` : NA} {row.default_uom || ""}
                     </TableCell>
                   </TableRow>
                 ))

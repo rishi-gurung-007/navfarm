@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Field } from "@/components/ui/field";
@@ -188,7 +189,7 @@ export function NotificationsPageShell({ activeChannel }: { activeChannel: Notif
         description={
           <>
             {t("ntDescPrefix")}{" "}
-            <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{activeCompany?.company_name || "—"}</span>
+            <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{activeCompany?.company_name || NA}</span>
           </>
         }
       />

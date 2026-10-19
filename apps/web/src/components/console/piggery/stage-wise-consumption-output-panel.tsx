@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import {
@@ -387,8 +388,8 @@ function buildStageProfile(
     observationLogs,
     transferLogs: (stageLog || []).map((l: any) => ({
       date: (l.transferred_at || "").toString().slice(0, 10),
-      fromStage: l.from_stage_code || "—",
-      toStage: l.to_stage_code || "—",
+      fromStage: l.from_stage_code || NA,
+      toStage: l.to_stage_code || NA,
       remarks: l.remarks || "",
     })),
     attachments: (attachments || []).map((a: any) => ({
@@ -475,10 +476,10 @@ export default function StageWiseConsumptionOutputPanel() {
   const currentBatch = useMemo(
     () => batches.find((b) => b.id === selectedBatchId) || batches[0] || {
       id: "",
-      code: "—",
+      code: NA,
       name: t("bpNoBatches"),
-      breed: "—",
-      batchType: "—",
+      breed: NA,
+      batchType: NA,
       startCount: 0,
       stages: [],
     },
@@ -522,7 +523,7 @@ export default function StageWiseConsumptionOutputPanel() {
                 id: b.batch_id,
                 code: b.batch_no,
                 name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || "—",
+                breed: b.breed_name || b.breed_code || NA,
                 batchType: b.lob_name || "Piggery Production Batch",
                 startCount: stageProfiles[0]?.startAnimals ?? (b.opening_quantity != null ? Number(b.opening_quantity) : 0),
                 stages: stageProfiles,
@@ -532,7 +533,7 @@ export default function StageWiseConsumptionOutputPanel() {
                 id: b.batch_id,
                 code: b.batch_no,
                 name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || "—",
+                breed: b.breed_name || b.breed_code || NA,
                 batchType: b.lob_name || "Piggery Production Batch",
                 startCount: Number(b.opening_quantity) || 20,
                 stages: [],
@@ -721,7 +722,7 @@ export default function StageWiseConsumptionOutputPanel() {
     if (!rawB) {
       return {
         id: "st-empty",
-        code: "—",
+        code: NA,
         name: "No Stage Data",
         startDate: dateFrom,
         endDate: dateTo,
@@ -1604,9 +1605,9 @@ export default function StageWiseConsumptionOutputPanel() {
                           {displayStage.weightLogs.map((w, index) => (
                             <tr key={index} className="hover:bg-[var(--surface-raised)] transition-colors">
                               <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{w.date || "—"}</td>
+                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{w.date || NA}</td>
                               <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                {w.avgWeightKg > 0 ? `${w.avgWeightKg.toFixed(2)} KG` : "—"}
+                                {w.avgWeightKg > 0 ? `${w.avgWeightKg.toFixed(2)} KG` : NA}
                               </td>
                               <td className="px-3 py-2 text-[var(--text-primary)]">{w.remarks}</td>
                             </tr>
@@ -1724,7 +1725,7 @@ export default function StageWiseConsumptionOutputPanel() {
                       {(displayStage.labourData || []).map((l, index) => (
                         <tr key={index} className="hover:bg-[var(--surface-raised)] transition-colors">
                           <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                          <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{l.date || "—"}</td>
+                          <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{l.date || NA}</td>
                           <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{l.resource}</td>
                           <td className="px-3 py-2 text-right font-mono font-bold">{l.hours} hrs</td>
                           <td className="px-3 py-2 text-right font-mono">{formatMoney(l.rate.toFixed(2))}</td>
@@ -1830,7 +1831,7 @@ export default function StageWiseConsumptionOutputPanel() {
                           <td className="px-3 py-2.5 align-top whitespace-nowrap font-mono text-[var(--text-secondary)]">{tr.date}</td>
                           <td className="px-3 py-2.5 align-top font-mono text-[var(--text-secondary)]">{tr.fromStage}</td>
                           <td className="px-3 py-2.5 align-top font-mono font-semibold text-[var(--text-primary)]">{tr.toStage}</td>
-                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">{tr.remarks || "—"}</td>
+                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">{tr.remarks || NA}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2043,7 +2044,7 @@ export default function StageWiseConsumptionOutputPanel() {
                               </p>
                               <p className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                                 <Calendar className="h-2.5 w-2.5" />
-                                {att.log_date || (att.created_at ? String(att.created_at).slice(0, 10) : "—")}
+                                {att.log_date || (att.created_at ? String(att.created_at).slice(0, 10) : NA)}
                               </p>
                             </div>
 
@@ -2058,7 +2059,7 @@ export default function StageWiseConsumptionOutputPanel() {
                                   <ExternalLink className="h-3 w-3" /> Open
                                 </a>
                               ) : (
-                                <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                                <span className="text-[10px] text-[var(--text-muted)]">{NA}</span>
                               )}
 
                               <button

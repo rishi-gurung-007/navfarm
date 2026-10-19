@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -106,14 +107,14 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
   }, [companyId]);
 
   const warehouseLabel = (id: string | null) => {
-    if (!id) return "—";
+    if (!id) return NA;
     const w = warehouses.find((wh) => wh.warehouse_id === id);
     if (!w) return id;
     return w.warehouse_code ? `${w.warehouse_code} (${w.warehouse_name})` : w.warehouse_name || id;
   };
 
   const warehouseCode = (id: string | null) => {
-    if (!id) return "—";
+    if (!id) return NA;
     const w = warehouses.find((wh) => wh.warehouse_id === id);
     return w?.warehouse_code || id;
   };
@@ -577,15 +578,15 @@ export default function ReceiveStockPanel({ onOpenTransferOrder }: ReceiveStockP
                       </TableCell>
                       <TableCell className="px-3 py-2.5">{viewingReceipt.uom}</TableCell>
                       <TableCell className="px-3 py-2.5 font-mono text-[11px] max-w-[200px] truncate">
-                        {viewingReceipt.serial_no ? `SN: ${viewingReceipt.serial_no}` : viewingReceipt.lot_no ? `Lot: ${viewingReceipt.lot_no}` : "—"}
+                        {viewingReceipt.serial_no ? `SN: ${viewingReceipt.serial_no}` : viewingReceipt.lot_no ? `Lot: ${viewingReceipt.lot_no}` : NA}
                       </TableCell>
                       <TableCell className="px-3 py-2.5 text-right font-mono">
-                        {Number(viewingReceipt.rate) > 0 ? formatMoney(Number(viewingReceipt.rate)) : "—"}
+                        {Number(viewingReceipt.rate) > 0 ? formatMoney(Number(viewingReceipt.rate)) : NA}
                       </TableCell>
                       <TableCell className="px-3 py-2.5 text-right font-mono font-semibold" style={S.primary}>
                         {Number(viewingReceipt.rate) > 0
                           ? formatMoney(Number(viewingReceipt.rate) * Number(viewingReceipt.quantity))
-                          : "—"}
+                          : NA}
                       </TableCell>
                     </TableRow>
                   </TableBody>

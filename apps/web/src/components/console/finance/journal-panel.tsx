@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2 } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -183,8 +184,8 @@ export default function JournalPanel() {
   };
 
   // Code and name are two columns (Rishi, 14 Oct).
-  const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || "—";
-  const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || "—";
+  const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || NA;
+  const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || NA;
 
   return (
     <div className="flex flex-col gap-4">
@@ -389,9 +390,9 @@ export default function JournalPanel() {
                     <TableRow key={l.line_id}>
                       <TableCell className="px-3 py-2 whitespace-nowrap" style={S.primary}>{accountCode(l.gl_account_id)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{accountName(l.gl_account_id)}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{Number(l.debit_amount) > 0 ? l.debit_amount : "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.primary}>{Number(l.credit_amount) > 0 ? l.credit_amount : "—"}</TableCell>
-                      <TableCell className="px-3 py-2" style={S.sub}>{l.description || "—"}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{Number(l.debit_amount) > 0 ? l.debit_amount : NA}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.primary}>{Number(l.credit_amount) > 0 ? l.credit_amount : NA}</TableCell>
+                      <TableCell className="px-3 py-2" style={S.sub}>{l.description || NA}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

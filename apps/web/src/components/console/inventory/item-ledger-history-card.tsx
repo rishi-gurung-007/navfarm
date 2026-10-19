@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from 'react';
 import {
   Copy,
@@ -350,7 +351,7 @@ export default function ItemLedgerHistoryCard({
                           >
                             {layer.warehouse_code ||
                               layer.warehouse_name ||
-                              '—'}
+                              NA}
                           </TableCell>
                           <TableCell
                             className="py-2.5 px-3 text-xs text-center"
@@ -569,7 +570,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.sub}
                           >
-                            {out.warehouse_code || out.warehouse_name || '—'}
+                            {out.warehouse_code || out.warehouse_name || NA}
                           </TableCell>
                           <TableCell className="py-2.5 px-3 font-mono text-right font-semibold text-[var(--danger)]">
                             -

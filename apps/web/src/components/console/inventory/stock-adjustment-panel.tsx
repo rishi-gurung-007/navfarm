@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Plus,
@@ -77,9 +78,9 @@ const emptyDraftLine = (defaultType: "POSITIVE" | "NEGATIVE" = "POSITIVE"): Jour
 
 /** A stored reason "RSN-N3 — Adjustment" as its code and name; free text has no code. */
 function reasonParts(reason?: string | null): { code: string; name: string } {
-  if (!reason) return { code: "—", name: "—" };
+  if (!reason) return { code: NA, name: NA };
   const [code, ...rest] = reason.split(" — ");
-  return rest.length ? { code, name: rest.join(" — ") } : { code: "—", name: reason };
+  return rest.length ? { code, name: rest.join(" — ") } : { code: NA, name: reason };
 }
 
 export default function StockAdjustmentPanel() {
@@ -485,10 +486,10 @@ export default function StockAdjustmentPanel() {
     }
   };
 
-  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
+  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || NA;
   // Code and name are two columns (Rishi, 14 Oct).
-  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
-  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || "—";
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || NA;
 
   // Searchable select options for items
   const itemOptions = useMemo(() => {
@@ -923,7 +924,7 @@ export default function StockAdjustmentPanel() {
                       {draftLiveBalance ? draftLiveBalance.on_hand_qty.toLocaleString() : "0"}
                     </span>
                     <span className="text-[10px]" style={S.muted}>
-                      {draftLiveBalance?.uom || draftLine.uom || "—"}
+                      {draftLiveBalance?.uom || draftLine.uom || NA}
                     </span>
                   </div>
                 </div>
@@ -1019,7 +1020,7 @@ export default function StockAdjustmentPanel() {
                             {it?.item_code || l.item_id}
                           </TableCell>
                           <TableCell className="px-3 py-2" style={S.primary}>
-                            {it?.item_name || "—"}
+                            {it?.item_name || NA}
                           </TableCell>
                           <TableCell className="px-3 py-2 text-center">
                             {l.type === "POSITIVE" ? (
@@ -1064,7 +1065,7 @@ export default function StockAdjustmentPanel() {
                               ) : isTracked ? (
                                 <span className="text-amber-500 font-semibold">Assign</span>
                               ) : (
-                                <span style={S.muted}>—</span>
+                                <span style={S.muted}>{NA}</span>
                               )}
                             </button>
                           </TableCell>
@@ -1326,13 +1327,13 @@ export default function StockAdjustmentPanel() {
                         {l.uom}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>
-                        {l.rate ? `$${Number(l.rate).toFixed(2)}` : "—"}
+                        {l.rate ? `$${Number(l.rate).toFixed(2)}` : NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>
-                        {l.lot_no || "—"}
+                        {l.lot_no || NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>
-                        {l.serial_no || "—"}
+                        {l.serial_no || NA}
                       </TableCell>
                     </TableRow>
                   ))}

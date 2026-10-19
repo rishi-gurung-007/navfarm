@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Hash,
@@ -560,7 +561,7 @@ export default function InventorySetupPage() {
                     const selectedSeries = seriesList.find((s) => s.id === cfg.default_series_id);
 
                     // Preview code calculation
-                    let previewCode = "—";
+                    let previewCode = NA;
                     if (selectedSeries) {
                       const prefix = selectedSeries.no_series_code || `${selectedSeries.code}-`;
                       const digits = selectedSeries.seq_length || 4;

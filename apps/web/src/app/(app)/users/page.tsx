@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Search, Shield, UserPlus } from "lucide-react";
@@ -176,7 +177,7 @@ export default function TeamPage() {
         ))}
       </div>
     ) : (
-      <span className="text-xs text-(--text-muted)">—</span>
+      <span className="text-xs text-(--text-muted)">{NA}</span>
     );
 
   const RowActions = ({ row }: { row: Row }) => (
@@ -274,9 +275,9 @@ export default function TeamPage() {
                   </div>
                   <dl className="grid grid-cols-1 gap-1.5 text-xs">
                     <div className="flex gap-2"><dt className="w-28 shrink-0 text-(--text-muted)">{t("tmColCompany")}</dt>
-                      <dd className="min-w-0 text-(--text-primary)">{row.company_name || "—"}</dd></div>
+                      <dd className="min-w-0 text-(--text-primary)">{row.company_name || NA}</dd></div>
                     <div className="flex gap-2"><dt className="w-28 shrink-0 text-(--text-muted)">{t("tmColFarm")}</dt>
-                      <dd className="min-w-0 text-(--text-primary)">{row.farm_name || "—"}</dd></div>
+                      <dd className="min-w-0 text-(--text-primary)">{row.farm_name || NA}</dd></div>
                     <div className="flex gap-2"><dt className="w-28 shrink-0 text-(--text-muted)">{t("tmColAreas")}</dt>
                       <dd className="min-w-0"><AreaCell row={row} /></dd></div>
                     <div className="flex gap-2"><dt className="w-28 shrink-0 text-(--text-muted)">{t("tmColLastLogin")}</dt>
@@ -325,7 +326,7 @@ export default function TeamPage() {
                             <span className="block text-(--text-primary)">{row.company_name}</span>
                             {row.company_code && <span className="block font-mono text-[10px] text-(--text-muted)">{row.company_code}</span>}
                           </span>
-                        ) : <span className="text-(--text-muted)">—</span>}
+                        ) : <span className="text-(--text-muted)">{NA}</span>}
                       </TableCell>
                       <TableCell className="px-4 py-3"><AreaCell row={row} /></TableCell>
                       <TableCell className="px-4 py-3">
@@ -334,7 +335,7 @@ export default function TeamPage() {
                             <span className="block text-(--text-primary)">{row.farm_name}</span>
                             {row.farm_code && <span className="block font-mono text-[10px] text-(--text-muted)">{row.farm_code}</span>}
                           </span>
-                        ) : <span className="text-(--text-muted)">—</span>}
+                        ) : <span className="text-(--text-muted)">{NA}</span>}
                       </TableCell>
                       <TableCell className="px-4 py-3"><AccountStatusBadge isActive={row.is_active} /></TableCell>
                       <TableCell className="px-4 py-3 text-(--text-secondary)">{formatLogin(row.last_login_at)}</TableCell>

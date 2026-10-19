@@ -5,6 +5,7 @@
  * key figures, item and tracking panels, and — for a GRN's entry — the animals registered from it, as a receipt lists
  * the issues applied to it. A registration shows the GRN entry it was taken from.
  */
+import { NA } from "@/utils/na";
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ExternalLink, Layers, Calendar, Package, DollarSign, ArrowDownLeft, ArrowUpRight, ShieldCheck, Loader2, Database } from 'lucide-react';
@@ -180,11 +181,11 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
           </div>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <Field label="Item No."><span className="font-mono font-bold">{entry.item_code}</span></Field>
-            <Field label="Unit of Measure Code">{entry.uom || '—'}</Field>
+            <Field label="Unit of Measure Code">{entry.uom || NA}</Field>
             <div className="col-span-2"><Field label="Description">{entry.item_description}</Field></div>
             <div className="col-span-2">
               <Field label="Location Code">
-                {entry.warehouse_code ? <><span className="font-mono">{entry.warehouse_code}</span>{entry.warehouse_name ? <span style={S.sub}> ({entry.warehouse_name})</span> : null}</> : '—'}
+                {entry.warehouse_code ? <><span className="font-mono">{entry.warehouse_code}</span>{entry.warehouse_name ? <span style={S.sub}> ({entry.warehouse_name})</span> : null}</> : NA}
               </Field>
             </div>
             <Field label="Transaction Type">{BIO_TRANSACTION_LABEL[entry.transaction_type] ?? entry.transaction_type}</Field>
@@ -200,13 +201,13 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
             <Field label="Animal">
               {entry.animal_id
                 ? <a className="text-(--accent) hover:underline" href={`/master-data/animal?recordId=${encodeURIComponent(entry.animal_id)}`}>{entry.animal_code || entry.document_no}</a>
-                : '—'}
+                : NA}
             </Field>
-            <Field label="Source GRN">{entry.source_grn_no ? <span className="font-mono">{entry.source_grn_no}{entry.source_entry_no ? ` (entry ${entry.source_entry_no})` : ''}</span> : isGrn ? <span className="font-mono">{entry.document_no}</span> : '—'}</Field>
+            <Field label="Source GRN">{entry.source_grn_no ? <span className="font-mono">{entry.source_grn_no}{entry.source_entry_no ? ` (entry ${entry.source_entry_no})` : ''}</span> : isGrn ? <span className="font-mono">{entry.document_no}</span> : NA}</Field>
             <Field label="Lot No.">{entry.lot_no || 'Not Lot Tracked'}</Field>
-            <Field label="Production Batch No.">{entry.batch_no || '—'}</Field>
-            <Field label="Status">{entry.status || '—'}</Field>
-            <Field label="Created At">{entry.created_at ? String(entry.created_at).replace('T', ' ').slice(0, 19) : '—'}</Field>
+            <Field label="Production Batch No.">{entry.batch_no || NA}</Field>
+            <Field label="Status">{entry.status || NA}</Field>
+            <Field label="Created At">{entry.created_at ? String(entry.created_at).replace('T', ' ').slice(0, 19) : NA}</Field>
           </div>
         </div>
       </div>
@@ -241,7 +242,7 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
                       <TableCell>
                         <a className="font-mono text-xs text-(--accent) hover:underline" href={`/master-data/animal?recordId=${encodeURIComponent(a.animal_id)}`}>{a.animal_code || a.document_no}</a>
                       </TableCell>
-                      <TableCell className="font-mono text-xs" style={S.sub}>{a.warehouse_code || '—'}</TableCell>
+                      <TableCell className="font-mono text-xs" style={S.sub}>{a.warehouse_code || NA}</TableCell>
                       <TableCell className="text-right font-mono text-xs" style={{ color: 'var(--danger)' }}>-{qtyText(Number(a.quantity || 1))}</TableCell>
                       <TableCell className="text-right font-mono text-xs" style={S.sub}>{formatMoney(Number(a.rate || 0))}</TableCell>
                     </TableRow>

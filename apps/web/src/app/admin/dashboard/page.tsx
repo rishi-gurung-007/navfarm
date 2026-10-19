@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -234,7 +235,7 @@ export default function AdminDashboardPage() {
                   <div className="flex items-center gap-3">
                     <span className="text-[11px] font-semibold border px-2.5 py-0.5 rounded-[var(--radius-pill)]"
                       style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent)", borderColor: "var(--accent)" }}>
-                      {tItem.plan_id?.replace("PLAN_", "") || "—"}
+                      {tItem.plan_id?.replace("PLAN_", "") || NA}
                     </span>
                     <span className="text-[11px] font-semibold" style={tItem.is_active !== false ? { color: "var(--success)" } : S.muted}>
                       {tItem.is_active !== false ? t("active") : t("inactive")}
@@ -299,7 +300,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] font-mono" style={S.muted}>
-                      {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                      {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : NA}
                     </div>
                   </div>
                 </div>

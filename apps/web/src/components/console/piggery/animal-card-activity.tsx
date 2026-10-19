@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { HeartCrack, Scale, UtensilsCrossed, Droplets } from 'lucide-react';
 
 type Row = Record<string, any>;
@@ -9,11 +10,11 @@ const heading = 'font-bold text-[var(--text-primary)] uppercase tracking-wider t
 const th = 'px-3 py-2';
 const headRow = 'border-b border-[var(--border)] text-[10px] uppercase font-bold text-[var(--text-muted)] bg-[var(--surface-raised)]';
 
-const dash = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : String(v));
-const kg = (v: unknown) => (v === null || v === undefined ? '—' : `${Number(v).toFixed(1)} kg`);
-const day = (v: unknown) => (v ? String(v).slice(0, 10) : '—');
-const num = (v: unknown, digits = 0) => (v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: digits }));
-const money = (v: unknown) => (v === null || v === undefined ? '—' : `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const dash = (v: unknown) => (v === null || v === undefined || v === '' ? NA : String(v));
+const kg = (v: unknown) => (v === null || v === undefined ? NA : `${Number(v).toFixed(1)} kg`);
+const day = (v: unknown) => (v ? String(v).slice(0, 10) : NA);
+const num = (v: unknown, digits = 0) => (v === null || v === undefined ? NA : Number(v).toLocaleString('en-US', { maximumFractionDigits: digits }));
+const money = (v: unknown) => (v === null || v === undefined ? NA : `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 
 /** Weights and condition scores recorded for this animal in daily data. Nothing here is estimated: no reading, no figure. */
 export function WeightReadings({ activity }: { activity: Row | null }) {
@@ -78,7 +79,7 @@ export function ConsumptionSummary({ activity }: { activity: Row | null }) {
           <tbody className="divide-y divide-[var(--border)]">
             {byItem.map((r) => (
               <tr key={`${r.item_id}|${r.uom}`}>
-                <td className="px-3 py-2.5 font-semibold text-[var(--text-primary)]">{r.item_name || r.item_code || '—'}</td>
+                <td className="px-3 py-2.5 font-semibold text-[var(--text-primary)]">{r.item_name || r.item_code || NA}</td>
                 <td className="px-3 py-2.5 text-[var(--text-secondary)]">{dash(r.item_type)}</td>
                 <td className="px-3 py-2.5 text-right font-mono">{num(r.quantity, 2)} {dash(r.uom)}</td>
                 <td className="px-3 py-2.5 text-right font-mono">{money(r.cost)}</td>
@@ -98,7 +99,7 @@ export function DeathRecord({ activity }: { activity: Row | null }) {
   if (!m) return null;
   const rows: [string, string][] = [
     ['Date', day(m.date)],
-    ['Reason', m.reason_name ? `${m.reason_name}${m.reason_code ? ` (${m.reason_code})` : ''}` : '—'],
+    ['Reason', m.reason_name ? `${m.reason_name}${m.reason_code ? ` (${m.reason_code})` : ''}` : NA],
     ['Cause of death', dash(m.cause_of_death)],
     ['Post-mortem findings', dash(m.post_mortem_notes)],
     ['Disposal method', dash(m.disposal_method)],
@@ -111,7 +112,7 @@ export function DeathRecord({ activity }: { activity: Row | null }) {
         <HeartCrack className="h-3.5 w-3.5" /> Death Record
       </h4>
       <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-        {rows.filter(([, v]) => v !== '—').map(([label, value]) => (
+        {rows.filter(([, v]) => v !== NA).map(([label, value]) => (
           <div key={label}>
             <dt className="text-[10px] uppercase font-bold text-[var(--text-muted)]">{label}</dt>
             <dd className="font-medium text-xs text-[var(--text-primary)] mt-0.5">{value}</dd>
@@ -152,7 +153,7 @@ export function SemenLots({ activity }: { activity: Row | null }) {
                 <tr key={l.semen_batch_id}>
                   <td className="px-3 py-2.5 font-mono text-[var(--text-primary)]">{day(l.collection_date)}</td>
                   <td className="px-3 py-2.5 font-mono whitespace-nowrap">
-                    {l.lot_no ? `${l.lot_no}${l.expiry_date ? ` · exp ${day(l.expiry_date)}` : ''}` : '—'}
+                    {l.lot_no ? `${l.lot_no}${l.expiry_date ? ` · exp ${day(l.expiry_date)}` : ''}` : NA}
                     {l.pooled && (
                       <span className="block text-[10px] text-[var(--text-muted)]">Pooled: {(l.pool_boars || []).join(' + ')}</span>
                     )}
@@ -166,7 +167,7 @@ export function SemenLots({ activity }: { activity: Row | null }) {
                       l.volume_ml != null ? `${num(l.volume_ml)} ml` : null,
                       l.motility_pct != null ? `${num(l.motility_pct)}% motile` : null,
                       l.concentration_m_per_ml != null ? `${num(l.concentration_m_per_ml)} M/ml` : null,
-                    ].filter(Boolean).join(' · ') || '—'}
+                    ].filter(Boolean).join(' · ') || NA}
                   </td>
                   <td className="px-3 py-2.5">{l.inventory_posted ? 'Posted' : <span className="text-amber-600 dark:text-amber-400">Not posted</span>}</td>
                 </tr>

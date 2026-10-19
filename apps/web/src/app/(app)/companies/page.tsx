@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -221,8 +222,8 @@ export default function CompaniesIndexPage() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="px-5 py-4 font-mono" style={S.sub}>{co.registration_no || "—"}</TableCell>
-                  <TableCell className="px-5 py-4" style={S.sub}>{co.country_id || "—"}</TableCell>
+                  <TableCell className="px-5 py-4 font-mono" style={S.sub}>{co.registration_no || NA}</TableCell>
+                  <TableCell className="px-5 py-4" style={S.sub}>{co.country_id || NA}</TableCell>
                   <TableCell className="px-5 py-4"><StatusBadge status={co.onboarding_status} t={t} /></TableCell>
                   <TableCell className="px-5 py-4">
                     {co.onboarding_status === "COMPLETED" ? (

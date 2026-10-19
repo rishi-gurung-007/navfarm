@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ChevronRight, ChevronDown } from "lucide-react";
@@ -71,7 +72,7 @@ function sameValue(a: unknown, b: unknown) {
 /** One value, rendered so a JSON blob or a timestamp is readable rather than raw. */
 function AuditValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   if (value === null || value === undefined || value === "") {
-    return <span style={{ color: "var(--text-muted)" }}>—</span>;
+    return <span style={{ color: "var(--text-muted)" }}>{NA}</span>;
   }
   if (typeof value === "boolean") {
     return <span style={{ color: "var(--text-primary)" }}>{value ? "Yes" : "No"}</span>;
@@ -250,8 +251,8 @@ function AuditDetail({ log, t }: { log: any; t: Translate }) {
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-2 text-[10px]" style={{ borderColor: "var(--row-border)", color: "var(--text-muted)" }}>
-        <span>{t("auditIpAddress")}: <span className="font-mono">{log.ip_address || "—"}</span></span>
-        <span className="break-all">{t("auditUserAgent")}: <span className="font-mono">{log.user_agent || "—"}</span></span>
+        <span>{t("auditIpAddress")}: <span className="font-mono">{log.ip_address || NA}</span></span>
+        <span className="break-all">{t("auditUserAgent")}: <span className="font-mono">{log.user_agent || NA}</span></span>
       </div>
     </div>
   );
@@ -384,7 +385,7 @@ export default function AuditPage() {
                       </TableCell>
                       <TableCell className="px-5 font-mono" style={{ color: "var(--text-muted)" }}>{idx + 1}</TableCell>
                       <TableCell className="px-5 font-mono whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                        {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                        {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : NA}
                       </TableCell>
                       <TableCell className="px-5">{actionBadge(log.action)}</TableCell>
                       <TableCell className="px-5 font-medium" style={{ color: "var(--text-primary)" }}>

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Search, Loader2, Inbox, Ban } from "lucide-react";
 import QRCode from "react-qr-code";
@@ -77,8 +78,8 @@ export default function PacksPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
-  const batchLabel = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || "—";
+  const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const batchLabel = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || NA;
 
   const filtered = search
     ? rows.filter((r) => (r.pack_no || "").toLowerCase().includes(search.toLowerCase()) || (r.lot_no || "").toLowerCase().includes(search.toLowerCase()))
@@ -180,11 +181,11 @@ export default function PacksPanel() {
             <div className="grid w-full grid-cols-2 gap-3 text-xs">
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkItem")}</p><p style={S.primary}>{itemLabel(viewing.item_id)}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkBatch")}</p><p style={S.primary}>{batchLabel(viewing.batch_id)}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkLotNo")}</p><p style={S.primary}>{viewing.lot_no || "—"}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkGradeLabel")}</p><p style={S.primary}>{viewing.grade || "—"}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{formatQuantity(viewing.net_weight)} / {viewing.gross_weight != null ? formatQuantity(viewing.gross_weight) : "—"} {viewing.pack_uom}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkLotNo")}</p><p style={S.primary}>{viewing.lot_no || NA}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkGradeLabel")}</p><p style={S.primary}>{viewing.grade || NA}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{formatQuantity(viewing.net_weight)} / {viewing.gross_weight != null ? formatQuantity(viewing.gross_weight) : NA} {viewing.pack_uom}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkProductionExpiry")}</p><p style={S.primary}>{viewing.production_date} {viewing.expiry_date ? `→ ${viewing.expiry_date}` : ""}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkQcLink")}</p><p style={S.primary}>{viewing.qc_id ? t("pkLinkedResult", { result: viewing.qr_data?.qc?.overall_result || "—" }) : t("pkNotLinked")}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkQcLink")}</p><p style={S.primary}>{viewing.qc_id ? t("pkLinkedResult", { result: viewing.qr_data?.qc?.overall_result || NA }) : t("pkNotLinked")}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkStatus")}</p><p style={viewing.is_voided ? { color: "var(--danger)" } : { color: "var(--success)" }}>{viewing.is_voided ? t("pkVoided2") : t("pkActive")}</p></div>
             </div>
             {viewing.origin_batch_chain && (

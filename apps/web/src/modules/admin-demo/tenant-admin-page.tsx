@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BarChart3, Building2, CheckCircle2, Users } from 'lucide-react';
@@ -85,7 +86,7 @@ export function TenantAdminPage() {
         </div>
       </section>
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <section className="rounded-[var(--radius-md)] border border-(--border) bg-(--surface) p-6"><h2 className="font-semibold text-(--text-primary)">{t("tapOrgProfile")}</h2><p className="mt-1 text-xs text-(--text-secondary)">{t("tapOrgProfileDesc")}</p><div className="mt-5 grid grid-cols-2 gap-4 text-xs">{[['Legal name',tenant?.tenant_name || 'Loading…'],['Workspace code',tenant?.tenant_code || '—'],['Tenant type',tenant?.tenant_type || '—'],['Plan',tenant?.subscription?.plan_code || tenant?.plan_id || '—'],['Billing email',tenant?.billing_email || '—'],['Support tier',tenant?.subscription?.support_tier || '—']].map(([label,value])=><div key={label}><p className="text-[10px] uppercase tracking-wide text-(--text-muted)">{label}</p><p className="mt-1 font-semibold text-(--text-primary)">{value}</p></div>)}</div></section>
+        <section className="rounded-[var(--radius-md)] border border-(--border) bg-(--surface) p-6"><h2 className="font-semibold text-(--text-primary)">{t("tapOrgProfile")}</h2><p className="mt-1 text-xs text-(--text-secondary)">{t("tapOrgProfileDesc")}</p><div className="mt-5 grid grid-cols-2 gap-4 text-xs">{[['Legal name',tenant?.tenant_name || 'Loading…'],['Workspace code',tenant?.tenant_code || NA],['Tenant type',tenant?.tenant_type || NA],['Plan',tenant?.subscription?.plan_code || tenant?.plan_id || NA],['Billing email',tenant?.billing_email || NA],['Support tier',tenant?.subscription?.support_tier || NA]].map(([label,value])=><div key={label}><p className="text-[10px] uppercase tracking-wide text-(--text-muted)">{label}</p><p className="mt-1 font-semibold text-(--text-primary)">{value}</p></div>)}</div></section>
         <section className="rounded-[var(--radius-md)] border border-(--border) bg-(--surface) p-6"><h2 className="font-semibold text-(--text-primary)">{t("tapOrgMembers")}</h2><p className="mt-1 text-xs text-(--text-secondary)">{t("tapOrgMembersDesc")}</p><div className="mt-4 divide-y divide-(--border)">{members.map((member)=><div key={member.userId || member.user_id || member.email} className="flex items-center gap-3 py-3"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-(--accent-muted) text-[10px] font-semibold text-(--accent)">{(member.fullName || member.full_name || member.email).charAt(0)}</span><div className="flex-1"><p className="text-xs font-semibold text-(--text-primary)">{member.fullName || member.full_name || member.email}</p><p className="mt-0.5 text-[10px] text-(--text-muted)">{member.userType || member.user_type || 'User'} · {member.email}</p></div><span className={`text-[10px] font-semibold ${member.is_active === false ? 'text-slate-500' : 'text-(--success)'}`}>{member.is_active === false ? 'Inactive' : 'Active'}</span></div>)}</div></section>
       </div>
     </AdminShell>

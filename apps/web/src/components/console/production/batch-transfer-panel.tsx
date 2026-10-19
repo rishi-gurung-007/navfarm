@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Loader2, MoveRight, PackageCheck, Scale, Users } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -134,7 +135,7 @@ export default function BatchTransferPanel() {
       count: rows.length,
       head: posted.reduce((s, r) => s + Number(r.head_count || 0), 0),
       value: posted.reduce((s, r) => s + Number(r.transfer_value || 0), 0),
-      latest: rows[0]?.transfer_date || "—",
+      latest: rows[0]?.transfer_date || NA,
     };
   }, [rows]);
 
@@ -210,7 +211,7 @@ export default function BatchTransferPanel() {
     }
   };
 
-  const batchNo = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || "—";
+  const batchNo = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || NA;
   const poolCount = pool.length;
   const fromBatch = batches.find((b) => b.batch_id === fromBatchId);
   const headcountMode = Boolean(fromBatchId) && fromBatch?.tracking_mode === "BATCH_WISE" && !poolLoading && pool.length === 0;
@@ -278,7 +279,7 @@ export default function BatchTransferPanel() {
                     {money(r.transfer_value)}
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                  <td className="px-4 py-3 text-[var(--text-secondary)]">{r.reason || "—"}</td>
+                  <td className="px-4 py-3 text-[var(--text-secondary)]">{r.reason || NA}</td>
                 </tr>
               ))}
             </tbody>
@@ -499,7 +500,7 @@ function TransferLines({ transferId, headcount }: { transferId: string; headcoun
           {lines.map((l) => (
             <tr key={l.line_id} className="border-b border-[var(--border)] last:border-b-0">
               <td className="px-3 py-2 font-mono font-semibold text-[var(--accent)]">{l.rfid_tag || l.animal_code}</td>
-              <td className="px-3 py-2 text-[var(--text-secondary)]">{l.animal_type || "—"}</td>
+              <td className="px-3 py-2 text-[var(--text-secondary)]">{l.animal_type || NA}</td>
               <td className="px-3 py-2 text-right tabular-nums text-[var(--text-primary)]">{money(l.book_value)}</td>
             </tr>
           ))}

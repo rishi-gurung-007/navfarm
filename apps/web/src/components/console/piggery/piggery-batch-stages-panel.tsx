@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Plus,
@@ -90,7 +91,7 @@ export default function PiggeryBatchStagesPanel() {
             id: b.batch_id,
             code: b.batch_no,
             name: b.remarks || b.batch_no,
-            breed: b.breed_name || b.breed_code || "—",
+            breed: b.breed_name || b.breed_code || NA,
             type: b.lob_name || "Piggery Batch",
             startDate: b.start_date || "",
             currentStageId: matchedStage.id,
@@ -382,9 +383,9 @@ export default function PiggeryBatchStagesPanel() {
           </div>
 
           <p className="text-xs text-[var(--text-muted)] mt-1.5">
-            {t("pbsBreedLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.breed || "—"}</strong> ·
-            {t("pbsTypeLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.type || "—"}</strong> ·
-            {t("pbsStartDateLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.startDate || "—"}</strong> ·
+            {t("pbsBreedLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.breed || NA}</strong> ·
+            {t("pbsTypeLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.type || NA}</strong> ·
+            {t("pbsStartDateLabel")}: <strong className="text-[var(--text-primary)]">{currentBatch?.startDate || NA}</strong> ·
             {t("pbsCurrentStageLabel")}: <strong className="text-[var(--accent)]">{currentStageName}</strong>
           </p>
         </div>
@@ -509,7 +510,7 @@ export default function PiggeryBatchStagesPanel() {
         <div className="p-3.5 bg-[var(--surface-raised)] border-t border-[var(--border)]">
           <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-            {t("pbsFooterNote", { startDate: currentBatch?.startDate || "—" })}
+            {t("pbsFooterNote", { startDate: currentBatch?.startDate || NA })}
           </p>
         </div>
       </div>

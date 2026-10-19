@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import {
   Loader2, AlertTriangle, CheckCircle2,
@@ -176,7 +177,7 @@ export default function BatchPerformanceCurvesPanel({
         <StatCard
           icon={Scale}
           label={t("bpcFeedConversionFcr")}
-          value={summary.liveFcr != null ? summary.liveFcr : "—"}
+          value={summary.liveFcr != null ? summary.liveFcr : NA}
           unit={t("bpcKgFeedPerKgGain")}
           sub={t("bpcLastWeight", { weight: summary.lastRecordedWeightKg || 1.5 })}
         />
@@ -237,7 +238,7 @@ export default function BatchPerformanceCurvesPanel({
                     </td>
                     <td className="px-3 py-2 font-mono" style={S.muted}>{c.date}</td>
                     <td className="px-3 py-2 font-mono">
-                      {targetFeed > 0 ? t("bpcKgValue", { value: targetFeed }) : "—"}
+                      {targetFeed > 0 ? t("bpcKgValue", { value: targetFeed }) : NA}
                     </td>
                     <td className="px-3 py-2 font-mono">
                       {actFeed != null ? (
@@ -245,7 +246,7 @@ export default function BatchPerformanceCurvesPanel({
                           {t("bpcKgValue", { value: actFeed })}
                         </span>
                       ) : (
-                        <span style={S.muted}>—</span>
+                        <span style={S.muted}>{NA}</span>
                       )}
                     </td>
                     <td className="px-3 py-2 min-w-[120px]">
@@ -267,10 +268,10 @@ export default function BatchPerformanceCurvesPanel({
                       )}
                     </td>
                     <td className="px-3 py-2 font-mono" style={S.muted}>
-                      {c.stdTargetWeight ? t("bpcKgValue", { value: c.stdTargetWeight }) : "—"}
+                      {c.stdTargetWeight ? t("bpcKgValue", { value: c.stdTargetWeight }) : NA}
                     </td>
                     <td className="px-3 py-2 font-mono font-semibold" style={S.primary}>
-                      {c.actWeight ? t("bpcKgValue", { value: c.actWeight }) : "—"}
+                      {c.actWeight ? t("bpcKgValue", { value: c.actWeight }) : NA}
                     </td>
                     <td className="px-3 py-2 font-mono">
                       {c.actDailyMort != null ? (

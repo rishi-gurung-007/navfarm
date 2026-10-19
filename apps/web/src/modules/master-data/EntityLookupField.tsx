@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { entityDisplayText } from "@/utils/code-name";
 import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, Inbox, Loader2, Plus, Search } from "lucide-react";
@@ -196,12 +197,12 @@ export function EntityLookupDialog({
                       aria-label={selectLabel}
                       className="min-h-11 w-full px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--focus-ring)"
                     >
-                      {code || "—"}
+                      {code || NA}
                     </button>
                   </TableCell>
                   <TableCell>
                     <div className="flex min-h-5 items-center justify-between gap-3">
-                      <span>{name || "—"}</span>
+                      <span>{name || NA}</span>
                       {selected && <Check className="h-4 w-4 shrink-0 text-(--accent)" aria-hidden />}
                     </div>
                   </TableCell>
