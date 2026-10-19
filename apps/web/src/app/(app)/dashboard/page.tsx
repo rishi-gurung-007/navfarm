@@ -157,7 +157,10 @@ export default function DashboardPage() {
         // than as the wrong-farm refusal it is.
         // Every page is fetched: a single `?limit=100` counted only the first 100 batches.
         fetchAllPages((limit, offset) => api.get(`/batch?${scopeParam}limit=${limit}&offset=${offset}`)),
-        fetchAllPages((limit, offset) => api.get(`/animal?${scopeParam}limit=${limit}&offset=${offset}`)),
+        // The animal list answers nothing without a company, so tenant scope asks per company below.
+        isTenantScope
+          ? Promise.resolve([] as any[])
+          : fetchAllPages((limit, offset) => api.get(`/animal?${scopeParam}limit=${limit}&offset=${offset}`)),
       ]);
 
       setTenantInfo(tenant);
@@ -171,7 +174,18 @@ export default function DashboardPage() {
       setCompanies(companyList);
       if (Array.isArray(areasRes)) setOperationalAreas(areasRes);
       setBatches(batchRes);
-      setAnimals(animalRes);
+      // Tenant scope: every company's live animals (a companyless /animal returned none, so the census left out
+      // the whole registered herd).
+      const tenantAnimals = isTenantScope
+        ? (
+            await Promise.all(
+              companyList.map((c: any) =>
+                fetchAllPages((limit, offset) => api.get(`/animal?companyId=${c.company_id}&limit=${limit}&offset=${offset}`)),
+              ),
+            )
+          ).flat()
+        : animalRes;
+      setAnimals(tenantAnimals);
     } catch (e: any) {
       setError(e?.message || t("dashLoadFailed"));
     } finally {
