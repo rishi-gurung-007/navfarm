@@ -83,3 +83,23 @@ describe('dashboard counts', () => {
     expect(rows).toEqual([{ a: 1 }]);
   });
 });
+
+describe('biologicalCensus counts head, not kilograms', () => {
+  it('leaves out an ACTIVE batch kept in KG', () => {
+    const batches = [
+      {
+        status: 'ACTIVE',
+        tracking_mode: 'BATCH_WISE',
+        uom: 'HEAD',
+        closing_quantity: '87',
+      },
+      {
+        status: 'ACTIVE',
+        tracking_mode: 'BATCH_WISE',
+        uom: 'KG',
+        closing_quantity: '1500',
+      },
+    ];
+    expect(biologicalCensus(batches, [{}, {}])).toBe(89);
+  });
+});

@@ -50,6 +50,8 @@ export const activeBatches = (batches: Row[]): Row[] =>
 export function biologicalCensus(batches: Row[], animals: Row[]): number {
   const batchWise = activeBatches(batches)
     .filter((b) => b.tracking_mode !== 'ANIMAL_WISE')
+    // Head only: a batch kept in KG (a cutting run, a carcass lot) is not animals.
+    .filter((b) => !b.uom || String(b.uom).toUpperCase() === 'HEAD')
     .reduce((sum, b) => sum + batchHead(b), 0);
   return animals.length + batchWise;
 }
