@@ -199,3 +199,24 @@ export function commonTargets(all: Targets[]): Targets {
   }
   return out;
 }
+
+/**
+ * The batch that stood where this one stands a year earlier (Rishi, 19 Oct: "matching batch last year"): the batch
+ * on the farm whose first service falls nearest the same date a year before this batch's first service, within a
+ * week either side. Null when no batch served in that week — the row's prior year then reads N/A.
+ */
+export function matchPriorBatch(
+  firstService: string | null | undefined,
+  candidates: Array<{ batch_id: string; first_service: string | null }>,
+  windowDays = 7,
+): string | null {
+  if (!firstService) return null;
+  const target = Date.parse(`${minusOneYear(firstService)}T00:00:00Z`);
+  let best: { id: string; gap: number } | null = null;
+  for (const c of candidates) {
+    if (!c.first_service) continue;
+    const gap = Math.abs(Date.parse(`${c.first_service}T00:00:00Z`) - target) / 86_400_000;
+    if (gap <= windowDays && (!best || gap < best.gap)) best = { id: c.batch_id, gap };
+  }
+  return best?.id ?? null;
+}

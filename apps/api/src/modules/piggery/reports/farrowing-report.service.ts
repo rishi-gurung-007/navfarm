@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, eq, gte, inArray, isNull, lte, or, SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql, SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
@@ -11,6 +11,7 @@ import {
   FarrowingMetrics,
   FarrowingRow,
   isEmptyPeriod,
+  matchPriorBatch,
   minusOneYear,
   MortalityRow,
   ServiceRow,
@@ -24,8 +25,13 @@ export interface FarrowingReportRow {
   is_total: boolean;
   metrics: FarrowingMetrics;
   targets: Targets;
-  /** Same farm and filters a year earlier. Batches do not repeat across years, so this is on the farm total only. */
+  /**
+   * A year earlier. A batch row: the batch that stood where this one stands a year before (matchPriorBatch), over
+   * the same dates shifted back a year. The farm total: the whole farm over those dates. Null when there is none.
+   */
   prior_year: FarrowingMetrics | null;
+  /** The batch a batch row's prior year is read from; null on the total and when no batch matched. */
+  prior_batch_no: string | null;
 }
 
 export interface FarrowingReport {
@@ -93,6 +99,11 @@ export class FarrowingReportService {
     // Prior year: the farm's batches of a year earlier, not the selected batch — batch numbers do not repeat.
     const prior = await this.periodData(farmBatches.map((b) => b.batch_id), query, minusOneYear(query.dateFrom), minusOneYear(query.dateTo));
 
+    const firstServices = await this.firstServices(farmBatches.map((b) => b.batch_id));
+    const batchNoById = new Map(farmBatches.map((b) => [b.batch_id, b.batch_no]));
+    const candidates = farmBatches.map((b) => ({ batch_id: b.batch_id, first_service: firstServices.get(b.batch_id) ?? null }));
+    const priorDateTo = minusOneYear(query.dateTo);
+
     const targetsByBreed = await this.targetsByBreed(tenantId, companyId, query.farmId, query.dateFrom, query.dateTo, selected.map((b) => b.breed_id));
 
     const rows: FarrowingReportRow[] = [];
@@ -101,13 +112,24 @@ export class FarrowingReportService {
       const farrowings = current.farrowings.filter((f) => f.batch_id === batch.batch_id);
       const metrics = computeFarrowingMetrics(services, farrowings, this.mortalityOf(current.mortality, farrowings), query.dateTo);
       if (isEmptyPeriod(metrics)) continue;
+      const priorId = matchPriorBatch(firstServices.get(batch.batch_id), candidates.filter((c) => c.batch_id !== batch.batch_id));
+      const priorFarrowings = priorId ? prior.farrowings.filter((f) => f.batch_id === priorId) : [];
+      const priorMetrics = priorId
+        ? computeFarrowingMetrics(
+            prior.services.filter((s) => s.batch_id === priorId),
+            priorFarrowings,
+            this.mortalityOf(prior.mortality, priorFarrowings),
+            priorDateTo,
+          )
+        : null;
       rows.push({
         batch_id: batch.batch_id,
         batch_no: batch.batch_no,
         is_total: false,
         metrics,
         targets: targetsByBreed.get(batch.breed_id ?? '') ?? targetsFromLifecycle([], query.farmId),
-        prior_year: null,
+        prior_year: priorMetrics && !isEmptyPeriod(priorMetrics) ? priorMetrics : null,
+        prior_batch_no: priorId ? batchNoById.get(priorId) ?? null : null,
       });
     }
 
@@ -120,7 +142,7 @@ export class FarrowingReportService {
         this.mortalityOf(current.mortality, farrowings),
         query.dateTo,
       );
-      const priorMetrics = computeFarrowingMetrics(prior.services, prior.farrowings, prior.mortality, minusOneYear(query.dateTo));
+      const priorMetrics = computeFarrowingMetrics(prior.services, prior.farrowings, prior.mortality, priorDateTo);
       rows.push({
         batch_id: null,
         batch_no: farm.farm_name,
@@ -128,6 +150,7 @@ export class FarrowingReportService {
         metrics: totalMetrics,
         targets: commonTargets(rows.map((r) => r.targets)),
         prior_year: isEmptyPeriod(priorMetrics) ? null : priorMetrics,
+        prior_batch_no: null,
       });
     }
 
@@ -187,6 +210,17 @@ export class FarrowingReportService {
           .orderBy(asc(schema.animalRegister.animal_code))
       : [];
     return { batches: batches.filter((b) => sowBatchIds.has(b.batch_id)), sows };
+  }
+
+  /** Each batch's first service date (its service week), from all its services — not only those in the dates. */
+  private async firstServices(batchIds: string[]): Promise<Map<string, string>> {
+    if (!batchIds.length) return new Map();
+    const rows = await this.db
+      .select({ batch_id: schema.breedingRecord.batch_id, first: sql<string>`MIN(${schema.breedingRecord.mating_date})` })
+      .from(schema.breedingRecord)
+      .where(inArray(schema.breedingRecord.batch_id, batchIds))
+      .groupBy(schema.breedingRecord.batch_id);
+    return new Map(rows.filter((r) => r.batch_id && r.first).map((r) => [r.batch_id as string, String(r.first).slice(0, 10)]));
   }
 
   private mortalityOf(all: MortalityRow[], farrowings: FarrowingRow[]): MortalityRow[] {

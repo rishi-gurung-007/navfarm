@@ -35,6 +35,7 @@ export interface FarrowingReportRow {
   metrics: FarrowingMetrics;
   targets: Record<string, Target | null>;
   prior_year: FarrowingMetrics | null;
+  prior_batch_no: string | null;
 }
 
 export interface FarrowingReport {
@@ -53,8 +54,11 @@ export interface ReportColumn {
   cell: (row: FarrowingReportRow, t: (k: TranslationKeys) => string) => string;
 }
 
+/** "N/A" where a figure is not available (Rishi, 19 Oct: never a dash). */
+export const NA = "N/A";
+
 const fmt = (v: number | null | undefined) =>
-  v === null || v === undefined ? "—" : Number.isInteger(v) ? String(v) : v.toFixed(2);
+  v === null || v === undefined ? NA : Number.isInteger(v) ? String(v) : v.toFixed(2);
 
 const actual = (m: Metric) => (row: FarrowingReportRow) => fmt(row.metrics[m]);
 
@@ -65,11 +69,8 @@ const target = (key: string) => (row: FarrowingReportRow, t: (k: TranslationKeys
   return fmt(v.lower ?? v.upper);
 };
 
-// Batches do not repeat from one year to the next, so the prior year is the farm's and sits on the farm total.
-const prior = (m: Metric) => (row: FarrowingReportRow, t: (k: TranslationKeys) => string) => {
-  if (!row.is_total) return "";
-  return row.prior_year ? fmt(row.prior_year[m]) : t("rptNoData");
-};
+// A batch row's prior year is the batch that stood where it stands a year earlier; the total's is the farm's.
+const prior = (m: Metric) => (row: FarrowingReportRow) => (row.prior_year ? fmt(row.prior_year[m]) : NA);
 
 const triple = (group: TranslationKeys, m: Metric, targetKey: string | null): ReportColumn[] => [
   { group, sub: "rptActual", cell: actual(m) },

@@ -4187,3 +4187,14 @@ Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
 - **Active Week Mortality** = piglet deaths in the current week — taken as the Monday–Sunday week holding Date To (ours).
 - Farrowing Rate % follows the sheet's formula literally: sows farrowed ÷ sows served, both within the dates. Across a
   date boundary this compares different cohorts (a batch served before Date From shows farrowings and no services).
+
+## 19 Oct 2026 — Farrowing Report prior year per batch; "N/A" for missing figures (Rishi)
+
+- **Prior year per batch row: the matching batch last year.** A batch's place is its first service date; its
+  prior-year batch is the farm's batch whose first service falls nearest the same date a year earlier, within a
+  week either side (`matchPriorBatch`). Its figures are read over the report's dates shifted back a year. The
+  farm total keeps the whole farm over those dates. No match → N/A. The matched batch is named under each batch.
+- **"N/A", never "—", where a figure is not available** — application-wide (Rishi: "for things where data is not
+  available … show N/A").
+- **Feed Forecast stays forward-only** from the Planning Date, and its date pickers must not offer dates before
+  the Planning Date.

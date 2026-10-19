@@ -11,7 +11,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { EmptyState } from "@/components/ui/states";
 import { Toast } from "@/components/ui/toast";
-import { columnGroups, FARROWING_COLUMNS, type FarrowingReport } from "./farrowing-report-columns";
+import { columnGroups, FARROWING_COLUMNS, NA, type FarrowingReport } from "./farrowing-report-columns";
 import { exportFarrowingPdf } from "./farrowing-report-pdf";
 
 type Row = Record<string, any>;
@@ -229,10 +229,15 @@ export default function FarrowingReportPanel() {
                   <td data-sticky-col className="border-b border-r px-3 py-2 whitespace-nowrap" style={{ ...S.cell, ...S.primary, backgroundColor: row.is_total ? "var(--surface-raised)" : "var(--surface)" }}>
                     {row.is_total ? t("rptFarmTotal") : report.farm.farm_name}
                   </td>
-                  <td className="border-b border-r px-3 py-2 whitespace-nowrap" style={{ ...S.cell, ...S.primary }}>{row.is_total ? "" : row.batch_no}</td>
+                  <td className="border-b border-r px-3 py-2 whitespace-nowrap" style={{ ...S.cell, ...S.primary }}>
+                    {row.is_total ? "" : row.batch_no}
+                    {!row.is_total && (
+                      <div className="text-[10px]" style={S.muted}>{t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}</div>
+                    )}
+                  </td>
                   {FARROWING_COLUMNS.map((c, i) => {
                     const text = c.cell(row, t);
-                    const faint = text === t("rptNotAvailable") || text === t("rptNoData") || text === "—";
+                    const faint = text === t("rptNotAvailable") || text === NA;
                     return (
                       <td key={i} className="border-b border-r px-3 py-2 text-right whitespace-nowrap tabular-nums" style={{ ...S.cell, ...(faint ? S.muted : S.primary) }}>{text}</td>
                     );

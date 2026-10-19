@@ -83,3 +83,20 @@ describe('farrowing report metrics', () => {
     expect(commonTargets([t, targetsFromLifecycle([], 'FARM')]).farrowing_rate).toBeNull();
   });
 });
+
+describe('matchPriorBatch', () => {
+  const { matchPriorBatch } = jest.requireActual('./farrowing-report.metrics');
+  const last = [
+    { batch_id: 'B-2025-W10', first_service: '2025-03-03' },
+    { batch_id: 'B-2025-W11', first_service: '2025-03-12' },
+    { batch_id: 'B-2025-W20', first_service: '2025-05-12' },
+  ];
+  it('takes the batch served nearest the same date a year earlier', () => {
+    expect(matchPriorBatch('2026-03-04', last)).toBe('B-2025-W10');
+    expect(matchPriorBatch('2026-03-10', last)).toBe('B-2025-W11');
+  });
+  it('finds none outside a week either side, or without a first service', () => {
+    expect(matchPriorBatch('2026-04-15', last)).toBeNull();
+    expect(matchPriorBatch(null, last)).toBeNull();
+  });
+});
