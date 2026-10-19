@@ -4241,6 +4241,7 @@ export const translations = {
     blCarriedForwardFrom: "Carried forward from {{batchNo}}",
     blCloseBatch: "Close Batch",
     blCloseBatchTitle: "Close Batch {{batchNo}}",
+    blCloseEmptyBioConfirm: "This batch holds no head. Close it? It will take no further entries.",
     blClosing: "Closing…",
     blColActions: "Actions",
     blColActual: "Actual",

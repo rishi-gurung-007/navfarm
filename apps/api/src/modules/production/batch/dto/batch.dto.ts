@@ -748,14 +748,14 @@ export class CloseBatchDto {
 
   @ApiProperty({
     description:
-      'Output lines — cost_split_pct must sum to 100 across all lines',
+      'Output lines — cost_split_pct must sum to 100 across all lines. Not taken for a bio-asset batch, which closes only once it holds no head.',
     type: [BatchOutputLineInput],
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => BatchOutputLineInput)
-  output_lines: BatchOutputLineInput[];
+  output_lines?: BatchOutputLineInput[];
 }
 
 export class QueryBatchDto {

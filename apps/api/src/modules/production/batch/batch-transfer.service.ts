@@ -796,10 +796,6 @@ export class BatchTransferService {
     //    shows the movement on both batches instead of value silently appearing.
     await this.writeLedgerLegs(transfer, tenantId, userPayload?.userId);
 
-    // 5. A bio-asset batch the transfer emptied is finished. Disposing the last head closes a batch;
-    //    transferring it out left the batch ACTIVE at nil head forever — every sow group whose sows
-    //    moved on to the next batch, and every piglet lot weaned into a grower group.
-    await this.closeIfEmptied(transfer.from_batch_id, transfer.transfer_date, userPayload?.userId);
 
     await this.db
       .update(schema.batchTransfer)
@@ -828,53 +824,6 @@ export class BatchTransferService {
     });
 
     return this.findOne(transferId, tenantId);
-  }
-
-  /**
-   * Closes an ACTIVE bio-asset batch that holds nothing any more: no head on its bio-asset state and, for an
-   * animal-wise batch, no live animal still assigned to it. Other costing methods close through POST
-   * /batch/:id/close, which allocates their cost to outputs.
-   */
-  private async closeIfEmptied(batchId: string, onDate: string, userId?: string) {
-    const [batch] = await this.db
-      .select({
-        status: schema.batchHeader.status,
-        costing_method: schema.batchHeader.costing_method,
-        tracking_mode: schema.batchHeader.tracking_mode,
-      })
-      .from(schema.batchHeader)
-      .where(eq(schema.batchHeader.batch_id, batchId))
-      .limit(1);
-    if (!batch || batch.status !== 'ACTIVE' || batch.costing_method !== 'BIO_ASSET') return;
-
-    const [state] = await this.db
-      .select({ current_quantity: schema.batchBioAssetState.current_quantity })
-      .from(schema.batchBioAssetState)
-      .where(eq(schema.batchBioAssetState.batch_id, batchId))
-      .limit(1);
-    if (state && Number(state.current_quantity) > 1e-9) return;
-
-    if (batch.tracking_mode === 'ANIMAL_WISE') {
-      const [live] = await this.db
-        .select({ animal_id: schema.animalRegister.animal_id })
-        .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)))
-        .limit(1);
-      if (live) return;
-    }
-
-    await this.db
-      .update(schema.batchHeader)
-      .set({
-        status: 'CLOSED',
-        actual_end_date: onDate,
-        closing_quantity: '0.0000',
-        closed_at: toMysqlTimestamp(),
-        closed_by: userId || null,
-        updated_by: userId || null,
-        updated_at: toMysqlTimestamp(),
-      })
-      .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.status, 'ACTIVE')));
   }
 
   /** Adds (or subtracts) head count and carrying value on one batch's bio-asset state row. */

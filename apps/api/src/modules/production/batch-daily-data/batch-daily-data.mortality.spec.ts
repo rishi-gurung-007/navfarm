@@ -12,6 +12,11 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('./entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+
+
 jest.mock('../../../common/period-close', () => ({ assertPostingPeriodOpen: jest.fn().mockResolvedValue(undefined) }));
 
 /**
