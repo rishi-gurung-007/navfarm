@@ -9,9 +9,9 @@ import { MASTER_DATA_CONFIGS } from "@/modules/master-data/configs";
 const reason = MASTER_DATA_CONFIGS.find((config) => config.key === "reason")!;
 const field = (key: string) => reason.fields.find((f) => f.key === key)!;
 
-describe("Reason master — Description capped at 50", () => {
-  it("limits the Description field (reason_name) to 50 characters", () => {
-    expect(field("reason_name").maxLength).toBe(50);
+describe("Reason master — Description capped at 150 (Rishi, 19 Oct)", () => {
+  it("limits the Description field (reason_name) to 150 characters", () => {
+    expect(field("reason_name").maxLength).toBe(150);
     expect(field("reason_name").label).toBe("Description");
   });
 });

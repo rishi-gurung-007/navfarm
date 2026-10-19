@@ -19,7 +19,7 @@ jest.mock("../src/hooks/useAuth", () => ({
   getActiveCompanyId: () => mockCompanyId,
   getStoredUser: () => ({}),
   hasPermission: (_u: unknown, mod: string, res: string, action: string) =>
-    mod === "PRODUCTION" && res === "APPROVAL" && action === "can_approve" ? mockCanApprove : true,
+    action === "can_approve" && ((mod === "PRODUCTION" && res === "APPROVAL") || (mod === "PROCUREMENT" && res === "REQUISITION")) ? mockCanApprove : true,
 }));
 jest.mock("../src/utils/date-short", () => ({ formatDateShort: (v: string | null) => v ?? "" }));
 jest.mock("../src/components/console/inventory/use-feed-farm", () => ({

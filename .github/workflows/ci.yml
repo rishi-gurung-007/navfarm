@@ -32,7 +32,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm nx sync:check
-      - run: pnpm nx format:check --base=origin/main
+      # Format is checked on files a change adds, not on every file it touches: most existing files were never
+      # Prettier-formatted, so touching one line failed the whole PR (Rishi, 19 Oct).
+      - name: Format check (new files only)
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          if [ -z "$BASE_REF" ] || ! git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null; then
+            echo "No base to compare against; skipping the new-file format check."; exit 0
+          fi
+          NEW_FILES=$(git diff --name-only --diff-filter=A "$BASE_REF"...HEAD | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|json|css|scss|md|yml|yaml|html)$' || true)
+          if [ -z "$NEW_FILES" ]; then echo "No new files to format-check."; exit 0; fi
+          echo "$NEW_FILES"
+          pnpm exec prettier --check $NEW_FILES
       # Lint has a documented existing error baseline, and E2E still needs its
       # database/browser runner setup. Keep the reliable release checks blocking.
       - run: pnpm nx run-many -t test -p api web

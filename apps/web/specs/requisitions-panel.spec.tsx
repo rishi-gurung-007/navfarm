@@ -16,7 +16,7 @@ let mockCanApprove = true;
 jest.mock('../src/hooks/useAuth', () => ({
   getStoredUser: () => ({ userType: 'STANDARD_USER' }),
   hasPermission: (_u: unknown, mod: string, res: string, action: string) =>
-    mod === 'PRODUCTION' && res === 'APPROVAL' && action === 'can_approve' ? mockCanApprove : true,
+    action === 'can_approve' && ((mod === 'PRODUCTION' && res === 'APPROVAL') || (mod === 'PROCUREMENT' && res === 'REQUISITION')) ? mockCanApprove : true,
   getActiveCompanyId: () => 'co',
 }));
 let mockFarm: any;
