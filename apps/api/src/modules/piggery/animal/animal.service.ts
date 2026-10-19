@@ -765,7 +765,8 @@ export class AnimalService {
     };
 
     await this.db.insert(schema.animalRegister).values(newAnimal);
-
+    // Placed straight into an ACTIVE batch, she joins its head count, value and stage counts.
+    const joinedBatch = await this.batchService.recordAnimalEntry(newAnimal, dto.entry_date, tenantId, userPayload);
 
     // Record IAS 41 Opening Acquisition in bio_asset_ledger for this tagged animal
     await this.db.insert(schema.bioAssetLedger).values({
@@ -782,6 +783,8 @@ export class AnimalService {
       uom: receiptUom ?? 'HEAD',
       document_no: animalCode,
       posting_date: dto.entry_date,
+      batch_id: joinedBatch?.batch_id ?? null,
+      batch_no: joinedBatch?.batch_no ?? null,
       stage: dto.current_stage_id || null,
       status: 'ACTIVE',
       quantity: '1.0000',
@@ -1144,9 +1147,25 @@ export class AnimalService {
       }
     }
 
-    const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
-    const gainLoss = dto.disposal_value != null && bookValue != null ? dto.disposal_value - bookValue : null;
     const mappedStatus = DISPOSAL_STATUS_MAP[dto.disposal_type];
+    if (dto.disposal_type === 'SOLD' && dto.customer_id) {
+      const [customer] = await this.db
+        .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
+        .from(schema.customerMaster)
+        .where(and(eq(schema.customerMaster.customer_id, dto.customer_id), eq(schema.customerMaster.tenant_id, tenantId)))
+        .limit(1);
+      if (!customer || (customer.company_id && customer.company_id !== animal.company_id) || customer.is_active === false) {
+        throw new BadRequestException('The customer is not an active customer of this company.');
+      }
+    }
+
+    // Her batch follows: its head and stage counts, the carrying value she takes with her, and the movement log
+    // saying how she left (E1/E5). Before the register flips, so the batch still sees her as its member.
+    const exit = await this.batchService.recordAnimalExit(animal, dto.disposal_type, dto.disposal_date, tenantId, userPayload);
+    // The book value that left the herd: what her batch gave up for her, else her own.
+    const ownBookValue = animal.book_value != null ? Number(animal.book_value) : null;
+    const bookValue = exit?.valueRelieved ?? ownBookValue;
+    const gainLoss = dto.disposal_value != null && bookValue != null ? dto.disposal_value - bookValue : null;
 
     const updates: any = {
       is_active: false,
@@ -1165,16 +1184,6 @@ export class AnimalService {
     if (mappedStatus) updates.status = mappedStatus;
     // She leaves at the stage named for how she left (SOLD, CULLED, SLAUGHTERED, DEAD), so the register and the
     // stage reports agree; a sold sow kept showing at Flush. A tenant without that stage keeps her last one.
-    if (dto.disposal_type === 'SOLD' && dto.customer_id) {
-      const [customer] = await this.db
-        .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
-        .from(schema.customerMaster)
-        .where(and(eq(schema.customerMaster.customer_id, dto.customer_id), eq(schema.customerMaster.tenant_id, tenantId)))
-        .limit(1);
-      if (!customer || (customer.company_id && customer.company_id !== animal.company_id) || customer.is_active === false) {
-        throw new BadRequestException('The customer is not an active customer of this company.');
-      }
-    }
     const exitStageId = mappedStatus ? await this.exitStageId(mappedStatus, animal.company_id, animal.lob_id) : null;
     if (exitStageId) updates.current_stage_id = exitStageId;
 
@@ -1203,6 +1212,9 @@ export class AnimalService {
         uom: 'HEAD',
         document_no: animal.animal_code,
         posting_date: dto.disposal_date,
+        // The batch she left, so its roll-forward shows her going out.
+        batch_id: exit?.batch?.batch_id ?? null,
+        batch_no: exit?.batch?.batch_no ?? null,
         stage: animal.current_stage_id || null,
         status: mappedStatus || 'CLOSED',
         quantity: '-1.0000',
@@ -1216,8 +1228,23 @@ export class AnimalService {
       });
     }
 
-    // Her batch follows: its head and stage counts, and the movement log saying how she left (E1/E5).
-    await this.batchService.recordAnimalExit(animal, dto.disposal_type, dto.disposal_date, tenantId, userPayload);
+    // A sale or cull journals like the batch-level sale (disposeBioAsset): the proceeds owed, and the gain or
+    // loss against the book value that left. It used to reach only the bio-asset ledger.
+    if (dto.disposal_type === 'SOLD' || dto.disposal_type === 'CULLED') {
+      await this.batchService.postAnimalDisposalJournal({
+        tenantId,
+        companyId: animal.company_id,
+        documentNo: animal.animal_code,
+        postingDate: dto.disposal_date,
+        bookValue: bookValue ?? 0,
+        proceeds: Number(dto.disposal_value) || 0,
+        nobId: animal.nob_id,
+        lobId: animal.lob_id,
+        stageId: exit?.batch?.stage_id ?? null,
+        label: dto.disposal_type === 'SOLD' ? 'Sale' : 'Cull',
+        userId: userPayload?.userId,
+      });
+    }
 
     await this.auditService.log({
       tenantId,

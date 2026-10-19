@@ -60,6 +60,19 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
  *    `batch_bio_asset_state` and `batch_header.closing_quantity`, which is what
  *    the bio-asset roll-forward and WIP-by-batch reports actually read.
  */
+/**
+ * Scales `values` so they sum to exactly `total` (4dp), in proportion to each one — evenly when they are all
+ * nil. The last value takes the rounding remainder.
+ */
+export function spreadToTotal(values: number[], total: number): { values: number[]; total: number } {
+  const target = Number(total.toFixed(4));
+  if (!values.length) return { values: [], total: 0 };
+  const sum = values.reduce((a, v) => a + v, 0);
+  const out = values.map((v) => Number(((sum > 0 ? v / sum : 1 / values.length) * target).toFixed(4)));
+  out[out.length - 1] = Number((target - out.slice(0, -1).reduce((a, v) => a + v, 0)).toFixed(4));
+  return { values: out, total: target };
+}
+
 @Injectable()
 export class BatchTransferService {
   constructor(
@@ -493,7 +506,7 @@ export class BatchTransferService {
     userPayload?: { userId?: string },
   ) {
     const quantity = Number(transfer.head_count);
-    const value = Number(transfer.transfer_value);
+    let value = Number(transfer.transfer_value);
 
     const [source] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, transfer.from_batch_id)).limit(1).for('update');
     const [destination] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, transfer.to_batch_id)).limit(1).for('update');
@@ -503,6 +516,14 @@ export class BatchTransferService {
       throw new BadRequestException(
         `${source.batch_no} now has ${onHand.quantity} head; this transfer of ${quantity} can no longer post.`,
       );
+    }
+    // The last head takes all the carrying value, including what was capitalised since the draft was made.
+    if (quantity >= onHand.quantity - 1e-9 && Math.abs(onHand.value - value) >= 0.00005) {
+      value = Number(onHand.value.toFixed(4));
+      await this.db
+        .update(schema.batchTransfer)
+        .set({ transfer_value: value.toFixed(4) })
+        .where(eq(schema.batchTransfer.transfer_id, transfer.transfer_id));
     }
 
     await this.shiftBioAssetState(transfer.from_batch_id, -quantity, -value);
@@ -643,7 +664,7 @@ export class BatchTransferService {
 
     const animalIds = transfer.lines.map((l) => l.animal_id);
     const headCount = animalIds.length;
-    const totalValue = transfer.lines.reduce(
+    let totalValue = transfer.lines.reduce(
       (sum, l) => sum + Number(l.book_value),
       0,
     );
@@ -779,6 +800,9 @@ export class BatchTransferService {
     await this.schedulerHeaderService.syncAnimalWiseCounts(transfer.from_batch_id);
     await this.schedulerHeaderService.syncAnimalWiseCounts(transfer.to_batch_id);
 
+    // 2a. A transfer that takes the source's last head takes all of its carrying value.
+    totalValue = await this.sweepIfEmptied(transfer, totalValue);
+
     // 2. Move the carrying value and head count between the two batches' states.
     await this.shiftBioAssetState(
       transfer.from_batch_id,
@@ -875,6 +899,55 @@ export class BatchTransferService {
         updated_at: toMysqlTimestamp(),
       })
       .where(and(eq(schema.batchHeader.batch_id, batchId), eq(schema.batchHeader.status, 'ACTIVE')));
+  }
+
+  /**
+   * A transfer that takes the source's last head takes all of its carrying value. The lines carry each animal's
+   * own book value, but the batch's value also holds what it capitalised while it held them (feed, overheads);
+   * moved at their own values the animals left that behind, and the batch closed at nil head still carrying it.
+   * That remainder is spread over the lines in proportion to their values, and the lines and the transfer are
+   * rewritten to match. Never less than the animals' own values: an animal-wise batch's state holds only the
+   * value that came in by transfer, not that of the animals it was created with, so it can hold less than they
+   * are worth — the source then just ends at nil. Returns the transfer's value. Runs after the animals are
+   * repointed.
+   */
+  private async sweepIfEmptied(
+    transfer: Awaited<ReturnType<BatchTransferService['findOne']>>,
+    totalValue: number,
+  ): Promise<number> {
+    const [sourceState] = await this.db
+      .select()
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, transfer.from_batch_id))
+      .limit(1);
+    if (!sourceState) return totalValue;
+    // Emptied means no live animal is left in it. The state's own head count can drift from the animals (an
+    // animal registered straight into the batch), so it is not the test.
+    const [stillInSource] = await this.db
+      .select({ animal_id: schema.animalRegister.animal_id })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.current_batch_id, transfer.from_batch_id), eq(schema.animalRegister.is_active, true)))
+      .limit(1);
+    if (stillInSource) return totalValue;
+
+    const remainder = (Number(sourceState.nca_book_value) || 0) - totalValue;
+    if (remainder < 0.00005) return totalValue;
+    const swept = spreadToTotal(
+      transfer.lines.map((l) => Number(l.book_value)),
+      totalValue + remainder,
+    );
+    for (const [i, line] of transfer.lines.entries()) {
+      line.book_value = swept.values[i].toFixed(4);
+      await this.db
+        .update(schema.batchTransferLine)
+        .set({ book_value: line.book_value })
+        .where(eq(schema.batchTransferLine.line_id, line.line_id));
+    }
+    await this.db
+      .update(schema.batchTransfer)
+      .set({ transfer_value: swept.total.toFixed(4) })
+      .where(eq(schema.batchTransfer.transfer_id, transfer.transfer_id));
+    return swept.total;
   }
 
   /** Adds (or subtracts) head count and carrying value on one batch's bio-asset state row. */

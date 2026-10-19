@@ -287,6 +287,22 @@
           "command": "node --import tsx src/scripts/resync-animal-wise-scheduler-counts.ts"
         }
       },
+      "db-repair-animal-wise-head-counts": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/repair-animal-wise-head-counts.ts"
+        }
+      },
+      "db-repair-bio-asset-residual-value": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/repair-bio-asset-residual-value.ts"
+        }
+      },
       "db-close-emptied-bio-asset-batches": {
         "executor": "nx:run-commands",
         "cache": false,

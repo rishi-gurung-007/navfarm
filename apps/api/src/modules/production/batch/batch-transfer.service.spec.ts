@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { BatchTransferService } from './batch-transfer.service';
+import { BatchTransferService, spreadToTotal } from './batch-transfer.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
@@ -279,6 +279,7 @@ describe('BatchTransferService', () => {
         .spyOn(service as any, 'writeLedgerLegs')
         .mockResolvedValue(undefined);
       jest.spyOn(service as any, 'closeIfEmptied').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'sweepIfEmptied').mockImplementation(async (_t, total) => total);
 
       mockDbSelect
         .mockReturnValueOnce({
@@ -340,6 +341,7 @@ describe('BatchTransferService', () => {
       jest.spyOn(service as any, 'shiftClosingQuantity').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'writeLedgerLegs').mockResolvedValue(undefined);
       jest.spyOn(service as any, 'closeIfEmptied').mockResolvedValue(undefined);
+      jest.spyOn(service as any, 'sweepIfEmptied').mockImplementation(async (_t, total) => total);
       mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
     };
 
@@ -462,6 +464,59 @@ describe('BatchTransferService', () => {
       await (service as any).closeIfEmptied('b-1', '2026-10-19');
       await (service as any).closeIfEmptied('b-2', '2026-10-19');
       expect(set).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a transfer that empties its source takes all of its carrying value', () => {
+    const rows = (r: object[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(r) }) }) });
+    const transfer = () => ({
+      ...draftTransfer,
+      transfer_id: 'tr-1',
+      lines: [
+        { line_id: 'l-1', animal_id: 'a-1', book_value: '300.0000' },
+        { line_id: 'l-2', animal_id: 'a-2', book_value: '300.0000' },
+      ],
+    });
+    let sets: Array<Record<string, unknown>>;
+    beforeEach(() => {
+      sets = [];
+      mockDbUpdate.mockReturnValue({ set: jest.fn((v) => (sets.push(v), { where: jest.fn().mockResolvedValue({}) })) });
+    });
+
+    it('spreads what the batch capitalised over the lines, rewriting them and the transfer', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(rows([{ current_quantity: '2.0000', nca_book_value: '659.3912' }])) // source state
+        .mockReturnValueOnce(rows([])); // no live animal left in the source
+      const t = transfer();
+
+      const total = await (service as any).sweepIfEmptied(t, 600);
+
+      expect(total).toBe(659.3912);
+      expect(t.lines.map((l) => l.book_value)).toEqual(['329.6956', '329.6956']);
+      expect(sets).toEqual([{ book_value: '329.6956' }, { book_value: '329.6956' }, { transfer_value: '659.3912' }]);
+    });
+
+    it('never moves the animals at less than their own values when the batch holds less', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(rows([{ current_quantity: '1.0000', nca_book_value: '100.0000' }]))
+        .mockReturnValueOnce(rows([]));
+
+      expect(await (service as any).sweepIfEmptied(transfer(), 600)).toBe(600);
+      expect(sets).toHaveLength(0);
+    });
+
+    it('leaves a partial transfer at the animals’ own values', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(rows([{ current_quantity: '9.0000', nca_book_value: '3000.0000' }]))
+        .mockReturnValueOnce(rows([{ animal_id: 'a-9' }])); // an animal is still in the source
+
+      expect(await (service as any).sweepIfEmptied(transfer(), 600)).toBe(600);
+      expect(sets).toHaveLength(0);
+    });
+
+    it('splits a total over the lines by their values, the last taking the rounding', () => {
+      expect(spreadToTotal([100, 200], 400)).toEqual({ values: [133.3333, 266.6667], total: 400 });
+      expect(spreadToTotal([0, 0, 0], 10)).toEqual({ values: [3.3333, 3.3333, 3.3334], total: 10 });
     });
   });
 });
