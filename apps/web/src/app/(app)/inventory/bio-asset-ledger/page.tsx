@@ -5,7 +5,7 @@ import BioAssetLedgerPanel from "@/components/console/inventory/bio-asset-ledger
 
 export default function BioAssetLedgerPage() {
   return (
-    <InventoryPageShell activeKey="bio-asset-ledger">
+    <InventoryPageShell activeKey="bio-asset-ledger" showHeader={false}>
       <BioAssetLedgerPanel />
     </InventoryPageShell>
   );

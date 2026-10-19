@@ -63,10 +63,20 @@ function useInventoryPageState() {
   return { ready, scope, activeLob, mayView };
 }
 
-export function InventoryPageShell({ activeKey, fill = false, title: titleOverride, children }: {
-  activeKey: InventoryTabKey; fill?: boolean;
+export function InventoryPageShell({
+  activeKey,
+  fill = false,
+  title: titleOverride,
+  showHeader = true,
+  actions,
+  children,
+}: {
+  activeKey: InventoryTabKey;
+  fill?: boolean;
   /** The page's own heading, e.g. the Feed Forecast view it shows (Rishi, 14 Oct); defaults to the section's title. */
   title?: string;
+  showHeader?: boolean;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { t } = useLanguage();
@@ -103,7 +113,7 @@ export function InventoryPageShell({ activeKey, fill = false, title: titleOverri
     // Plan S: a feed screen holds its header and filters still; only its table scrolls.
     <ConsolePage fill={fill}>
       {/* No tab row: the Inventory & Stock menu in the sidebar opens each of these pages directly. */}
-      <PageHeader title={title} sticky={!fill} />
+      {showHeader && <PageHeader title={title} actions={actions} sticky={!fill} />}
       {children}
     </ConsolePage>
   );

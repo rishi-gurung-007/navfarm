@@ -5,7 +5,7 @@ import InventoryLedgerPanel from "@/components/console/inventory/inventory-ledge
 
 export default function InventoryLedgerPage() {
   return (
-    <InventoryPageShell activeKey="ledger">
+    <InventoryPageShell activeKey="ledger" showHeader={false}>
       <InventoryLedgerPanel />
     </InventoryPageShell>
   );
