@@ -1163,6 +1163,20 @@ export class AnimalService {
       updated_at: toMysqlTimestamp(),
     };
     if (mappedStatus) updates.status = mappedStatus;
+    // She leaves at the stage named for how she left (SOLD, CULLED, SLAUGHTERED, DEAD), so the register and the
+    // stage reports agree; a sold sow kept showing at Flush. A tenant without that stage keeps her last one.
+    if (dto.disposal_type === 'SOLD' && dto.customer_id) {
+      const [customer] = await this.db
+        .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
+        .from(schema.customerMaster)
+        .where(and(eq(schema.customerMaster.customer_id, dto.customer_id), eq(schema.customerMaster.tenant_id, tenantId)))
+        .limit(1);
+      if (!customer || (customer.company_id && customer.company_id !== animal.company_id) || customer.is_active === false) {
+        throw new BadRequestException('The customer is not an active customer of this company.');
+      }
+    }
+    const exitStageId = mappedStatus ? await this.exitStageId(mappedStatus, animal.company_id, animal.lob_id) : null;
+    if (exitStageId) updates.current_stage_id = exitStageId;
 
     await this.db
       .update(schema.animalRegister)
@@ -1197,6 +1211,7 @@ export class AnimalService {
         costing_method: 'AMORTIZED_COST',
         nob_id: animal.nob_id,
         lob_id: animal.lob_id,
+        customer_id: dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
         created_by: userPayload?.userId || null,
       });
     }
@@ -1217,6 +1232,23 @@ export class AnimalService {
 
     return this.findOne(id);
     });
+  }
+
+  /** The active exit stage with this code for the animal's line of business — the company's own copy first. */
+  private async exitStageId(stageCode: string, companyId: string | null, lobId: string | null): Promise<string | null> {
+    if (!lobId) return null;
+    const rows = await this.db
+      .select({ stage_id: schema.stageMaster.stage_id, company_id: schema.stageMaster.company_id })
+      .from(schema.stageMaster)
+      .where(and(
+        eq(schema.stageMaster.stage_code, stageCode),
+        eq(schema.stageMaster.lob_id, lobId),
+        eq(schema.stageMaster.is_active, true),
+        companyId
+          ? or(eq(schema.stageMaster.company_id, companyId), isNull(schema.stageMaster.company_id))
+          : isNull(schema.stageMaster.company_id),
+      ));
+    return (rows.find((r) => r.company_id === companyId) ?? rows[0])?.stage_id ?? null;
   }
 
   /**

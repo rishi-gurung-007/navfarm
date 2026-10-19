@@ -25,6 +25,7 @@ export const STARTER_GL_ACCOUNTS: StarterGlAccount[] = [
   { account_code: '1040', account_name: 'Inventory in Transit', account_type: 'ASSET' },
   { account_code: '1050', account_name: 'Biological Assets — Pre-mature (NCA)', account_type: 'ASSET' },
   { account_code: '1060', account_name: 'Biological Assets — Mature (NCA)', account_type: 'ASSET' },
+  { account_code: '1200', account_name: 'Trade Receivables', account_type: 'ASSET' },
   // Liabilities
   { account_code: '2010', account_name: 'Trade Payables (Clearing)', account_type: 'LIABILITY' },
   // Income
@@ -93,6 +94,8 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
   { transaction_type: 'BIO_FAIR_VALUE', debit_account_code: '1060', credit_account_code: '4020' },
   { transaction_type: 'BIO_HARVEST', debit_account_code: '1030', credit_account_code: '1060' },
   { transaction_type: 'BIO_DISPOSAL_SOLD', debit_account_code: '1060', credit_account_code: '4010' },
+  // A sale's proceeds: owed by the customer, out of the herd's carrying value (the gain/loss line above nets it to book value).
+  { transaction_type: 'BIO_SALE_PROCEEDS', debit_account_code: '1200', credit_account_code: '1060' },
 ];
 
 export const STARTER_WAREHOUSE = {

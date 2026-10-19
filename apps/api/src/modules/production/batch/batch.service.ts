@@ -2072,7 +2072,10 @@ export class BatchService {
         state_id: stateId,
         batch_id: id,
         stage,
-        current_quantity: batch.opening_quantity?.toString() || '1',
+        // The head the batch holds now. closing_quantity is kept in step by transfers and deaths; the opening
+        // figure re-created a herd that had left — a sow group emptied by transfer came back at 8 head the
+        // first time a late consumption touched it, and so never read as empty again.
+        current_quantity: (batch.closing_quantity ?? batch.opening_quantity)?.toString() || '1',
         nca_book_value: stage === 'MATURE' ? (Number(batch.opening_quantity || 1) * 28000).toString() : '0.0000',
       });
       [bioState] = await this.db
@@ -5746,6 +5749,18 @@ export class BatchService {
     return bioState;
   }
 
+  /** A sale's customer must be one of the batch's company (or tenant-wide), and still active. */
+  private async assertCustomerOfCompany(customerId: string, companyId: string, tenantId: string) {
+    const [customer] = await this.db
+      .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
+      .from(schema.customerMaster)
+      .where(and(eq(schema.customerMaster.customer_id, customerId), eq(schema.customerMaster.tenant_id, tenantId)))
+      .limit(1);
+    if (!customer || (customer.company_id && customer.company_id !== companyId) || customer.is_active === false) {
+      throw new BadRequestException('The customer is not an active customer of this company.');
+    }
+  }
+
   private assertBioAsset(batch: { costing_method: string }, action: string) {
     if (batch.costing_method !== 'BIO_ASSET') {
       throw new BadRequestException(
@@ -6077,10 +6092,28 @@ export class BatchService {
       if (dto.sale_proceeds === undefined || dto.sale_proceeds === null) {
         throw new BadRequestException('A sale disposal needs the sale proceeds.');
       }
+      if (dto.customer_id) await this.assertCustomerOfCompany(dto.customer_id, batch.company_id, tenantId);
+      // The sale: Dr Trade Receivables / Cr Biological Assets for the proceeds (BIO_SALE_PROCEEDS), then the
+      // gain or loss below takes the asset credit down to the book value sold. Before this only the gain
+      // posted — Dr Biological Assets / Cr Disposal Gain — so a sale raised the asset it should have relieved
+      // and no receivable was ever owed.
+      if (dto.sale_proceeds > 0) {
+        await this.glPostingService.postBatchCostEntry({
+          tenantId,
+          companyId: batch.company_id,
+          transactionType: 'BIO_SALE_PROCEEDS',
+          amount: dto.sale_proceeds,
+          documentNo: batch.batch_no,
+          postingDate: dto.posting_date,
+          description: `Sale — ${batch.batch_no}, ${dto.quantity} head`,
+          nobId: batch.nob_id || undefined,
+          lobId: batch.lob_id,
+          stageId: batch.stage_id || undefined,
+          userId: userPayload?.userId,
+        });
+      }
       const gainLoss = dto.sale_proceeds - nbvDisposed;
       if (Math.abs(gainLoss) >= 0.005) {
-        // Only the bio-asset-relief + gain/loss recognition posts here — no
-        // Sales/AR module exists yet to hang the cash/receivable side off of.
         await this.glPostingService.postBatchCostEntry({
           tenantId,
           companyId: batch.company_id,
@@ -6126,6 +6159,7 @@ export class BatchService {
         bioState.stage === 'MATURE' ? 'AMORTIZED_COST' : 'COST_ACCUMULATION',
       nob_id: batch.nob_id,
       lob_id: batch.lob_id,
+      customer_id: dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
       created_by: userPayload?.userId || null,
     });
 

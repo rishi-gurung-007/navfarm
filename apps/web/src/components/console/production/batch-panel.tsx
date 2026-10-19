@@ -120,6 +120,7 @@ export default function BatchPanel() {
   const [items, setItems] = useState<Row[]>([]);
   const [uoms, setUoms] = useState<Row[]>([]);
   const [warehouses, setWarehouses] = useState<Row[]>([]);
+  const [customers, setCustomers] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
@@ -400,6 +401,10 @@ export default function BatchPanel() {
       .get(`/warehouse?${qs}`)
       .then((r) => setWarehouses(unwrap<Row[]>(r) || []))
       .catch(() => {});
+    api
+      .get(`/customer?${qs}`)
+      .then((r) => setCustomers(unwrap<Row[]>(r) || []))
+      .catch(() => setCustomers([]));
     api
       .get(`/batch?${qs}`)
       .then((r) => setBatches(unwrap<Row[]>(r) || []))
@@ -1256,6 +1261,7 @@ export default function BatchPanel() {
       output_quantity: '',
       warehouse_id: '',
       sale_proceeds: '',
+      customer_id: '',
     });
     setBioError('');
     setBioActionOpen(type);
@@ -1313,7 +1319,10 @@ export default function BatchPanel() {
         } else {
           if (!bioForm.sale_proceeds)
             throw new Error(t('blErrSaleProceedsRequired'));
+          if (!bioForm.customer_id)
+            throw new Error(t('blErrCustomerRequired'));
           payload.sale_proceeds = Number(bioForm.sale_proceeds);
+          payload.customer_id = bioForm.customer_id;
         }
       }
       await api.post(path, payload);
@@ -4512,6 +4521,18 @@ export default function BatchPanel() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5">
+                  <label className="nf-text-label" style={S.sub}>
+                    {t('blLabelCustomer')}
+                  </label>
+                  <SearchableSelect
+                    ariaLabel={t('blLabelCustomer')}
+                    value={bioForm.customer_id}
+                    onChange={(v) => setBioForm((f: Row) => ({ ...f, customer_id: v }))}
+                    options={customers.filter((c) => c.is_active !== false)}
+                    valueKey="customer_id"
+                    getLabel={(c) => `${c.customer_code ?? ''} ${c.customer_name ?? ''}`.trim()}
+                    placeholder={t('blSelectEllipsis')}
+                  />
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelSaleProceeds')}
                   </label>
