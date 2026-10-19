@@ -49,7 +49,7 @@ describe('secondary production reference scope', () => {
         .mockReturnValueOnce(chain([], (condition) => { itemWhere = condition; })),
     };
     const cls = { get: (key: string) => key === 'tenantDb' ? db : undefined } as unknown as ClsService;
-    const service = new QrCodeService(cls, audit);
+    const service = new QrCodeService(cls, audit, {} as any);
 
     await expect(service.create({
       company_id: 'co-1', batch_id: 'batch-1', item_id: 'item-1',

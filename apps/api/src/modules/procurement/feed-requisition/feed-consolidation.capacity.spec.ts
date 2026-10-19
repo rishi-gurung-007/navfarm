@@ -53,7 +53,7 @@ describe('FeedConsolidationService mill capacity', () => {
     expect(millCapacity.approvedDemand).toHaveBeenCalledTimes(1);
     expect(millCapacity.approvedDemand).toHaveBeenCalledWith('tenant-1', { companyIds: ['co-1'] }, '2026-10-11', '2026-10-13');
     expect(millCapacity.allocateOnDates).toHaveBeenCalledTimes(1);
-    expect([...millCapacity.allocateOnDates.mock.calls[0][2].keys()]).toEqual(['2026-10-11', '2026-10-12', '2026-10-13']);
+    expect([...(millCapacity.allocateOnDates.mock.calls as any[][])[0][2].keys()]).toEqual(['2026-10-11', '2026-10-12', '2026-10-13']);
   });
 
   it('names no BIN and no capacity when the diet has no BIN assignment that day', async () => {

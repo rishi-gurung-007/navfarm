@@ -187,6 +187,7 @@ describe('buildSelectedSiloDashboard', () => {
   it('deduplicates a shared physical balance, sums batch demand, and splits current/next need', () => {
     const status: SiloStatusRow = {
       ...fact({}),
+      nextDietNote: null,
       currentDietItemId: 'r1',
       dailyRequirementKg: 500,
       daysRemaining: 3,

@@ -134,9 +134,9 @@ describe('FeedAlertService pushed events — MILL_DISPATCH, MILL_ADJUSTED, RECEI
       const alertRules: any = { ensureDefaultRules: jest.fn(async () => { table.push(rule('MILL_DISPATCH', { notificationCode: 'MILL-DISPATCH' })); }) };
       const service = new FeedAlertService(transactionCls(db), {} as any, {} as any, alertRules);
       jest.spyOn(service as any, 'loadRules').mockImplementation(async () => [...table]);
-      const args = [ctx, { eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: 'ls-1', title: 'T', message: 'M' }, NOW] as const;
+      const args: [any, any, any] = [ctx, { eventType: 'MILL_DISPATCH', subjectType: 'LOADING_SHEET', subjectId: 'ls-1', title: 'T', message: 'M' }, NOW];
       // Rishi, 12 Oct: no default rules are created — an empty rule table raises nothing.
-      if (safe) await service.raiseEventSafely(...(args as any)); else expect(await service.raiseEvent(...(args as any))).toEqual({ rules: 0, raised: 0 });
+      if (safe) await service.raiseEventSafely(...args); else expect(await service.raiseEvent(...args)).toEqual({ rules: 0, raised: 0 });
       expect(alertRules.ensureDefaultRules).not.toHaveBeenCalled();
       expect(table).toHaveLength(0);
       expect(inserted).toHaveLength(0);

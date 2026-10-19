@@ -99,7 +99,7 @@ describe('BinDietAssignmentService', () => {
       production_date: '2026-10-06', diet_priority: 1,
     }, 'tenant-1')).resolves.toEqual(created);
     expect(db.insert).toHaveBeenCalledTimes(1);
-    expect(values.mock.calls[0][0]).not.toHaveProperty('production_slot_id');
+    expect((values.mock.calls as any[][])[0][0]).not.toHaveProperty('production_slot_id');
   });
 
   it('refuses changing a BIN to an item while positive stock of another item remains', async () => {
