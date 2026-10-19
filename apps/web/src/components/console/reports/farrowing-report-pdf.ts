@@ -1,5 +1,5 @@
 import type { TranslationKeys } from "@/utils/translations";
-import { columnGroups, FARROWING_COLUMNS, type FarrowingReport } from "./farrowing-report-columns";
+import { columnGroups, FARROWING_COLUMNS, NA, type FarrowingReport } from "./farrowing-report-columns";
 
 type T = (key: TranslationKeys, params?: Record<string, string | number>) => string;
 
@@ -36,7 +36,7 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
   ];
   const body = report.rows.map((row) => [
     row.is_total ? t("rptFarmTotal") : report.farm.farm_name,
-    row.is_total ? "" : row.batch_no,
+    row.is_total ? "" : `${row.batch_no}\n${t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}`,
     ...FARROWING_COLUMNS.map((c) => c.cell(row, t)),
   ]);
 
