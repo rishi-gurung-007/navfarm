@@ -45,7 +45,7 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
     body,
     startY: 26,
     margin: { left: 6, right: 6 },
-    styles: { fontSize: 4.5, cellPadding: 0.5, halign: "right", lineWidth: 0.1 },
+    styles: { fontSize: 4, cellPadding: 0.4, halign: "right", lineWidth: 0.1 },
     headStyles: { fillColor: [235, 238, 242], textColor: 30, halign: "center", valign: "middle", fontStyle: "bold" },
     columnStyles: { 0: { halign: "left" }, 1: { halign: "left" } },
     theme: "grid",

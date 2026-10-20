@@ -2431,6 +2431,8 @@ export const translations = {
     rptAvgWeaningWeight: "Avg Piglet Weaning Weight (kg)",
     rptLitterMassTotal: "Total Litter Mass (kg) — All",
     rptLitterMassAvg: "Litter Mass (kg) — Average",
+    rptWeanPerSow: "Average Wean per Sow",
+    rptGiltBodyLoss: "Gilt Maternal Body Loss %",
     rptGiltsServed: "Gilts Served",
     rptSecondParityServed: "2nd Parity Served",
     rptPriorYearSows: "Prior Year Sows",

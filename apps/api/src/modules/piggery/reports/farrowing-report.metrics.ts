@@ -4,6 +4,7 @@
  *   - Farrowing Rate % is the sheet's own formula: sows farrowed ÷ sows served, both within the dates.
  *   - Total Litter Mass is shown both ways ("ALL OR ONE"): the total of every weaned litter, and the average litter.
  *   - Active Week Mortality is the piglet deaths in the current week — the Monday-to-Sunday week holding Date To.
+ *   - Average Wean per Sow and Gilt Maternal Body Loss read the litters weaned between the dates (Rishi, 20 Oct).
  */
 
 export interface ServiceRow {
@@ -32,6 +33,29 @@ export interface MortalityRow {
   quantity: number;
 }
 
+/** A litter weaned between the report's dates, whenever it was farrowed. */
+export interface WeanedRow {
+  batch_id: string;
+  sow_animal_id: string;
+  parity_number: number;
+  farrowing_date: string;
+  weaning_date: string;
+  piglets_weaned: number;
+}
+
+/** A sow's posted body weight from batch data entry, with the stage it was taken in. */
+export interface SowWeightRow {
+  animal_id: string;
+  stage_code: 'GESTATION' | 'LACTATION';
+  entry_date: string;
+  weight_kg: number;
+}
+
+export interface WeaningData {
+  weaned: WeanedRow[];
+  weights: SowWeightRow[];
+}
+
 export interface FarrowingMetrics {
   sows_served: number;
   sows_farrowed: number;
@@ -47,6 +71,9 @@ export interface FarrowingMetrics {
   litter_mass_avg_kg: number | null;
   gilts_served: number;
   second_parity_served: number;
+  sows_weaned: number;
+  wean_per_sow: number | null;
+  gilt_body_loss_pct: number | null;
 }
 
 const round = (value: number, places = 2) => Number(value.toFixed(places));
@@ -73,6 +100,7 @@ export function computeFarrowingMetrics(
   farrowings: FarrowingRow[],
   mortality: MortalityRow[],
   dateTo: string,
+  weaning: WeaningData = { weaned: [], weights: [] },
 ): FarrowingMetrics {
   const sum = (rows: FarrowingRow[], pick: (r: FarrowingRow) => number) => rows.reduce((acc, r) => acc + pick(r), 0);
   const served = services.length;
@@ -115,12 +143,35 @@ export function computeFarrowingMetrics(
     // breeding_record.parity_number is the litter the service is for: a gilt's first service is litter 1.
     gilts_served: services.filter((s) => s.parity_number === 1).length,
     second_parity_served: services.filter((s) => s.parity_number === 2).length,
+    sows_weaned: weaning.weaned.length,
+    wean_per_sow: ratio(weaning.weaned.reduce((acc, w) => acc + w.piglets_weaned, 0), weaning.weaned.length),
+    gilt_body_loss_pct: giltBodyLossPct(weaning),
   };
+}
+
+/**
+ * Gilt Maternal Body Weight Loss % (sheet AN6): (weight before farrowing − weight at weaning) ÷ weight before
+ * farrowing × 100, averaged over the gilt litters (parity 1) that have both. Before farrowing is the gilt's latest
+ * gestation weighing on or before the farrowing date — a gilt has no earlier gestation for it to come from. At weaning
+ * is her latest lactation weighing from farrowing to the weaning date. Null when no gilt litter has both.
+ */
+function giltBodyLossPct({ weaned, weights }: WeaningData): number | null {
+  const latest = (animalId: string, stage: SowWeightRow['stage_code'], from: string, to: string) =>
+    weights
+      .filter((w) => w.animal_id === animalId && w.stage_code === stage && w.entry_date >= from && w.entry_date <= to)
+      .reduce<SowWeightRow | null>((best, w) => (!best || w.entry_date > best.entry_date ? w : best), null);
+  const losses: number[] = [];
+  for (const litter of weaned.filter((w) => w.parity_number === 1)) {
+    const before = latest(litter.sow_animal_id, 'GESTATION', '0000-01-01', litter.farrowing_date);
+    const after = latest(litter.sow_animal_id, 'LACTATION', litter.farrowing_date, litter.weaning_date);
+    if (before && after && before.weight_kg > 0) losses.push(((before.weight_kg - after.weight_kg) / before.weight_kg) * 100);
+  }
+  return losses.length ? round(losses.reduce((a, b) => a + b, 0) / losses.length) : null;
 }
 
 /** True when a period had nothing recorded at all — the report shows "No data" rather than a row of zeros. */
 export function isEmptyPeriod(m: FarrowingMetrics): boolean {
-  return m.sows_served === 0 && m.sows_farrowed === 0;
+  return m.sows_served === 0 && m.sows_farrowed === 0 && m.sows_weaned === 0;
 }
 
 /**
@@ -139,6 +190,8 @@ export const TARGET_METRICS = {
   pre_wean_mortality: 'PRE_WEAN_MORTALITY',
   weaning_weight: 'WEANING_WEIGHT',
   litter_mass: 'LITTER_MASS',
+  wean_per_sow: 'WEAN_PER_SOW',
+  gilt_body_loss: 'GILT_BODY_LOSS',
 } as const;
 
 export type TargetKey = keyof typeof TARGET_METRICS;

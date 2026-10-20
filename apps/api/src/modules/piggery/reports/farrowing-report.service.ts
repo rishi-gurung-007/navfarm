@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, eq, gte, inArray, isNull, lte, or, sql, SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
@@ -15,8 +15,11 @@ import {
   minusOneYear,
   MortalityRow,
   ServiceRow,
+  SowWeightRow,
   Targets,
   targetsFromLifecycle,
+  WeanedRow,
+  WeaningData,
 } from './farrowing-report.metrics';
 
 export interface FarrowingReportRow {
@@ -110,7 +113,7 @@ export class FarrowingReportService {
     for (const batch of selected) {
       const services = current.services.filter((s) => s.batch_id === batch.batch_id);
       const farrowings = current.farrowings.filter((f) => f.batch_id === batch.batch_id);
-      const metrics = computeFarrowingMetrics(services, farrowings, this.mortalityOf(current.mortality, farrowings), query.dateTo);
+      const metrics = computeFarrowingMetrics(services, farrowings, this.mortalityOf(current.mortality, farrowings), query.dateTo, this.weaningOf(current, [batch.batch_id]));
       if (isEmptyPeriod(metrics)) continue;
       const priorId = matchPriorBatch(firstServices.get(batch.batch_id), candidates.filter((c) => c.batch_id !== batch.batch_id));
       const priorFarrowings = priorId ? prior.farrowings.filter((f) => f.batch_id === priorId) : [];
@@ -120,6 +123,7 @@ export class FarrowingReportService {
             priorFarrowings,
             this.mortalityOf(prior.mortality, priorFarrowings),
             priorDateTo,
+            this.weaningOf(prior, [priorId]),
           )
         : null;
       rows.push({
@@ -141,8 +145,9 @@ export class FarrowingReportService {
         farrowings,
         this.mortalityOf(current.mortality, farrowings),
         query.dateTo,
+        this.weaningOf(current, [...inRows].filter((id): id is string => Boolean(id))),
       );
-      const priorMetrics = computeFarrowingMetrics(prior.services, prior.farrowings, prior.mortality, priorDateTo);
+      const priorMetrics = computeFarrowingMetrics(prior.services, prior.farrowings, prior.mortality, priorDateTo, prior);
       rows.push({
         batch_id: null,
         batch_no: farm.farm_name,
@@ -223,6 +228,12 @@ export class FarrowingReportService {
     return new Map(rows.filter((r) => r.batch_id && r.first).map((r) => [r.batch_id as string, String(r.first).slice(0, 10)]));
   }
 
+  /** The weaned litters of some batches, with the weights of their sows. */
+  private weaningOf(data: WeaningData, batchIds: string[]): WeaningData {
+    const ids = new Set(batchIds);
+    return { weaned: data.weaned.filter((w) => ids.has(w.batch_id)), weights: data.weights };
+  }
+
   private mortalityOf(all: MortalityRow[], farrowings: FarrowingRow[]): MortalityRow[] {
     const lots = new Set(farrowings.map((f) => f.piglet_batch_id).filter(Boolean));
     return all.filter((m) => lots.has(m.piglet_batch_id));
@@ -230,7 +241,9 @@ export class FarrowingReportService {
 
   /** Services and farrowings in the batches between the dates, with the piglet deaths of those litters. */
   private async periodData(batchIds: string[], query: FarrowingReportQueryDto, from: string, to: string) {
-    if (!batchIds.length) return { services: [] as ServiceRow[], farrowings: [] as FarrowingRow[], mortality: [] as MortalityRow[] };
+    if (!batchIds.length) {
+      return { services: [] as ServiceRow[], farrowings: [] as FarrowingRow[], mortality: [] as MortalityRow[], weaned: [] as WeanedRow[], weights: [] as SowWeightRow[] };
+    }
 
     const serviceConditions: SQL[] = [
       inArray(schema.breedingRecord.batch_id, batchIds),
@@ -312,7 +325,65 @@ export class FarrowingReportService {
         }))
       : [];
 
-    return { services, farrowings, mortality };
+    // Litters weaned between the dates, whenever farrowed — Average Wean per Sow and Gilt Maternal Body Loss.
+    const weanConditions: SQL[] = [
+      inArray(f.batch_id, batchIds),
+      gte(f.weaning_date, from),
+      lte(f.weaning_date, to),
+    ];
+    if (query.parity) weanConditions.push(eq(f.parity_number, query.parity));
+    if (query.sowId) weanConditions.push(eq(f.sow_animal_id, query.sowId));
+    const weaned: WeanedRow[] = (
+      await this.db
+        .select({
+          batch_id: f.batch_id,
+          sow_animal_id: f.sow_animal_id,
+          parity_number: f.parity_number,
+          farrowing_date: f.farrowing_date,
+          weaning_date: f.weaning_date,
+          piglets_weaned: f.piglets_weaned,
+        })
+        .from(f)
+        .where(and(...weanConditions))
+    ).map((r) => ({
+      batch_id: r.batch_id as string,
+      sow_animal_id: r.sow_animal_id,
+      parity_number: Number(r.parity_number),
+      farrowing_date: String(r.farrowing_date).slice(0, 10),
+      weaning_date: String(r.weaning_date).slice(0, 10),
+      piglets_weaned: Number(r.piglets_weaned ?? 0),
+    }));
+
+    // The gilts' posted body weights from data entry, taken in gestation or lactation, up to the last weaning.
+    const gilts = [...new Set(weaned.filter((w) => w.parity_number === 1).map((w) => w.sow_animal_id))];
+    const d = schema.batchDailyData;
+    const weights: SowWeightRow[] = gilts.length
+      ? (
+          await this.db
+            .select({ animal_id: d.animal_id, stage_code: schema.stageMaster.stage_code, entry_date: d.entry_date, value: d.entered_value })
+            .from(d)
+            .innerJoin(schema.schedulerLine, eq(d.line_id, schema.schedulerLine.line_id))
+            .innerJoin(schema.schedulerHeader, eq(schema.schedulerLine.scheduler_id, schema.schedulerHeader.scheduler_id))
+            .innerJoin(schema.stageMaster, eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id))
+            .where(
+              and(
+                inArray(d.animal_id, gilts),
+                eq(d.posted, true),
+                isNotNull(d.entered_value),
+                lte(d.entry_date, to),
+                eq(schema.schedulerLine.kpi_metric, 'BODY_WEIGHT'),
+                inArray(schema.stageMaster.stage_code, ['GESTATION', 'LACTATION']),
+              ),
+            )
+        ).map((w) => ({
+          animal_id: w.animal_id as string,
+          stage_code: w.stage_code as SowWeightRow['stage_code'],
+          entry_date: String(w.entry_date).slice(0, 10),
+          weight_kg: Number(w.value),
+        }))
+      : [];
+
+    return { services, farrowings, mortality, weaned, weights };
   }
 
   /** Each breed's KPI targets from its active lifecycle rows in force during the dates. */

@@ -1,4 +1,4 @@
-import { commonTargets, computeFarrowingMetrics, FarrowingRow, minusOneYear, targetsFromLifecycle, weekStart } from './farrowing-report.metrics';
+import { commonTargets, computeFarrowingMetrics, FarrowingRow, isEmptyPeriod, minusOneYear, SowWeightRow, targetsFromLifecycle, WeanedRow, weekStart } from './farrowing-report.metrics';
 
 const litter = (over: Partial<FarrowingRow>): FarrowingRow => ({
   batch_id: 'B1',
@@ -98,5 +98,72 @@ describe('matchPriorBatch', () => {
   it('finds none outside a week either side, or without a first service', () => {
     expect(matchPriorBatch('2026-04-15', last)).toBeNull();
     expect(matchPriorBatch(null, last)).toBeNull();
+  });
+});
+
+describe('weaning columns', () => {
+  const weaned = (over: Partial<WeanedRow>): WeanedRow => ({
+    batch_id: 'B1',
+    sow_animal_id: 'S1',
+    parity_number: 1,
+    farrowing_date: '2026-03-01',
+    weaning_date: '2026-03-28',
+    piglets_weaned: 0,
+    ...over,
+  });
+  const w = (animal_id: string, stage_code: SowWeightRow['stage_code'], entry_date: string, weight_kg: number): SowWeightRow => ({
+    animal_id,
+    stage_code,
+    entry_date,
+    weight_kg,
+  });
+
+  it('weans per sow: piglets weaned over the litters weaned in the dates', () => {
+    const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
+      weaned: [weaned({ piglets_weaned: 11 }), weaned({ sow_animal_id: 'S2', piglets_weaned: 10, parity_number: 3 })],
+      weights: [],
+    });
+    expect(m.sows_weaned).toBe(2);
+    expect(m.wean_per_sow).toBe(10.5);
+    expect(computeFarrowingMetrics([], [], [], '2026-03-31').wean_per_sow).toBeNull();
+  });
+
+  it("gilt body loss: the latest gestation weight before farrowing against the latest lactation weight by weaning", () => {
+    const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
+      weaned: [
+        weaned({ sow_animal_id: 'G1' }),
+        weaned({ sow_animal_id: 'G2' }),
+        weaned({ sow_animal_id: 'G3' }), // no lactation weight: left out
+        weaned({ sow_animal_id: 'S4', parity_number: 2 }), // not a gilt: left out
+      ],
+      weights: [
+        w('G1', 'GESTATION', '2026-01-10', 150),
+        w('G1', 'GESTATION', '2026-02-25', 200), // latest before farrowing
+        w('G1', 'GESTATION', '2026-03-02', 999), // after farrowing: ignored
+        w('G1', 'LACTATION', '2026-03-10', 190),
+        w('G1', 'LACTATION', '2026-03-27', 180), // latest by weaning: 10% loss
+        w('G1', 'LACTATION', '2026-03-29', 1), // after weaning: ignored
+        w('G2', 'GESTATION', '2026-02-20', 160),
+        w('G2', 'LACTATION', '2026-03-28', 152), // on the weaning day: 5% loss
+        w('G3', 'GESTATION', '2026-02-20', 170),
+        w('S4', 'GESTATION', '2026-02-20', 250),
+        w('S4', 'LACTATION', '2026-03-20', 200),
+      ],
+    });
+    expect(m.gilt_body_loss_pct).toBe(7.5);
+  });
+
+  it('gilt body loss is empty when no gilt has both weights', () => {
+    const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
+      weaned: [weaned({ sow_animal_id: 'G1' })],
+      weights: [w('G1', 'GESTATION', '2026-02-20', 160)],
+    });
+    expect(m.gilt_body_loss_pct).toBeNull();
+  });
+
+  it('a batch that only weaned in the dates still has something recorded', () => {
+    const m = computeFarrowingMetrics([], [], [], '2026-03-31', { weaned: [weaned({ piglets_weaned: 9 })], weights: [] });
+    expect(isEmptyPeriod(m)).toBe(false);
+    expect(isEmptyPeriod(computeFarrowingMetrics([], [], [], '2026-03-31'))).toBe(true);
   });
 });

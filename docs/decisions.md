@@ -4198,3 +4198,18 @@ Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
   available … show N/A").
 - **Feed Forecast stays forward-only** from the Planning Date, and its date pickers must not offer dates before
   the Planning Date.
+
+## 20 Oct 2026 — Farrowing Report: YoY on every group; Wean per Sow and Gilt Maternal Body Loss (Rishi)
+
+- **Change vs Prior YR and YoY % Change on every group that has a Prior YR** (sheet AY5 comment: "Year on Year
+  Change must be on every parameter"). Change = actual − prior (percentage points for the % metrics); YoY % =
+  (actual − prior) ÷ prior × 100. N/A when either is missing or the prior is 0. Rishi counts these as the sheet's
+  Prior Year Rate (AX) and YoY % Change (AY).
+- **Average Wean per Sow** (AK–AM) = piglets weaned ÷ litters weaned, over the litters whose **weaning date** falls in
+  the dates, whenever they farrowed. Target KPI `WEAN_PER_SOW`.
+- **Gilt Maternal Body Loss %** (AN–AP) = (weight before farrowing − weight at weaning) ÷ weight before farrowing × 100,
+  **gilts only** (parity 1), averaged over the gilt litters weaned in the dates that have both weights. Before
+  farrowing = the gilt's latest posted BODY_WEIGHT entry in the GESTATION stage on or before the farrowing date; at
+  weaning = her latest in LACTATION from farrowing to the weaning date. Target KPI `GILT_BODY_LOSS`.
+- A batch that only **weaned** litters in the dates now has a row (it used to need a service or a farrowing in them).
+- The PDF is at 4pt so the 72 columns fit one A3 page without values wrapping.

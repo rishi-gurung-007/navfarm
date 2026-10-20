@@ -2,8 +2,8 @@ import type { TranslationKeys } from "@/utils/translations";
 
 /**
  * The R07 Farrowing Report's columns, in the order of Triple-C_reports COMMENTS.xlsx row 5. Shared by the screen
- * and the PDF so both always show the same thing. Left out for now (Rishi, 18 Oct): Week, Month, Average Wean per
- * Sow, Gilt Maternal Body Loss and the Gilt and 2nd-parity service targets. Every group with a Prior YR also shows the
+ * and the PDF so both always show the same thing. Left out for now (Rishi, 18 Oct): Week, Month and the Gilt and
+ * 2nd-parity service targets. Every group with a Prior YR also shows the
  * change against it and the YoY % change (AY5 comment: "Year on Year Change must be on every parameter"; Rishi, 20 Oct).
  */
 
@@ -27,6 +27,9 @@ export interface FarrowingMetrics {
   litter_mass_avg_kg: number | null;
   gilts_served: number;
   second_parity_served: number;
+  sows_weaned: number;
+  wean_per_sow: number | null;
+  gilt_body_loss_pct: number | null;
 }
 
 export interface FarrowingReportRow {
@@ -116,6 +119,8 @@ export const FARROWING_COLUMNS: ReportColumn[] = [
   ...triple("rptAvgWeaningWeight", "avg_weaning_weight_kg", "weaning_weight"),
   ...triple("rptLitterMassTotal", "litter_mass_total_kg", "litter_mass"),
   ...triple("rptLitterMassAvg", "litter_mass_avg_kg", null),
+  ...triple("rptWeanPerSow", "wean_per_sow", "wean_per_sow"),
+  ...triple("rptGiltBodyLoss", "gilt_body_loss_pct", "gilt_body_loss"),
   ...triple("rptGiltsServed", "gilts_served", null),
   ...triple("rptSecondParityServed", "second_parity_served", null),
   { group: "rptPriorYearSows", sub: "rptPriorYear", cell: prior("sows_served") },
