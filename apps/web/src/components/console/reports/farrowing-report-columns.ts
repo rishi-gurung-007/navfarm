@@ -3,7 +3,8 @@ import type { TranslationKeys } from "@/utils/translations";
 /**
  * The R07 Farrowing Report's columns, in the order of Triple-C_reports COMMENTS.xlsx row 5. Shared by the screen
  * and the PDF so both always show the same thing. Left out for now (Rishi, 18 Oct): Week, Month, Average Wean per
- * Sow, Gilt Maternal Body Loss, the Gilt and 2nd-parity service targets, Prior Year Rate and YoY % Change.
+ * Sow, Gilt Maternal Body Loss and the Gilt and 2nd-parity service targets. Every group with a Prior YR also shows the
+ * change against it and the YoY % change (AY5 comment: "Year on Year Change must be on every parameter"; Rishi, 20 Oct).
  */
 
 export interface Target {
@@ -72,10 +73,32 @@ const target = (key: string) => (row: FarrowingReportRow, t: (k: TranslationKeys
 // A batch row's prior year is the batch that stood where it stands a year earlier; the total's is the farm's.
 const prior = (m: Metric) => (row: FarrowingReportRow) => (row.prior_year ? fmt(row.prior_year[m]) : NA);
 
+// Rounded first so a tiny negative shows as 0, not "-0.00".
+const signed = (v: number) => {
+  const r = Math.round(v * 100) / 100;
+  return r > 0 ? `+${fmt(r)}` : fmt(r);
+};
+
+// Actual − Prior YR; for the % metrics this is the difference in percentage points.
+const change = (m: Metric) => (row: FarrowingReportRow) => {
+  const a = row.metrics[m];
+  const p = row.prior_year?.[m];
+  return a === null || p === null || p === undefined ? NA : signed(a - p);
+};
+
+// (Actual − Prior YR) ÷ Prior YR × 100; N/A when the prior year is missing or 0.
+const yoy = (m: Metric) => (row: FarrowingReportRow) => {
+  const a = row.metrics[m];
+  const p = row.prior_year?.[m];
+  return a === null || p === null || p === undefined || p === 0 ? NA : `${signed(((a - p) / p) * 100)}%`;
+};
+
 const triple = (group: TranslationKeys, m: Metric, targetKey: string | null): ReportColumn[] => [
   { group, sub: "rptActual", cell: actual(m) },
   ...(targetKey ? [{ group, sub: "rptTarget" as Sub, cell: target(targetKey) }] : []),
   { group, sub: "rptPriorYear", cell: prior(m) },
+  { group, sub: "rptPriorChange", cell: change(m) },
+  { group, sub: "rptYoyPct", cell: yoy(m) },
 ];
 
 export const FARROWING_COLUMNS: ReportColumn[] = [

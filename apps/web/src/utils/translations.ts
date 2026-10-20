@@ -2413,6 +2413,8 @@ export const translations = {
     rptActual: "Actual",
     rptTarget: "Target",
     rptPriorYear: "Prior YR",
+    rptPriorChange: "Change vs Prior YR",
+    rptYoyPct: "YoY % Change",
     rptFarmCol: "Farm",
     rptSowBatch: "Sow Batch",
     rptServiceTarget: "Service Target",
