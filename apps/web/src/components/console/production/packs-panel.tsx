@@ -14,6 +14,34 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { Badge } from "@/components/ui/badge";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { formatQuantity } from "@/lib/utils";
+import type { TranslationKeys } from "@/utils/translations";
+
+interface ChainNode {
+  batch_no?: string;
+  start_date?: string | null;
+  costing_method?: string | null;
+  parents?: ChainNode[];
+}
+
+/** The batches a pack came from: its own batch, then each batch that fed it, indented under it. */
+function OriginChain({ node, t }: { node: ChainNode; t: (k: TranslationKeys, p?: Record<string, string | number>) => string }) {
+  const method = node.costing_method ? node.costing_method.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : null;
+  return (
+    <div>
+      <div>
+        <span className="font-mono font-semibold" style={{ color: "var(--text-primary)" }}>{node.batch_no ?? NA}</span>
+        {node.start_date && <span style={{ color: "var(--text-secondary)" }}> · {t("pkChainStarted", { date: String(node.start_date).slice(0, 10) })}</span>}
+        {method && <span style={{ color: "var(--text-muted)" }}> · {method}</span>}
+      </div>
+      {node.parents && node.parents.length > 0 && (
+        <div className="mt-1 ml-3 border-l pl-3" style={{ borderColor: "var(--border)" }}>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{t("pkChainFrom")}</div>
+          {node.parents.map((parent, i) => <OriginChain key={`${parent.batch_no}-${i}`} node={parent} t={t} />)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PAGE_SIZE = 25;
 
@@ -191,7 +219,9 @@ export default function PacksPanel() {
             {viewing.origin_batch_chain && (
               <div className="w-full">
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("pkOriginChain")}</p>
-                <pre className="overflow-x-auto rounded-[var(--radius-sm)] border p-3 text-[10px]" style={S.surface}>{JSON.stringify(viewing.origin_batch_chain, null, 2)}</pre>
+                <div className="rounded-[var(--radius-sm)] border p-3 text-[11px]" style={S.surface}>
+                  <OriginChain node={viewing.origin_batch_chain} t={t} />
+                </div>
               </div>
             )}
           </div>

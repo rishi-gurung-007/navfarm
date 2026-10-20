@@ -147,8 +147,9 @@ export class AuditLogService {
       }
       return null;
     };
-    // `full_name` on a user snapshot ends in _name too, so one pass covers both.
-    return { code: pick('_code'), name: pick('_name') };
+    // `full_name` on a user snapshot ends in _name too, so one pass covers both. A document has a number, not a
+    // code: a transfer's transfer_no, a shipment's shipment_no.
+    return { code: pick('_code') ?? pick('_no'), name: pick('_name') };
   }
 
   async findLogs(filters: {
@@ -230,7 +231,7 @@ export class AuditLogService {
       }
     }
 
-    return rows.map((r) => {
+    const mapped = rows.map((r) => {
       // Prefer the after state's handle; a delete has only the before state.
       const after = this.entityLabel(r.new_values);
       const before = this.entityLabel(r.old_values);
@@ -241,5 +242,31 @@ export class AuditLogService {
         entity_label: after.name ?? before.name,
       };
     });
+    // An entry that carries no handle (a POST records only the new status) takes the one another entry for the same
+    // record carries — its CREATE names the document number.
+    const missing = [...new Set(mapped.filter((r) => !r.entity_code && !r.entity_label && r.entity_id).map((r) => r.entity_id as string))];
+    if (missing.length) {
+      const others = await this.db
+        .select({ entity_id: schema.auditLog.entity_id, old_values: schema.auditLog.old_values, new_values: schema.auditLog.new_values })
+        .from(schema.auditLog)
+        .where(and(inArray(schema.auditLog.entity_id, missing), ...(filters.tenantId ? [eq(schema.auditLog.tenant_id, filters.tenantId)] : [])));
+      const handle = new Map<string, { code: string | null; name: string | null }>();
+      for (const o of others) {
+        if (!o.entity_id || handle.has(o.entity_id)) continue;
+        const a = this.entityLabel(o.new_values);
+        const b = this.entityLabel(o.old_values);
+        const code = a.code ?? b.code;
+        const name = a.name ?? b.name;
+        if (code || name) handle.set(o.entity_id, { code, name });
+      }
+      for (const r of mapped) {
+        const h = !r.entity_code && !r.entity_label && r.entity_id ? handle.get(r.entity_id) : undefined;
+        if (h) {
+          r.entity_code = h.code;
+          r.entity_label = h.name;
+        }
+      }
+    }
+    return mapped;
   }
 }

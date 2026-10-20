@@ -1288,7 +1288,7 @@ const breed: MasterDataConfig = {
     { key: "boar_productive_life_months", label: "Boar Productive Life (months)", type: "number", min: 0, helpText: "How long a boar stays productive — amortisation input for a male.", section: "Reproduction — Male (Boar)" },
     { key: "mature_age_months", label: "Mature Age (months)", type: "number", min: 0, section: "Productive Life" },
     { key: "residual_value_pct", label: "Residual Value %", type: "number", step: "0.01", min: 0, helpText: "Salvage value as percent of opening asset value — amortisation input.", section: "Productive Life" },
-    { key: "age_labels", label: "Stage Age Labels", type: "json", section: "Productive Life", helpText: "Stage labels by week range (JSON), shown on the data entry screen header." },
+    // Stage Age Labels (age_labels) is not offered (Rishi, 20 Oct): it asked for JSON and nothing in the app reads it.
     { key: "is_blocked", label: "Blocked", type: "boolean", helpText: "A blocked breed stays visible/historical but cannot be used on new animals.", section: "Productive Life" },
   ],
 };
@@ -1766,7 +1766,7 @@ const disease: MasterDataConfig = {
 const feedFormula: MasterDataConfig = {
   key: "feed-formula",
   label: "Feed Formulas",
-  description: "Feed recipes (BOM). Ingredients are edited as a JSON array — one entry per raw material.",
+  description: "Feed recipes (BOM): the produced feed and its ingredients, one line per raw material.",
   apiBase: "/feed-formula",
   idKey: "formula_id",
   group: "Livestock & Health",
@@ -1801,7 +1801,7 @@ const feedFormula: MasterDataConfig = {
         { key: "unit", label: "Unit", type: "select-entity", entityEndpoint: "/uom?uomType=WEIGHT", entityValueKey: "uom_code", entityLabelKeys: ["uom_code", "uom_name"] },
         { key: "inclusion_pct", label: "Inclusion %", type: "number", step: "0.01", min: 0 },
       ],
-      helpText: 'Array of { item_id, quantity, unit, inclusion_pct?, loss_pct? }. Example: [{"item_id":"...","quantity":650,"unit":"KG"}]. Set at creation only — the API does not yet support editing ingredients after a formula is created.',
+      helpText: "One line per raw material: the item, its quantity and unit for one batch, and its inclusion %. Set when the formula is created; ingredients cannot be changed afterwards.",
     },
   ],
 };

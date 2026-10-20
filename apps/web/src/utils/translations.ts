@@ -3195,6 +3195,8 @@ export const translations = {
     pkVoided2: "Voided",
     pkActive: "Active",
     pkOriginChain: "Origin Chain",
+    pkChainStarted: "started {{date}}",
+    pkChainFrom: "From",
     paramTitle: "Parameters",
     paramSubtitle: "Reusable expected-value definitions used to build Schedulers (e.g. \"Starter Feed Consumption\").",
     paramAllTypes: "All types",
