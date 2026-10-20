@@ -1,3 +1,5 @@
+import { kpiLimits, KpiLimitsInput } from '../../production/lifecycle/kpi-limits';
+
 /**
  * The arithmetic of the R07 Farrowing Report, kept apart from the queries so it can be tested on plain rows.
  * Column definitions are Triple-C_reports COMMENTS.xlsx row 6, as Rishi settled them on 18 Oct:
@@ -175,8 +177,8 @@ export function isEmptyPeriod(m: FarrowingMetrics): boolean {
 }
 
 /**
- * The KPI each target column reads from breed_lifecycle_stages.kpi_thresholds ([{ metric, lower_limit,
- * upper_limit }]). A breed with no such row shows "Not available" (Rishi, 18 Oct).
+ * The KPI each target column reads from breed_lifecycle_stages.kpi_thresholds — its Average Value and Tolerance, or
+ * an older row's lower and upper limits (kpiLimits; Rishi, 20 Oct). A breed with no such row shows "N/A".
  */
 export const TARGET_METRICS = {
   service_target: 'SERVICE_TARGET',
@@ -192,22 +194,22 @@ export const TARGET_METRICS = {
   litter_mass: 'LITTER_MASS',
   wean_per_sow: 'WEAN_PER_SOW',
   gilt_body_loss: 'GILT_BODY_LOSS',
+  gilt_service_target: 'GILT_SERVICE_TARGET',
+  second_parity_service_target: 'SECOND_PARITY_SERVICE_TARGET',
 } as const;
 
 export type TargetKey = keyof typeof TARGET_METRICS;
+/** A KPI's target: its Average Value and the band its tolerance allows (kpiLimits). */
 export interface Target {
+  average: number | null;
   lower: number | null;
   upper: number | null;
 }
 export type Targets = Record<TargetKey, Target | null>;
 
-interface ThresholdRow {
+interface ThresholdRow extends KpiLimitsInput {
   metric?: string;
-  lower_limit?: number | string | null;
-  upper_limit?: number | string | null;
 }
-
-const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
 
 /**
  * Targets for one breed from its lifecycle rows. A farm's own row wins over the company-wide one, the way a
@@ -221,8 +223,8 @@ export function targetsFromLifecycle(rows: Array<{ farm_id: string | null; kpi_t
     if (!Array.isArray(list)) continue;
     for (const t of list as ThresholdRow[]) {
       if (!t?.metric || found.has(t.metric)) continue;
-      const target = { lower: num(t.lower_limit), upper: num(t.upper_limit) };
-      if (target.lower === null && target.upper === null) continue;
+      const target = kpiLimits(t);
+      if (target.average === null && target.lower === null && target.upper === null) continue;
       found.set(t.metric, target);
     }
   }
@@ -248,7 +250,7 @@ export function commonTargets(all: Targets[]): Targets {
     const values = all.map((t) => t[key]);
     const first = values[0];
     out[key] =
-      first && values.every((v) => v && v.lower === first.lower && v.upper === first.upper) ? first : null;
+      first && values.every((v) => v && v.average === first.average && v.lower === first.lower && v.upper === first.upper) ? first : null;
   }
   return out;
 }

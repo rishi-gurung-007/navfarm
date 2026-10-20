@@ -76,11 +76,36 @@ describe('farrowing report metrics', () => {
       ],
       'FARM',
     );
-    expect(t.farrowing_rate).toEqual({ lower: 85, upper: null });
-    expect(t.total_born).toEqual({ lower: 13, upper: null });
+    expect(t.farrowing_rate).toEqual({ average: null, lower: 85, upper: null });
+    expect(t.total_born).toEqual({ average: null, lower: 13, upper: null });
     expect(t.mummified).toBeNull();
-    expect(commonTargets([t, t]).farrowing_rate).toEqual({ lower: 85, upper: null });
+    expect(commonTargets([t, t]).farrowing_rate).toEqual({ average: null, lower: 85, upper: null });
     expect(commonTargets([t, targetsFromLifecycle([], 'FARM')]).farrowing_rate).toBeNull();
+  });
+});
+
+describe('targets from Average Value and Tolerance', () => {
+  it('reads the band the KPIs & Alerts form records, the way the data-entry alerts do', () => {
+    const t = targetsFromLifecycle(
+      [
+        {
+          farm_id: null,
+          kpi_thresholds: [
+            { metric: 'TOTAL_BORN', average_value: 14, tolerance_pct: 10 }, // both sides: 12.6–15.4
+            { metric: 'BORN_DEAD', average_value: 1, tolerance_pct: 50, tolerance_type: 'UPPER' }, // at most 1.5
+            { metric: 'FARROWING_RATE', average_value: 88, tolerance_pct: 5, tolerance_type: 'LOWER' }, // at least 83.6
+            { metric: 'GILT_SERVICE_TARGET', average_value: 4 }, // the average alone
+            { metric: 'SECOND_PARITY_SERVICE_TARGET', average_value: 3, tolerance_pct: 0 },
+          ],
+        },
+      ],
+      'FARM',
+    );
+    expect(t.total_born).toEqual({ average: 14, lower: 12.6, upper: 15.4 });
+    expect(t.born_dead).toEqual({ average: 1, lower: null, upper: 1.5 });
+    expect(t.farrowing_rate).toEqual({ average: 88, lower: 83.6, upper: null });
+    expect(t.gilt_service_target).toEqual({ average: 4, lower: null, upper: null });
+    expect(t.second_parity_service_target).toEqual({ average: 3, lower: 3, upper: 3 });
   });
 });
 

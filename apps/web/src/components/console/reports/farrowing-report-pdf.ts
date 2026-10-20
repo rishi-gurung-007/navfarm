@@ -3,6 +3,9 @@ import { columnGroups, FARROWING_COLUMNS, NA, type FarrowingReport } from "./far
 
 type T = (key: TranslationKeys, params?: Record<string, string | number>) => string;
 
+// jsPDF's built-in fonts cover Latin-1 only: a dash or ≤ / ≥ outside it prints as "�".
+const latin1 = (text: string) => text.replace(/[–—]/g, "-").replace(/≤ ?/g, "<=").replace(/≥ ?/g, ">=");
+
 /**
  * The Farrowing Report as a PDF: the same rows and columns as the screen, landscape A3 so the 40-odd columns
  * stay readable. jsPDF is loaded only when someone exports.
@@ -30,14 +33,14 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
     [
       { content: t("rptFarmCol"), rowSpan: 2 },
       { content: t("rptSowBatch"), rowSpan: 2 },
-      ...columnGroups(FARROWING_COLUMNS).map((g) => ({ content: t(g.group), colSpan: g.span })),
+      ...columnGroups(FARROWING_COLUMNS).map((g) => ({ content: latin1(t(g.group)), colSpan: g.span })),
     ],
-    FARROWING_COLUMNS.map((c) => t(c.sub)),
+    FARROWING_COLUMNS.map((c) => latin1(t(c.sub))),
   ];
   const body = report.rows.map((row) => [
     row.is_total ? t("rptFarmTotal") : report.farm.farm_name,
     row.is_total ? "" : `${row.batch_no}\n${t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}`,
-    ...FARROWING_COLUMNS.map((c) => c.cell(row, t)),
+    ...FARROWING_COLUMNS.map((c) => latin1(c.cell(row, t))),
   ]);
 
   autoTable(doc, {

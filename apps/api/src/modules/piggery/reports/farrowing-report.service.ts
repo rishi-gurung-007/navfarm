@@ -3,7 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
+import { batchScopeConditions, farmPickerConditions, farmScope } from '../../../common/farm-scope';
 import { FarrowingReportQueryDto } from './farrowing-report.dto';
 import {
   commonTargets,
@@ -166,6 +166,19 @@ export class FarrowingReportService {
       generated_at: new Date().toISOString(),
       rows,
     };
+  }
+
+  /** The farms this caller may report on, with the company each belongs to (farmPickerConditions). */
+  async listFarms(tenantId: string, userType: string | undefined) {
+    const conditions = farmPickerConditions(farmScope(this.cls), tenantId, userType);
+    if (!conditions) return [];
+    const L = schema.locationMaster;
+    return this.db
+      .select({ farm_id: L.location_id, farm_code: L.location_code, farm_name: L.location_name, company_id: L.company_id, company_name: schema.companyMaster.company_name })
+      .from(L)
+      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .where(and(...conditions))
+      .orderBy(asc(L.location_code));
   }
 
   /** The batches on a farm and the sows that have a service or a farrowing in them — the report's own pickers. */

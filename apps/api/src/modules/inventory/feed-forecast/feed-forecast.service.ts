@@ -6,7 +6,7 @@ import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
 import { headsAt, loadBatchDeaths } from '../../production/batch-heads';
-import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { activeFarmOfCompany, batchScopeConditions, farmPickerConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { resolveNextStageDiets, type NextStageDiet } from './next-stage-diet';
@@ -1417,33 +1417,9 @@ export class FeedForecastService {
     return byFarm;
   }
 
-  /**
-   * Which farms this caller may be offered, as WHERE conditions — null when the
-   * answer is "none at all". Shared by GET /feed-forecast/farms and D32's
-   * farm-settings list so the two can never disagree about whose farms a user
-   * sees.
-   */
+  /** Which farms this caller may be offered (farmPickerConditions), shared by GET /feed-forecast/farms and D32's list. */
   private farmListConditions(tenantId: string, userType: string | undefined): SQL[] | null {
-    const scope = farmScope(this.cls);
-    const L = schema.locationMaster;
-    const conditions: SQL[] = [
-      eq(L.tenant_id, tenantId),
-      eq(L.location_type, 'FARM'),
-      isNull(L.parent_location_id),
-      eq(L.is_active, true),
-      isNull(L.deleted_at),
-    ];
-    if (isFarmBoundUserType(userType)) {
-      if (!scope.farmId) return null;
-      conditions.push(eq(L.location_id, scope.farmId));
-      if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
-    } else if (scope.companyId) {
-      conditions.push(eq(L.company_id, scope.companyId));
-      if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
-    } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
-      return null;
-    }
-    return conditions;
+    return farmPickerConditions(farmScope(this.cls), tenantId, userType);
   }
 
   async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {

@@ -15,6 +15,17 @@ import { FarrowingReportService } from './farrowing-report.service';
 export class FarrowingReportController {
   constructor(private readonly reportService: FarrowingReportService) {}
 
+  // The report's own farm list: a tenant administrator in the tenant-wide workspace has no company farms in the location
+  // master, and a farm login has no Master Data grant, so the picker is read under the report's grant.
+  @Get('farrowing/farms')
+  @RequirePermission('REPORTS', 'FARROWING', 'view')
+  @ApiOperation({ summary: 'Farms the Farrowing Report may offer this caller' })
+  async farrowingFarms(@Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.reportService.listFarms(tenantId, req.user?.userType);
+    return { success: true, message: 'Farms retrieved successfully.', data };
+  }
+
   @Get('farrowing/filters')
   @RequirePermission('REPORTS', 'FARROWING', 'view')
   @ApiOperation({ summary: 'Farrowing Report pickers — the batches on a farm and the sows recorded in them' })

@@ -4213,3 +4213,23 @@ Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
   weaning = her latest in LACTATION from farrowing to the weaning date. Target KPI `GILT_BODY_LOSS`.
 - A batch that only **weaned** litters in the dates now has a row (it used to need a service or a farrowing in them).
 - The PDF is at 4pt so the 72 columns fit one A3 page without values wrapping.
+
+## 20 Oct 2026 — Report targets from Average and Tolerance; service-target KPIs; client answers (Rishi)
+
+- **Report targets read the KPIs & Alerts row the way the form saves it:** Average Value and Tolerance (%) with its
+  side — upper = average × (1 + tolerance), lower = average × (1 − tolerance); Upper sets only the upper, Lower only
+  the lower. Rows that still store lower/upper limits keep working. One function (`production/lifecycle/kpi-limits.ts`)
+  serves both the scheduler's data-entry alerts and the reports, so they cannot disagree. Shown as a range, `≤ x`,
+  `≥ x`, or the average alone.
+- **Gilt Service Target and 2nd Parity Service Target are KPIs:** `GILT_SERVICE_TARGET` and
+  `SECOND_PARITY_SERVICE_TARGET` (HEAD), set on the breed's Insemination stage, shown as the Target of Gilts Served
+  and 2nd Parity Served. Week and Month columns stay out of R07.
+- **Litter Mass target belongs to the average litter**, not the farm's total litter mass.
+- **The report has its own farm list** (`GET /reports/farrowing/farms`, the feed screens' rule via
+  `farmPickerConditions`): a tenant administrator in the tenant-wide workspace was refused by the location master.
+- **Weaning is the stage in which the sow suckles her litter** — the piglets live on the sow's milk until they are
+  weaned. It is the Lactation stage; the weaning date ends it.
+- **Residual value is a per-kg rate** (currency per kg), not a percentage. Not built yet.
+- **Currency:** Base Currency (Settings → Finance) is the currency the application posts and reports in; Local
+  Currency maps it to the country's currency, at the exchange rate held in the Currency master.
+- **Kill Sheet and DOA are deferred.** They belong to the slaughter Transfer Order (BBP §10.1).

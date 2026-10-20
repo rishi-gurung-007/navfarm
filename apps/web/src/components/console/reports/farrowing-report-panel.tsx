@@ -33,7 +33,6 @@ const PARITIES = Array.from({ length: 10 }, (_, i) => ({ value: String(i + 1), l
 
 export default function FarrowingReportPanel() {
   const { t } = useLanguage();
-  const companyId = getActiveCompanyId();
   const [farms, setFarms] = useState<Row[]>([]);
   const [farmId, setFarmId] = useState<string>(() => getActiveFarmId() || "");
   const [dateFrom, setDateFrom] = useState("");
@@ -48,14 +47,15 @@ export default function FarrowingReportPanel() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
+  // The report's own farm list: in the tenant-wide workspace the location master holds no company farms.
   useEffect(() => {
-    const qs = new URLSearchParams({ locationType: "FARM", rootOnly: "true", isActive: "true" });
-    if (companyId) qs.set("companyId", companyId);
     api
-      .get(`/location?${qs.toString()}`)
+      .get(`/reports/farrowing/farms`)
       .then((res: any) => setFarms(unwrap<Row[]>(res) || []))
       .catch(() => setFarms([]));
-  }, [companyId]);
+  }, []);
+  // The chosen farm's company: a tenant administrator may pick a farm of any company.
+  const companyId = farms.find((f) => f.farm_id === farmId)?.company_id ?? getActiveCompanyId();
 
   // A farm's own batches and sows feed the two pickers below it; a new farm starts the other filters over.
   useEffect(() => {
@@ -126,8 +126,8 @@ export default function FarrowingReportPanel() {
             value={farmId}
             onChange={setFarmId}
             options={farms}
-            valueKey="location_id"
-            getLabel={(r) => String(r.location_name ?? "")}
+            valueKey="farm_id"
+            getLabel={(r) => String(r.farm_name ?? "")}
             placeholder={t("rptSelectFarm")}
           />
         </Field>

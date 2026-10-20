@@ -2,12 +2,13 @@ import type { TranslationKeys } from "@/utils/translations";
 
 /**
  * The R07 Farrowing Report's columns, in the order of Triple-C_reports COMMENTS.xlsx row 5. Shared by the screen
- * and the PDF so both always show the same thing. Left out for now (Rishi, 18 Oct): Week, Month and the Gilt and
- * 2nd-parity service targets. Every group with a Prior YR also shows the
+ * and the PDF so both always show the same thing. Week and Month are left out (Rishi, 18 and 20 Oct). Every group with a Prior YR also shows the
  * change against it and the YoY % change (AY5 comment: "Year on Year Change must be on every parameter"; Rishi, 20 Oct).
  */
 
+/** A KPI's Average Value and the band its tolerance allows. */
 export interface Target {
+  average: number | null;
   lower: number | null;
   upper: number | null;
 }
@@ -49,7 +50,7 @@ export interface FarrowingReport {
   rows: FarrowingReportRow[];
 }
 
-type Sub = "rptActual" | "rptTarget" | "rptPriorYear";
+type Sub = "rptActual" | "rptTarget" | "rptPriorYear" | "rptPriorChange" | "rptYoyPct";
 type Metric = keyof FarrowingMetrics;
 
 export interface ReportColumn {
@@ -66,11 +67,14 @@ const fmt = (v: number | null | undefined) =>
 
 const actual = (m: Metric) => (row: FarrowingReportRow) => fmt(row.metrics[m]);
 
+// The band the KPI's tolerance allows; one side when the tolerance is Upper or Lower; the average when it has none.
 const target = (key: string) => (row: FarrowingReportRow, t: (k: TranslationKeys) => string) => {
   const v = row.targets[key];
   if (!v) return t("rptNotAvailable");
   if (v.lower !== null && v.upper !== null) return v.lower === v.upper ? fmt(v.lower) : `${fmt(v.lower)}–${fmt(v.upper)}`;
-  return fmt(v.lower ?? v.upper);
+  if (v.upper !== null) return `≤ ${fmt(v.upper)}`;
+  if (v.lower !== null) return `≥ ${fmt(v.lower)}`;
+  return fmt(v.average);
 };
 
 // A batch row's prior year is the batch that stood where it stands a year earlier; the total's is the farm's.
@@ -117,12 +121,13 @@ export const FARROWING_COLUMNS: ReportColumn[] = [
   ...triple("rptActiveWeekMortality", "active_week_mortality", "active_week_mortality"),
   ...triple("rptPreWeanMortality", "pre_wean_mortality_pct", "pre_wean_mortality"),
   ...triple("rptAvgWeaningWeight", "avg_weaning_weight_kg", "weaning_weight"),
-  ...triple("rptLitterMassTotal", "litter_mass_total_kg", "litter_mass"),
-  ...triple("rptLitterMassAvg", "litter_mass_avg_kg", null),
+  // The Litter Mass KPI is one litter's weaned mass, so it is the average litter's target, not the farm total's.
+  ...triple("rptLitterMassTotal", "litter_mass_total_kg", null),
+  ...triple("rptLitterMassAvg", "litter_mass_avg_kg", "litter_mass"),
   ...triple("rptWeanPerSow", "wean_per_sow", "wean_per_sow"),
   ...triple("rptGiltBodyLoss", "gilt_body_loss_pct", "gilt_body_loss"),
-  ...triple("rptGiltsServed", "gilts_served", null),
-  ...triple("rptSecondParityServed", "second_parity_served", null),
+  ...triple("rptGiltsServed", "gilts_served", "gilt_service_target"),
+  ...triple("rptSecondParityServed", "second_parity_served", "second_parity_service_target"),
   { group: "rptPriorYearSows", sub: "rptPriorYear", cell: prior("sows_served") },
 ];
 
