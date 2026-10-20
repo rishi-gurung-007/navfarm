@@ -83,7 +83,7 @@ const createDto = {
 function createQueues(overrides: Partial<{ farm: unknown[]; duplicate: unknown[]; company: unknown[]; local: unknown[]; silo: unknown[] }> = {}) {
   return new Map<unknown, unknown[][]>([
     [schema.locationMaster, [overrides.farm ?? [farm], overrides.silo ?? [silo]]],
-    [schema.feedStockCount, [overrides.duplicate ?? []]],
+    [schema.feedStockCount, [overrides.duplicate ?? [], [{ n: 4 }]]],
     [schema.companyMaster, [overrides.company ?? [company]]],
     [schema.companyCurrencyConfig, [overrides.local ?? [local]]],
   ]);
@@ -137,7 +137,7 @@ describe('FeedStockCountService', () => {
   it('captures only exact active-farm SILO ledger evidence at counted_at, inside one transaction', async () => {
     const { service, ledger, log } = setup(createQueues());
     await expect(service.create(createDto as any, 'tenant-1', { userId: 'worker-1', userType: 'STANDARD_USER' }))
-      .resolves.toMatchObject({ status: 'DRAFT', count_no: expect.stringMatching(/^FSC-/) });
+      .resolves.toMatchObject({ status: 'DRAFT', count_no: 'PC-FARM-001-2026-00005' });
     expect(ledger.getSiloStockEvidenceAsOf).toHaveBeenCalledWith({
       companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-05', countedAtEpochSeconds: 1791185400,
     }, 'tenant-1');
@@ -396,7 +396,7 @@ describe('FeedStockCountService', () => {
     await service.create(createDto as any, 'tenant-1', { userId: 'worker-1' });
     expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-1', 'tenant-1', {
       companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
-    });
+    }, 'ADJUSTMENT');
   });
 
   it('does not require or persist a reason for zero variance', async () => {
@@ -546,7 +546,7 @@ describe('FeedStockCountService', () => {
     expect(currency.currentRate).not.toHaveBeenCalled();
     expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-2', 'tenant-1', {
       companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
-    });
+    }, 'ADJUSTMENT');
     expect(log.find((entry) => entry.op === 'update' && entry.table === schema.feedStockCountLine)?.set).toMatchObject({
       counted_qty_kg: '90', variance_qty_kg: '-10', variance_pct_absolute: '10', reason_id: 'reason-2',
       rate_snapshot: expect.objectContaining({ rate: 2 }), variance_value_local: '-80', updated_at: expect.any(String),
@@ -582,7 +582,7 @@ describe('FeedStockCountService', () => {
     expect(ledger.getSiloStockEvidenceAsOf).not.toHaveBeenCalled();
     expect(reasons.findActiveForOperationalScope).toHaveBeenCalledWith('reason-1', 'tenant-1', {
       companyId: 'company-1', nobId: 'nob-livestock', lobId: 'lob-piggery',
-    });
+    }, 'ADJUSTMENT');
     expect(log.some((entry) => entry.table === schema.inventoryLedger || entry.table === schema.stockAdjustment)).toBe(false);
   });
 

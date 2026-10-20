@@ -8,6 +8,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateReasonDto, QueryReasonDto, UpdateReasonDto } from './reason.dto';
+import type { ReasonCategory } from '../../../core/database/reason-code-seed';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
@@ -34,6 +35,7 @@ export class ReasonService {
     id: string,
     tenantId: string,
     scope: { companyId: string; nobId: string | null; lobId: string | null },
+    category?: ReasonCategory,
   ) {
     const [row] = await this.db.select().from(table).where(and(
       eq(table.reason_id, id),
@@ -46,6 +48,9 @@ export class ReasonService {
       isNull(table.deleted_at),
     )).limit(1);
     if (!row) throw new NotFoundException('Select an active Reason Master row visible to this company and farm LOB.');
+    if (category && row.category !== category) {
+      throw new BadRequestException(`${row.reason_name} is a ${row.category} reason; choose an ${category} reason.`);
+    }
     return row;
   }
   async findAll(query: QueryReasonDto, tenantId: string) {

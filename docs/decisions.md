@@ -4266,5 +4266,10 @@ Found testing the count in frtest:
   back with `UNIX_TIMESTAMP`.
 - The three adjustments the faulty test count posted in frtest (ADJ-000037/38/39, +31,840.1 KG) were reversed by
   ADJ-000040/41/42 on the same date. Dry Sow's genuine −223 KG (ADJ-000036) stays, dated 21 Oct.
-- Still open: the count number embeds the farm id (`FSC-<uuid>-<epoch>`) and is cut short on the approval request; a
-  company needs its own ADJUSTMENT reasons (frtest had only tenant templates); the reason's category is not checked.
+- **Count number:** a weekly physical count is numbered `PC-<FarmCode>-YYYY-NNNNN` (year of the count day), read like
+  the monthly take's `ST-…` (NAVFarm design; the workbook numbers only the monthly take). It replaced
+  `FSC-<farm uuid>-<epoch>`, which was cut short on the approval request. Counts already numbered `FSC-…` keep it.
+- **Reason category:** a count variance takes an `ADJUSTMENT` reason; another category is refused by name
+  ("MASTITIS is a MORTALITY reason; choose an ADJUSTMENT reason.").
+- Still open: a company needs its own ADJUSTMENT reasons — frtest had only the tenant templates until ADJ-001 and
+  ADJ-002 were added to it on 20 Oct.
