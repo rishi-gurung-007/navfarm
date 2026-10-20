@@ -31,6 +31,10 @@ describe('InventoryLedgerService.getSiloStockEvidenceAsOf', () => {
     expect(rendered.sql).toMatch(/`posting_date` <= \?/);
     expect(rendered.sql.toLowerCase()).toMatch(/`created_at` <= from_unixtime\(\?\)/);
     expect(rendered.sql).toMatch(/`warehouse_id` in \(\?\)/);
+    // Feed a silo received by Transfer Order is an entry_type TRANSFER row: leaving it out made the silos of a farm fed
+    // by transfers read negative and a posted count add the transferred feed a second time (frtest, 20 Oct).
+    expect(rendered.sql).toMatch(/`entry_type` in \(\?, \?, \?\)/);
+    expect(rendered.params).toEqual(expect.arrayContaining(['POSITIVE', 'NEGATIVE', 'TRANSFER']));
     expect(rendered.params).toEqual(expect.arrayContaining([
       'tenant-1', 'company-1', 'silo-1', '2026-10-01', 1790842500, 'farm-1', 'lob-piggery',
     ]));

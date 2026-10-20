@@ -4252,3 +4252,19 @@ Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
 - Until now frtest's BINs were stocked by GRNs referenced `MILL-PROD-…` (52 receipts, 8 Sep – 14 Oct); this replaces
   that workaround.
 - Migration **0208** (Arun's unmerged branches already use 0205–0207).
+
+## 20 Oct 2026 — Physical stock count: transferred feed counts; posting on the count's own day (Rishi)
+
+Found testing the count in frtest:
+
+- **The count's system balance left out `TRANSFER` ledger rows** — feed a silo received by Transfer Order (and stock
+  shipped from a source). KINTYRE's silos read negative (Grower −24,993.9 KG against a true +23,506.1) and a posted
+  count added the transferred feed a second time. The balance now counts `POSITIVE`, `NEGATIVE` and `TRANSFER`, as
+  every other balance in the ledger service does.
+- **A count posted on the next day.** `counted_at` is written with `FROM_UNIXTIME` (the session's wall clock) but was
+  read back as UTC, so on a non-UTC database a count taken on 20 Oct posted its adjustments on 21 Oct. It is now read
+  back with `UNIX_TIMESTAMP`.
+- The three adjustments the faulty test count posted in frtest (ADJ-000037/38/39, +31,840.1 KG) were reversed by
+  ADJ-000040/41/42 on the same date. Dry Sow's genuine −223 KG (ADJ-000036) stays, dated 21 Oct.
+- Still open: the count number embeds the farm id (`FSC-<uuid>-<epoch>`) and is cut short on the approval request; a
+  company needs its own ADJUSTMENT reasons (frtest had only tenant templates); the reason's category is not checked.

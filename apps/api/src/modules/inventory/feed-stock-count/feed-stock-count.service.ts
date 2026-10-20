@@ -39,8 +39,6 @@ type Actor = {
 
 type UserCtx = { userId?: string; userType?: string } | undefined;
 
-/** MySQL holds UTC wall-clock strings; this is the instant they represent. */
-const utcInstant = (mysqlUtc: string): Date => new Date(`${mysqlUtc.replace(' ', 'T')}Z`);
 const nowTs = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 /** A rejected count stays correctable rather than becoming a dead document. */
@@ -792,7 +790,14 @@ export class FeedStockCountService implements OnModuleInit {
         }
       }
       const effective = await this.resolveSettings(count.company_id, count.farm_id, kindOfCount(count));
-      const postingDate = this.postingDate(utcInstant(count.counted_at), effective.timezoneId);
+      // counted_at was written with FROM_UNIXTIME, so it holds the session's wall clock, not UTC: read the instant back
+      // with UNIX_TIMESTAMP. Reading it as UTC moved a count taken on 20 Oct to a posting date of 21 Oct.
+      const [{ epoch }] = await this.db
+        .select({ epoch: sql<number>`UNIX_TIMESTAMP(${schema.feedStockCount.counted_at})` })
+        .from(schema.feedStockCount)
+        .where(eq(schema.feedStockCount.count_id, countId))
+        .limit(1);
+      const postingDate = this.postingDate(new Date(Number(epoch) * 1000), effective.timezoneId);
       const bySilo = new Map<string, typeof variance>();
       for (const line of variance) {
         bySilo.set(line.silo_id, [...(bySilo.get(line.silo_id) ?? []), line]);

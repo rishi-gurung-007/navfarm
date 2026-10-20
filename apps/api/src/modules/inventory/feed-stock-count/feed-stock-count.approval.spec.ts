@@ -30,6 +30,8 @@ function setup(options: {
   lines?: any[];
   permissionRows?: any[];
   settings?: any;
+  /** The database session's offset from UTC, in minutes — counted_at is that session's wall clock. */
+  sessionOffsetMinutes?: number;
 } ) {
   const log: Log[] = [];
   const readers = new Map<unknown, () => unknown[]>();
@@ -49,9 +51,13 @@ function setup(options: {
         throw error;
       }
     }),
-    select: jest.fn(() => {
+    select: jest.fn((fields?: Record<string, unknown>) => {
       const entry: Log = { op: 'select', table: undefined };
       log.push(entry);
+      // UNIX_TIMESTAMP(counted_at), as MySQL answers it for a UTC session.
+      const epochOf = () => [{
+        epoch: Date.parse(`${String(options.count.counted_at).replace(' ', 'T')}Z`) / 1000 - (options.sessionOffsetMinutes ?? 0) * 60,
+      }];
       const chain: any = {
         from: (table: unknown) => { entry.table = table; return chain; },
         innerJoin: () => chain,
@@ -59,7 +65,7 @@ function setup(options: {
         orderBy: () => chain,
         limit: () => chain,
         for: (lock: string) => { entry.lock = lock; return chain; },
-        then: (ok: any, fail: any) => Promise.resolve(readers.get(entry.table)?.() ?? []).then(ok, fail),
+        then: (ok: any, fail: any) => Promise.resolve(fields && 'epoch' in fields ? epochOf() : readers.get(entry.table)?.() ?? []).then(ok, fail),
       };
       return chain;
     }),
@@ -347,6 +353,19 @@ describe('FeedStockCountService approval and posting', () => {
     expect(count).toMatchObject({ status: 'POSTED', stock_adjustment_id: 'adj-1', posted_by: 'manager-1' });
     expect(log.some((entry) => entry.op === 'insert')).toBe(false);
     expect(feedAlerts.evaluateFarmSafely).toHaveBeenCalledWith('farm-1', 'company-1', 'tenant-1');
+  });
+
+  it('posts on the day the count was taken when the database session is not UTC', async () => {
+    // frtest, 20 Oct: taken 17:25 UTC (19:25 in Harare), stored as the IST wall clock 22:55; read as UTC it posted on 21 Oct.
+    const { service, adjustments } = setup({
+      count: pendingCount({ status: 'APPROVED', counted_at: '2026-10-20 22:55:47' }),
+      lines: [varianceLine({ variance_qty_kg: '-5', variance_pct_absolute: '5' })],
+      sessionOffsetMinutes: 330,
+    });
+    await service.postApprovedCount('count-1', 'tenant-1', { userId: 'manager-1' });
+    expect(adjustments.create).toHaveBeenCalledWith(
+      expect.objectContaining({ posting_date: '2026-10-20' }), 'tenant-1', expect.anything(),
+    );
   });
 
   it('posts a zero-variance count without inventing an adjustment document', async () => {
