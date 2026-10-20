@@ -326,6 +326,7 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
     { label: t("fftTabCompareReport"), href: "/inventory/feed-forecast?tab=compare-report" },
     { label: t("fftTabFeedRequisition"), href: "/inventory/feed-forecast?tab=feed-requisition" },
     { label: t("invFeedConsolidations"), href: "/inventory/feed-forecast?tab=mill-consolidation" },
+    { label: t("mpoTab"), href: "/inventory/feed-forecast?tab=mill-production" },
     { label: t("invFeedLoading"), href: "/inventory/feed-forecast?tab=loading-instructions" },
     { label: t("fftTabPhysicalCount"), href: "/inventory/feed-forecast?tab=physical-count" },
   ];

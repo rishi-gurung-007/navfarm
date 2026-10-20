@@ -2,7 +2,7 @@
 
 /**
  * Inventory -> Feed Forecast is one page with eight tabs: Dashboard, Forecast,
- * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Loading Instructions and
+ * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Mill Production, Loading Instructions and
  * Physical Count — all of them work on the same selected farm.
  *
  * The chosen tab lives in `?tab=`, so a bookmark, a refresh and the redirect
@@ -26,8 +26,9 @@ import FeedStockCountPanel from "./feed-stock-count-panel";
 import { FeedForecastProvider } from "./feed-forecast-context";
 import { FeedConsolidationsPanel } from "./feed-consolidations-panel";
 import { FeedLoadingPanel } from "./feed-loading-panel";
+import MillProductionPanel from "./mill-production-panel";
 
-export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"] as const;
+export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "mill-production", "loading-instructions", "physical-count"] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
 export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
@@ -37,6 +38,7 @@ export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   "compare-report": "fftTabCompareReport",
   "feed-requisition": "fftTabFeedRequisition",
   "mill-consolidation": "invFeedConsolidations",
+  "mill-production": "mpoTab",
   "loading-instructions": "invFeedLoading",
   "physical-count": "fftTabPhysicalCount",
 };
@@ -69,6 +71,7 @@ const PANELS: Partial<Record<FeedForecastTab, () => ReactNode>> = {
   "compare-report": () => <MillComparePanel />,
   "feed-requisition": () => <FeedRequisitionPanel />,
   "mill-consolidation": () => <FeedConsolidationsPanel />,
+  "mill-production": () => <MillProductionPanel />,
   "loading-instructions": () => <FeedLoadingPanel />,
   "physical-count": () => <FeedStockCountPanel />,
 };

@@ -4233,3 +4233,22 @@ Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
 - **Currency:** Base Currency (Settings → Finance) is the currency the application posts and reports in; Local
   Currency maps it to the country's currency, at the exchange rate held in the Currency master.
 - **Kill Sheet and DOA are deferred.** They belong to the slaughter Transfer Order (BBP §10.1).
+
+## 20 Oct 2026 — Mill Production Output (Rishi)
+
+- **What it is:** the feed the mill produced into a loading BIN — production date, the BIN's diet assignment for that
+  date (which names the BIN and the feed), KG, lot when the feed is lot-tracked without a number series. Numbered
+  `MPO-000001`, posted when saved, not editable afterwards (a mistake is corrected by a stock adjustment). Inventory →
+  Feed Forecast → **Mill Production**. Spec 2026-10-03 §4.2 step 1 (R5), with the later rulings: stock sits in the BIN
+  (5 Oct), no production slots (11 Oct).
+- **Posting:** a positive inventory-ledger entry in the BIN (`MILL_PRODUCTION_OUTPUT` / `MILL_OUTPUT`) at the feed's
+  **standard cost** (refused when it has none; feeds are STANDARD-valued) and a journal through a **new `MILL_OUTPUT`
+  GL mapping** that finance sets under Master Data → GL Mappings. Without the mapping the posting is refused and
+  nothing is written. No raw-material consumption.
+- **Checks:** the assignment is active and for that date; its BIN is an active BIN of the company under an active
+  MILL; the feed is active, kept in KG, not serial-tracked; the posting period is open.
+- **Who:** permission `INVENTORY / MILL_OUTPUT` (view, create), granted to the Feed Mill Manager. A farm-bound login
+  acts for its farm's company, as on the consolidation and loading screens.
+- Until now frtest's BINs were stocked by GRNs referenced `MILL-PROD-…` (52 receipts, 8 Sep – 14 Oct); this replaces
+  that workaround.
+- Migration **0208** (Arun's unmerged branches already use 0205–0207).

@@ -2034,6 +2034,7 @@ const glMapping: MasterDataConfig = {
         { value: "TRANSFER_RECEIPT", label: "Transfer In — Transfer Order (Receipt)" },
         { value: "VARIANCE_POSITIVE", label: "Stock Adjustment — Positive Variance" },
         { value: "VARIANCE_NEGATIVE", label: "Stock Adjustment — Negative Variance" },
+        { value: "MILL_OUTPUT", label: "Mill Production Output — feed into a BIN" },
         // Batch — STANDARD/FIFO costing
         { value: "BATCH_INPUT", label: "Batch — Input Draw (on Activation)" },
         { value: "BATCH_CONSUMPTION", label: "Batch — Daily Consumption" },

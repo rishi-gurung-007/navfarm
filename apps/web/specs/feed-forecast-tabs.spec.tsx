@@ -44,6 +44,10 @@ jest.mock('../src/components/console/inventory/requisitions-panel', () => ({
   FeedRequisitionPanel: () => <div data-testid="panel-requisition" />,
   default: () => <div data-testid="panel-requisition" />,
 }));
+jest.mock('../src/components/console/inventory/mill-production-panel', () => ({
+  __esModule: true,
+  default: () => <div data-testid="mill-production-panel" />,
+}));
 jest.mock('../src/components/console/inventory/feed-plan-panel', () => ({
   __esModule: true,
   default: () => <div data-testid="panel-feed-plan" />,
@@ -87,12 +91,13 @@ const displayOf = (tab: string) => document.querySelector(`[data-feed-tab="${tab
 
 describe('Feed Forecast tab selection is carried by the URL', () => {
   it('reads each supported tab and falls back to the forecast for anything else', () => {
-    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-plan', 'compare-report', 'feed-requisition', 'mill-consolidation', 'loading-instructions', 'physical-count']);
+    expect(FEED_FORECAST_TABS).toEqual(['dashboard', 'forecast', 'feed-plan', 'compare-report', 'feed-requisition', 'mill-consolidation', 'mill-production', 'loading-instructions', 'physical-count']);
     expect(readFeedForecastTab('dashboard')).toBe('dashboard');
     expect(readFeedForecastTab('forecast')).toBe('forecast');
     expect(readFeedForecastTab('feed-plan')).toBe('feed-plan');
     expect(readFeedForecastTab('feed-requisition')).toBe('feed-requisition');
     expect(readFeedForecastTab('mill-consolidation')).toBe('mill-consolidation');
+    expect(readFeedForecastTab('mill-production')).toBe('mill-production');
     expect(readFeedForecastTab('loading-instructions')).toBe('loading-instructions');
     expect(readFeedForecastTab('physical-count')).toBe('physical-count');
     expect(readFeedForecastTab(null)).toBe('forecast');
@@ -186,11 +191,12 @@ describe('the feed screens read the shared farm selection', () => {
  * The routes keep their existing `?tab=` keys, because they are bookmarks.
  */
 describe("WP1d — Feed Forecast tab names follow the workbook", () => {
-  it("names the eight tabs in order without renaming any route key", () => {
-    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"]);
+  it("names the tabs in order without renaming any route key", () => {
+    // Mill Production (20 Oct) sits after Mill Consolidation: the mill produces, then loads.
+    expect(FEED_FORECAST_TABS).toEqual(["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "mill-production", "loading-instructions", "physical-count"]);
     const en = (require("../src/utils/translations") as any).translations.en;
     expect([
-      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabCompareReport, en.fftTabFeedRequisition, en.invFeedConsolidations, en.invFeedLoading, en.fftTabPhysicalCount,
-    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Feed Comparison Report", "Feed Requisition", "Feed Mill Consolidation", "Feed Loading Instructions", "Physical Stock Count"]);
+      en.fftTabDashboard, en.fftTabForecast, en.fftTabFeedPlan, en.fftTabCompareReport, en.fftTabFeedRequisition, en.invFeedConsolidations, en.mpoTab, en.invFeedLoading, en.fftTabPhysicalCount,
+    ]).toEqual(["Dashboard", "Calculation", "Feed Plan", "Feed Comparison Report", "Feed Requisition", "Feed Mill Consolidation", "Mill Production", "Feed Loading Instructions", "Physical Stock Count"]);
   });
 });

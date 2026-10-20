@@ -1386,6 +1386,37 @@ export const binDietAssignment = mysqlTable('bin_diet_assignment', {
   itemDateIndex: index('idx_bin_diet_item_date').on(table.feed_item_id, table.production_date),
 }));
 
+/**
+ * Mill Production Output (Rishi, 20 Oct; spec 2026-10-03 §4.2 step 1, R5): feed the mill produced into a loading BIN —
+ * production date, BIN, the feed item assigned to that BIN for the date, KG. Posting puts the KG into the BIN's stock
+ * at the item's standard cost (inventory ledger MILL_OUTPUT) and journals it through the MILL_OUTPUT GL mapping. No
+ * raw-material consumption. Posted when saved; one row per output.
+ */
+export const millProductionOutput = mysqlTable('mill_production_output', {
+  output_id: varchar('output_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  output_no: varchar('output_no', { length: 30 }).notNull(),
+  production_date: date('production_date', { mode: 'string' }).notNull(),
+  mill_location_id: varchar('mill_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  bin_location_id: varchar('bin_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  assignment_id: varchar('assignment_id', { length: 36 }).references(() => binDietAssignment.assignment_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  quantity_kg: decimal('quantity_kg', { precision: 18, scale: 4 }).notNull(),
+  rate: decimal('rate', { precision: 18, scale: 6 }).notNull(),
+  amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+  lot_no: varchar('lot_no', { length: 80 }),
+  remarks: varchar('remarks', { length: 500 }),
+  ledger_id: varchar('ledger_id', { length: 36 }),
+  journal_id: varchar('journal_id', { length: 36 }),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqCompanyNo: uniqueIndex('uq_mill_output_company_no').on(table.company_id, table.output_no),
+  binDateIndex: index('idx_mill_output_bin_date').on(table.bin_location_id, table.production_date),
+}));
+
 // ==========================================
 // DRIZZLE SCHEMA RELATIONSHIPS
 // ==========================================

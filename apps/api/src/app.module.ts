@@ -58,6 +58,7 @@ import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-rece
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
+import { MillOutputModule } from './modules/inventory/mill-output/mill-output.module';
 import { InventorySetupModule } from './modules/inventory/inventory-setup/inventory-setup.module';
 import { JournalModule } from './modules/finance/journal/journal.module';
 import { ExpenseModule } from './modules/finance/expense/expense.module';
@@ -161,6 +162,7 @@ import { SystemController } from './system/system.controller';
     BioAssetLedgerModule,
     StockTransferModule,
     StockAdjustmentModule,
+    MillOutputModule,
     InventorySetupModule,
     JournalModule,
     ExpenseModule,

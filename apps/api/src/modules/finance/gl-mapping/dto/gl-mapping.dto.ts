@@ -43,7 +43,7 @@ export class CreateGlMappingDto {
     description: 'The inventory_ledger transaction type this mapping resolves GL accounts for — must match a value GlPostingService actually posts (see inventory-ledger.service.ts / batch.service.ts / *.service.ts callers of postInventoryLedgerEntry / postBatchCostEntry)',
     example: 'PURCHASE',
     enum: [
-      'PURCHASE', 'CONSUMPTION', 'TRANSFER_SHIPMENT', 'TRANSFER_RECEIPT', 'VARIANCE_POSITIVE', 'VARIANCE_NEGATIVE',
+      'PURCHASE', 'CONSUMPTION', 'TRANSFER_SHIPMENT', 'TRANSFER_RECEIPT', 'VARIANCE_POSITIVE', 'VARIANCE_NEGATIVE', 'MILL_OUTPUT',
       'BATCH_INPUT', 'BATCH_CONSUMPTION', 'BATCH_OUTPUT', 'OUTPUT', 'BATCH_IMPAIRMENT', 'MORTALITY', 'OVERHEAD',
       'PRICE_VARIANCE', 'USAGE_VARIANCE', 'OUTPUT_VARIANCE', 'OVERHEAD_VARIANCE',
       'BIO_ACQUISITION', 'BIO_CONSUMPTION_PREMATURE', 'BIO_CONSUMPTION_MATURE', 'BIO_OUTPUT',
