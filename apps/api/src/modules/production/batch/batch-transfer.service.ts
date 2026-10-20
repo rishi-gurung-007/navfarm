@@ -78,32 +78,24 @@ export class BatchTransferService {
   }
 
   /**
-   * Tenants provisioned before this feature have no BATCH_TRANSFER series, and
-   * generateNext() throws on a missing one. Rather than make every existing
-   * tenant fail at the first transfer, fall back to a self-derived number.
+   * The transfer number (BTR-0001), from the company's Batch Transfer series. A company with none gets one made the
+   * first time a transfer is saved — there is no other numbering to fall back to, so a missing or blocked series
+   * is reported, never papered over with a self-derived number. Transfers made before the series existed were
+   * numbered BTR-<year>-nnnn; the series carries on after the highest of them, so none is reused.
    */
   private async generateTransferNo(
     tenantId: string,
     companyId: string,
   ): Promise<string> {
-    try {
-      return await this.numberSeriesService.generateNext(
-        'BATCH_TRANSFER',
-        tenantId,
-        companyId,
-      );
-    } catch {
-      const [{ n }] = await this.db
-        .select({ n: sql<number>`COUNT(*)` })
-        .from(schema.batchTransfer)
-        .where(
-          and(
-            eq(schema.batchTransfer.tenant_id, tenantId),
-            eq(schema.batchTransfer.company_id, companyId),
-          ),
-        );
-      return `BTR-${new Date().getFullYear()}-${String(Number(n) + 1).padStart(4, '0')}`;
-    }
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'BATCH_TRANSFER', seriesName: 'Batch Transfer Number', documentType: 'BATCH_TRANSFER', prefix: 'BTR', separator: '-', seqLength: 4 },
+      async () => (await this.db.select({ no: schema.batchTransfer.transfer_no }).from(schema.batchTransfer)
+        .where(and(eq(schema.batchTransfer.tenant_id, tenantId), eq(schema.batchTransfer.company_id, companyId))))
+        .map((r) => r.no?.replace(/^BTR-\d{4}-/, 'BTR-')),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId);
   }
 
   private async loadBatch(batchId: string, tenantId: string, label: string) {
@@ -161,6 +153,19 @@ export class BatchTransferService {
   }
 
   async create(
+    dto: CreateBatchTransferDto,
+    tenantId: string,
+    fromBatchId: string,
+    userPayload?: { userId?: string },
+    // Internal (reverse()): the stage each animal returns to. Never part of a request.
+    options: { returnStages?: Record<string, string>; value?: number } = {},
+  ) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, fromBatchId, userPayload, options));
+  }
+
+  private async createRecord(
     dto: CreateBatchTransferDto,
     tenantId: string,
     fromBatchId: string,

@@ -3,6 +3,8 @@ import { MySqlDialect, QueryBuilder } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import * as schema from '../../../core/database/schema';
 
+const numberSeriesStub = { seriesCodeForDocument: jest.fn().mockResolvedValue('ITEM_APPLICATION'), generateNext: jest.fn().mockResolvedValue('APP-00001') } as any;
+
 /**
  * Item 3: reverseEntry used to stamp its two inserts with
  * `new Date().toISOString().slice(0,19)` — UTC — while every other ledger
@@ -32,7 +34,7 @@ describe('InventoryLedgerService reverseEntry — created_at', () => {
       insert: jest.fn(() => ({ values: async (v: any) => { insertedValues.push(v); return undefined; } })),
       update: jest.fn(() => ({ set: () => ({ where: async () => undefined }) })),
     };
-    const service = new InventoryLedgerService(transactionCls(db));
+    const service = new InventoryLedgerService(transactionCls(db), numberSeriesStub);
 
     await service.reverseEntry('ledger-1', 'tenant-1', 'user-1');
 
@@ -64,7 +66,7 @@ describe('InventoryLedgerService reversePositiveEntry', () => {
       insert: jest.fn(() => ({ values: async (v: any) => { inserted.push(v); } })),
       update: jest.fn(() => ({ set: (v: any) => ({ where: async () => { updated.push(v); } }) })),
     };
-    const service = new InventoryLedgerService(transactionCls(db));
+    const service = new InventoryLedgerService(transactionCls(db), numberSeriesStub);
     return { call: () => service.reversePositiveEntry('in-1', 'tenant-1', 'user-1'), inserted, updated };
   };
 
@@ -104,7 +106,7 @@ describe('InventoryLedgerService reverseEntry — closed period guard (r32)', ()
       insert: jest.fn(),
       update: jest.fn(),
     };
-    const service = new InventoryLedgerService(transactionCls(db));
+    const service = new InventoryLedgerService(transactionCls(db), numberSeriesStub);
     await expect(service.reverseEntry('ledger-1', 'tenant-1', 'user-1')).rejects.toThrow(/closed/);
     expect(db.insert).not.toHaveBeenCalled();
     expect(db.update).not.toHaveBeenCalled();
@@ -154,7 +156,7 @@ describe('Inventory costing — by the item\'s costing method', () => {
   const base = { tenantId: 't', companyId: 'c', itemId: 'i', outboundLedgerId: 'out', applicationDate: '2026-10-01' };
   const make = (opts: Parameters<typeof costingDb>[0]) => {
     const { db, applications } = costingDb(opts);
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     return { db, applications, service };
   };
   const two = () => [
@@ -263,7 +265,7 @@ describe('Inventory costing — by the item\'s costing method', () => {
       lotBalanceRows: [{ lot_no: 'LOT-A', quantity: '6', expiry_date: null, receipt_date: '2026-10-01' }],
       onWhere: (c) => queries.push(new MySqlDialect().sqlToQuery(c)),
     });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await service.applyFifo({ ...base, quantity: 6, lots: [{ lotNo: 'LOT-A', quantity: 6 }] }, db);
     const lotQuery = queries.find((q) => q.sql.includes('`lot_no` in'));
     expect(lotQuery.sql).toContain('`ledger_id` <> ?');
@@ -280,7 +282,7 @@ describe('Inventory costing — by the item\'s costing method', () => {
 describe('Inventory FIFO — serial-tracked draws', () => {
   const params = { tenantId: 't', companyId: 'c', itemId: 'i', outboundLedgerId: 'out', applicationDate: '2026-10-01' };
   const noDb: any = { select: jest.fn(), insert: jest.fn(), update: jest.fn() };
-  const service = new InventoryLedgerService({ get: () => noDb } as any);
+  const service = new InventoryLedgerService({ get: () => noDb } as any, numberSeriesStub);
 
   it('refuses a quantity that does not equal the number of serials, before touching stock', async () => {
     await expect(service.applyFifo({ ...params, quantity: 2, serialNo: 'SN1' }, noDb))
@@ -301,7 +303,7 @@ describe('Inventory FIFO', () => {
   it('checks the selected lot against what the lot holds, refusing its shortage without drawing anything', async () => {
     const queries: any[] = [];
     const { db, applications } = costingDb({ layers: [], onWhere: (c) => queries.push(new MySqlDialect().sqlToQuery(c)) });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.applyFifo({ ...params, lotNo: 'selected-lot' }, db)).rejects.toThrow(/Insufficient stock/);
     // The lot is looked up by name, on its own; the receipt layers are not filtered by it (cost follows the item's method).
     expect(queries.some((q) => q.sql.includes('`lot_no` in') && q.params.includes('selected-lot'))).toBe(true);
@@ -319,7 +321,7 @@ describe('Inventory FIFO', () => {
       insert: () => ({ values: insert }),
       update: () => ({ set: () => ({ where: async () => undefined }) }),
     };
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 10, averageRate: 10 });
     await service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
       documentType: 'BATCH', documentNo: 'batch', postingDate: '2026-09-14',
@@ -338,7 +340,7 @@ describe('Inventory FIFO', () => {
       insert: (table: unknown) => ({ values: async (values: any) => { inserted.push({ table, values }); } }),
       update: () => ({ set: () => ({ where: async () => undefined }) }),
     };
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 3440, averageRate: 95.56, lotExpiry: new Map([['A', '2027-01-01'], ['B', null]]) } as any);
     await service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item',
       documentType: 'BATCH', documentNo: 'batch', postingDate: '2026-09-14',
@@ -351,14 +353,14 @@ describe('Inventory FIFO', () => {
 
   it('refuses naming one lot on the entry and several as lines', async () => {
     const db: any = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ item_id: 'item', item_code: 'item', item_name: 'Item' }] }) }) }) };
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.writeNegativeEntry({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentType: 'BATCH', documentNo: 'b', postingDate: '2026-09-14',
       transactionType: 'CONSUMPTION', quantity: 2, uom: 'KG', lotNo: 'A', lots: [{ lotNo: 'A', quantity: 2 }] })).rejects.toThrow('Name either one lot on the entry or several lots as lines');
   });
 
   it('refuses a shortfall without manufacturing an opening layer', async () => {
     const { db, applications } = costingDb({ layers: [] });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.applyFifo(params, db)).rejects.toThrow(/Insufficient stock/);
     expect(applications).toHaveLength(0);
   });
@@ -371,7 +373,7 @@ describe('Inventory FIFO', () => {
     ];
     // The test double returns whatever layers it holds; the query is what must carry the restriction.
     const { db } = costingDb({ layers: [layers[1]], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     const result = await service.applyFifo({ ...params, quantity: 10, sourceLedgerId: 'named' }, db);
     expect(layerQuery.sql).toContain('`ledger_id` = ?');
     expect(layerQuery.params).toContain('named');
@@ -382,7 +384,7 @@ describe('Inventory FIFO', () => {
 
   it('refuses a draw bigger than the named receipt holds, instead of falling back to older receipts', async () => {
     const { db, applications } = costingDb({ layers: [{ ledger_id: 'named', quantity: '10', remaining_quantity: '4', rate: '30', amount: '300', warehouse_id: 'w' }] });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.applyFifo({ ...params, quantity: 10, sourceLedgerId: 'named' }, db)).rejects.toThrow(/Insufficient stock/);
     expect(applications).toHaveLength(0);
   });
@@ -390,7 +392,7 @@ describe('Inventory FIFO', () => {
   it('draws only receipts posted on or before the issue date, so a future-dated GRN is not usable in the past', async () => {
     let layerQuery: any;
     const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await service.applyFifo({ ...params, applicationDate: '2026-10-12' }, db).catch(() => undefined);
     expect(layerQuery.sql).toContain('`posting_date` <= ?');
     expect(layerQuery.params).toContain('2026-10-12');
@@ -399,28 +401,28 @@ describe('Inventory FIFO', () => {
   it('does not date-cap a named source receipt - the caller chose that exact layer', async () => {
     let layerQuery: any;
     const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await service.applyFifo({ ...params, sourceLedgerId: 'named' }, db).catch(() => undefined);
     expect(layerQuery.sql).not.toContain('`posting_date` <= ?');
   });
 
   it('says so when the shortage is stock received under a later posting date', async () => {
     const { db } = costingDb({ layers: [], laterStock: '8' });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.applyFifo({ ...params, quantity: 5, applicationDate: '2026-10-12' }, db))
       .rejects.toThrow(/8 more is received but dated after 2026-10-12, so it cannot be used yet/);
   });
 
   it('keeps the plain shortage message when nothing is dated later', async () => {
     const { db } = costingDb({ layers: [] });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await expect(service.applyFifo({ ...params, quantity: 5 }, db)).rejects.not.toThrow(/dated after/);
   });
 
   it('restricts source layers to the issuing company', async () => {
     let layerQuery: any;
     const { db } = costingDb({ layers: [], onWhere: (c) => { const q = new MySqlDialect().sqlToQuery(c); if (q.sql.includes('`entry_type`') && !layerQuery) layerQuery = q; } });
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     await service.applyFifo(params, db).catch(() => undefined);
     expect(layerQuery.sql).toContain('`company_id` = ?');
     expect(layerQuery.params).toContain('company');
@@ -455,7 +457,7 @@ describe('InventoryLedgerService farm scope', () => {
   beforeEach(() => {
     capturedWhere = undefined;
     cls = transactionCls(mockDb);
-    service = new InventoryLedgerService(cls);
+    service = new InventoryLedgerService(cls, numberSeriesStub);
   });
 
   it('includes batch issues with no location through their batch farm', async () => {
@@ -518,7 +520,7 @@ describe('InventoryLedgerService farm scope', () => {
     };
     const scopedCls = transactionCls(tableDb);
     useFarmScope(scopedCls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-    const scopedService = new InventoryLedgerService(scopedCls);
+    const scopedService = new InventoryLedgerService(scopedCls, numberSeriesStub);
 
     const result = await scopedService.writePositiveEntry({
       tenantId: 'tenant-1', companyId: 'co-1', itemId: 'item-1',
@@ -544,7 +546,7 @@ describe('InventoryLedgerService transferShipmentRate', () => {
   function serviceReturning(rows: unknown[]) {
     const seen: { where?: unknown } = {};
     const db: any = { select: jest.fn(() => ({ from: () => ({ where: async (cond: unknown) => { seen.where = cond; return rows; } }) })) };
-    return { service: new InventoryLedgerService(transactionCls(db)), seen };
+    return { service: new InventoryLedgerService(transactionCls(db), numberSeriesStub), seen };
   }
 
   it('divides the shipment line\'s total cost by its total quantity', async () => {
@@ -592,7 +594,7 @@ describe('InventoryLedgerService transfer legs', () => {
       insert: jest.fn(() => ({ values: async (v: any) => { inserted.push({ ...v, amount: v.amount === undefined ? undefined : Number(v.amount).toFixed(4) }); } })),
       update: () => ({ set: () => ({ where: async () => undefined }) }),
     };
-    return { db, inserted, service: new InventoryLedgerService(transactionCls(db)) };
+    return { db, inserted, service: new InventoryLedgerService(transactionCls(db), numberSeriesStub) };
   }
   const base = { tenantId: 'tenant-1', companyId: 'co-1', itemId: 'item-1', documentLineId: 'line-1', postingDate: '2026-10-04', uom: 'PCS' };
 
@@ -689,9 +691,11 @@ describe('applyFifo — a transfer shipment may take stock from other stores of 
 
   it('falls back company-wide when the From location lacks the serial, transfers included (Rishi, 11 Oct)', async () => {
     const { db, queries } = serialDb();
-    const service = new InventoryLedgerService({ get: () => db } as any);
+    const service = new InventoryLedgerService({ get: () => db } as any, numberSeriesStub);
     const out = await service.applyFifo(args, db);
-    expect(queries).toHaveLength(6);
+    // Five reads. The sixth used to be the application number's MAX(application_no) fallback, which is gone: the
+    // number now comes from the series (stubbed here), never from a query of its own.
+    expect(queries).toHaveLength(5);
     expect(out.appliedWarehouseId).toBe('wh-other');
   });
 
@@ -703,7 +707,7 @@ describe('applyFifo — a transfer shipment may take stock from other stores of 
       insert: () => ({ values: insert }),
       update: () => ({ set: () => ({ where: async () => undefined }) }),
     };
-    const service = new InventoryLedgerService(transactionCls(db));
+    const service = new InventoryLedgerService(transactionCls(db), numberSeriesStub);
     const fifo = jest.spyOn(service, 'applyFifo').mockResolvedValue({ totalCost: 5, averageRate: 5, appliedWarehouseId: 'wh-store' });
     await service.writeTransferShipment({ tenantId: 'tenant', companyId: 'company', itemId: 'item', documentNo: 'SH-1', documentLineId: 'line-1',
       postingDate: '2026-10-05', quantity: 1, uom: 'PCS', fromWarehouseId: 'wh-store', serialNo: 'SN1' });

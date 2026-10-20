@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { eq, and, or, like, isNull, isNotNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
@@ -2239,8 +2239,10 @@ export class BatchService {
   ) {
     // A death touches the transaction, the cost write-off, the batch and
     // scheduler counts and (animal-wise) the animal itself. They post together
-    // or not at all; joins the caller's transaction when one is open.
-    if (dto.transaction_type === 'MORTALITY') {
+    // or not at all; joins the caller's transaction when one is open. An output
+    // draws its lot number from the ITEM_LOT series, so it is one too: a failure
+    // after the number is drawn rolls the counter back instead of burning it.
+    if (dto.transaction_type === 'MORTALITY' || dto.transaction_type === 'OUTPUT') {
       return withTenantTransaction(this.cls, () =>
         this.addTransactionInner(id, dto, tenantId, userPayload),
       );
@@ -2993,12 +2995,22 @@ export class BatchService {
           })
           .where(eq(schema.batchHeader.batch_id, id));
         if (bioAssetSubjectItemId) {
+          // The lot the head came in as (a farrowing's piglet lot, say), so a death can be tied to it.
+          const [acquired] = dto.animal_id
+            ? []
+            : await this.db
+                .select({ lot_no: schema.bioAssetLedger.lot_no })
+                .from(schema.bioAssetLedger)
+                .where(and(eq(schema.bioAssetLedger.batch_id, id), eq(schema.bioAssetLedger.entry_type, 'ACQUISITION'), isNotNull(schema.bioAssetLedger.lot_no)))
+                .orderBy(schema.bioAssetLedger.entry_no)
+                .limit(1);
           await this.db.insert(schema.bioAssetLedger).values({
             entry_id: randomUUID(),
             tenant_id: tenantId,
             company_id: batch.company_id,
             bio_asset_item_id: bioAssetSubjectItemId,
             animal_id: dto.animal_id || null,
+            lot_no: acquired?.lot_no ?? null,
             entry_type: 'MORTALITY',
             document_type: 'MORTALITY',
             document_no: batch.batch_no,

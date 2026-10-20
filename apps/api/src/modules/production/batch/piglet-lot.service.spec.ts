@@ -30,7 +30,7 @@ describe('PigletLotService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PigletLotService,
-        { provide: ClsService, useValue: { get: () => db } },
+        { provide: ClsService, useValue: { get: (key?: string) => (key === 'tenantPostingTransaction' ? true : db) } },
         { provide: BatchService, useValue: batchService },
         { provide: NumberSeriesService, useValue: numberSeries },
       ],

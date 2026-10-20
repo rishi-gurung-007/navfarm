@@ -217,6 +217,24 @@ export class CreateFarrowingDto {
   notes?: string;
 }
 
+export class CreateLitterFosterDto {
+  /** The farrowing whose litter receives the piglets. */
+  @IsUUID()
+  to_farrow_id: string;
+
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  quantity: number;
+
+  @IsDateString()
+  foster_date: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 export class UpdateWeaningDto {
   @IsDateString()
   weaning_date: string;
@@ -245,6 +263,11 @@ export class UpdateWeaningDto {
   @IsOptional()
   @IsString()
   move_to_stage_code?: string;
+
+  /** Reason Master row (category MORTALITY) for the piglets lost before weaning. */
+  @IsOptional()
+  @IsUUID()
+  loss_reason_id?: string;
 
   @IsOptional()
   @IsString()

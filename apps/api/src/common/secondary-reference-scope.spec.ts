@@ -24,7 +24,7 @@ describe('secondary production reference scope', () => {
         .mockReturnValueOnce(chain([{ batch_id: 'batch-1', company_id: 'co-1', lob_id: 'lob-pig' }]))
         .mockReturnValueOnce(chain([], (condition) => { parameterWhere = condition; })),
     };
-    const cls = { get: (key: string) => key === 'tenantDb' ? db : undefined } as unknown as ClsService;
+    const cls = { get: (key: string) => key === 'tenantPostingTransaction' ? true : key === 'tenantDb' ? db : undefined } as unknown as ClsService;
     const service = new QcService(cls, audit);
 
     await expect(service.create({
@@ -48,7 +48,7 @@ describe('secondary production reference scope', () => {
         .mockReturnValueOnce(chain([{ batch_id: 'batch-1', company_id: 'co-1', lob_id: 'lob-pig' }]))
         .mockReturnValueOnce(chain([], (condition) => { itemWhere = condition; })),
     };
-    const cls = { get: (key: string) => key === 'tenantDb' ? db : undefined } as unknown as ClsService;
+    const cls = { get: (key: string) => key === 'tenantPostingTransaction' ? true : key === 'tenantDb' ? db : undefined } as unknown as ClsService;
     const service = new QrCodeService(cls, audit);
 
     await expect(service.create({

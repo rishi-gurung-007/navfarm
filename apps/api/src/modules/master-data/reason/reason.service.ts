@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -70,6 +71,12 @@ export class ReasonService {
     return row;
   }
   async create(dto: CreateReasonDto, tenantId: string, user?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, user));
+  }
+
+  private async createRecord(dto: CreateReasonDto, tenantId: string, user?: any) {
     await this.assertStages(dto.applicable_stages, tenantId, dto.company_id);
     const reason_code = await this.numbering.resolveNewCode('REASON', dto.reason_code, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
     const reason_id = randomUUID();

@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -56,6 +57,12 @@ export class UomService {
   }
 
   async create(dto: CreateUomDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  private async createRecord(dto: CreateUomDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
 
     // Resolve the UOM code — a series if one is configured, else the user-supplied code.
@@ -361,6 +368,12 @@ export class UomService {
   // ========================================================
 
   async createConversion(dto: CreateUomConversionDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createConversionRecord(dto, tenantId, userPayload));
+  }
+
+  private async createConversionRecord(dto: CreateUomConversionDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
 
     // Check if conversion already exists

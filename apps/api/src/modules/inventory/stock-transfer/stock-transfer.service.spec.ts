@@ -1,6 +1,7 @@
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { StockTransferService } from './stock-transfer.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -25,6 +26,11 @@ import * as schema from '../../../core/database/schema';
  * farm join made it in.
  */
 describe('StockTransferService', () => {
+  // The transfer number comes from the Stock Transfer series, drawn inside the save transaction.
+  const numberSeriesMock = {
+    seriesCodeForDocument: jest.fn().mockResolvedValue('STOCK_TRANSFER'),
+    generateNext: jest.fn().mockResolvedValue('TR-000001'),
+  };
   let service: StockTransferService;
   let cls: ReturnType<typeof transactionCls>;
 
@@ -134,6 +140,7 @@ describe('StockTransferService', () => {
           },
         },
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        { provide: NumberSeriesService, useValue: numberSeriesMock },
         { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
         { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
       ],
@@ -252,6 +259,7 @@ describe('StockTransferService', () => {
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
           { provide: InventoryLedgerService, useValue: { transferShipmentRemainingValue: jest.fn().mockResolvedValue(0), writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }), writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }), transferShipmentRate: jest.fn().mockResolvedValue(2.5), getStockBalance: mockGetStockBalance } },
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: NumberSeriesService, useValue: numberSeriesMock },
           { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
           { provide: FeedAlertService, useValue: feedAlerts },

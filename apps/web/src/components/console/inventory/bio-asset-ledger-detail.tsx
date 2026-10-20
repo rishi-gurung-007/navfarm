@@ -29,12 +29,18 @@ const S = {
 export const BIO_TRANSACTION_LABEL: Record<string, string> = {
   PURCHASE: 'Purchase',
   ANIMAL_REGISTRATION: 'Animal Registration',
+  BATCH_RECEIPT: 'Batch / Lot Receipt',
+  BATCH_TRANSFER: 'Batch Transfer',
+  LITTER_COST: 'Litter Cost Allocation',
   MORTALITY: 'Mortality',
 };
 
 export const BIO_DOCUMENT_LABEL: Record<string, string> = {
   GOODS_RECEIPT: 'GRN',
   ANIMAL_REGISTRATION: 'Animal Registration',
+  BATCH_RECEIPT: 'Batch / Lot Receipt',
+  BATCH_TRANSFER: 'Batch Transfer',
+  LITTER_COST: 'Litter Cost Allocation',
   MORTALITY: 'Mortality',
 };
 
@@ -75,7 +81,8 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
   }
 
   const qty = Number(entry.quantity || 0);
-  const isPositive = qty > 0;
+  // A cost allocation moves value, not head: its sign is the sign of its amount.
+  const isPositive = (qty !== 0 ? qty : Number(entry.amount || 0)) > 0;
   const isGrn = entry.entry_type === 'PURCHASE';
   const remaining = Number(entry.remaining_quantity ?? 0);
   const registeredPct = isGrn && qty > 0 ? Math.round(((qty - remaining) / qty) * 100) : 0;
@@ -160,6 +167,21 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
               <>
                 <p className="text-sm font-semibold" style={S.primary}>{entry.source_grn_no ? `From ${entry.source_grn_no}` : 'Registered'}</p>
                 <p className="mt-0.5 text-xs" style={S.sub}>{entry.source_grn_no ? 'Taken from that GRN entry' : 'No source GRN'}</p>
+              </>
+            ) : entry.transaction_type === 'BATCH_RECEIPT' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>{entry.lot_no ? `Lot ${entry.lot_no}` : 'Batch input'}</p>
+                <p className="mt-0.5 text-xs" style={S.sub}>Head received into {entry.batch_no || 'the batch'}</p>
+              </>
+            ) : entry.transaction_type === 'LITTER_COST' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>{isPositive ? 'Cost received by the lot' : 'Cost given by the sow batch'}</p>
+                <p className="mt-0.5 text-xs" style={S.sub}>{entry.lot_no ? `Lot ${entry.lot_no} · ` : ''}Lactation feed, drug and overhead</p>
+              </>
+            ) : entry.transaction_type === 'BATCH_TRANSFER' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>{entry.entry_type === 'TRANSFER_IN' ? 'Transferred in' : 'Transferred out'}</p>
+                <p className="mt-0.5 text-xs" style={S.sub}>{entry.lot_no ? `Lot ${entry.lot_no} · ` : ''}{entry.document_no}</p>
               </>
             ) : (
               <>

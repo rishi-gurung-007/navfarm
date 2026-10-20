@@ -1,4 +1,4 @@
-import { formatSeriesCode, formatSeriesStem, nextSequenceInStem, normalizeSegment, assertCodeFits, CodeTooLongError, formatDateSegment, describeSeriesPattern } from './code-format.util';
+import { formatSeriesCode, formatSeriesStem, nextSequenceInStem, normalizeSegment, assertCodeFits, CodeTooLongError, formatDateSegment, describeSeriesPattern, nextSequence, seriesCounter, trailingNumber, incrementOf, resetPeriodOf } from './code-format.util';
 
 const NOW = new Date('2026-09-08T12:00:00Z');
 const series = (over: Partial<any> = {}): any => ({
@@ -197,5 +197,76 @@ describe('describeSeriesPattern', () => {
 
   it('shows referenced fields in braces and honours the sequence separator', () => {
     expect(describeSeriesPattern({ ...base, separator: '/', seq_separator: '-', code_segments: ['parent_location_id', 'location_type'] })).toBe('{parent_location}/{location_type}-000');
+  });
+});
+
+describe('nextSequence', () => {
+  const NOW = new Date('2026-10-19T10:00:00');
+  const base = { prefix: 'T', separator: '-', seq_length: 4, current_seq: 5, last_no_used: 'T-0005', reset_frequency: 'NEVER', updated_at: '2026-10-01 10:00:00' };
+
+  it('adds the increment to the counter', () => {
+    expect(nextSequence({ ...base, increment_by: 1 }, NOW)).toBe(6);
+    expect(nextSequence({ ...base, increment_by: 5 }, NOW)).toBe(10);
+    expect(nextSequence(base, NOW)).toBe(6);
+  });
+
+  it('carries on from a last number that is ahead of the counter', () => {
+    expect(seriesCounter({ current_seq: 0, last_no_used: 'T-0100' })).toBe(100);
+    expect(nextSequence({ ...base, current_seq: 0, last_no_used: 'T-0100' }, NOW)).toBe(101);
+    expect(seriesCounter({ current_seq: 9, last_no_used: 'T-0003' })).toBe(9);
+  });
+
+  it('starts at the starting number only while nothing has been issued', () => {
+    expect(nextSequence({ ...base, current_seq: 0, last_no_used: null, starting_no: 'T-0500' }, NOW)).toBe(500);
+    expect(nextSequence({ ...base, starting_no: 'T-0500' }, NOW)).toBe(6);
+  });
+
+  it('restarts at one when the reset period has rolled over', () => {
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', updated_at: '2025-12-30 10:00:00' }, NOW)).toBe(1);
+    expect(nextSequence({ ...base, reset_frequency: 'MONTHLY', updated_at: '2026-09-30 10:00:00' }, NOW)).toBe(1);
+  });
+
+  it('reads trailing digits and treats a bad increment as one', () => {
+    expect(trailingNumber('GRN-00012')).toBe(12);
+    expect(trailingNumber('LARGE_WHITE')).toBe(0);
+    expect(trailingNumber(null)).toBe(0);
+    expect(incrementOf({ increment_by: 0 })).toBe(1);
+    expect(incrementOf({ increment_by: null })).toBe(1);
+  });
+});
+
+describe('reset period', () => {
+  const NOW = new Date('2027-01-05T10:00:00');
+  const base = { prefix: 'T', separator: '-', seq_length: 4, current_seq: 5, last_no_used: 'T-0005', increment_by: 1 };
+
+  it('names the period a date falls in', () => {
+    expect(resetPeriodOf('YEARLY', new Date('2026-10-19T10:00:00'))).toBe('2026');
+    expect(resetPeriodOf('MONTHLY', new Date('2026-10-19T10:00:00'))).toBe('2026-10');
+    expect(resetPeriodOf('MONTHLY', new Date('2026-03-01T10:00:00'))).toBe('2026-03');
+    expect(resetPeriodOf('NEVER', NOW)).toBeNull();
+    expect(resetPeriodOf(undefined, NOW)).toBeNull();
+  });
+
+  it('restarts when the period the series last issued in is over', () => {
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', last_reset_period: '2026', updated_at: '2026-12-30 10:00:00' }, NOW)).toBe(1);
+    expect(nextSequence({ ...base, reset_frequency: 'MONTHLY', last_reset_period: '2026-12', updated_at: '2026-12-30 10:00:00' }, NOW)).toBe(1);
+  });
+
+  it('does not restart inside the period it last issued in', () => {
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', last_reset_period: '2027', updated_at: '2027-01-02 09:00:00' }, NOW)).toBe(6);
+  });
+
+  it('is not defeated by an edit of the series in the new period (the old updated_at bug)', () => {
+    // Last issued in 2026; someone renamed the series on 2 Jan 2027, which bumps updated_at into the new year.
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', last_reset_period: '2026', updated_at: '2027-01-02 09:00:00' }, NOW)).toBe(1);
+  });
+
+  it('falls back to updated_at only for a series that has not recorded a period yet', () => {
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', last_reset_period: null, updated_at: '2026-12-30 10:00:00' }, NOW)).toBe(1);
+    expect(nextSequence({ ...base, reset_frequency: 'YEARLY', last_reset_period: null, updated_at: '2027-01-02 09:00:00' }, NOW)).toBe(6);
+  });
+
+  it('never restarts a series that does not reset', () => {
+    expect(nextSequence({ ...base, reset_frequency: 'NEVER', last_reset_period: '2020', updated_at: '2020-01-01 00:00:00' }, NOW)).toBe(6);
   });
 });

@@ -6,9 +6,10 @@ import { JournalModule } from '../../finance/journal/journal.module';
 import { UomModule } from '../../master-data/uom/uom.module';
 import { SiloFeedModule } from '../silo-feed/silo-feed.module';
 import { FeedAlertModule } from '../feed-alert/feed-alert.module';
+import { NumberSeriesModule } from '../../system/number-series/number-series.module';
 
 @Module({
-  imports: [InventoryLedgerModule, JournalModule, UomModule, SiloFeedModule, FeedAlertModule],
+  imports: [InventoryLedgerModule, JournalModule, UomModule, SiloFeedModule, FeedAlertModule, NumberSeriesModule],
   controllers: [StockTransferController],
   providers: [StockTransferService],
   exports: [StockTransferService],

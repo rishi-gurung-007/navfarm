@@ -882,6 +882,9 @@ export const noSeries = mysqlTable('no_series', {
   is_default: boolean('is_default').default(true).notNull(),
   manual_nos: boolean('manual_nos').default(false).notNull(),
   last_no_used: varchar('last_no_used', { length: 50 }),
+  // The reset period the counter last issued in (2026 for a YEARLY series, 2026-10 for a MONTHLY one). The reset
+  // compares against this, not updated_at, which any edit of the series bumps. Null until the series first issues.
+  last_reset_period: varchar('last_reset_period', { length: 10 }),
   blocked: boolean('blocked').default(false).notNull(),
   created_by: varchar('created_by', { length: 36 }),
   updated_by: varchar('updated_by', { length: 36 }),
@@ -4623,6 +4626,21 @@ export const breedingRecordRelations = relations(breedingRecord, ({ one, many })
   batch: one(batchHeader, { fields: [breedingRecord.batch_id], references: [batchHeader.batch_id] }),
   farrowings: many(farrowingRecord),
 }));
+
+/** Piglets fostered from one litter to another (migration 0206): the link between the donor's and the receiver's farrowing. */
+export const litterFoster = mysqlTable('litter_foster', {
+  foster_id: varchar('foster_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  from_farrow_id: varchar('from_farrow_id', { length: 36 }).notNull().references(() => farrowingRecord.farrow_id, { onDelete: 'restrict' }),
+  to_farrow_id: varchar('to_farrow_id', { length: 36 }).notNull().references(() => farrowingRecord.farrow_id, { onDelete: 'restrict' }),
+  quantity: int('quantity').notNull(),
+  foster_date: date('foster_date', { mode: 'string' }).notNull(),
+  transfer_no: varchar('transfer_no', { length: 50 }),
+  notes: text('notes'),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+});
 
 export const farrowingRecordRelations = relations(farrowingRecord, ({ one }) => ({
   company: one(companyMaster, { fields: [farrowingRecord.company_id], references: [companyMaster.company_id] }),

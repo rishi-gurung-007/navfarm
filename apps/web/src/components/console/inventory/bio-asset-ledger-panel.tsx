@@ -282,6 +282,9 @@ export default function BioAssetLedgerPanel() {
                 { value: "", label: t("ilpAllTransactionTypes") },
                 { value: "PURCHASE", label: "Purchase" },
                 { value: "ANIMAL_REGISTRATION", label: "Animal Registration" },
+                { value: "BATCH_RECEIPT", label: "Batch / Lot Receipt" },
+                { value: "BATCH_TRANSFER", label: "Batch Transfer" },
+                { value: "LITTER_COST", label: "Litter Cost Allocation" },
                 { value: "MORTALITY", label: "Mortality" },
               ]}
               columnHeaders={false}
@@ -375,7 +378,7 @@ export default function BioAssetLedgerPanel() {
               ) : (
                 pagedRows.map((row) => {
                   const qty = Number(row.quantity || 0);
-                  const isPos = qty > 0;
+                  const isPos = (qty !== 0 ? qty : Number(row.amount || 0)) > 0;
                   return (
                     <TableRow key={row.entry_id} onClick={() => setViewingEntry(row)} className="cursor-pointer hover:bg-[var(--surface-raised)] transition">
                       <TableCell className="whitespace-nowrap font-mono font-semibold" style={S.primary}>{row.entry_no}</TableCell>

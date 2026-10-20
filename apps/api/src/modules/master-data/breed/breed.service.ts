@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { validateFeedLines, linesOf, siblingKey, type FeedLine } from './lifecycle-feed-lines';
 import { feedQtyToKg } from '../../production/lifecycle/feed-qty-kg';
@@ -89,6 +90,12 @@ export class BreedService {
   // ========================================================
 
   async createSpecies(dto: CreateSpeciesDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createSpeciesRecord(dto, tenantId, userPayload));
+  }
+
+  private async createSpeciesRecord(dto: CreateSpeciesDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
     const speciesCode = await this.numberSeriesService.resolveNewCode('SPECIES', dto.species_code, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
 
@@ -998,6 +1005,12 @@ export class BreedService {
   }
 
   async createLifecycleStage(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createLifecycleStageRecord(dto, tenantId, userPayload));
+  }
+
+  private async createLifecycleStageRecord(dto: CreateBreedLifecycleStageDto, tenantId: string, userPayload?: any) {
     const breed = await this.findOneBreed(dto.breed_id, tenantId);
     // Feed Consumption lines (13 Oct): the first line is this row; the others become the stage's further rows.
     const feedLines = dto.feed_lines?.length ? await this.withKg(validateFeedLines(dto.feed_lines as FeedLine[])) : null;

@@ -1436,6 +1436,20 @@
       "when": 1792000000073,
       "tag": "0205_bio_asset_sale_customer",
       "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "5",
+      "when": 1792000000074,
+      "tag": "0206_litter_foster",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "5",
+      "when": 1792000000075,
+      "tag": "0207_no_series_reset_period",
+      "breakpoints": true
     }
   ]
 }

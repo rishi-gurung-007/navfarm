@@ -33,6 +33,15 @@ export class GoodsReceiptController {
     return { success: true, message: 'GRNs retrieved successfully.', data: result };
   }
 
+  @Get('next-number')
+  @RequirePermission('INVENTORY', 'GOODS_RECEIPT', 'view')
+  @ApiOperation({ summary: 'Preview the number the next GRN will get from the Goods Receipt number series (draws nothing)' })
+  async nextNumber(@Query('company_id') companyId: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.goodsReceiptService.previewReceiptNo(companyId, tenantId);
+    return { success: true, message: 'GRN number preview retrieved.', data: result };
+  }
+
   @Get(':id')
   @RequirePermission('INVENTORY', 'GOODS_RECEIPT', 'view')
   @ApiOperation({ summary: 'Fetch a single GRN with its lines' })

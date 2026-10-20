@@ -42,7 +42,7 @@ describe('SemenLotService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         SemenLotService,
-        { provide: ClsService, useValue: { get: () => db } },
+        { provide: ClsService, useValue: { get: (key?: string) => (key === 'tenantPostingTransaction' ? true : db) } },
         { provide: InventoryLedgerService, useValue: ledger },
         { provide: GlPostingService, useValue: gl },
         { provide: NumberSeriesService, useValue: numberSeries },

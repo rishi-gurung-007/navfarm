@@ -122,47 +122,28 @@ const INFORMATIONAL_ENTRY_TYPES = ['DESCRIPTIVE', 'OVERHEAD'];
 export class InventoryLedgerService {
   constructor(
     private readonly cls: ClsService,
-    @Optional() private readonly numberSeriesService?: NumberSeriesService,
+    private readonly numberSeriesService: NumberSeriesService,
   ) { }
 
-  /** The readable application code from the company's ITEM_APPLICATION series; the row's key is a UUID (0193). */
+  /**
+   * The readable application code (APP-00001) from the company's Item Application series. A company with none gets
+   * one made the first time it is needed. A series that is missing or blocked is reported, not covered with a
+   * self-derived number or a random one: those could not be told from the series' own, and would be issued twice.
+   */
   private async generateApplicationNo(
     tenantId: string,
     companyId?: string | null,
     executor?: MySql2Database<typeof schema>,
   ): Promise<string> {
-    if (this.numberSeriesService) {
-      try {
-        return await this.numberSeriesService.generateNext(
-          'ITEM_APPLICATION',
-          tenantId,
-          companyId,
-          executor,
-        );
-      } catch {
-        // Fall through to query fallback
-      }
-    }
     const db = executor || this.db;
-    try {
-      const [{ maxId }] = await db
-        .select({
-          maxId: sql<string>`MAX(${schema.inventoryApplication.application_no})`,
-        })
-        .from(schema.inventoryApplication)
-        .where(
-          and(
-            eq(schema.inventoryApplication.tenant_id, tenantId),
-            ...(companyId ? [eq(schema.inventoryApplication.company_id, companyId)] : []),
-            like(schema.inventoryApplication.application_no, 'APP-%'),
-          ),
-        );
-      const seqMatch = maxId ? maxId.match(/APP-(\d+)/) : null;
-      const nextSeq = seqMatch ? parseInt(seqMatch[1], 10) + 1 : 1;
-      return `APP-${String(nextSeq).padStart(5, '0')}`;
-    } catch {
-      return `APP-${randomUUID().slice(0, 8).toUpperCase()}`;
-    }
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'ITEM_APPLICATION', seriesName: 'Item Application Series', documentType: 'APPLICATION', prefix: 'APP', separator: '-', seqLength: 5 },
+      async () => (await db.select({ no: schema.inventoryApplication.application_no }).from(schema.inventoryApplication)
+        .where(and(eq(schema.inventoryApplication.tenant_id, tenantId), ...(companyId ? [eq(schema.inventoryApplication.company_id, companyId)] : [])))).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
   private get db(): MySql2Database<typeof schema> {

@@ -17,6 +17,7 @@ import {
   UpdatePregCheckDto,
   CreateFarrowingDto,
   UpdateWeaningDto,
+  CreateLitterFosterDto,
   CreateSemenCollectionDto,
   ConceptionResult,
   MatingType,
@@ -413,6 +414,9 @@ export class BreedingService {
     if (dto.mating_type === MatingType.AI && !Number.isInteger(doseQty)) {
       throw new BadRequestException('Doses used must be a whole number.');
     }
+    if (dto.mating_type === MatingType.AI && !dto.semen_lot_id) {
+      throw new BadRequestException('An AI service needs the semen lot it uses, so the doses leave stock and the sire is traced.');
+    }
     const lot = dto.semen_lot_id ? await this.assertLotUsable(dto.semen_lot_id, dto.mating_date, tenantId) : null;
 
     const defaults = await this.matingDefaults(sow, boarAnimalId, dto.mating_date, tenantId);
@@ -677,11 +681,10 @@ export class BreedingService {
       totalLitterWeight = Number((dto.avg_birth_weight_kg * live).toFixed(3));
     }
 
-    // Parity counts completed pregnancies, post weaning (decisions.md, TDD row 27): this
-    // litter is parity_count + 1, and parity_count itself only moves when it is weaned.
-    // A farrowing numbered above parity_count has not been weaned, so a second one now
-    // would be numbered the same. Read from the records rather than the sow's status,
-    // which can be set by hand or by a seed without any farrowing behind it.
+    // Parity counts farrowings (changed from "on weaning" on 19 Oct): this litter is parity_count + 1, and
+    // parity_count moves to it in the same write as the farrowing. A litter still on the sow — nothing weaned yet —
+    // blocks a second farrowing. Read from the records rather than the sow's status, which can be set by hand or
+    // by a seed without any farrowing behind it.
     const [nursing] = await this.db
       .select({ farrow_id: schema.farrowingRecord.farrow_id })
       .from(schema.farrowingRecord)
@@ -689,7 +692,7 @@ export class BreedingService {
         and(
           eq(schema.farrowingRecord.sow_animal_id, dto.sow_animal_id),
           eq(schema.farrowingRecord.tenant_id, tenantId),
-          sql`${schema.farrowingRecord.parity_number} > ${sow.parity_count || 0}`,
+          eq(schema.farrowingRecord.piglets_weaned, 0),
         ),
       )
       .limit(1);
@@ -706,6 +709,10 @@ export class BreedingService {
     // litters, so the lot is the litter as it stands: born live, plus received, less fostered out. A farrowing recorded
     // without a piglet item records the litter only.
     const netLitter = Math.max(0, live + (dto.foster_received || 0) - (dto.fostered_out || 0));
+    // A litter with live piglets must be held as a lot: without one it has no ledger entry and nothing to track to weaning.
+    if (netLitter > 0 && !dto.piglet_item_id) {
+      throw new BadRequestException('Choose the piglet item — the live piglets are held as a lot of it, which is what puts them in the Bio Asset Ledger.');
+    }
     const pigletLot =
       dto.piglet_item_id && netLitter > 0
         ? await this.pigletLots.createLot(
@@ -748,11 +755,12 @@ export class BreedingService {
     // Update sow lifetime statistics and status — a GILT (never farrowed)
     // becomes a SOW on her first farrowing, in the same write, so a second
     // farrowing recorded against her doesn't still read her as a GILT.
-    // parity_count is deliberately not touched here; weaning completes the parity.
+    // Parity moves up here, with the farrowing; weaning leaves it alone.
     await this.db
       .update(schema.animalRegister)
       .set({
         total_piglets_born_live: (sow.total_piglets_born_live || 0) + live,
+        parity_count: parityNumber,
         status: 'LACTATING',
         ...(sow.animal_type === 'GILT' ? { animal_type: 'SOW' } : {}),
       })
@@ -762,7 +770,7 @@ export class BreedingService {
       ...newRecord,
       piglet_batch_no: pigletLot?.batch_no ?? null,
       message:
-        `Farrowing recorded: ${live} live piglets born (litter ${parityNumber}). Sow status set to LACTATING; parity completes at weaning.` +
+        `Farrowing recorded: ${live} live piglets born (litter ${parityNumber}). Sow status set to LACTATING; parity is now ${parityNumber}.` +
         (pigletLot
           ? ` ${netLitter} piglets held as lot ${pigletLot.lot_no} in batch ${pigletLot.batch_no}.`
           : ' No piglet lot was created — choose the piglet item to hold them as a lot.'),
@@ -801,10 +809,19 @@ export class BreedingService {
       throw new NotFoundException(`Farrowing record with ID '${farrowId}' not found.`);
     }
 
+    // A litter is weaned once. A second posting would overwrite the weaned head, move the sow again and run the
+    // piglets' transfer a second time, so it is refused: the first weaning stands.
+    if ((farrow.piglets_weaned || 0) > 0) {
+      throw new BadRequestException(
+        `This litter was already weaned (${farrow.piglets_weaned} piglets on ${String(farrow.weaning_date).slice(0, 10)}); it cannot be weaned again.`,
+      );
+    }
+
     // The piglets. Anything the lot has lost since farrowing and not yet recorded is pre-weaning mortality; the head
     // that were weaned then go where they are sent — to another batch, or on to a stage — by the ordinary transfer.
     // Only the first weaning of a litter moves them, so posting it again cannot move the same piglets twice.
     let pigletNote = '';
+    let costPerPiglet: string | null = null;
     if (dto.move_to_batch_id && dto.move_to_stage_code) {
       throw new BadRequestException('Send the weaned piglets to a batch or on to a stage, not both.');
     }
@@ -819,12 +836,22 @@ export class BreedingService {
       if (lost > 0) {
         await this.batchService.recordMortality(
           farrow.piglet_batch_id,
-          { transaction_date: dto.weaning_date, quantity: lost, remarks: 'Pre-weaning loss, recorded at weaning' },
+          {
+            transaction_date: dto.weaning_date,
+            quantity: lost,
+            remarks: 'Pre-weaning loss, recorded at weaning',
+            ...(dto.loss_reason_id ? { mortality_detail: { reason_id: dto.loss_reason_id } } : {}),
+          } as any,
           tenantId,
           userPayload,
         );
         pigletNote += ` ${lost} lost before weaning.`;
       }
+      // The litter is costed here, after the losses and before the move: what the sow cost over her lactation is
+      // spread over the piglets that were weaned, so it travels with them.
+      const costed = await this.allocateLactationCost(farrow, sow, dto, tenantId, userPayload);
+      pigletNote += costed.note;
+      costPerPiglet = costed.perPiglet;
       if (dto.move_to_batch_id && dto.piglets_weaned > 0) {
         await this.batchTransfers.create(
           {
@@ -881,15 +908,13 @@ export class BreedingService {
         weaning_date: dto.weaning_date,
         piglets_weaned: dto.piglets_weaned,
         avg_weaning_weight_kg: dto.avg_weaning_weight_kg ? String(dto.avg_weaning_weight_kg) : null,
-        cost_per_piglet: dto.cost_per_piglet ? String(dto.cost_per_piglet) : null,
+        cost_per_piglet: dto.cost_per_piglet ? String(dto.cost_per_piglet) : costPerPiglet,
         notes: dto.notes || farrow.notes,
       })
       .where(eq(schema.farrowingRecord.farrow_id, farrowId));
 
-    // Weaning completes this litter's parity (BBP: "Parity incremented on weaning POST").
-    // Set from the farrowing's own number, and the weaned total moved by the change from
-    // what was already recorded, so posting the same weaning twice (or correcting it)
-    // cannot count the litter or its piglets twice.
+    // Parity was raised at farrowing; the max() here only repairs a sow farrowed before that rule changed. The
+    // weaned total moves by the change from what was already recorded.
     await this.db
       .update(schema.animalRegister)
       .set({
@@ -905,7 +930,171 @@ export class BreedingService {
       farrow_id: farrowId,
       piglets_weaned: dto.piglets_weaned,
       parity_count: Math.max(sow.parity_count || 0, farrow.parity_number),
-      message: `Weaning recorded: ${dto.piglets_weaned} piglets weaned. Parity ${farrow.parity_number} complete; ${sowNote}${pigletNote}`,
+      message: `Weaning recorded: ${dto.piglets_weaned} piglets weaned. Litter ${farrow.parity_number} weaned; ${sowNote}${pigletNote}`,
+    };
+  }
+
+  /**
+   * Fosters piglets from one litter to another sow's (19 Oct, Arun). Both litters must still be on their sows, each with
+   * its piglet lot. The head moves between the two lots by an ordinary batch transfer — so the ledger names both sides
+   * and the lots' book value follows — and both farrowing records are updated, so each sow's litter, survival rate and
+   * weaning count describe the piglets she actually reared. The born-live total stays with the birth mother.
+   */
+  async fosterPiglets(fromFarrowId: string, dto: CreateLitterFosterDto, tenantId: string, userPayload?: any) {
+    return withTenantTransaction(this.cls, async () => {
+      if (fromFarrowId === dto.to_farrow_id) throw new BadRequestException('Choose a different litter to foster the piglets to.');
+      if (!Number.isInteger(dto.quantity) || dto.quantity < 1) throw new BadRequestException('Fostered piglets must be a whole number of at least 1.');
+      this.assertNotFuture(dto.foster_date, 'The fostering date');
+
+      const load = async (id: string, role: string) => {
+        const [farrow] = await this.db
+          .select()
+          .from(schema.farrowingRecord)
+          .where(and(eq(schema.farrowingRecord.farrow_id, id), eq(schema.farrowingRecord.tenant_id, tenantId)))
+          .limit(1);
+        if (!farrow) throw new NotFoundException(`The ${role} litter '${id}' was not found.`);
+        const [sow] = await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(and(eq(schema.animalRegister.animal_id, farrow.sow_animal_id), ...animalScopeConditions(farmScope(this.cls))))
+          .limit(1);
+        if (!sow) throw new NotFoundException(`The ${role} litter '${id}' was not found.`);
+        if (!farrow.piglet_batch_id) throw new BadRequestException(`${sow.animal_code}'s litter has no piglet lot, so piglets cannot be fostered ${role === 'donor' ? 'from' : 'to'} it.`);
+        if ((farrow.piglets_weaned || 0) > 0) throw new BadRequestException(`${sow.animal_code}'s litter is already weaned.`);
+        return { farrow, sow };
+      };
+      const from = await load(fromFarrowId, 'donor');
+      const to = await load(dto.to_farrow_id, 'receiving');
+      if (from.farrow.company_id !== to.farrow.company_id) throw new BadRequestException('The two litters belong to different companies.');
+      for (const f of [from, to]) {
+        if (dto.foster_date < String(f.farrow.farrowing_date).slice(0, 10)) {
+          throw new BadRequestException(`The fostering is dated before ${f.sow.animal_code} farrowed.`);
+        }
+      }
+
+      const head = await this.pigletHead(from.farrow.piglet_batch_id!);
+      if (dto.quantity > head + 1e-9) {
+        throw new BadRequestException(`${from.sow.animal_code}'s litter holds ${head} piglets; ${dto.quantity} cannot be fostered.`);
+      }
+
+      const transfer: any = await this.batchTransfers.create(
+        {
+          company_id: from.farrow.company_id ?? from.sow.company_id,
+          to_batch_id: to.farrow.piglet_batch_id!,
+          transfer_date: dto.foster_date,
+          transfer_type: 'PARTIAL',
+          quantity: dto.quantity,
+          reason: 'FOSTERING',
+          remarks: `Fostered from ${from.sow.animal_code} (lot ${from.farrow.piglet_lot_no ?? ''}) to ${to.sow.animal_code} (lot ${to.farrow.piglet_lot_no ?? ''})`,
+        } as any,
+        tenantId,
+        from.farrow.piglet_batch_id!,
+        userPayload,
+      );
+
+      await this.db
+        .update(schema.farrowingRecord)
+        .set({ fostered_out: (from.farrow.fostered_out || 0) + dto.quantity })
+        .where(eq(schema.farrowingRecord.farrow_id, fromFarrowId));
+      await this.db
+        .update(schema.farrowingRecord)
+        .set({ foster_received: (to.farrow.foster_received || 0) + dto.quantity })
+        .where(eq(schema.farrowingRecord.farrow_id, dto.to_farrow_id));
+
+      const fosterId = randomUUID();
+      await this.db.insert(schema.litterFoster).values({
+        foster_id: fosterId,
+        tenant_id: tenantId,
+        company_id: from.farrow.company_id ?? from.sow.company_id,
+        from_farrow_id: fromFarrowId,
+        to_farrow_id: dto.to_farrow_id,
+        quantity: dto.quantity,
+        foster_date: dto.foster_date,
+        transfer_no: transfer?.transfer_no ?? null,
+        notes: dto.notes || null,
+        created_by: userPayload?.userId || null,
+      });
+
+      return {
+        foster_id: fosterId,
+        from_farrow_id: fromFarrowId,
+        to_farrow_id: dto.to_farrow_id,
+        quantity: dto.quantity,
+        message: `${dto.quantity} piglets fostered from ${from.sow.animal_code} to ${to.sow.animal_code}; the head moved between their piglet lots.`,
+      };
+    });
+  }
+
+  /**
+   * Costs the litter at weaning (19 Oct, Arun): what was posted for the sow over her lactation — her feed, drug and
+   * overhead, from the farrowing to the weaning — moves from her batch's carrying value into the piglet lot's, spread
+   * over the piglets weaned. Both are bio-asset batches carried in the same account, so, like a batch transfer, no journal
+   * is raised: the value moves between the two batches' book values and the bio-asset ledger records both sides. The
+   * most her batch can give is what it carries. Returns what the weaning message should add and the cost per piglet.
+   */
+  private async allocateLactationCost(
+    farrow: typeof schema.farrowingRecord.$inferSelect,
+    sow: typeof schema.animalRegister.$inferSelect,
+    dto: UpdateWeaningDto,
+    tenantId: string,
+    userPayload?: any,
+  ): Promise<{ note: string; perPiglet: string | null }> {
+    const none = { note: '', perPiglet: null };
+    const sowBatchId = farrow.batch_id ?? sow.current_batch_id;
+    if (!farrow.piglet_batch_id || !sowBatchId || !(dto.piglets_weaned > 0)) return none;
+
+    const costs = await this.postedAnimalCosts(sow, sowBatchId, String(farrow.farrowing_date).slice(0, 10), dto.weaning_date, tenantId);
+    const [sowState] = await this.db.select().from(schema.batchBioAssetState).where(eq(schema.batchBioAssetState.batch_id, sowBatchId)).limit(1);
+    const [lotState] = await this.db.select().from(schema.batchBioAssetState).where(eq(schema.batchBioAssetState.batch_id, farrow.piglet_batch_id)).limit(1);
+    if (!sowState || !lotState) return none;
+    const wanted = costs.feed + costs.drug + costs.overhead;
+    const total = Number(Math.min(wanted, Number(sowState.nca_book_value) || 0).toFixed(4));
+    if (!(total >= 0.005)) return none;
+
+    const [sowBatch] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, sowBatchId)).limit(1);
+    const [lot] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, farrow.piglet_batch_id)).limit(1);
+    const [lotEntry] = await this.db
+      .select({ item_id: schema.bioAssetLedger.bio_asset_item_id })
+      .from(schema.bioAssetLedger)
+      .where(and(eq(schema.bioAssetLedger.batch_id, farrow.piglet_batch_id), eq(schema.bioAssetLedger.entry_type, 'ACQUISITION')))
+      .limit(1);
+    if (!lot || !sowBatch || !lotEntry) return none;
+
+    await this.db
+      .update(schema.batchBioAssetState)
+      .set({ nca_book_value: String(Math.max(0, Number(sowState.nca_book_value) - total).toFixed(4)) })
+      .where(eq(schema.batchBioAssetState.batch_id, sowBatchId));
+    await this.db
+      .update(schema.batchBioAssetState)
+      .set({ nca_book_value: String((Number(lotState.nca_book_value) + total).toFixed(4)) })
+      .where(eq(schema.batchBioAssetState.batch_id, farrow.piglet_batch_id));
+
+    const perPiglet = total / dto.piglets_weaned;
+    const row = (batch: typeof lot, amount: number, state: typeof lotState) => ({
+      entry_id: randomUUID(),
+      tenant_id: tenantId,
+      company_id: batch.company_id,
+      bio_asset_item_id: lotEntry.item_id,
+      entry_type: 'COST_ALLOCATION',
+      document_type: 'LITTER_COST',
+      document_no: lot.batch_no,
+      batch_id: batch.batch_id,
+      batch_no: batch.batch_no,
+      lot_no: farrow.piglet_lot_no,
+      posting_date: dto.weaning_date,
+      stage: state.stage,
+      quantity: '0',
+      cost_amount: amount.toFixed(4),
+      cost_amount_each_unit: perPiglet.toFixed(4),
+      costing_method: 'COST_ACCUMULATION',
+      nob_id: batch.nob_id,
+      lob_id: batch.lob_id,
+      created_by: userPayload?.userId || null,
+    });
+    await this.db.insert(schema.bioAssetLedger).values([row(sowBatch, -total, sowState), row(lot, total, lotState)]);
+    return {
+      note: ` Lactation cost ${total.toFixed(2)} moved from ${sow.animal_code}'s batch to the piglet lot (${perPiglet.toFixed(4)} per piglet weaned).`,
+      perPiglet: perPiglet.toFixed(6),
     };
   }
 
@@ -1140,7 +1329,7 @@ export class BreedingService {
       const perBoar: { from: string; to: string; costs: PeriodCosts }[] = [];
       for (const b of allBoars) {
         const p = await this.semenCostPeriod(b, dto, tenantId);
-        perBoar.push({ ...p, costs: await this.postedSemenCosts(b, boarBatchId, p.from, p.to, tenantId) });
+        perBoar.push({ ...p, costs: await this.postedAnimalCosts(b, boarBatchId, p.from, p.to, tenantId) });
       }
       const sum = (pick: (c: PeriodCosts) => number) => perBoar.reduce((t, x) => t + pick(x.costs), 0);
       amort = sum((c) => c.amortisation);
@@ -1302,8 +1491,8 @@ export class BreedingService {
     return { from, to };
   }
 
-  /** What was posted for the boar over the period: his consumption, overhead and amortisation, with his batch share (G7). */
-  private async postedSemenCosts(
+  /** What was posted for an animal over a period: her or his consumption, overhead and amortisation, with the batch share (G7). */
+  private async postedAnimalCosts(
     boar: typeof schema.animalRegister.$inferSelect,
     batchId: string | null,
     from: string,

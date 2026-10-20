@@ -104,7 +104,7 @@ export function checkMating({ form, sow, boar, lot, matings, gestationDays }: Ma
 
   const isAi = form.mating_type === "AI";
   if (!isAi && !form.boar_animal_id) err("boar_animal_id", "A natural mating needs the boar.");
-  if (isAi && !form.semen_lot_id) warn("semen_lot_id", "No semen lot chosen — no doses will be taken out of stock, and the sire is not traced.");
+  if (isAi && !form.semen_lot_id) err("semen_lot_id", "Choose the semen lot — its doses leave stock and it names the sire.");
   if (boar && boar.is_active === false) err("boar_animal_id", `${boar.animal_code} is no longer active.`);
 
   if (isAi) {

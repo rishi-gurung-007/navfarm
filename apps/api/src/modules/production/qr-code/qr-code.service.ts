@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, count, isNull, or, sql } from 'drizzle-orm';
@@ -68,6 +69,12 @@ export class QrCodeService {
   }
 
   async create(dto: CreateQrCodeDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  private async createRecord(dto: CreateQrCodeDto, tenantId: string, userPayload?: any) {
     const [batch] = await this.db.select().from(schema.batchHeader).where(and(
       eq(schema.batchHeader.batch_id, dto.batch_id),
       eq(schema.batchHeader.tenant_id, tenantId),
@@ -213,6 +220,28 @@ export class QrCodeService {
    * it shows on the Packs screen and can be voided like any other.
    */
   async createForSemenLot(
+    params: {
+      boar: typeof schema.animalRegister.$inferSelect;
+      /** The other boars a pooled lot was mixed from; the lot's `boar` is the first of them. */
+      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
+      boarBatch: typeof schema.batchHeader.$inferSelect;
+      item: typeof schema.itemMaster.$inferSelect;
+      lotNo: string;
+      collectionDate: string;
+      doses: number;
+      expiryDate: string | null;
+      warehouseId: string | null;
+      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+    },
+    tenantId: string,
+    userPayload?: any,
+  ) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createForSemenLotRecord(params, tenantId, userPayload));
+  }
+
+  private async createForSemenLotRecord(
     params: {
       boar: typeof schema.animalRegister.$inferSelect;
       /** The other boars a pooled lot was mixed from; the lot's `boar` is the first of them. */

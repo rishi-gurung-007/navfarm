@@ -36,20 +36,21 @@ export class StockAdjustmentService {
     return tenantDb;
   }
 
-  // `executor` must be the active transaction when called from inside one (see
-  // `create()`) — `.for('update')` locks the counted rows so a second concurrent
-  // call blocks until the first commits its insert, instead of both reading the
-  // same count and generating the same adjustment number.
+  /**
+   * The readable adjustment number (ADJ-000001), from the company's Stock Adjustment series: the one configured on
+   * the Number Series master, else a built-in default made the first time an adjustment is saved and carrying on
+   * after the highest number the company already holds. `executor` must be the active transaction when called from
+   * inside one (see `create()`), so the number is given back if the save fails.
+   */
   private async generateAdjustmentNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockAdjustment.adjustment_no}, 5) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.stockAdjustment)
-      .where(and(eq(schema.stockAdjustment.tenant_id, tenantId), eq(schema.stockAdjustment.company_id, companyId)))
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `ADJ-${String(seq).padStart(6, '0')}`;
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'STOCK_ADJUSTMENT', seriesName: 'Stock Adjustment Number', documentType: 'STOCK_ADJUSTMENT', prefix: 'ADJ', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.stockAdjustment.adjustment_no }).from(schema.stockAdjustment)
+        .where(and(eq(schema.stockAdjustment.tenant_id, tenantId), eq(schema.stockAdjustment.company_id, companyId)))).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
   async create(dto: CreateStockAdjustmentDto, tenantId: string, userPayload?: any) {

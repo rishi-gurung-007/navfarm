@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, eq } from 'drizzle-orm';
@@ -45,7 +46,23 @@ export class PigletLotService {
     },
     tenantId: string,
     userPayload?: UserContext,
-  ): Promise<PigletLot> {
+  ) : Promise<PigletLot> {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createLotRecord(params, tenantId, userPayload));
+  }
+
+  private async createLotRecord(
+    params: {
+      sow: typeof schema.animalRegister.$inferSelect;
+      farrowing_date: string;
+      quantity: number;
+      item_id: string;
+      stage_id?: string | null;
+    },
+    tenantId: string,
+    userPayload?: UserContext,
+  ) : Promise<PigletLot> {
     const { sow, quantity } = params;
     if (!(quantity > 0)) throw new BadRequestException('A piglet lot needs at least one piglet.');
 

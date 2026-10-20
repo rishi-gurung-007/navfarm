@@ -68,7 +68,8 @@ describe('BatchTransferService', () => {
         {
           provide: NumberSeriesService,
           useValue: {
-            generateNext: jest.fn().mockResolvedValue('BTR-2026-0001'),
+            generateNext: jest.fn().mockResolvedValue('BTR-0001'),
+            seriesCodeForDocument: jest.fn().mockResolvedValue('BATCH_TRANSFER'),
           },
         },
         {

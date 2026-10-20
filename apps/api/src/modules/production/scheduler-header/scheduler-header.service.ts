@@ -560,7 +560,8 @@ export class SchedulerHeaderService {
   }
 
   async createForStage(batchId: string, stageId: string, tenantId: string, userPayload?: { userId?: string }, options?: CreateForStageOptions): Promise<any> {
-    return this.createForStageInternal(batchId, stageId, tenantId, userPayload, undefined, options);
+    // The scheduler number is drawn inside this transaction, so a failure after it does not burn the number.
+    return withTenantTransaction(this.cls, () => this.createForStageInternal(batchId, stageId, tenantId, userPayload, undefined, options));
   }
 
   /**
@@ -576,7 +577,7 @@ export class SchedulerHeaderService {
     options?: CreateForStageOptions,
   ) {
     if (batch.tenant_id !== tenantId) throw new NotFoundException(`Batch '${batch.batch_id}' not found.`);
-    return this.createForStageInternal(batch.batch_id, stageId, tenantId, userPayload, batch, options);
+    return withTenantTransaction(this.cls, () => this.createForStageInternal(batch.batch_id, stageId, tenantId, userPayload, batch, options));
   }
 
   private async createForStageInternal(

@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, eq } from 'drizzle-orm';
@@ -58,7 +59,28 @@ export class SemenLotService {
     },
     tenantId: string,
     userPayload?: { userId?: string },
-  ): Promise<PostedSemenLot> {
+  ) : Promise<PostedSemenLot> {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.postCollectionRecord(params, tenantId, userPayload));
+  }
+
+  private async postCollectionRecord(
+    params: {
+      boar: typeof schema.animalRegister.$inferSelect;
+      /** The other boars a pooled lot is mixed from (the collection's `boar` is the first of them). */
+      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
+      boarBatchId: string | null;
+      semenBatchId: string;
+      collectionDate: string;
+      doses: number;
+      itemId: string;
+      /** Quality on the collection (G8), printed on the lot's QR. */
+      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+    },
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ) : Promise<PostedSemenLot> {
     const { boar } = params;
     if (!(params.doses > 0)) throw new BadRequestException('A collection to post to inventory needs at least one dose.');
 

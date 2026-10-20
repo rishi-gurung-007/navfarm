@@ -20,6 +20,7 @@ import {
   UpdatePregCheckDto,
   CreateFarrowingDto,
   UpdateWeaningDto,
+  CreateLitterFosterDto,
   CreateSemenCollectionDto,
   MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
@@ -85,6 +86,18 @@ export class BreedingController {
   async recordFarrowing(@Body() dto: CreateFarrowingDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return await this.breedingService.recordFarrowing(dto, tenantId, req.user);
+  }
+
+  @Post('farrowing/:id/foster')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Foster piglets from this litter to another sow\'s litter: moves the head between the two piglet lots and links the farrowings' })
+  async fosterPiglets(
+    @Param('id') id: string,
+    @Body() dto: CreateLitterFosterDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return await this.breedingService.fosterPiglets(id, dto, tenantId, req.user);
   }
 
   @Patch('farrowing/:id/weaning')

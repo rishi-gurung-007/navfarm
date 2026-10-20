@@ -1,3 +1,4 @@
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -55,6 +56,7 @@ export class StockTransferService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    private readonly numberSeriesService: NumberSeriesService,
     // Silo capacity is kilograms and a feed line can be entered in any unit
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
@@ -74,20 +76,22 @@ export class StockTransferService {
     return tenantDb;
   }
 
-  // `executor` must be the active transaction when called from inside one (see
-  // `create()`) — `.for('update')` locks the counted rows so a second concurrent
-  // call blocks until the first commits its insert, instead of both reading the
-  // same count and generating the same transfer number.
+  /**
+   * The readable transfer number (TR-000001), from the company's Stock Transfer series: the one configured on the
+   * Number Series master, else a built-in default made the first time a transfer is saved and carrying on after the
+   * highest number the company already holds. `executor` must be the active transaction when called from inside one
+   * (see `create()`): the series row is locked until the transfer is inserted, so two concurrent transfers never
+   * share a number and a failed save gives its number back.
+   */
   private async generateTransferNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockTransfer.transfer_no}, 4) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.stockTransfer)
-      .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.company_id, companyId)))
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `TR-${String(seq).padStart(6, '0')}`;
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'STOCK_TRANSFER', seriesName: 'Stock Transfer Number', documentType: 'STOCK_TRANSFER', prefix: 'TR', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.stockTransfer.transfer_no }).from(schema.stockTransfer)
+        .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.company_id, companyId)))).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
   async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {

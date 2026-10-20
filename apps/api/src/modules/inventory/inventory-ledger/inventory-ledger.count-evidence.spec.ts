@@ -3,6 +3,8 @@ import * as schema from '../../../core/database/schema';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { InventoryLedgerService } from './inventory-ledger.service';
 
+const numberSeriesStub = { seriesCodeForDocument: jest.fn().mockResolvedValue('ITEM_APPLICATION'), generateNext: jest.fn().mockResolvedValue('APP-00001') } as any;
+
 describe('InventoryLedgerService.getSiloStockEvidenceAsOf', () => {
   it('derives item quantity and unit cost from ledger rows visible at the exact count timestamp', async () => {
     let where: unknown;
@@ -20,7 +22,7 @@ describe('InventoryLedgerService.getSiloStockEvidenceAsOf', () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-1', companyId: 'company-1', lobId: 'lob-piggery', restricted: true });
 
-    await expect(new InventoryLedgerService(cls).getSiloStockEvidenceAsOf({
+    await expect(new InventoryLedgerService(cls, numberSeriesStub).getSiloStockEvidenceAsOf({
       companyId: 'company-1', siloIds: ['silo-1'], postingDate: '2026-10-01', countedAtEpochSeconds: 1790842500,
     }, 'tenant-1')).resolves.toEqual([{
       warehouse_id: 'silo-1', item_id: 'item-1', item_code: 'FEED-1', uom: 'KG',

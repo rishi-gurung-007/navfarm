@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, isNotNull, or, SQL, gte, lte, gt, lt, like, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, isNotNull, isNull, or, SQL, gte, lte, gt, lt, like, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -17,11 +17,19 @@ import {
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
 
+/** What a ledger row is called on the Bio Asset Ledger page. */
+function transactionTypeOf(entryType: string, animalId: string | null): string {
+  if (entryType === 'MORTALITY' || entryType === 'PURCHASE') return entryType;
+  if (entryType === 'TRANSFER_IN' || entryType === 'TRANSFER_OUT') return 'BATCH_TRANSFER';
+  if (entryType === 'COST_ALLOCATION') return 'LITTER_COST';
+  return animalId ? 'ANIMAL_REGISTRATION' : 'BATCH_RECEIPT';
+}
+
 /**
- * Manual-entry API for the Bio-Asset Ledger (living/biological assets:
- * mortality, growth adjustment, fair-value changes, transformation). Nothing
- * auto-writes here yet — that requires Batch Management (Phase 5). This
- * exists so the table and API shape are ready for Phase 5 to build on.
+ * The Bio-Asset Ledger (living/biological assets: acquisition, mortality, transfer,
+ * growth adjustment, fair-value changes, transformation). Batch activation, batch
+ * mortality, batch transfers, goods receipts and animal registration write to it;
+ * this service reads it for the page and takes manual entries for the rest.
  */
 @Injectable()
 export class BioAssetLedgerService {
@@ -139,7 +147,8 @@ export class BioAssetLedgerService {
   /**
    * The Bio Asset Ledger page (Rishi, 14 Oct): each GRN of animals (+N, with what remains to register), each animal's
    * registration (+1, taken from its GRN) and each death (-1), read like the Inventory Ledger — entry no., document,
-   * item, location, quantity, remaining, cost. Other bio-asset movements (a batch's feed, a transformation) stay off.
+   * item, location, quantity, remaining, cost. A batch's own bio-asset movements are on it too (19 Oct): the lot a
+   * farrowing or a batch input creates, and the transfers of head between batches. Feed and other costs stay off.
    */
   async entries(query: QueryBioAssetLedgerEntriesDto, tenantId: string, max = query.limit || 250, entryId?: string) {
     const B = schema.bioAssetLedger;
@@ -147,7 +156,7 @@ export class BioAssetLedgerService {
     const conditions: SQL[] = [
       eq(B.tenant_id, tenantId),
       ...this.scopeConditions(),
-      or(eq(B.entry_type, 'PURCHASE'), and(eq(B.entry_type, 'ACQUISITION'), isNotNull(B.animal_id)), eq(B.entry_type, 'MORTALITY'))!,
+      or(eq(B.entry_type, 'PURCHASE'), eq(B.entry_type, 'ACQUISITION'), eq(B.entry_type, 'MORTALITY'), eq(B.entry_type, 'TRANSFER_IN'), eq(B.entry_type, 'TRANSFER_OUT'), eq(B.entry_type, 'COST_ALLOCATION'))!,
     ];
     if (entryId) conditions.push(eq(B.entry_id, entryId));
     if (query.companyId) conditions.push(eq(B.company_id, query.companyId));
@@ -156,7 +165,10 @@ export class BioAssetLedgerService {
     if (query.entryType === 'POSITIVE') conditions.push(gt(B.quantity, '0'));
     if (query.entryType === 'NEGATIVE') conditions.push(lt(B.quantity, '0'));
     if (query.transactionType === 'PURCHASE') conditions.push(eq(B.entry_type, 'PURCHASE'));
-    if (query.transactionType === 'ANIMAL_REGISTRATION') conditions.push(eq(B.entry_type, 'ACQUISITION'));
+    if (query.transactionType === 'ANIMAL_REGISTRATION') conditions.push(and(eq(B.entry_type, 'ACQUISITION'), isNotNull(B.animal_id))!);
+    if (query.transactionType === 'BATCH_RECEIPT') conditions.push(and(eq(B.entry_type, 'ACQUISITION'), isNull(B.animal_id))!);
+    if (query.transactionType === 'LITTER_COST') conditions.push(eq(B.entry_type, 'COST_ALLOCATION'));
+    if (query.transactionType === 'BATCH_TRANSFER') conditions.push(or(eq(B.entry_type, 'TRANSFER_IN'), eq(B.entry_type, 'TRANSFER_OUT'))!);
     if (query.transactionType === 'MORTALITY') conditions.push(eq(B.entry_type, 'MORTALITY'));
     if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
     if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
@@ -218,8 +230,8 @@ export class BioAssetLedgerService {
       ...r,
       source_entry_no: r.source_entry_id ? sources.get(r.source_entry_id)?.entry_no ?? null : null,
       source_grn_no: r.source_entry_id ? sources.get(r.source_entry_id)?.document_no ?? null : null,
-      transaction_type: r.entry_type === 'MORTALITY' ? 'MORTALITY' : r.entry_type === 'PURCHASE' ? 'PURCHASE' : 'ANIMAL_REGISTRATION',
-      document_type: r.document_type ?? (r.entry_type === 'MORTALITY' ? 'MORTALITY' : 'ANIMAL_REGISTRATION'),
+      transaction_type: transactionTypeOf(r.entry_type, r.animal_id),
+      document_type: r.document_type ?? (r.entry_type === 'MORTALITY' ? 'MORTALITY' : transactionTypeOf(r.entry_type, r.animal_id)),
     }));
   }
 

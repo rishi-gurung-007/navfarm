@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { and, eq, isNull, like, ne, or, sql } from 'drizzle-orm';
@@ -53,6 +54,12 @@ export class LocationTypeService {
   }
 
   async create(dto: CreateLocationTypeDto, tenantId: string, user?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, user));
+  }
+
+  private async createRecord(dto: CreateLocationTypeDto, tenantId: string, user?: any) {
     const companyId = dto.company_id || null;
     const typeCode = await this.numberSeriesService.resolveNewCode('LOCATION_TYPE', dto.type_code, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
     const [duplicate] = await this.db.select().from(schema.locationTypeMaster).where(and(

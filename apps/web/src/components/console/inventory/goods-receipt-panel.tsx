@@ -245,6 +245,9 @@ export default function GoodsReceiptPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  // The number the next receipt will get from the Goods Receipt number series. A preview: nothing is drawn
+  // until the receipt is saved, so another user saving first takes it.
+  const [previewReceiptNo, setPreviewReceiptNo] = useState("");
   const [header, setHeader] = useState<Row>({ warehouse_id: "", posting_date: "", supplier_id: "", external_reference_no: "", remarks: "" });
   const [lines, setLines] = useState<Row[]>([emptyLine()]);
   // Set only when the form was opened from Edit on a DRAFT row — drives
@@ -322,7 +325,13 @@ export default function GoodsReceiptPanel() {
     setHeader({ warehouse_id: "", posting_date: new Date().toISOString().slice(0, 10), supplier_id: "", external_reference_no: "", remarks: "" });
     setLines([emptyLine()]);
     setFormError("");
+    setPreviewReceiptNo("");
     setModalOpen(true);
+    if (companyId) {
+      api.get(`/goods-receipt/next-number?company_id=${encodeURIComponent(companyId)}`)
+        .then((r) => setPreviewReceiptNo(unwrap<Row>(r)?.receipt_no || ""))
+        .catch(() => setPreviewReceiptNo(""));
+    }
   };
 
   // DRAFT-only: fetches the full receipt (list rows carry no lines) and
@@ -635,6 +644,21 @@ export default function GoodsReceiptPanel() {
           <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <label className="nf-text-label" style={S.sub}>{t("grpColReceiptNo")}</label>
+              {(() => {
+                const shownNo = editingId ? rows.find((r) => r.receipt_id === editingId)?.receipt_no || "" : previewReceiptNo;
+                return (
+                  <input
+                    type="text"
+                    disabled
+                    value={shownNo || (editingId ? "—" : "Auto-generated on Save")}
+                    className={`${inputCls} nf-input-sm text-xs h-9 font-mono font-semibold tracking-wide cursor-not-allowed opacity-70`}
+                    style={{ ...S.input, backgroundColor: "var(--surface-raised)", color: shownNo ? "var(--text-primary)" : "var(--text-muted)" }}
+                  />
+                );
+              })()}
+            </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("grpWarehouse")} <span className="text-(--danger)">*</span></label>
               <SearchableSelect

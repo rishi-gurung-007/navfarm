@@ -2,6 +2,8 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
 import { InventoryLedgerService } from './inventory-ledger.service';
 
+const numberSeriesStub = { seriesCodeForDocument: jest.fn().mockResolvedValue('ITEM_APPLICATION'), generateNext: jest.fn().mockResolvedValue('APP-00001') } as any;
+
 describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
   const wheres: unknown[] = [];
   const results: unknown[][] = [];
@@ -34,7 +36,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
       ],
       [{ warehouse_id: 's1', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-27', qty: '3000.0000' }],
     );
-    const out = await new InventoryLedgerService(cls).getFeedStockAsOf(
+    const out = await new InventoryLedgerService(cls, numberSeriesStub).getFeedStockAsOf(
       { companyId: 'co-1', warehouseIds: ['s1'], stockDate: '2026-09-26', horizonTo: '2026-11-10' }, 'tenant-1',
     );
     expect(out).toEqual({
@@ -56,7 +58,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-1', restricted: true, companyId: 'co-1', lobId: 'lob-1' });
     results.push([], []);
-    await new InventoryLedgerService(cls).getFeedStockAsOf(
+    await new InventoryLedgerService(cls, numberSeriesStub).getFeedStockAsOf(
       { companyId: 'co-1', warehouseIds: ['s1'], stockDate: '2026-09-26', horizonTo: '2026-09-30' }, 'tenant-1',
     );
     for (const w of wheres.map(render)) {
@@ -72,7 +74,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
     const cls = transactionCls(db);
     useFarmScope(cls, { farmId: 'farm-1', restricted: false, companyId: 'co-1', lobId: null });
     results.push([], [{ warehouse_id: 'st', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '-250.0000' }]);
-    const out = await new InventoryLedgerService(cls).getFeedStockAsOf(
+    const out = await new InventoryLedgerService(cls, numberSeriesStub).getFeedStockAsOf(
       { companyId: 'co-1', warehouseIds: ['st'], stockDate: '2026-09-26', horizonTo: '2026-10-10' }, 'tenant-1',
     );
     expect(out.movements).toEqual([{ warehouse_id: 'st', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: -250 }]);
@@ -89,7 +91,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
       [{ warehouse_id: 'st', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', qty: '0.0000' }],
       [{ warehouse_id: 'st', item_id: 'i1', item_code: 'FEED-R1', uom: 'KG', posting_date: '2026-09-28', qty: '0.0000' }],
     );
-    const out = await new InventoryLedgerService(cls).getFeedStockAsOf(
+    const out = await new InventoryLedgerService(cls, numberSeriesStub).getFeedStockAsOf(
       { companyId: 'co-1', warehouseIds: ['st'], stockDate: '2026-09-26', horizonTo: '2026-10-10' }, 'tenant-1',
     );
     expect(out.movements[0].qty).toBe(0);
@@ -101,7 +103,7 @@ describe('InventoryLedgerService.getFeedStockAsOf (Plan R, D19 / Q6)', () => {
   });
 
   it('reads nothing for no locations', async () => {
-    const out = await new InventoryLedgerService(transactionCls(db)).getFeedStockAsOf(
+    const out = await new InventoryLedgerService(transactionCls(db), numberSeriesStub).getFeedStockAsOf(
       { companyId: 'co-1', warehouseIds: [], stockDate: '2026-09-26', horizonTo: '2026-09-30' }, 'tenant-1',
     );
     expect(out).toEqual({ opening: [], movements: [] });

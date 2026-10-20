@@ -198,7 +198,7 @@ describe('NumberSeriesService', () => {
 
     it('returns the next unoccupied code without writes or locks', async () => {
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'ITEM' } as any);
-      mockDbSelect.mockReturnValueOnce(returning([series])).mockReturnValueOnce(returning([{ code: 'ITM-001' }]));
+      mockDbSelect.mockReturnValueOnce(returning([series])).mockReturnValueOnce(returning([{ code: 'ITM-001' }])).mockReturnValueOnce(returning([]));
       await expect(service.previewCode({ master: 'ITEM' }, 'tenant', 'company')).resolves.toMatchObject({ preview: 'ITM-002' });
       expect(mockDbUpdate).not.toHaveBeenCalled();
       expect(mockDbInsert).not.toHaveBeenCalled();
@@ -211,11 +211,13 @@ describe('NumberSeriesService', () => {
       const taken = [{ code: 'PIG-0004' }, { code: 'PIG-2026-0001' }, { code: 'PIG-2026-0002' }];
       jest.spyOn(service, 'resolveCodeSettings').mockResolvedValue({ generated: true, allowManual: true, seriesCode: 'ANIMAL' } as any);
 
-      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken));
+      // series, then the codes sharing the stem, then the candidate PIG-… asked about on its own.
+      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken)).mockReturnValueOnce(returning([]));
       await expect(service.previewCode({ master: 'ANIMAL' } as any, 'tenant', 'company'))
         .resolves.toMatchObject({ preview: 'PIG-0005', segmentFields: ['dob'] });
 
-      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken));
+      // series, then the codes sharing the stem, then the candidate PIG-… asked about on its own.
+      mockDbSelect.mockReturnValueOnce(returning([animalSeries])).mockReturnValueOnce(returning(taken)).mockReturnValueOnce(returning([]));
       await expect(service.previewCode({ master: 'ANIMAL', record: JSON.stringify({ dob: '2026-07-30' }) } as any, 'tenant', 'company'))
         .resolves.toMatchObject({ preview: 'PIG-2026-0003', segmentFields: ['dob'] });
     });
@@ -230,7 +232,8 @@ describe('NumberSeriesService', () => {
         seq_length: 0,
         code_segments: ['breed_name'],
       }]))
-        .mockReturnValueOnce(returning([{ code: 'LARGE_WHITE' }]));
+        .mockReturnValueOnce(returning([{ code: 'LARGE_WHITE' }]))
+        .mockReturnValueOnce(returning([]));
       await expect(service.previewCode({
         master: 'BREED',
         record: JSON.stringify({ breed_name: 'Yorkshire' }),
@@ -264,7 +267,9 @@ describe('NumberSeriesService', () => {
     it('skips occupied manual identities without changing those records', async () => {
       mockLockedSelect({ id: 'series-1', document_type: 'ITEM', current_seq: 0, seq_length: 3,
         prefix: 'ITM', date_format: null, separator: '-', reset_frequency: 'NEVER', blocked: false, updated_at: new Date().toISOString() });
-      mockDbSelect.mockReturnValueOnce({ from: () => ({ where: async () => [{ code: 'ITM-001' }, { code: 'itm-002' }, { code: 'MANUAL' }] }) });
+      // Each candidate is asked about on its own: ITM-001 and ITM-002 are taken, ITM-003 is free.
+      const candidateTaken = (taken: boolean) => ({ from: () => ({ where: () => ({ limit: async () => (taken ? [{ code: 'x' }] : []) }) }) });
+      mockDbSelect.mockReturnValueOnce(candidateTaken(true)).mockReturnValueOnce(candidateTaken(true)).mockReturnValueOnce(candidateTaken(false));
       const set = jest.fn(() => ({ where: async () => ({}) }));
       mockDbUpdate.mockReturnValue({ set });
       await expect(service.generateNext('ITEM', 'tenant', 'company')).resolves.toBe('ITM-003');

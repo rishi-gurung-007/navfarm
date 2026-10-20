@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -48,6 +49,12 @@ export class FeedFormulaService {
   }
 
   async create(dto: CreateFeedFormulaDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  private async createRecord(dto: CreateFeedFormulaDto, tenantId: string, userPayload?: any) {
     if (!dto.ingredients || dto.ingredients.length === 0) {
       throw new BadRequestException('A feed formula must contain at least one ingredient.');
     }
