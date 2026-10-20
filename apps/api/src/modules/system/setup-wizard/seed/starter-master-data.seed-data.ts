@@ -92,6 +92,8 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
   // Favorable/base direction — GlPostingService.postBatchCostEntry swaps debit/credit
   // for the unfavorable case (loss on fair value, loss on disposal) automatically.
   { transaction_type: 'BIO_FAIR_VALUE', debit_account_code: '1060', credit_account_code: '4020' },
+  // A premature herd is carried in the pre-mature asset account, so its revaluation debits that, not 1060.
+  { transaction_type: 'BIO_FAIR_VALUE_PREMATURE', debit_account_code: '1050', credit_account_code: '4020' },
   { transaction_type: 'BIO_HARVEST', debit_account_code: '1030', credit_account_code: '1060' },
   { transaction_type: 'BIO_DISPOSAL_SOLD', debit_account_code: '1060', credit_account_code: '4010' },
   // A sale's proceeds: owed by the customer, out of the herd's carrying value (the gain/loss line above nets it to book value).

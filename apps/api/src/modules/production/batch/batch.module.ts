@@ -10,11 +10,13 @@ import { JournalModule } from '../../finance/journal/journal.module';
 import { NumberSeriesModule } from '../../system/number-series/number-series.module';
 import { SchedulerHeaderModule } from '../scheduler-header/scheduler-header.module';
 import { BatchDailyDataModule } from '../batch-daily-data/batch-daily-data.module';
+import { AnimalBookValueModule } from '../../inventory/bio-asset-ledger/animal-book-value.module';
 
 @Module({
   // forwardRef: BatchDailyDataModule already imports this module (for
   // addTransaction); BatchService.postBatchDay() needs the reverse edge too.
   imports: [
+    AnimalBookValueModule,
     InventoryLedgerModule,
     JournalModule,
     NumberSeriesModule,

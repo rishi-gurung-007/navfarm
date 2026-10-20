@@ -632,9 +632,9 @@ const animal: MasterDataConfig = {
     // No. of Teats stays female-only: it is a gilt-selection measure (BBP §6).
     // Parity and litter totals below stay female-only as well; they count a
     // sow's farrowings.
-    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", min: 0, editOnly: true, helpText: "Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
-    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", min: 0, editOnly: true, helpText: "Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.", section: "Bio-Asset" },
-    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
+    { key: "current_bio_asset_value", label: "Current Bio-Asset Value", type: "number", step: "0.01", min: 0, hideInForm: true, helpText: "Worked out from the animal's bio-asset ledger (acquisition + capitalised cost - amortisation +/- fair value); it cannot be typed.", section: "Bio-Asset" },
+    { key: "book_value", label: "Book Value NBV", type: "number", step: "0.01", min: 0, hideInForm: true, helpText: "Worked out from the animal's bio-asset ledger (acquisition + capitalised cost - amortisation +/- fair value); it cannot be typed.", section: "Bio-Asset" },
+    { key: "total_amortised", label: "Total Amortised", type: "number", step: "0.01", min: 0, hideInForm: true, helpText: "Worked out from the animal's bio-asset ledger; it cannot be typed.", section: "Bio-Asset" },
     { key: "amortisation_monthly", label: "Monthly Amortisation", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "residual_value", label: "Residual Value", type: "number", step: "0.01", min: 0, editOnly: true, section: "Bio-Asset" },
     { key: "disposal_date", label: "Disposal Date", type: "date", hideInForm: true, helpText: "Set via the Dispose action, not direct edit.", section: "Bio-Asset" },
@@ -2063,6 +2063,7 @@ const glMapping: MasterDataConfig = {
         { value: "BIO_TRANSFORMATION", label: "Bio-Asset — Transformation (Pre-mature → Mature)" },
         { value: "BIO_AMORTIZATION", label: "Bio-Asset — Amortization" },
         { value: "BIO_FAIR_VALUE", label: "Bio-Asset — Fair Value Adjustment" },
+        { value: "BIO_FAIR_VALUE_PREMATURE", label: "Bio-Asset — Fair Value Adjustment (Pre-mature)" },
         { value: "BIO_HARVEST", label: "Bio-Asset — Disposal (Harvest)" },
         { value: "BIO_DISPOSAL_SOLD", label: "Bio-Asset — Disposal (Sold)" },
         { value: "BIO_SALE_PROCEEDS", label: "Bio-Asset — Sale Proceeds (Receivable)" },

@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { farmScope, animalScopeConditions, batchScopeConditions, assertCompanyInScope, assertLobInScope, locationReferenceScopeConditions } from '../../../common/farm-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
@@ -15,6 +15,8 @@ import { AnimalMovementLogService } from '../animal-movement-log/animal-movement
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { BatchService } from '../../production/batch/batch.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
 import { assertStageFitsAnimal } from '../../production/stage/stage-gender';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
@@ -179,7 +181,11 @@ export class AnimalService {
     private readonly nobLobResolution: NobLobResolutionService,
     private readonly movementLog: AnimalMovementLogService,
     private readonly batchService: BatchService,
+    private readonly animalBookValue: AnimalBookValueService,
+    private readonly bioCosting: BioCostingProfileService,
   ) {}
+
+  private readonly logger = new Logger(AnimalService.name);
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -805,6 +811,15 @@ export class AnimalService {
       newValues: newAnimal,
     });
 
+    // Frozen to the central costing profile that fits her now, with the date her costing begins. No matching profile leaves her
+    // uncosted (not an error); an ambiguous setup is the costing setup's fault and must not stop a registration, so it is logged.
+    try {
+      await this.bioCosting.assignAnimal(animalId, tenantId);
+    } catch (error) {
+      if (!(error instanceof BadRequestException)) throw error;
+      this.logger.warn(`Animal ${animalCode} was registered without a costing profile: ${error.message}`);
+    }
+
     return this.findOne(animalId);
     });
   }
@@ -869,7 +884,16 @@ export class AnimalService {
     if (!animal) {
       throw new NotFoundException(`Animal with ID '${id}' not found.`);
     }
-    return animal;
+    // book_value / total_amortised / current_bio_asset_value on the row are a cache that has gone stale before;
+    // the card shows what her bio-asset ledger says (an animal the ledger has never seen keeps the column).
+    const value = await this.animalBookValue.valueOf(id);
+    if (!value.hasRows) return animal;
+    return {
+      ...animal,
+      book_value: value.bookValue.toFixed(4),
+      total_amortised: value.amortised.toFixed(4),
+      current_bio_asset_value: value.bookValue.toFixed(4),
+    };
   }
 
   async findAll(query: QueryAnimalDto, tenantId: string) {
@@ -985,9 +1009,6 @@ export class AnimalService {
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
     if (dto.total_piglets_weaned !== undefined) updates.total_piglets_weaned = dto.total_piglets_weaned;
-    if (dto.current_bio_asset_value !== undefined) updates.current_bio_asset_value = dto.current_bio_asset_value?.toString() ?? null;
-    if (dto.total_amortised !== undefined) updates.total_amortised = dto.total_amortised?.toString() ?? null;
-    if (dto.book_value !== undefined) updates.book_value = dto.book_value?.toString() ?? null;
     if (dto.residual_value !== undefined) updates.residual_value = dto.residual_value?.toString() ?? null;
     if (dto.amortisation_monthly !== undefined) updates.amortisation_monthly = dto.amortisation_monthly?.toString() ?? null;
     if (dto.productive_life_start !== undefined) updates.productive_life_start = dto.productive_life_start;
@@ -1144,7 +1165,9 @@ export class AnimalService {
       }
     }
 
-    const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
+    // Her book value is what her bio-asset ledger says, not the column (which went stale at the first feed).
+    const derived = await this.animalBookValue.valueOf(id);
+    const bookValue = derived.hasRows ? derived.bookValue : animal.book_value != null ? Number(animal.book_value) : null;
     const gainLoss = dto.disposal_value != null && bookValue != null ? dto.disposal_value - bookValue : null;
     const mappedStatus = DISPOSAL_STATUS_MAP[dto.disposal_type];
 
@@ -1214,6 +1237,7 @@ export class AnimalService {
         customer_id: dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
         created_by: userPayload?.userId || null,
       });
+      await this.animalBookValue.refreshCache([id]);
     }
 
     // Her batch follows: its head and stage counts, and the movement log saying how she left (E1/E5).

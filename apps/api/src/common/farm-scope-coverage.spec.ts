@@ -125,6 +125,7 @@ const EXEMPT: Record<string, string> = {
   // animal/batch data alongside company-level ledgers — it is SCOPED above.
   'finance/cost-center/cost-center.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/gl-account/gl-account.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/bio-costing/bio-costing-profile.controller.ts': 'Company-level finance setup (central bio-asset costing profiles), like the GL mappings it sits beside; not a farm\'s.',
   'finance/gl-mapping/gl-mapping.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
   'finance/expense/expense.controller.ts': 'Company-level finance expense documents; finance is not farm-scoped (decided 2026-09-14).',

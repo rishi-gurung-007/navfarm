@@ -855,6 +855,7 @@ export class RecordFairValueDto {
 
   @ApiProperty({ description: 'New fair value per unit', example: 28000 })
   @IsNumber()
+  @Min(0)
   @IsNotEmpty()
   fair_value_per_unit: number;
 }

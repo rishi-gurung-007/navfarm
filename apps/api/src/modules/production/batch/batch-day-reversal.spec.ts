@@ -41,6 +41,7 @@ import { BatchDayReversalService } from './batch-day-reversal.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import * as schema from '../../../core/database/schema';
 
 describe('BatchDayReversalService', () => {
@@ -77,12 +78,59 @@ describe('BatchDayReversalService', () => {
       providers: [
         BatchDayReversalService,
         { provide: ClsService, useValue: { get: (k: string) => (k === 'tenantPostingTransaction' ? true : db) } },
+        { provide: AnimalBookValueService, useValue: { valueOf: jest.fn().mockResolvedValue({ acquisition: 0, capitalised: 0, amortised: 0, fairValue: 0, exits: 0, bookValue: 0, hasRows: false }), valuesFor: jest.fn().mockResolvedValue(new Map()), refreshCache: jest.fn().mockResolvedValue(undefined) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: ledger },
         { provide: GlPostingService, useValue: gl },
       ],
     }).compile();
     service = moduleRef.get(BatchDayReversalService);
+  });
+
+  // Bio-asset costing Phase 2: a pre-mature herd's capitalised cost is on the ledger one row per animal, tied to the issue by
+  // document_line_id. Taking the day back must take each animal's own cost back out, not one row for the herd.
+  it('mirrors each animal\'s capitalised ledger row when a pre-mature bio-asset issue is reversed, and refreshes their cache', async () => {
+    queue.push(
+      [{ ...batch, costing_method: 'BIO_ASSET' }],
+      [{ stage_code: 'GESTATION' }],
+      [row({ entry_id: 'e1', animal_id: 'a1', posting_reference: 't1' }), row({ entry_id: 'e2', animal_id: 'a2', posting_reference: 't2' })],
+      [{ animal_id: 'a1', animal_code: 'P-a1', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }, { animal_id: 'a2', animal_code: 'P-a2', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }],
+      [{ transaction_id: 't1', ledger_id: 'L1' }, { transaction_id: 't2', ledger_id: 'L1' }],
+      [{ ledger_id: 'L1', transaction_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: 'G1', posting_date: '2026-10-01' }],
+      [{ nca_book_value: '10' }], // the herd's state
+      [ // the rows the issue wrote, one per animal
+        { entry_id: 'r1', animal_id: 'a1', bio_asset_item_id: 'feed', quantity: '10', cost_amount: '2.0000', cost_amount_each_unit: '0.2', posting_date: '2026-10-01' },
+        { entry_id: 'r2', animal_id: 'a2', bio_asset_item_id: 'feed', quantity: '20', cost_amount: '4.0000', cost_amount_each_unit: '0.2', posting_date: '2026-10-01' },
+      ],
+      [{ transaction_id: 't1' }, { transaction_id: 't2' }],
+    );
+
+    await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
+
+    const mirrors = inserts.filter((i) => i.table === schema.bioAssetLedger).map((i) => i.values);
+    expect(mirrors).toHaveLength(2);
+    expect(mirrors[0]).toMatchObject({ animal_id: 'a1', entry_type: 'CONSUMPTION', cost_amount: '-2', quantity: '-10', source_entry_id: 'r1' });
+    expect(mirrors[1]).toMatchObject({ animal_id: 'a2', entry_type: 'CONSUMPTION', cost_amount: '-4', quantity: '-20', source_entry_id: 'r2' });
+    expect(updates.find((u) => u.table === schema.batchBioAssetState)!.set.nca_book_value).toBe('4'); // 10 - 6
+    expect((service as any).animalBookValue.refreshCache).toHaveBeenCalledWith(['a1', 'a2']);
+  });
+
+  it('still mirrors an older issue (one batch-level row, no tie) as a single row', async () => {
+    queue.push(
+      [{ ...batch, costing_method: 'BIO_ASSET' }],
+      [{ stage_code: 'GESTATION' }],
+      [row({ entry_id: 'e1', animal_id: 'a1', posting_reference: 't1' })],
+      [{ animal_id: 'a1', animal_code: 'P-a1', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }],
+      [{ transaction_id: 't1', ledger_id: 'L1' }],
+      [{ ledger_id: 'L1', transaction_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: null, posting_date: '2026-10-01' }],
+      [{ nca_book_value: '10' }],
+      [{ transaction_id: 't1' }],
+    );
+    await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
+    const mirrors = inserts.filter((i) => i.table === schema.bioAssetLedger).map((i) => i.values);
+    expect(mirrors).toHaveLength(1);
+    expect(mirrors[0]).toMatchObject({ entry_type: 'CONSUMPTION', cost_amount: '-6' });
+    expect(mirrors[0].animal_id).toBeUndefined();
   });
 
   it('reverses a consumption shared by two animals once, marks both transactions and puts both entries back to drafts', async () => {

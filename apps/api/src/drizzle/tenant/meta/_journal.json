@@ -1450,6 +1450,20 @@
       "when": 1792000000075,
       "tag": "0207_no_series_reset_period",
       "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "5",
+      "when": 1792000000076,
+      "tag": "0208_bio_costing_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "5",
+      "when": 1792000000077,
+      "tag": "0209_animal_costing_profile",
+      "breakpoints": true
     }
   ]
 }

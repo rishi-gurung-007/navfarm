@@ -292,23 +292,8 @@ export class UpdateAnimalDto {
   @IsOptional()
   total_piglets_weaned?: number;
 
-  @ApiProperty({ description: 'Not ledger-derived yet — settable directly until per-animal bio-asset ledger integration exists', required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  current_bio_asset_value?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  total_amortised?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  book_value?: number;
+  // current_bio_asset_value, total_amortised and book_value are not accepted here: they are derived from the
+  // animal's bio-asset ledger (AnimalBookValueService), and a typed value would part them from it.
 
   @ApiProperty({ required: false })
   @IsNumber()

@@ -271,6 +271,30 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/probe-farm-scope-users.ts"
         }
       },
+      "db-seed-bio-costing-profiles": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-bio-costing-profiles.ts"
+        }
+      },
+      "db-check-bio-asset-reconciliation": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/check-bio-asset-reconciliation.ts"
+        }
+      },
+      "db-align-bio-fair-value-premature": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/align-bio-fair-value-premature.ts"
+        }
+      },
       "db-repair-demo-gl-dimensions": {
         "executor": "nx:run-commands",
         "cache": false,

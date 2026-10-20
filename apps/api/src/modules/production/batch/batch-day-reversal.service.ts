@@ -8,6 +8,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { classifyPostedRow, ReversibleKind } from './batch-day-reversal';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -40,6 +41,7 @@ export class BatchDayReversalService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly auditService: AuditLogService,
+    private readonly animalBookValue: AnimalBookValueService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -241,14 +243,39 @@ export class BatchDayReversalService {
           .set({ nca_book_value: Math.max(0, Number(state.nca_book_value) - capitalised).toString(), updated_at: toMysqlTimestamp() })
           .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
       }
-      await this.db.insert(schema.bioAssetLedger).values({
-        entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
-        bio_asset_item_id: original.item_id ?? '', entry_type: 'CONSUMPTION', document_no: batch.batch_no,
-        batch_id: batch.batch_id, batch_no: batch.batch_no, posting_date: original.posting_date, stage: 'PREMATURE',
-        quantity: (-Math.abs(Number(original.quantity))).toString(), cost_amount: (-capitalised).toString(),
-        cost_amount_each_unit: original.rate, costing_method: 'COST_ACCUMULATION',
-        nob_id: batch.nob_id, lob_id: batch.lob_id, created_by: userId || null,
-      });
+      // The capitalised cost went onto the ledger one row per share, each with its animal, and tied to this issue by
+      // document_line_id: mirror those rows, so every animal's own cost comes back out. An issue made before that
+      // (one batch-level row, no tie) is mirrored the old way, as one row.
+      const originals = original.document_line_id
+        ? await this.db.select().from(schema.bioAssetLedger).where(and(
+            eq(schema.bioAssetLedger.document_line_id, original.document_line_id),
+            eq(schema.bioAssetLedger.entry_type, 'CONSUMPTION'),
+            eq(schema.bioAssetLedger.batch_id, batch.batch_id),
+          ))
+        : [];
+      if (originals.length) {
+        for (const o of originals) {
+          await this.db.insert(schema.bioAssetLedger).values({
+            entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
+            bio_asset_item_id: o.bio_asset_item_id, animal_id: o.animal_id, entry_type: 'CONSUMPTION', document_no: batch.batch_no,
+            source_entry_id: o.entry_id, batch_id: batch.batch_id, batch_no: batch.batch_no, posting_date: o.posting_date, stage: 'PREMATURE',
+            quantity: (-Math.abs(Number(o.quantity))).toString(), cost_amount: (-Math.abs(Number(o.cost_amount))).toString(),
+            cost_amount_each_unit: o.cost_amount_each_unit, costing_method: 'COST_ACCUMULATION',
+            nob_id: batch.nob_id, lob_id: batch.lob_id, created_by: userId || null,
+          });
+        }
+        const animalIds = [...new Set(originals.map((o) => o.animal_id).filter((x): x is string => !!x))];
+        if (animalIds.length) await this.animalBookValue.refreshCache(animalIds);
+      } else {
+        await this.db.insert(schema.bioAssetLedger).values({
+          entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
+          bio_asset_item_id: original.item_id ?? '', entry_type: 'CONSUMPTION', document_no: batch.batch_no,
+          batch_id: batch.batch_id, batch_no: batch.batch_no, posting_date: original.posting_date, stage: 'PREMATURE',
+          quantity: (-Math.abs(Number(original.quantity))).toString(), cost_amount: (-capitalised).toString(),
+          cost_amount_each_unit: original.rate, costing_method: 'COST_ACCUMULATION',
+          nob_id: batch.nob_id, lob_id: batch.lob_id, created_by: userId || null,
+        });
+      }
     }
   }
 

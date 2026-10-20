@@ -4037,6 +4037,70 @@ export const batchBioAssetStateRelations = relations(batchBioAssetState, ({ one 
   batch: one(batchHeader, { fields: [batchBioAssetState.batch_id], references: [batchHeader.batch_id] }),
 }));
 
+// Central bio-asset costing profile (0208, bio-asset costing Phase 3). One row says how an animal is costed: by
+// amortisation or by fair value, from which age, over what life, to what residual, how often, and to which GL accounts.
+// The scope columns (item / breed / gender / origin) choose which animals it applies to; the most specific active profile wins.
+// Terms lock once an animal is costed by it; a change is a new version (supersedes_profile_id), never an edit.
+export const bioCostingProfile = mysqlTable('bio_costing_profile', {
+  profile_id: varchar('profile_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  profile_code: varchar('profile_code', { length: 40 }).notNull(),
+  name: varchar('name', { length: 150 }).notNull(),
+  item_id: varchar('item_id', { length: 36 }).references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  breed_id: varchar('breed_id', { length: 36 }).references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+  gender: char('gender', { length: 1 }), // F, M; null = either
+  origin: varchar('origin', { length: 10 }), // IMPORTED, LOCAL; null = either
+  costing_method: varchar('costing_method', { length: 20 }).notNull(), // AMORTIZATION, FAIR_VALUE
+  start_age_weeks: int('start_age_weeks').notNull(),
+  useful_life_months: int('useful_life_months'),
+  residual_rule: varchar('residual_rule', { length: 20 }).default('NONE').notNull(), // NONE, FIXED, WEIGHT_X_PRICE
+  residual_fixed_amount: decimal('residual_fixed_amount', { precision: 18, scale: 4 }),
+  residual_weight_kg: decimal('residual_weight_kg', { precision: 10, scale: 3 }),
+  residual_price_per_kg: decimal('residual_price_per_kg', { precision: 18, scale: 6 }),
+  residual_applies_gender: char('residual_applies_gender', { length: 1 }), // F, M; null = both
+  run_frequency: varchar('run_frequency', { length: 10 }).default('MONTHLY').notNull(), // WEEKLY, MONTHLY, QUARTERLY, YEARLY
+  day_basis: varchar('day_basis', { length: 20 }).default('FREQUENCY_DAYS').notNull(), // FREQUENCY_DAYS (7/30/90/360), ACTUAL
+  tracking: varchar('tracking', { length: 12 }).default('INDIVIDUAL').notNull(), // INDIVIDUAL, BATCH
+  auto_post: boolean('auto_post').default(false).notNull(),
+  acquisition_gl_id: varchar('acquisition_gl_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  accum_amort_gl_id: varchar('accum_amort_gl_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  amort_expense_gl_id: varchar('amort_expense_gl_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  fv_gain_loss_gl_id: varchar('fv_gain_loss_gl_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  writeoff_gl_id: varchar('writeoff_gl_id', { length: 36 }).references(() => glAccountMaster.gl_account_id, { onDelete: 'restrict' }),
+  effective_from: date('effective_from', { mode: 'string' }).notNull(),
+  status: varchar('status', { length: 12 }).default('DRAFT').notNull(), // DRAFT, ACTIVE, INACTIVE, SUPERSEDED
+  // Set only while ACTIVE (company|item|breed|gender|origin), so the database refuses a second active profile for the same scope.
+  active_scope_key: varchar('active_scope_key', { length: 200 }),
+  supersedes_profile_id: varchar('supersedes_profile_id', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqCode: uniqueIndex('uq_bio_costing_profile_code').on(table.tenant_id, table.company_id, table.profile_code),
+  uqActiveScope: uniqueIndex('uq_bio_costing_profile_active_scope').on(table.active_scope_key),
+  idxStatus: index('idx_bio_costing_profile_status').on(table.company_id, table.status),
+}));
+
+// Fair-value inputs, dated and never locked: a price per kg moves, the amortisation terms must not. The run takes, for an
+// animal's farm and age, the latest row with effective_from on or before the period end.
+export const bioCostingProfileRate = mysqlTable('bio_costing_profile_rate', {
+  rate_id: varchar('rate_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  profile_id: varchar('profile_id', { length: 36 }).notNull().references(() => bioCostingProfile.profile_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }), // null = every farm
+  age_week_from: int('age_week_from').default(0).notNull(),
+  effective_from: date('effective_from', { mode: 'string' }).notNull(),
+  expected_weight_kg: decimal('expected_weight_kg', { precision: 10, scale: 3 }).notNull(),
+  price_per_kg: decimal('price_per_kg', { precision: 18, scale: 6 }).notNull(),
+  cdm_based: boolean('cdm_based').default(false).notNull(),
+  costs_to_sell_pct: decimal('costs_to_sell_pct', { precision: 5, scale: 2 }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  idxProfile: index('idx_bio_costing_profile_rate_profile').on(table.profile_id, table.effective_from),
+}));
+
 export const goodsReceipt = mysqlTable('goods_receipt', {
   receipt_id: varchar('receipt_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
@@ -4130,6 +4194,10 @@ export const animalRegister = mysqlTable('animal_register', {
   amortisation_monthly: decimal('amortisation_monthly', { precision: 18, scale: 4 }),
   productive_life_start: date('productive_life_start', { mode: 'string' }),
   expected_cull_date: date('expected_cull_date', { mode: 'string' }),
+  // 0209 (bio-asset costing, Phase 3): the central costing profile this animal is costed by, frozen at first resolution,
+  // and the date its costing begins (the later of her entry date and her birth date plus the profile's start age).
+  costing_profile_id: varchar('costing_profile_id', { length: 36 }),
+  costing_start_date: date('costing_start_date', { mode: 'string' }),
   // Master Template parity (P2) — BBP §6: no_of_teats < 15 is a hard block on gilt
   // selection regardless of TSI score, enforced in animal.service.ts.
   no_of_teats: int('no_of_teats'),

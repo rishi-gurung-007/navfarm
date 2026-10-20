@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AnimalService, resolveAgeAtEntryWeeks } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -90,6 +92,8 @@ describe('AnimalService', () => {
       providers: [
         AnimalService,
         { provide: ClsService, useValue: cls },
+        { provide: AnimalBookValueService, useValue: { valueOf: jest.fn().mockResolvedValue({ acquisition: 0, capitalised: 0, amortised: 0, fairValue: 0, exits: 0, bookValue: 0, hasRows: false }), valuesFor: jest.fn().mockResolvedValue(new Map()), refreshCache: jest.fn().mockResolvedValue(undefined) } },
+        { provide: BioCostingProfileService, useValue: { assignAnimal: jest.fn().mockResolvedValue({ assigned: false, reason: 'NO_MATCHING_PROFILE' }) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
@@ -376,6 +380,26 @@ describe('AnimalService', () => {
       await expect(service.update('a-1', { current_batch_id: null } as any, 'tenant-123'))
         .rejects.toThrow(/transfer/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  // Bio-asset costing Phase 2: the card shows what the animal's own bio-asset ledger says, not the register's cache.
+  describe('findOne — book value from the ledger', () => {
+    const row = { animal_id: 'a-1', book_value: '300.0000', total_amortised: '0.0000', current_bio_asset_value: '300.0000' };
+
+    it('overlays the ledger-derived book value, accumulated amortisation and current value on the cached columns', async () => {
+      mockDbSelect.mockReturnValueOnce(found(row));
+      (module.get(AnimalBookValueService) as any).valueOf = jest.fn().mockResolvedValue({
+        acquisition: 300, capitalised: 97.5, amortised: 20, fairValue: 0, exits: 0, bookValue: 377.5, hasRows: true,
+      });
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({ book_value: '377.5000', total_amortised: '20.0000', current_bio_asset_value: '377.5000' });
+    });
+
+    it('keeps the column for an animal the ledger has never seen, rather than showing nil', async () => {
+      mockDbSelect.mockReturnValueOnce(found(row));
+      const animal = await service.findOne('a-1');
+      expect(animal.book_value).toBe('300.0000');
     });
   });
 

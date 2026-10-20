@@ -7,6 +7,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
+import { assertPostingPeriodOpen } from '../../../common/period-close';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, like, isNull, isNotNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
 import { masterScopeConditions } from '../../../common/master-data-scope';
@@ -102,6 +104,7 @@ export class BatchService {
     // itself — see the `import type` comment above.
     @Inject('BATCH_DAILY_DATA_POSTER')
     private readonly batchDailyDataService: BatchDailyDataService,
+    private readonly animalBookValue: AnimalBookValueService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -2068,6 +2071,24 @@ export class BatchService {
       const stage = ['GESTATION', 'DRY_SOW_GESTATION', 'LACTATION'].includes(batch.current_stage_code || '')
         ? 'MATURE'
         : 'PREMATURE';
+      // A mature herd's opening carrying value is what its bio-asset ledger says it is worth. It used to be
+      // heads x 28000, a figure from the demo seed. With nothing on the ledger there is no honest value to open
+      // at, so the herd is refused rather than given one.
+      let openingValue = '0.0000';
+      if (stage === 'MATURE') {
+        const [ledgerValue] = await this.db
+          .select({ total: sql<string>`COALESCE(SUM(${schema.bioAssetLedger.cost_amount}), 0)` })
+          .from(schema.bioAssetLedger)
+          .where(eq(schema.bioAssetLedger.batch_id, id));
+        const derived = Number(ledgerValue?.total ?? 0);
+        if (!(derived > 0)) {
+          throw new BadRequestException(
+            `Batch ${batch.batch_no} has no carrying value on its bio-asset ledger, so its mature herd cannot be opened. ` +
+              'Record the acquisition (or the opening value) for this batch first.',
+          );
+        }
+        openingValue = derived.toFixed(4);
+      }
       await this.db.insert(schema.batchBioAssetState).values({
         state_id: stateId,
         batch_id: id,
@@ -2076,7 +2097,7 @@ export class BatchService {
         // figure re-created a herd that had left — a sow group emptied by transfer came back at 8 head the
         // first time a late consumption touched it, and so never read as empty again.
         current_quantity: (batch.closing_quantity ?? batch.opening_quantity)?.toString() || '1',
-        nca_book_value: stage === 'MATURE' ? (Number(batch.opening_quantity || 1) * 28000).toString() : '0.0000',
+        nca_book_value: openingValue,
       });
       [bioState] = await this.db
         .select()
@@ -2153,26 +2174,10 @@ export class BatchService {
         .update(schema.batchBioAssetState)
         .set({ nca_book_value: (Number(bio.nca_book_value) + capitalized).toString(), updated_at: toMysqlTimestamp() })
         .where(eq(schema.batchBioAssetState.batch_id, id));
-      await this.db.insert(schema.bioAssetLedger).values({
-        entry_id: randomUUID(),
-        tenant_id: tenantId,
-        company_id: batch.company_id,
-        bio_asset_item_id: params.item_id,
-        entry_type: 'CONSUMPTION',
-        document_no: batch.batch_no,
-        batch_id: id,
-        batch_no: batch.batch_no,
-        posting_date: params.transaction_date,
-        stage: 'PREMATURE',
-        quantity: total.toString(),
-        cost_amount: capitalized.toString(),
-        cost_amount_each_unit: rate?.toString() || null,
-        costing_method: 'COST_ACCUMULATION',
-        nob_id: batch.nob_id,
-        lob_id: batch.lob_id,
-        created_by: userPayload?.userId || null,
-      });
     }
+    // The capitalised cost is written to the bio-asset ledger one row per share below, each carrying its animal, so
+    // an animal's own cost is on her ledger (it was one batch-level row, and her book value could not be derived).
+    const capitalising = isBioAsset && bio?.stage === 'PREMATURE';
 
     // Each animal's share of the entry: its quantity, and that fraction of the cost (the last takes the rounding).
     const transactions: Array<{ transaction_id: string; animal_id?: string; quantity: number; amount: number }> = [];
@@ -2198,6 +2203,30 @@ export class BatchService {
         animal_id: share.animal_id || null,
         created_by: userPayload?.userId || null,
       });
+      if (capitalising) {
+        await this.db.insert(schema.bioAssetLedger).values({
+          entry_id: randomUUID(),
+          tenant_id: tenantId,
+          company_id: batch.company_id,
+          bio_asset_item_id: params.item_id,
+          animal_id: share.animal_id || null,
+          entry_type: 'CONSUMPTION',
+          document_no: batch.batch_no,
+          // The issue this share belongs to, so a reversal of the day can find and mirror exactly these rows.
+          document_line_id: groupId,
+          batch_id: id,
+          batch_no: batch.batch_no,
+          posting_date: params.transaction_date,
+          stage: 'PREMATURE',
+          quantity: share.quantity.toString(),
+          cost_amount: Math.abs(shareAmount).toString(),
+          cost_amount_each_unit: rate?.toString() || null,
+          costing_method: 'COST_ACCUMULATION',
+          nob_id: batch.nob_id,
+          lob_id: batch.lob_id,
+          created_by: userPayload?.userId || null,
+        });
+      }
       await this.evaluateKpi(batch, {
         transaction_id: transactionId,
         transaction_date: params.transaction_date,
@@ -2216,6 +2245,10 @@ export class BatchService {
         newValues: { batch_id: id, item_id: params.item_id, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount, ledger_id: ledgerEntry.ledger_id },
       });
       transactions.push({ transaction_id: transactionId, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount });
+    }
+    if (capitalising) {
+      const animalIds = params.shares.map((x) => x.animal_id).filter((x): x is string => !!x);
+      if (animalIds.length) await this.animalBookValue.refreshCache(animalIds);
     }
     return { ledgerEntry, transactions };
   }
@@ -2544,7 +2577,11 @@ export class BatchService {
       // bio-asset ledger, whatever the batch's costing: what AnimalService.dispose() has always written for a
       // DIED animal. A bio-asset batch's row above is something else — her share of the costs the batch has
       // accumulated — and used to be the only write-off, so a dead sow kept her registered value (F5).
-      const bookValue = animal.book_value != null ? Number(animal.book_value) : null;
+      // ONE write-off, her whole book value as her own ledger derives it (acquisition + capitalised cost - amortisation
+      // +/- fair value), so her ledger sums to nil after the death. The register column is only a cache and is read
+      // here only for an animal whose ledger has no rows yet.
+      const derived = await this.animalBookValue.valueOf(animal.animal_id);
+      const bookValue = derived.hasRows ? derived.bookValue : animal.book_value != null ? Number(animal.book_value) : null;
       if (bookValue != null) {
         await this.db.insert(schema.bioAssetLedger).values({
           entry_id: randomUUID(),
@@ -2556,6 +2593,9 @@ export class BatchService {
           document_type: 'MORTALITY',
           uom: 'HEAD',
           document_no: animal.animal_code,
+          // The batch she died in, so the batch's own ledger view still shows the death (the batch-level row that did is gone).
+          batch_id: batch.batch_id,
+          batch_no: batch.batch_no,
           posting_date: dto.transaction_date,
           stage: animal.current_stage_id || null,
           status: 'DEAD',
@@ -2567,6 +2607,7 @@ export class BatchService {
           lob_id: animal.lob_id,
           created_by: userPayload?.userId || null,
         });
+        await this.animalBookValue.refreshCache([animal.animal_id]);
       }
     }
 
@@ -2762,6 +2803,8 @@ export class BatchService {
           tenant_id: tenantId,
           company_id: batch.company_id,
           bio_asset_item_id: dto.item_id,
+          // The animal it was fed to, so the cost is on her own ledger (it was a batch-level row only).
+          animal_id: dto.animal_id || null,
           entry_type: 'CONSUMPTION',
           document_no: batch.batch_no,
           batch_id: id,
@@ -2776,6 +2819,7 @@ export class BatchService {
           lob_id: batch.lob_id,
           created_by: userPayload?.userId || null,
         });
+        if (dto.animal_id) await this.animalBookValue.refreshCache([dto.animal_id]);
       }
     } else if (dto.transaction_type === 'OUTPUT') {
       if (!dto.item_id || !dto.quantity || !dto.uom) {
@@ -2939,6 +2983,7 @@ export class BatchService {
         );
       }
       if (isBioAsset && bio) {
+        await this.assertBioPeriodOpen(batch, String(dto.transaction_date).slice(0, 10), tenantId);
         const currentQty =
           Number(bio.current_quantity) > 0
             ? Number(bio.current_quantity)
@@ -2950,9 +2995,28 @@ export class BatchService {
             `Cannot record mortality of ${dto.quantity} — only ${currentQty} remain in the herd.`,
           );
         }
-        const perUnitNca =
+        let perUnitNca =
           currentQty > 0 ? Number(bio.nca_book_value) / currentQty : 0;
-        const nbvShare = perUnitNca * dto.quantity;
+        let nbvShare = perUnitNca * dto.quantity;
+        // A named animal takes her OWN capitalised cost out of the herd (and the GL), not the herd's per-head
+        // average: the average left the dead animal's feed with the animals still alive. That is only knowable
+        // where the batch's capitalised cost sits on animals' ledgers; a batch whose cost is all on batch-level
+        // rows (written before the cost carried its animal) still uses the average.
+        if (dto.animal_id) {
+          const [animalLevel] = await this.db
+            .select({ n: sql<string>`COUNT(*)` })
+            .from(schema.bioAssetLedger)
+            .where(and(
+              eq(schema.bioAssetLedger.batch_id, id),
+              eq(schema.bioAssetLedger.entry_type, 'CONSUMPTION'),
+              isNotNull(schema.bioAssetLedger.animal_id),
+            ));
+          if (Number(animalLevel?.n ?? 0) > 0) {
+            const own = await this.animalBookValue.valueOf(dto.animal_id);
+            nbvShare = Math.min(Math.max(0, own.capitalised), Number(bio.nca_book_value));
+            perUnitNca = nbvShare / dto.quantity;
+          }
+        }
         rate = perUnitNca;
         amount = -nbvShare;
         // A herd carried at nil (the piglets of a farrowing) loses nothing to journal.
@@ -2994,7 +3058,10 @@ export class BatchService {
             updated_at: toMysqlTimestamp(),
           })
           .where(eq(schema.batchHeader.batch_id, id));
-        if (bioAssetSubjectItemId) {
+        // A named animal's ledger write-off is ONE row, her whole derived book value, written with the register flip
+        // (applyMortalityEffects). The batch-level row below used to be written as well, also carrying her id, so a
+        // death left a second, smaller row on her ledger and her value never reached nil.
+        if (bioAssetSubjectItemId && !dto.animal_id) {
           // The lot the head came in as (a farrowing's piglet lot, say), so a death can be tied to it.
           const [acquired] = dto.animal_id
             ? []
@@ -3112,6 +3179,7 @@ export class BatchService {
             tenant_id: tenantId,
             company_id: batch.company_id,
             bio_asset_item_id: bioAssetSubjectItemId,
+            animal_id: dto.animal_id || null,
             entry_type: 'OVERHEAD_COST',
             document_no: batch.batch_no,
             batch_id: id,
@@ -3125,6 +3193,7 @@ export class BatchService {
             lob_id: batch.lob_id,
             created_by: userPayload?.userId || null,
           });
+          if (dto.animal_id) await this.animalBookValue.refreshCache([dto.animal_id]);
         }
       }
     }
@@ -5781,6 +5850,16 @@ export class BatchService {
     }
   }
 
+  /** A bio-asset posting dated inside a CLOSED reporting period is refused, as every other posting is. */
+  private async assertBioPeriodOpen(batch: { company_id: string }, postingDate: string, tenantId: string) {
+    await assertPostingPeriodOpen(this.db, { tenantId, companyId: batch.company_id, postingDate });
+  }
+
+  /** Calendar months from the month of `from` to the month of `to` (YYYY-MM-DD both); 0 inside the same month. */
+  private monthsBetween(from: string, to: string): number {
+    return (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + (Number(to.slice(5, 7)) - Number(from.slice(5, 7)));
+  }
+
   /** PREMATURE → MATURE: reclassifies the NCA and sets up the amortization schedule. */
   async matureBioAsset(
     id: string,
@@ -5831,6 +5910,7 @@ export class BatchService {
     }
 
     const maturedAt = toMysqlTimestamp().slice(0, 10);
+    await this.assertBioPeriodOpen(batch, maturedAt, tenantId);
     await this.glPostingService.postBatchCostEntry({
       tenantId,
       companyId: batch.company_id,
@@ -5911,6 +5991,23 @@ export class BatchService {
       );
     }
 
+    const postingDay = dto.posting_date.slice(0, 10);
+    await this.assertBioPeriodOpen(batch, postingDay, tenantId);
+    // An amortization run belongs to the life of the herd: not before it matured, and not past its useful life.
+    // (JE-000014 in nf_devco was dated two months before its batch matured.)
+    const maturedOn = bioState.matured_at ? String(bioState.matured_at).slice(0, 10) : null;
+    if (maturedOn && postingDay < maturedOn) {
+      throw new BadRequestException(
+        `Amortization cannot be dated ${postingDay} — the batch matured on ${maturedOn}.`,
+      );
+    }
+    const lifeMonths = bioState.productive_life_months;
+    if (maturedOn && lifeMonths && this.monthsBetween(maturedOn, postingDay) >= lifeMonths) {
+      throw new BadRequestException(
+        `The useful life of ${lifeMonths} months from ${maturedOn} is complete — nothing more to amortize.`,
+      );
+    }
+
     const period = dto.posting_date.slice(0, 7); // YYYY-MM
     const existingEntries = await this.db
       .select()
@@ -5928,7 +6025,21 @@ export class BatchService {
     }
 
     const currentQty = Number(bioState.current_quantity);
-    const amount = Number(bioState.monthly_amortization_rate) * currentQty;
+    // The charge never takes the herd below its residual value, and the journal, the ledger row and the herd's
+    // carrying value all use this one figure. The carrying value used to be floored at 0 while the journal still
+    // posted the full charge, so the three could part.
+    // (A residual below zero, as one batch in nf_devco carries, is read as none: it must not raise the room.)
+    const residualTotal = Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
+    const room = Math.max(0, Number(bioState.nca_book_value) - residualTotal);
+    if (room < 0.005) {
+      throw new BadRequestException(
+        'Nothing to amortize — the carrying value is already at the residual value.',
+      );
+    }
+    const amount = Math.round(Math.min(Number(bioState.monthly_amortization_rate) * currentQty, room) * 1e4) / 1e4;
+    if (amount < 0.005) {
+      throw new BadRequestException('The amortization for this period is nil.');
+    }
 
     await this.glPostingService.postBatchCostEntry({
       tenantId,
@@ -5944,7 +6055,7 @@ export class BatchService {
       userId: userPayload?.userId,
     });
 
-    const newNca = Math.max(0, Number(bioState.nca_book_value) - amount);
+    const newNca = Math.round((Number(bioState.nca_book_value) - amount) * 1e4) / 1e4;
     await this.db
       .update(schema.batchBioAssetState)
       .set({
@@ -5991,8 +6102,13 @@ export class BatchService {
     if (currentQty <= 0) {
       throw new BadRequestException('No animals remain in this herd.');
     }
+    if (!(dto.fair_value_per_unit >= 0)) {
+      throw new BadRequestException('The fair value per unit cannot be negative.');
+    }
+    const postingDay = dto.posting_date.slice(0, 10);
+    await this.assertBioPeriodOpen(batch, postingDay, tenantId);
     const currentPerUnit = Number(bioState.nca_book_value) / currentQty;
-    const gainLoss = (dto.fair_value_per_unit - currentPerUnit) * currentQty;
+    const gainLoss = Math.round((dto.fair_value_per_unit - currentPerUnit) * currentQty * 1e4) / 1e4;
 
     if (Math.abs(gainLoss) < 0.005) {
       return this.findOne(id);
@@ -6001,7 +6117,9 @@ export class BatchService {
     await this.glPostingService.postBatchCostEntry({
       tenantId,
       companyId: batch.company_id,
-      transactionType: 'BIO_FAIR_VALUE',
+      // A premature herd's value sits in the pre-mature asset account, so its revaluation posts there, not to
+      // the mature account (it used to debit the mature account whatever the stage).
+      transactionType: bioState.stage === 'PREMATURE' ? 'BIO_FAIR_VALUE_PREMATURE' : 'BIO_FAIR_VALUE',
       amount: Math.abs(gainLoss),
       documentNo: batch.batch_no,
       postingDate: dto.posting_date,
@@ -6013,11 +6131,27 @@ export class BatchService {
       reverseDirection: gainLoss < 0,
     });
 
-    const newNca = Math.max(0, Number(bioState.nca_book_value) + gainLoss);
+    // The herd now stands at fair value x head; journal, ledger and carrying value agree (no floor to part them).
+    const newNca = Math.round((Number(bioState.nca_book_value) + gainLoss) * 1e4) / 1e4;
+    // A mature herd's monthly charge was fixed from the old cost basis. Re-spread what is left above residual over
+    // the amortization runs that remain, so the next charge follows the new carrying value.
+    let newRate: string | undefined;
+    if (bioState.stage === 'MATURE' && bioState.monthly_amortization_rate != null && bioState.productive_life_months) {
+      const [done] = await this.db
+        .select({ runs: sql<string>`COUNT(*)` })
+        .from(schema.bioAssetLedger)
+        .where(and(eq(schema.bioAssetLedger.batch_id, id), eq(schema.bioAssetLedger.entry_type, 'AMORTIZATION')));
+      const remainingRuns = bioState.productive_life_months - Number(done?.runs ?? 0);
+      const residualTotal = Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
+      newRate = remainingRuns > 0
+        ? (Math.max(0, newNca - residualTotal) / remainingRuns / currentQty).toFixed(6)
+        : '0.000000';
+    }
     await this.db
       .update(schema.batchBioAssetState)
       .set({
         nca_book_value: newNca.toString(),
+        ...(newRate !== undefined ? { monthly_amortization_rate: newRate } : {}),
         updated_at: toMysqlTimestamp(),
       })
       .where(eq(schema.batchBioAssetState.batch_id, id));
@@ -6057,6 +6191,7 @@ export class BatchService {
     this.assertBioAsset(batch, 'Disposal');
     const bioState = await this.getBioAssetState(id);
 
+    await this.assertBioPeriodOpen(batch, dto.posting_date.slice(0, 10), tenantId);
     const currentQty = Number(bioState.current_quantity);
     if (dto.quantity <= 0 || dto.quantity > currentQty) {
       throw new BadRequestException(
