@@ -107,7 +107,7 @@ export class FarrowingReportService {
     const candidates = farmBatches.map((b) => ({ batch_id: b.batch_id, first_service: firstServices.get(b.batch_id) ?? null }));
     const priorDateTo = minusOneYear(query.dateTo);
 
-    const targetsByBreed = await this.targetsByBreed(tenantId, companyId, query.farmId, query.dateFrom, query.dateTo, selected.map((b) => b.breed_id));
+    const targetsByBreed = await this.targetsByBreed(tenantId, farm.company_id, query.farmId, query.dateFrom, query.dateTo, selected.map((b) => b.breed_id));
 
     const rows: FarrowingReportRow[] = [];
     for (const batch of selected) {
@@ -421,7 +421,8 @@ export class FarrowingReportService {
       or(isNull(l.effective_from), lte(l.effective_from, to)) as SQL,
       or(isNull(l.effective_to), gte(l.effective_to, from)) as SQL,
     ];
-    if (companyId) conditions.push(or(isNull(l.company_id), eq(l.company_id, companyId)) as SQL);
+    // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
+    conditions.push(companyId ? eq(l.company_id, companyId) : isNull(l.company_id));
     const rows = await this.db
       .select({ breed_id: l.breed_id, farm_id: l.farm_id, kpi_thresholds: l.kpi_thresholds })
       .from(l)

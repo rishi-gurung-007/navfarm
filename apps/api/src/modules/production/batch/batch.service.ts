@@ -1513,7 +1513,7 @@ export class BatchService {
           eq(schema.stageMaster.is_active, true),
           isNull(schema.stageMaster.deleted_at),
           batch.company_id
-            ? or(eq(schema.stageMaster.company_id, batch.company_id), isNull(schema.stageMaster.company_id))
+            ? eq(schema.stageMaster.company_id, batch.company_id)
             : undefined,
         ),
       )

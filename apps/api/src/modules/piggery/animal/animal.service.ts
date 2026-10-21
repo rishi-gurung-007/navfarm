@@ -237,7 +237,7 @@ export class AnimalService {
     return this.db.select().from(schema.breedMaster).where(and(
       eq(schema.breedMaster.breed_id, breedId),
       eq(schema.breedMaster.tenant_id, tenantId),
-      or(eq(schema.breedMaster.company_id, companyId), isNull(schema.breedMaster.company_id)),
+      eq(schema.breedMaster.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     ));
   }
 

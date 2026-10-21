@@ -1326,20 +1326,8 @@ export class NumberSeriesService {
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
 
     if (companyId) {
-      // Check if this company has its own series (or check if any exist with this company_id)
-      const [companyCount] = await this.db
-        .select({ total: count() })
-        .from(schema.noSeries)
-        .where(and(
-          eq(schema.noSeries.company_id, companyId),
-          tenantId ? eq(schema.noSeries.tenant_id, tenantId) : undefined!,
-        ));
-      if (Number(companyCount?.total ?? 0) > 0) {
-        conditions.push(eq(schema.noSeries.company_id, companyId));
-      } else {
-        // Fall back to tenant-level templates if company hasn't copied/created any yet
-        conditions.push(isNull(schema.noSeries.company_id));
-      }
+      // A company lists only its own series (20 Oct): no tenant-level fallback.
+      conditions.push(eq(schema.noSeries.company_id, companyId));
     } else {
       conditions.push(isNull(schema.noSeries.company_id));
     }

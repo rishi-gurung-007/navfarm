@@ -2471,7 +2471,7 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.stageMaster.tenant_id, tenantId),
-          or(isNull(schema.stageMaster.company_id), eq(schema.stageMaster.company_id, farm.companyId)),
+          eq(schema.stageMaster.company_id, farm.companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           inArray(schema.stageMaster.lob_id, lobIds),
           isNull(schema.stageMaster.deleted_at),
         ),
@@ -2518,7 +2518,7 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.breedLifecycleStages.tenant_id, tenantId),
-          or(isNull(schema.breedLifecycleStages.company_id), eq(schema.breedLifecycleStages.company_id, companyId)),
+          eq(schema.breedLifecycleStages.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           // Default rows (no farm) and this farm's overrides only (Master Setup r30/r39).
           farmId ? or(isNull(schema.breedLifecycleStages.farm_id), eq(schema.breedLifecycleStages.farm_id, farmId)) : isNull(schema.breedLifecycleStages.farm_id),
           inArray(schema.breedLifecycleStages.breed_id, breedIds),

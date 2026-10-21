@@ -34,7 +34,7 @@ function databaseWithAnswers(...answers: unknown[][]) {
 }
 
 describe('CurrencyService.currentRate', () => {
-  it('prefers company-scoped data, then newest rate date and created-at tie-break', async () => {
+  it('uses only the company\'s own rates, newest rate date then created-at — never a tenant-level one (20 Oct)', async () => {
     const { db } = databaseWithRows([
       { rate_id: 'legacy-newer', company_id: null, rate: '99', rate_date: '2026-10-01', created_at: '2026-10-01 12:00:00' },
       { rate_id: 'company-old', company_id: 'co-1', rate: '20', rate_date: '2026-09-30', created_at: '2026-09-30 08:00:00' },
@@ -47,12 +47,12 @@ describe('CurrencyService.currentRate', () => {
     });
   });
 
-  it('uses the newest legacy row when no company row exists', async () => {
+  it('reports a missing rate rather than borrow a tenant-level one when the company has none', async () => {
     const { db } = databaseWithRows([
       { rate_id: 'old', company_id: null, rate: '10', rate_date: '2026-09-01', created_at: '2026-09-02 00:00:00' },
       { rate_id: 'new', company_id: null, rate: '12', rate_date: '2026-09-03', created_at: '2026-09-03 00:00:00' },
     ]);
-    await expect(new CurrencyService(transactionCls(db)).currentRate('co-1', 'base', 'local')).resolves.toEqual(expect.objectContaining({ rateId: 'new', rate: 12, scope: 'LEGACY' }));
+    await expect(new CurrencyService(transactionCls(db)).currentRate('co-1', 'base', 'local')).resolves.toEqual(expect.objectContaining({ status: 'MISSING_RATE' }));
   });
 
   it('returns identity rate 1 without querying when currencies are equal', async () => {

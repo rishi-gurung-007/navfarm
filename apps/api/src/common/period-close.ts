@@ -46,7 +46,7 @@ export async function assertPostingPeriodOpen(
     .from(P)
     .where(and(
       eq(P.tenant_id, params.tenantId),
-      params.companyId ? or(eq(P.company_id, params.companyId), isNull(P.company_id)) : isNull(P.company_id),
+      params.companyId ? eq(P.company_id, params.companyId) : isNull(P.company_id),
       eq(P.period_status, 'CLOSED'),
       isNull(P.deleted_at),
       lte(P.start_date, d),

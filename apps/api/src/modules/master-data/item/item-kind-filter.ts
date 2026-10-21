@@ -47,7 +47,7 @@ export function itemKindCondition(itemType: string, tenantId: string, scope: Cls
    */
   const scopeConditions =
     typeof scope === 'string' || scope === null
-      ? [eq(T.tenant_id, tenantId), scope ? or(eq(T.company_id, scope), isNull(T.company_id))! : sql`1 = 1`]
+      ? [eq(T.tenant_id, tenantId), scope ? eq(T.company_id, scope) : sql`1 = 1`]
       : masterScopeConditions(scope, T, requestedCompany);
 
   const kindTypes = sql`(

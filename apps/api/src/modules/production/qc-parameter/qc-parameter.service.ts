@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull } from 'drizzle-orm';
+import { eq, and, like, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { MasterScope, masterScopeConditions } from '../../../common/master-data-scope';
 import { CreateQcParameterDto, UpdateQcParameterDto, QueryQcParameterDto } from './dto/qc-parameter.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
@@ -13,6 +14,12 @@ export class QcParameterService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
   ) {}
+
+  /** The workspace's company for a new row; a tenant template only from the tenant workspace. */
+  private workspaceCompany(requested?: string | null): string | null {
+    const scope = this.cls.get<MasterScope>('masterScope');
+    return scope?.kind ? scope.companyId : requested || null;
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -43,7 +50,7 @@ export class QcParameterService {
     await this.db.insert(schema.qcParameterMaster).values({
       param_id: paramId,
       tenant_id: tenantId,
-      company_id: dto.company_id || null,
+      company_id: this.workspaceCompany(dto.company_id),
       lob_id: dto.lob_id,
       param_code: dto.param_code.toUpperCase(),
       param_name: dto.param_name,
@@ -75,7 +82,8 @@ export class QcParameterService {
     const [param] = await this.db
       .select()
       .from(schema.qcParameterMaster)
-      .where(eq(schema.qcParameterMaster.param_id, id))
+      // A company reads and changes only its own rows (Rishi, 20 Oct): never a tenant template or another company's.
+      .where(and(eq(schema.qcParameterMaster.param_id, id), ...masterScopeConditions(this.cls, schema.qcParameterMaster)))
       .limit(1);
 
     if (!param) {
@@ -88,9 +96,7 @@ export class QcParameterService {
   async findAll(query: QueryQcParameterDto, tenantId: string) {
     const conditions: any[] = [eq(schema.qcParameterMaster.tenant_id, tenantId)];
 
-    if (query.companyId) {
-      conditions.push(or(eq(schema.qcParameterMaster.company_id, query.companyId), isNull(schema.qcParameterMaster.company_id))!);
-    }
+    conditions.push(...masterScopeConditions(this.cls, schema.qcParameterMaster, query.companyId));
     if (query.lobId) conditions.push(eq(schema.qcParameterMaster.lob_id, query.lobId));
     if (query.search) {
       conditions.push(

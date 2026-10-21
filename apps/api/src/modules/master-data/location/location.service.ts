@@ -1864,14 +1864,7 @@ export class LocationService {
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
     ];
-    if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.locationMaster.company_id, companyId),
-          isNull(schema.locationMaster.company_id)
-        )
-      );
-    }
+    if (companyId) conditions.push(eq(schema.locationMaster.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     const scope = farmScope(this.cls);
     conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
 
