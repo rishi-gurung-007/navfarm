@@ -57,8 +57,11 @@ type Metric = keyof FarrowingMetrics;
 export interface ReportColumn {
   group: TranslationKeys;
   sub: Sub;
-  /** A loss or a death count: a fall against the prior year is the good news (green), a rise the bad (red). */
-  lowerIsBetter?: boolean;
+  /**
+   * Which way is good news: "down" for a loss or a death count (a fall is green, a rise red), "none" for a planning
+   * figure that is aimed at a target, not maximised (no colour). Default "up".
+   */
+  better?: "up" | "down" | "none";
   cell: (row: FarrowingReportRow, t: (k: TranslationKeys) => string) => string;
 }
 
@@ -103,20 +106,20 @@ const yoy = (m: Metric) => (row: FarrowingReportRow) => {
   return a === null || p === null || p === undefined || p === 0 ? NA : `${signed(((a - p) / p) * 100)}%`;
 };
 
-const triple = (group: TranslationKeys, m: Metric, targetKey: string | null, lowerIsBetter = false): ReportColumn[] => [
+const triple = (group: TranslationKeys, m: Metric, targetKey: string | null, better: ReportColumn["better"] = "up"): ReportColumn[] => [
   { group, sub: "rptActual", cell: actual(m) },
   ...(targetKey ? [{ group, sub: "rptTarget" as Sub, cell: target(targetKey) }] : []),
   { group, sub: "rptPriorYear", cell: prior(m) },
-  { group, sub: "rptPriorChange", cell: change(m), lowerIsBetter },
-  { group, sub: "rptYoyPct", cell: yoy(m), lowerIsBetter },
+  { group, sub: "rptPriorChange", cell: change(m), better },
+  { group, sub: "rptYoyPct", cell: yoy(m), better },
 ];
 
 /** The colour of a change or YoY % figure: good news green, bad news red, nothing for no change or N/A. */
 export function changeTone(column: ReportColumn, text: string): "good" | "bad" | null {
-  if (column.sub !== "rptPriorChange" && column.sub !== "rptYoyPct") return null;
+  if ((column.sub !== "rptPriorChange" && column.sub !== "rptYoyPct") || column.better === "none") return null;
   const rise = text.startsWith("+");
   if (!rise && !text.startsWith("-")) return null;
-  return rise !== Boolean(column.lowerIsBetter) ? "good" : "bad";
+  return rise !== (column.better === "down") ? "good" : "bad";
 }
 
 export const FARROWING_COLUMNS: ReportColumn[] = [
@@ -127,16 +130,16 @@ export const FARROWING_COLUMNS: ReportColumn[] = [
   ...triple("rptFarrowingRate", "farrowing_rate_pct", "farrowing_rate"),
   ...triple("rptTotalBornPerSow", "total_born_per_sow", "total_born"),
   ...triple("rptBaPerSow", "born_alive_per_sow", "born_alive"),
-  ...triple("rptBornDead", "born_dead", "born_dead", true),
-  ...triple("rptMummified", "mummified", "mummified", true),
-  ...triple("rptActiveWeekMortality", "active_week_mortality", "active_week_mortality", true),
-  ...triple("rptPreWeanMortality", "pre_wean_mortality_pct", "pre_wean_mortality", true),
+  ...triple("rptBornDead", "born_dead", "born_dead", "down"),
+  ...triple("rptMummified", "mummified", "mummified", "down"),
+  ...triple("rptActiveWeekMortality", "active_week_mortality", "active_week_mortality", "down"),
+  ...triple("rptPreWeanMortality", "pre_wean_mortality_pct", "pre_wean_mortality", "down"),
   ...triple("rptAvgWeaningWeight", "avg_weaning_weight_kg", "weaning_weight"),
   ...triple("rptLitterMassTotal", "litter_mass_total_kg", "total_litter_mass"),
   ...triple("rptWeanPerSow", "wean_per_sow", "wean_per_sow"),
-  ...triple("rptGiltBodyLoss", "gilt_body_loss_pct", "gilt_body_loss"),
-  ...triple("rptGiltsServed", "gilts_served", "gilt_service_target"),
-  ...triple("rptSecondParityServed", "second_parity_served", "second_parity_service_target"),
+  ...triple("rptGiltBodyLoss", "gilt_body_loss_pct", "gilt_body_loss", "down"),
+  ...triple("rptGiltsServed", "gilts_served", "gilt_service_target", "none"),
+  ...triple("rptSecondParityServed", "second_parity_served", "second_parity_service_target", "none"),
   { group: "rptPriorYearSows", sub: "rptPriorYear", cell: prior("sows_served") },
 ];
 
