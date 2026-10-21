@@ -57,6 +57,8 @@ import { ConsolePage } from "../../../components/ui/console-page";
 import { StatRow, StatCard } from "../../../components/ui/stat-row";
 import { resolveLobFamily } from "@/lib/lob";
 import PiggeryGmDashboard from "@/components/console/piggery/piggery-gm-dashboard";
+import { canOpen } from "@/utils/nav-permissions";
+import type { TranslationKeys } from "@/utils/translations";
 
 const CHART_COLORS = ["var(--accent)", "var(--success)", "var(--info)", "var(--warning)", "#8a6fd6", "#4fb0a5"];
 
@@ -91,6 +93,25 @@ const tooltipStyle = {
   color: "var(--text-primary)",
 };
 
+/** The pages a stores, mill or finance role works in, as dashboard tiles — each shown only when the role may open it. */
+const WORK_TILES: Array<{ href: string; labelKey: TranslationKeys }> = [
+  { href: "/inventory/balance", labelKey: "invStockBalance" },
+  { href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
+  { href: "/inventory/transfers", labelKey: "invTransfers" },
+  { href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
+  { href: "/inventory/ledger", labelKey: "invLedger" },
+  { href: "/inventory/feed-forecast?tab=forecast", labelKey: "navFeedForecast" },
+  { href: "/inventory/feed-forecast?tab=mill-production", labelKey: "mpoTab" },
+  { href: "/inventory/feed-forecast?tab=physical-count", labelKey: "fftTabPhysicalCount" },
+  { href: "/requisitions", labelKey: "navRequisition" },
+  { href: "/approvals", labelKey: "approvals" },
+  { href: "/alerts", labelKey: "navAlerts" },
+  { href: "/finance/journal", labelKey: "financeCosting" },
+  { href: "/expenses/expense", labelKey: "navExpenses" },
+  { href: "/reports/farrowing", labelKey: "rptFarrowingReport" },
+  { href: "/master-data/location", labelKey: "masterData" },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const { t } = useLanguage();
@@ -117,6 +138,8 @@ export default function DashboardPage() {
   // hardcoded behavior, but is now a real, switchable selection.
   const [batchViewMode, setBatchViewMode] = useState<string>("ALL");
   const [piggeryViewMode, setPiggeryViewMode] = useState<"gm" | "operations">("gm");
+  // Each card, chart and section shows only what the user's role may open (Rishi, 20 Oct): the menu's own rule.
+  const can = (href: string) => canOpen(user, href);
 
   useEffect(() => {
     const token = getStoredToken();
@@ -156,9 +179,12 @@ export default function DashboardPage() {
         // "0 herd / no batches recorded yet", which reads as lost data rather
         // than as the wrong-farm refusal it is.
         // Every page is fetched: a single `?limit=100` counted only the first 100 batches.
-        fetchAllPages((limit, offset) => api.get(`/batch?${scopeParam}limit=${limit}&offset=${offset}`)),
+        // Only what the role may see: a storekeeper's dashboard used to stop at "Insufficient permissions" (20 Oct).
+        canOpen(storedUser, "/batches")
+          ? fetchAllPages((limit, offset) => api.get(`/batch?${scopeParam}limit=${limit}&offset=${offset}`))
+          : Promise.resolve([] as any[]),
         // The animal list answers nothing without a company, so tenant scope asks per company below.
-        isTenantScope
+        isTenantScope || !canOpen(storedUser, "/livestock")
           ? Promise.resolve([] as any[])
           : fetchAllPages((limit, offset) => api.get(`/animal?${scopeParam}limit=${limit}&offset=${offset}`)),
       ]);
@@ -406,10 +432,33 @@ export default function DashboardPage() {
       {/* ========================================================================= */}
       {/* ── 1. TENANT SCOPE DASHBOARD (Group Multi-Entity Command Center) ── */}
       {/* ========================================================================= */}
+      {/* A role without batches or animals (stores, mill, finance) gets its own work, not an empty or refused
+          dashboard (20 Oct): one tile per page it may open. */}
+      {scope !== "TENANT" && !can("/batches") && !can("/livestock") && (
+        <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-semibold">{t("dashYourWork")}</h2>
+          <p className="mb-4 text-xs" style={{ color: "var(--text-secondary)" }}>{t("dashYourWorkDesc")}</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {WORK_TILES.filter((tile) => can(tile.href)).map((tile) => (
+              <Link
+                key={tile.href}
+                href={tile.href}
+                className="nf-press flex items-center justify-between rounded-[var(--radius-sm)] border px-4 py-3 text-sm font-medium transition-colors hover:bg-[var(--surface-raised)]"
+                style={{ borderColor: "var(--border)", color: "var(--text-primary)" }}
+              >
+                <span>{t(tile.labelKey)}</span>
+                <ChevronRight className="h-4 w-4" style={{ color: "var(--accent)" }} />
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {scope === "TENANT" && (
         <div className="space-y-6">
           {/* 4 Group KPI Stat Strips */}
           <StatRow>
+            {can("/companies") && (
             <StatCard
               icon={Building2}
               label={t("dashOperatingCompanies")}
@@ -423,6 +472,8 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/livestock") && (
             <StatCard
               icon={Activity}
               label={t("dashBiologicalCensus")}
@@ -436,6 +487,8 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/batches") && (
             <StatCard
               icon={Layers}
               label={t("dashActiveBatches")}
@@ -449,6 +502,8 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/finance/journal") && (
             <StatCard
               icon={DollarSign}
               label={t("dashGroupBatchValuation")}
@@ -462,6 +517,7 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
           </StatRow>
 
           {/* Batches & Population by Company */}
@@ -590,6 +646,7 @@ export default function DashboardPage() {
         <div className="space-y-6">
           {/* 4 Company KPI Stat Strips */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {can("/operational-areas") && (
             <div
               onClick={() => router.push("/operational-areas")}
               className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -610,7 +667,9 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/livestock") && (
             <div
               onClick={() => router.push("/livestock")}
               className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -633,7 +692,9 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/batches") && (
             <div
               onClick={() => router.push("/batches")}
               className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -656,7 +717,9 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/finance/journal") && (
             <div
               onClick={() => router.push("/finance/journal")}
               className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -679,8 +742,10 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
           </div>
 
+          {can("/batches") && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <ChartCard title={t("dashBatchesByOpArea")} subtitle={t("dashBatchesByOpAreaDesc")}>
               {operationalAreas.length === 0 ? (
@@ -740,8 +805,10 @@ export default function DashboardPage() {
               )}
             </ChartCard>
           </div>
+          )}
 
           {/* Operational Area Cards */}
+          {can("/operational-areas") && (
           <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -803,13 +870,14 @@ export default function DashboardPage() {
               })}
             </div>
           </div>
+          )}
         </div>
       )}
 
       {/* ========================================================================= */}
       {/* ── 3. OPERATIONAL SCOPE: PIGGERY DASHBOARD ── */}
       {/* ========================================================================= */}
-      {scope === "OPERATIONAL" && activeLob === "PIGGERY" && (() => {
+      {scope === "OPERATIONAL" && activeLob === "PIGGERY" && (can("/batches") || can("/livestock")) && (() => {
         const activeBatch = singleBatch || batches.find(b => b.status === "ACTIVE") || batches[0];
         const aggAssignedHead = biologicalCensus(batches, animals);
         const assignedHead = isAllBatchesView
@@ -827,7 +895,9 @@ export default function DashboardPage() {
 
         return (
           <div className="space-y-6">
-            {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations */}
+            {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
+                so a role without the Animal Register sees the batch view only. */}
+            {can("/livestock") && (
             <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
               <button
                 onClick={() => setPiggeryViewMode("gm")}
@@ -853,13 +923,15 @@ export default function DashboardPage() {
                 <span>Batch Lifecycle Operations</span>
               </button>
             </div>
+            )}
 
-            {piggeryViewMode === "gm" ? (
+            {piggeryViewMode === "gm" && can("/livestock") ? (
               <PiggeryGmDashboard />
             ) : (
               <div className="space-y-6">
                 {/* 4 Piggery Operational Stat Strips */}
                 <StatRow>
+              {can("/livestock") && (
               <StatCard
                 icon={Activity}
                 label={t("dashBreedingSowsGilts")}
@@ -875,6 +947,8 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
+              {can("/batches") && (
               <StatCard
                 icon={Layers}
                 label={isAllBatchesView ? t("dashBatchesInView") : t("dashActiveGestationBatch")}
@@ -890,6 +964,8 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
+              {can("/batches/records") && (
               <StatCard
                 icon={Wheat}
                 label={t("dashActiveBatches")}
@@ -903,6 +979,8 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
+              {can("/livestock") && (
               <StatCard
                 icon={DollarSign}
                 label={t("dashBatchWipValuation")}
@@ -916,6 +994,7 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
             </StatRow>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -963,9 +1042,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
+                {(can("/batches/entry") || can("/livestock") || can("/livestock/analytics")) && (
                 <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <h3 className="text-sm font-semibold mb-3">{t("quickActionsHeading")}</h3>
                   <div className="space-y-2">
+                    {can("/batches/entry") && (
                     <button
                       onClick={() => router.push("/batches/entry")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -974,6 +1055,8 @@ export default function DashboardPage() {
                       <span>{t("dashLogDailyOperations")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock") && (
                     <button
                       onClick={() => router.push("/livestock")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -982,6 +1065,8 @@ export default function DashboardPage() {
                       <span>{t("dashAnimalEarTagRegister")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock/analytics") && (
                     <button
                       onClick={() => router.push("/livestock/analytics")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -990,8 +1075,10 @@ export default function DashboardPage() {
                       <span>Piggery GM Executive Dashboard</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>
@@ -1003,7 +1090,7 @@ export default function DashboardPage() {
       {/* ========================================================================= */}
       {/* ── 4. OPERATIONAL SCOPE: DAIRY DASHBOARD ── */}
       {/* ========================================================================= */}
-      {scope === "OPERATIONAL" && activeLob === "DAIRY" && (() => {
+      {scope === "OPERATIONAL" && activeLob === "DAIRY" && (can("/batches") || can("/livestock")) && (() => {
         const dairyBatches = batches.filter(b => (b.batch_no || "").includes("COW") || (b.lob_name || "").includes("DAIRY"));
         const activeDairyBatch = singleBatch || dairyBatches[0] || batches[0];
         const dairyHead = animals.filter(a => a.animal_type?.includes("COW") || a.breed_name?.includes("Holstein") || a.gender === "F").length || 80;
@@ -1020,6 +1107,7 @@ export default function DashboardPage() {
           <div className="space-y-6">
             {/* 4 Dairy Operational Stat Strips */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {can("/livestock") && (
               <div
                 onClick={() => router.push("/livestock")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1040,7 +1128,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/batches/entry") && (
               <div
                 onClick={() => router.push("/batches/entry")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1061,7 +1151,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/batches/records") && (
               <div
                 onClick={() => router.push("/batches/records")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1082,7 +1174,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/inventory/balance") && (
               <div
                 onClick={() => router.push("/inventory/balance")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1105,6 +1199,7 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1145,9 +1240,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
+                {(can("/batches/entry") || can("/livestock")) && (
                 <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <h3 className="text-sm font-semibold mb-3">{t("dashDairyQuickActions")}</h3>
                   <div className="space-y-2">
+                    {can("/batches/entry") && (
                     <button
                       onClick={() => router.push("/batches/entry")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -1156,6 +1253,8 @@ export default function DashboardPage() {
                       <span>{t("dashLogDailyMilkingTmr")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock") && (
                     <button
                       onClick={() => router.push("/livestock")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -1164,8 +1263,10 @@ export default function DashboardPage() {
                       <span>{t("dashDairyCattleRegister")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>

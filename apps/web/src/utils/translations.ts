@@ -1293,6 +1293,8 @@ export const translations = {
     navInventorySetup: "Inventory Setup",
     financeCosting: "Finance & Costing",
     approvals: "Approvals",
+    dashYourWork: "Your work",
+    dashYourWorkDesc: "The pages your role works in.",
 
     // Console — Batch Data Entry
     activeProductionBatch: "Active Production Batch:",

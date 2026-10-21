@@ -55,6 +55,7 @@ import { FINANCE_SECTIONS } from "@/components/console/finance/finance-page-shel
 import { EXPENSE_SECTIONS } from "@/components/console/expenses/expense-shell";
 import { REPORT_SECTIONS } from "@/components/console/reports/reports-shell";
 import { MASTER_DATA_CONFIGS, MASTER_DATA_NAV_ORDER } from "@/modules/master-data/configs";
+import { filterNavByPermission } from "@/utils/nav-permissions";
 
 /** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
 const sortCountries = (rows: any) =>
@@ -505,7 +506,8 @@ export default function ConsoleLayout({ children, modal }: { children: React.Rea
             brandSubtitle="Management console"
             sidebarSummary={sidebarSummary}
             navSectionLabel="Organization"
-            navItems={navItems}
+            // Only what the user's role can open (20 Oct): the pages refuse the rest anyway.
+            navItems={filterNavByPermission(navItems, user)}
             pathname={pathname}
             userInitials={initials}
             userName={user.fullName}
