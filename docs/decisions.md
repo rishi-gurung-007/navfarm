@@ -4162,6 +4162,17 @@ same run added CULLED and PRODUCTIVE_SOW.
 Not changed: the BATCH_WISE data-entry path still auto-creates for the batch's **own current stage** only
 (`batch.service.ts`, gated on `effectiveStageId === batch.stage_id`) — one stage, the one the batch is in.
 
+## 19 Oct 2026 — A batch is closed by a user, never by a posting; an empty batch takes no entries (Rishi)
+
+- **No automatic close.** Removed: closing a batch when a transfer takes its last head, when a disposal takes its
+  last head, and when weaning empties a piglet lot. Such a batch stays ACTIVE at nil head until a user closes it.
+  Batches already closed stay closed (no reopen feature).
+- **A user closes a bio-asset batch** through POST /batch/:id/close once it holds no head (no head on its
+  bio-asset state, no live animal). No output lines are taken — its value left with its animals. The batch screen
+  shows Close on such a batch.
+- **No data entry on an empty batch:** an animal-wise batch with no live animal, or a batch-wise batch whose head
+  count is 0. Posting refuses it and the Data Entry screen shows why and disables Save/Post (`entry-blocked.ts`).
+
 ## 18 Oct 2026 — Reports: R07 Farrowing Report first, built like Voucher (Rishi)
 
 Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:

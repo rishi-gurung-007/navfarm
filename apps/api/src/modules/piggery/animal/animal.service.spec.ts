@@ -95,7 +95,7 @@ describe('AnimalService', () => {
         { provide: NobLobResolutionService, useValue: nobLobResolution },
         // Checklist 6: transitionStage records a STAGE_CHANGE row.
         { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) } },
-        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
+        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue({ valueRelieved: null, batch: null }), recordAnimalEntry: jest.fn().mockResolvedValue(null), postAnimalDisposalJournal: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -273,6 +273,28 @@ describe('AnimalService', () => {
       const ledgerInsert = insertedRecords[1];
       expect(ledgerInsert.entry_type).toBe('ACQUISITION');
       expect(ledgerInsert.cost_amount).toBe('2857.57');
+    });
+
+    it('joins the ACTIVE batch it is registered into, and ledgers its acquisition against that batch', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+      const insertedRecords: any[] = [];
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
+      batchService.recordAnimalEntry.mockResolvedValueOnce({ batch_id: 'b-171', batch_no: 'BATCH-000171' });
+
+      await service.create(baseDto as any, 'tenant-123', { userId: 'user-1' });
+
+      expect(batchService.recordAnimalEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ animal_id: insertedRecords[0].animal_id, book_value: '2857.57' }),
+        baseDto.entry_date, 'tenant-123', { userId: 'user-1' },
+      );
+      expect(insertedRecords[1]).toMatchObject({ entry_type: 'ACQUISITION', batch_id: 'b-171', batch_no: 'BATCH-000171' });
     });
 
     it('runs number issuance, Animal insert, and opening ledger insert in one transaction', async () => {
@@ -917,6 +939,37 @@ describe('AnimalService', () => {
       await service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-06-01', disposal_value: 3200 }, 'tenant-123', { userId: 'user-1' });
 
       expect(batchService.recordAnimalExit).toHaveBeenCalledWith(expect.objectContaining({ animal_id: 'a-1', current_batch_id: 'batch-1' }), 'SOLD', '2026-06-01', 'tenant-123', { userId: 'user-1' });
+    });
+
+    it('values a sale at what her batch gave up for her, ledgers it against that batch and journals it', async () => {
+      const sow = { animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1', is_active: true, book_value: '300.00', animal_code: 'PIG-2026-0001', current_batch_id: 'batch-1', current_stage_id: 'st', current_location_id: 'pen' };
+      mockDbSelect.mockReturnValueOnce(found(sow)).mockReturnValueOnce(found({ ...sow, is_active: false }));
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+      jest.spyOn(service as any, 'exitStageId').mockResolvedValue(null);
+      batchService.recordAnimalExit.mockResolvedValueOnce({ valueRelieved: 425.2, batch: { batch_id: 'batch-1', batch_no: 'BATCH-000140', stage_id: 'st-g' } });
+
+      await service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-10-17', disposal_value: 500 }, 'tenant-123', { userId: 'user-1' });
+
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      expect(Number(setArg.gain_loss_on_disposal)).toBeCloseTo(74.8, 4);
+      const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
+      expect(ledger).toMatchObject({ batch_id: 'batch-1', batch_no: 'BATCH-000140', cost_amount: '-425.2' });
+      expect(batchService.postAnimalDisposalJournal).toHaveBeenCalledWith(expect.objectContaining({
+        documentNo: 'PIG-2026-0001', postingDate: '2026-10-17', bookValue: 425.2, proceeds: 500, stageId: 'st-g', label: 'Sale',
+      }));
+    });
+
+    it('journals no sale for a slaughter', async () => {
+      const pig = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '300.00', animal_code: 'PIG-1', current_batch_id: null };
+      mockDbSelect.mockReturnValueOnce(found(pig)).mockReturnValueOnce(found({ ...pig, is_active: false }));
+      jest.spyOn(service as any, 'assertWithdrawalPeriodsElapsed').mockResolvedValue(undefined);
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+
+      await service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-10-17' } as any, 'tenant-123');
+
+      expect(batchService.postAnimalDisposalJournal).not.toHaveBeenCalled();
     });
 
     // E5, to BBP-1: out-of-production date, then a cull date not before it, a CULL reason, the weight and destination.

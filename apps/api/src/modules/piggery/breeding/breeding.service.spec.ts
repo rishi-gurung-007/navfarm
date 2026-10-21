@@ -466,7 +466,7 @@ describe('BreedingService', () => {
       expect(result.message).toContain('10 moved to the destination batch');
     });
 
-    it('closes the piglet lot once weaning leaves nothing in it, and leaves it open while head remain', async () => {
+    it('leaves an emptied piglet lot open for a user to close (Rishi, 19 Oct), and says so', async () => {
       const closed = () => mockDbUpdate.mock.results.some((r) => (r.value.set as jest.Mock).mock.calls.some(([v]) => v?.status === 'CLOSED'));
       litter();
       await wean({ piglets_weaned: 12 }); // stays in the lot: 12 still on hand
@@ -479,8 +479,8 @@ describe('BreedingService', () => {
         return {};
       });
       const result: any = await wean({ piglets_weaned: 12, move_to_batch_id: 'b-weaner' });
-      expect(closed()).toBe(true);
-      expect(result.message).toContain('piglet lot is empty and was closed');
+      expect(closed()).toBe(false);
+      expect(result.message).toContain('piglet lot is now empty; close it from the batch');
     });
 
     it('moves the lot on to a stage instead when a stage is chosen', async () => {

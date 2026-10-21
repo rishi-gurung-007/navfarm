@@ -38,6 +38,9 @@ describe('InventoryLedgerService.getSiloStockEvidenceAsOf', () => {
     expect(rendered.params).toEqual(expect.arrayContaining([
       'tenant-1', 'company-1', 'silo-1', '2026-10-01', 1790842500, 'farm-1', 'lob-piggery',
     ]));
+    // A direct store→silo transfer posts its in leg as entry_type TRANSFER; leaving it out counted the
+    // silo's consumption against nothing and showed the silo negative.
+    expect(rendered.params).toEqual(expect.arrayContaining(['POSITIVE', 'NEGATIVE', 'TRANSFER']));
   });
 
   it('returns explicit missing cost when any contributing ledger row lacks monetary evidence', async () => {

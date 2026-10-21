@@ -411,6 +411,11 @@ export class DisposeAnimalDto {
   @IsOptional()
   disposal_destination?: string;
 
+  @ApiProperty({ description: 'Customer UUID — who bought her on a SOLD exit', required: false })
+  @IsUUID()
+  @IsOptional()
+  customer_id?: string;
+
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()

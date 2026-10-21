@@ -49,6 +49,7 @@ import { BatchShedField } from '@/components/console/production/batch-shed-field
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatAmount, formatQuantity, formatRate, toInputNumber } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { confirmAction } from '@/components/ui/confirm-dialog';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
 
@@ -121,6 +122,7 @@ export default function BatchPanel() {
   const [items, setItems] = useState<Row[]>([]);
   const [uoms, setUoms] = useState<Row[]>([]);
   const [warehouses, setWarehouses] = useState<Row[]>([]);
+  const [customers, setCustomers] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
@@ -401,6 +403,10 @@ export default function BatchPanel() {
       .get(`/warehouse?${qs}`)
       .then((r) => setWarehouses(unwrap<Row[]>(r) || []))
       .catch(() => {});
+    api
+      .get(`/customer?${qs}`)
+      .then((r) => setCustomers(unwrap<Row[]>(r) || []))
+      .catch(() => setCustomers([]));
     api
       .get(`/batch?${qs}`)
       .then((r) => setBatches(unwrap<Row[]>(r) || []))
@@ -1242,6 +1248,24 @@ export default function BatchPanel() {
     }
   };
 
+  // A bio-asset batch is closed by a user once it holds no head (Rishi, 19 Oct) — its value left with its animals,
+  // so there is nothing to allocate and no output lines to enter.
+  const handleCloseEmptyBioAsset = async () => {
+    if (!viewing) return;
+    if (!(await confirmAction({ title: t('blCloseBatchTitle', { batchNo: viewing.batch_no }), message: t('blCloseEmptyBioConfirm') }))) return;
+    setActing(true);
+    setCloseError('');
+    try {
+      await api.post(`/batch/${viewing.batch_id}/close`, { actual_end_date: new Date().toISOString().slice(0, 10) });
+      await refreshViewing();
+      load();
+    } catch (err: any) {
+      setCloseError(err?.message || t('blErrCloseBatch'));
+    } finally {
+      setActing(false);
+    }
+  };
+
   const openBioAction = (
     type: 'mature' | 'amortize' | 'fair-value' | 'dispose',
   ) => {
@@ -1257,6 +1281,7 @@ export default function BatchPanel() {
       output_quantity: '',
       warehouse_id: '',
       sale_proceeds: '',
+      customer_id: '',
     });
     setBioError('');
     setBioActionOpen(type);
@@ -1314,7 +1339,10 @@ export default function BatchPanel() {
         } else {
           if (!bioForm.sale_proceeds)
             throw new Error(t('blErrSaleProceedsRequired'));
+          if (!bioForm.customer_id)
+            throw new Error(t('blErrCustomerRequired'));
           payload.sale_proceeds = Number(bioForm.sale_proceeds);
+          payload.customer_id = bioForm.customer_id;
         }
       }
       await api.post(path, payload);
@@ -3404,6 +3432,21 @@ export default function BatchPanel() {
                   )}
 
                 {viewing.status === 'ACTIVE' &&
+                  viewing.costing_method === 'BIO_ASSET' &&
+                  Number(viewing.bio_asset_state?.current_quantity ?? 0) <= 0 &&
+                  Number(viewing.closing_quantity ?? 0) <= 0 && (
+                    <Button
+                      size="sm"
+                      onClick={handleCloseEmptyBioAsset}
+                      disabled={acting}
+                      style={{ backgroundColor: 'var(--success)', color: '#fff' }}
+                      className="gap-1.5 self-start"
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> {t('blCloseBatch')}
+                    </Button>
+                  )}
+
+                {viewing.status === 'ACTIVE' &&
                   viewing.costing_method !== 'BIO_ASSET' && (
                     <Button
                       size="sm"
@@ -4513,6 +4556,18 @@ export default function BatchPanel() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5">
+                  <label className="nf-text-label" style={S.sub}>
+                    {t('blLabelCustomer')}
+                  </label>
+                  <SearchableSelect
+                    ariaLabel={t('blLabelCustomer')}
+                    value={bioForm.customer_id}
+                    onChange={(v) => setBioForm((f: Row) => ({ ...f, customer_id: v }))}
+                    options={customers.filter((c) => c.is_active !== false)}
+                    valueKey="customer_id"
+                    getLabel={(c) => `${c.customer_code ?? ''} ${c.customer_name ?? ''}`.trim()}
+                    placeholder={t('blSelectEllipsis')}
+                  />
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelSaleProceeds')}
                   </label>

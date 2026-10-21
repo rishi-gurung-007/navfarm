@@ -11,6 +11,11 @@ import { BatchDayReversalService } from './batch-day-reversal.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('../batch-daily-data/entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+
+
 describe('BatchService', () => {
   let service: BatchService;
   let numberSeriesService: NumberSeriesService;
@@ -2816,7 +2821,7 @@ describe('BatchService', () => {
       input_lines: [{ item_id: 'item-piglet' }],
     };
 
-    it('auto-closes the batch when the last animals are disposed', async () => {
+    it('leaves the batch ACTIVE at nil head when the last animals are disposed — a user closes it (Rishi, 19 Oct)', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(matureBioBatch as any);
 
       const mockLedgerService = {
@@ -2876,14 +2881,11 @@ describe('BatchService', () => {
         }),
       );
 
-      // Verify that batchHeader was updated to CLOSED
+      // The header goes to nil head and stays open: nothing sets CLOSED.
       const setMock = mockDbUpdate.mock.results[0].value.set as jest.Mock;
       const allSetCalls = setMock.mock.calls.map((call) => call[0]);
-      const batchHeaderCloseCall = allSetCalls.find(
-        (call) => call.status === 'CLOSED',
-      );
-      expect(batchHeaderCloseCall).toBeDefined();
-      expect(batchHeaderCloseCall.status).toBe('CLOSED');
+      expect(allSetCalls.find((call) => call.status === 'CLOSED')).toBeUndefined();
+      expect(allSetCalls).toEqual(expect.arrayContaining([expect.objectContaining({ closing_quantity: '0.0000' })]));
     });
   });
 
@@ -3188,6 +3190,33 @@ describe('BatchService', () => {
       expect(info?.can_move_without_remarks).toBe(true);
       expect(info?.min_days_before_move).toBe(14);
       expect(info?.days_in_stage).toBeGreaterThanOrEqual(42);
+    });
+  });
+
+  describe('close — a bio-asset batch, by a user (Rishi, 19 Oct)', () => {
+    const rows = (value: unknown[]) => {
+      const c: any = {};
+      for (const m of ['from', 'where']) c[m] = jest.fn(() => c);
+      c.limit = jest.fn().mockResolvedValue(value);
+      c.then = (ok: (v: unknown) => unknown, fail: (e: unknown) => unknown) => Promise.resolve(value).then(ok, fail);
+      return c;
+    };
+    const bioBatch = { batch_id: 'b-1', batch_no: 'SOW-1', status: 'ACTIVE', costing_method: 'BIO_ASSET', tracking_mode: 'ANIMAL_WISE' };
+
+    it('refuses while the batch still holds head', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      mockDbSelect.mockReturnValueOnce(rows([{ current_quantity: '0.0000' }])).mockReturnValueOnce(rows([{ live: 2 }]));
+      await expect(service.close('b-1', {} as any, 'tenant-123', { userId: 'u-1' } as any)).rejects.toThrow('still holds 2 head');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('closes an empty one with no output lines to allocate', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      mockDbSelect.mockReturnValueOnce(rows([{ current_quantity: '0.0000' }])).mockReturnValueOnce(rows([{ live: 0 }]));
+      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
+      mockDbUpdate.mockReturnValue({ set });
+      await service.close('b-1', { actual_end_date: '2026-10-19' } as any, 'tenant-123', { userId: 'u-1' } as any);
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'CLOSED', actual_end_date: '2026-10-19', closed_by: 'u-1' }));
     });
   });
 });

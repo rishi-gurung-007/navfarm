@@ -279,6 +279,30 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/repair-demo-gl-dimensions.ts"
         }
       },
+      "db-resync-animal-wise-scheduler-counts": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/resync-animal-wise-scheduler-counts.ts"
+        }
+      },
+      "db-repair-animal-wise-head-counts": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/repair-animal-wise-head-counts.ts"
+        }
+      },
+      "db-repair-bio-asset-residual-value": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/repair-bio-asset-residual-value.ts"
+        }
+      },
       "db-align-stages-to-tdd": {
         "executor": "nx:run-commands",
         "cache": false,

@@ -2061,6 +2061,7 @@ const glMapping: MasterDataConfig = {
         { value: "BIO_FAIR_VALUE", label: "Bio-Asset — Fair Value Adjustment" },
         { value: "BIO_HARVEST", label: "Bio-Asset — Disposal (Harvest)" },
         { value: "BIO_DISPOSAL_SOLD", label: "Bio-Asset — Disposal (Sold)" },
+        { value: "BIO_SALE_PROCEEDS", label: "Bio-Asset — Sale Proceeds (Receivable)" },
       ],
     },
     { key: "debit_gl_account_id", label: "Debit GL Account", type: "select-entity", searchable: true, entityEndpoint: "/gl-account", entityValueKey: "gl_account_id", entityLabelKeys: ["account_code", "account_name"] },

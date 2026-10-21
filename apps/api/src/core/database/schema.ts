@@ -4042,6 +4042,8 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   costing_method: varchar('costing_method', { length: 30 }), // COST_ACCUMULATION, AMORTIZED_COST, FAIR_VALUE
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  // 0205: who bought the animals on a SOLD exit — the sale's receivable belongs to this customer.
+  customer_id: varchar('customer_id', { length: 36 }).references(() => customerMaster.customer_id, { onDelete: 'restrict' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
