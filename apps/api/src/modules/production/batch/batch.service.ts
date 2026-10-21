@@ -9,6 +9,7 @@ import {
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, ne, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL, count } from 'drizzle-orm';
+import { animalsInBatchOn, loadBatchMembership } from '../batch-daily-data/animal-membership';
 import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
@@ -3770,47 +3771,40 @@ export class BatchService {
       };
 
       if (batch.tracking_mode === 'ANIMAL_WISE') {
-        const liveAnimals =
-          (await this.db
-            .select({
-              animal_id: schema.animalRegister.animal_id,
-              current_stage_id: schema.animalRegister.current_stage_id,
-            })
-            .from(schema.animalRegister)
-            .where(
-              and(
-                eq(schema.animalRegister.current_batch_id, batch.batch_id),
-                eq(schema.animalRegister.is_active, true),
-              ),
-            )) || [];
-        const activeStageIds = new Set(
-          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
-        );
-        // A stage is owed a day's entry only from the day its animals entered it. Counting
-        // from the batch start, sows moved into Farrowing on 13 Sep made 9 Sep the next
-        // pending date — a day they had already been posted on, under Insemination.
-        const stageStart = new Map<string, string>();
-        for (const sId of activeStageIds) {
-          const entered = await this.schedulerHeaderService.stageEntryDate(batch.batch_id, sId as string);
-          stageStart.set(sId as string, entered && entered > startDate ? entered : startDate);
-        }
+        // A day is owed only for the animals the batch HAD that day, at the stage each was at then (Rishi, 21 Oct):
+        // a day with none is not owed, and a stage nobody was in that day is not asked for. Reading today's animals
+        // instead made days pending that nobody could enter, and asked for animals that had not yet arrived.
+        const membership = await loadBatchMembership(this.db, batch.batch_id);
+        // A stage is only owed where the batch has a scheduler for it: without one the screen offers no entry, so a
+        // day could never be completed. Stages are compared by code, as the entry screen groups them.
+        const schedulerStages = await this.db
+          .select({ stage_id: schema.schedulerHeader.stage_id })
+          .from(schema.schedulerHeader)
+          .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
+        const stageIds = [...new Set([...schedulerStages.map((r) => r.stage_id), ...locks.map((l: any) => l.stage_id)])];
+        const stageRows = stageIds.length
+          ? await this.db
+              .select({ stage_id: schema.stageMaster.stage_id, stage_code: schema.stageMaster.stage_code })
+              .from(schema.stageMaster)
+              .where(inArray(schema.stageMaster.stage_id, stageIds))
+          : [];
+        const codeOf = new Map(stageRows.map((r) => [r.stage_id, r.stage_code]));
+        const stageKey = (id: string) => codeOf.get(id) || id;
+        const scheduledKeys = new Set(schedulerStages.map((r) => stageKey(r.stage_id)));
 
         let cursor = startDate;
         let count = 0;
         while (count < 365) {
-          let isComplete = false;
-          if (activeStageIds.size === 0) {
-            isComplete = locks.some((l: any) => l.entry_date === cursor);
-          } else {
-            const lockedStages = new Set(
-              locks
-                .filter((l: any) => l.entry_date === cursor)
-                .map((l: any) => l.stage_id),
-            );
-            isComplete = Array.from(activeStageIds)
-              .filter((sId) => (stageStart.get(sId as string) ?? startDate) <= cursor)
-              .every((sId) => lockedStages.has(sId!));
+          const owedStages = new Set<string>();
+          for (const m of membership.on(cursor)) {
+            if (!m.stage_id) continue;
+            const key = stageKey(m.stage_id);
+            if (scheduledKeys.has(key)) owedStages.add(key);
           }
+          const lockedStages = new Set(
+            locks.filter((l: any) => l.entry_date === cursor).map((l: any) => stageKey(l.stage_id)),
+          );
+          const isComplete = Array.from(owedStages).every((key) => lockedStages.has(key));
 
           if (!isComplete) {
             return cursor;
@@ -4023,7 +4017,7 @@ export class BatchService {
   /** The Data Entry screen's lines, with why the batch takes no entry when it does not (see entry-blocked.ts). */
   async getDataEntry(id: string, dateStr: string, stageId?: string) {
     const result = await this.getDataEntryLines(id, dateStr, stageId);
-    return { ...result, entry_blocked_reason: await entryBlockedReason(this.db, id) };
+    return { ...result, entry_blocked_reason: await entryBlockedReason(this.db, id, dateStr) };
   }
 
   private async getDataEntryLines(id: string, dateStr: string, stageId?: string) {
@@ -4414,15 +4408,17 @@ export class BatchService {
     batch: Awaited<ReturnType<BatchService['findOne']>>,
     dateStr: string,
   ) {
-    const liveAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batch.batch_id),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The animals in the batch ON this date, each at the stage it was at that day (Rishi, 21 Oct): a past day asks
+    // for those animals only, at their stage then — not for whoever is in the batch now.
+    const members = await animalsInBatchOn(this.db, batch.batch_id, dateStr);
+    const memberStage = new Map(members.map((m) => [m.animal_id, m.stage_id]));
+    const memberRows = members.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(inArray(schema.animalRegister.animal_id, members.map((m) => m.animal_id)))
+      : [];
+    const liveAnimals = memberRows.map((a) => ({ ...a, current_stage_id: memberStage.get(a.animal_id) ?? null }));
 
     const animalStageIds = [
       ...new Set(
@@ -4819,19 +4815,18 @@ export class BatchService {
       }
     }
 
-    const allStageAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batchId),
-          eq(schema.animalRegister.current_stage_id, stageId),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The stage's animals ON the date being posted - those the batch had then at this stage, whether or not they
+    // are still there (Rishi, 21 Oct).
+    const stageMembers = (await animalsInBatchOn(this.db, batchId, dateStr)).filter((m) => m.stage_id === stageId);
+    const allStageAnimals = stageMembers.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(inArray(schema.animalRegister.animal_id, stageMembers.map((m) => m.animal_id)))
+      : [];
     if (!allStageAnimals.length) {
       throw new BadRequestException(
-        'No animals are currently in this stage — nothing to post.',
+        `No animals were in this stage on ${dateStr} — nothing to post.`,
       );
     }
 
@@ -4873,7 +4868,7 @@ export class BatchService {
       const match = allStageAnimals.find((a) => a.animal_id === animalId);
       if (!match) {
         throw new BadRequestException(
-          `Animal '${animalId}' is not active in this stage — cannot post.`,
+          `Animal '${animalId}' was not in this stage on ${dateStr} — cannot post.`,
         );
       }
       if (alreadyPostedAnimalIds.has(animalId)) {

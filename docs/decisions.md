@@ -4320,3 +4320,30 @@ animals gets **Your work** — a tile for each page it may open.
 - **Total Litter Mass has a target**: the new KPI `TOTAL_LITTER_MASS` (KG) — the weaned mass of all of a batch's
   litters together — set on the breed's Farrowing stage. This replaces the per-litter `LITTER_MASS` target in the
   report. frtest: average 850 kg with a 10 % Lower tolerance, so the target shows as ≥ 765.
+
+## 21 Oct 2026 — Data entry follows who was in the batch on the day (Rishi)
+
+Rishi: "Some batches are never going to close, so even when there are no animals, no auto close — only the user closes
+a batch. On data entry for a batch, if there is no animal, do not allow the data entry; and if on any previous day
+there was no animal in the batch, then do not ask for that previous date's data entry; and if there were some, then
+only for the animals which were in the batch on those previous days."
+
+- **Membership is read for the date, not for today.** `animalsInBatchOn` / `animalPlacementOn`
+  (`batch-daily-data/animal-membership.ts`) replay `animal_movement_log`: the latest move on or before the date decides
+  the batch (a move into a batch counts from its own day; a cull, disposal, death or unassignment ends it), and the
+  latest move that set a stage decides the stage. Before an animal's first move it was where that move says it came
+  from; an animal the log never mentions is where the register has it while it is live. A stage change never decides the
+  batch, so a stage change dated after a transfer cannot put an animal back. Replayed for today, it reproduces the
+  register for every live animal of every animal-wise batch in frtest.
+- **Owed days** (`getNextPendingDate`): a day on which an animal-wise batch had no animal is not owed. A day with
+  animals is owed for the stages those animals were at then (a stage nobody was in that day is not asked for), and only
+  for stages the batch has a scheduler for - a stage without one has no entry screen, so its day could never complete.
+  A batch emptied since owes nothing after it emptied; days before still count.
+- **The entry form** (`GET /batch/:id/data-entry?date=`) lists the animals the batch had on that date, at their stage
+  that day. **POST STAGE DATA** for a past date checks the mandatory lines for those animals.
+- **Posting an entry** for an animal is accepted when it was in this batch and at the line's stage ON the entry date,
+  even if it has since moved stage or batch (a gestation weight dated before farrowing on a gilt now in Flush); it is
+  refused, naming the animal and the date, when it was not.
+- **`entryBlockedReason` takes the date**: a past date is blocked only if the batch had no animal that day, so an emptied
+  batch still takes entries for the days it had animals; today is judged as before.
+- **Batch-wise batches are unchanged.** They keep no head count by date, so they are judged on the head count as it stands.
