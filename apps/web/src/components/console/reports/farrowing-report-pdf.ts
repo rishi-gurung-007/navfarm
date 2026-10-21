@@ -1,5 +1,5 @@
 import type { TranslationKeys } from "@/utils/translations";
-import { columnGroups, FARROWING_COLUMNS, NA, type FarrowingReport } from "./farrowing-report-columns";
+import { changeTone, columnGroups, FARROWING_COLUMNS, groupStarts, NA, type FarrowingReport } from "./farrowing-report-columns";
 
 type T = (key: TranslationKeys, params?: Record<string, string | number>) => string;
 
@@ -43,6 +43,7 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
     ...FARROWING_COLUMNS.map((c) => latin1(c.cell(row, t))),
   ]);
 
+  const starts = groupStarts(FARROWING_COLUMNS);
   autoTable(doc, {
     head,
     body,
@@ -54,6 +55,15 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
     theme: "grid",
     didParseCell: (data: any) => {
       if (data.section === "body" && report.rows[data.row.index]?.is_total) data.cell.styles.fontStyle = "bold";
+      // A wider, light line before each group of columns, as on the screen (columns 0 and 1 are the Farm and the Sow Batch).
+      if (starts.has(data.column.index - 2)) {
+        data.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.5 };
+        data.cell.styles.lineColor = [190, 194, 202];
+      }
+      // Change and YoY %: good news green, bad news red, as on the screen.
+      const column = FARROWING_COLUMNS[data.column.index - 2];
+      const tone = data.section === "body" && column ? changeTone(column, String(data.cell.raw ?? "")) : null;
+      if (tone) data.cell.styles.textColor = tone === "good" ? [47, 125, 91] : [183, 41, 62];
     },
   });
 

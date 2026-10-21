@@ -3,7 +3,8 @@ import type { TranslationKeys } from "@/utils/translations";
 /**
  * The R07 Farrowing Report's columns, in the order of Triple-C_reports COMMENTS.xlsx row 5. Shared by the screen
  * and the PDF so both always show the same thing. Week and Month are left out (Rishi, 18 and 20 Oct). Every group with a Prior YR also shows the
- * change against it and the YoY % change (AY5 comment: "Year on Year Change must be on every parameter"; Rishi, 20 Oct).
+ * change against it and the YoY % change (AY5 comment: "Year on Year Change must be on every parameter"; Rishi, 20 and
+ * 21 Oct). The Average Litter Mass group was taken out (Rishi, 21 Oct).
  */
 
 /** A KPI's Average Value and the band its tolerance allows. */
@@ -56,6 +57,8 @@ type Metric = keyof FarrowingMetrics;
 export interface ReportColumn {
   group: TranslationKeys;
   sub: Sub;
+  /** A loss or a death count: a fall against the prior year is the good news (green), a rise the bad (red). */
+  lowerIsBetter?: boolean;
   cell: (row: FarrowingReportRow, t: (k: TranslationKeys) => string) => string;
 }
 
@@ -100,13 +103,21 @@ const yoy = (m: Metric) => (row: FarrowingReportRow) => {
   return a === null || p === null || p === undefined || p === 0 ? NA : `${signed(((a - p) / p) * 100)}%`;
 };
 
-const triple = (group: TranslationKeys, m: Metric, targetKey: string | null): ReportColumn[] => [
+const triple = (group: TranslationKeys, m: Metric, targetKey: string | null, lowerIsBetter = false): ReportColumn[] => [
   { group, sub: "rptActual", cell: actual(m) },
   ...(targetKey ? [{ group, sub: "rptTarget" as Sub, cell: target(targetKey) }] : []),
   { group, sub: "rptPriorYear", cell: prior(m) },
-  { group, sub: "rptPriorChange", cell: change(m) },
-  { group, sub: "rptYoyPct", cell: yoy(m) },
+  { group, sub: "rptPriorChange", cell: change(m), lowerIsBetter },
+  { group, sub: "rptYoyPct", cell: yoy(m), lowerIsBetter },
 ];
+
+/** The colour of a change or YoY % figure: good news green, bad news red, nothing for no change or N/A. */
+export function changeTone(column: ReportColumn, text: string): "good" | "bad" | null {
+  if (column.sub !== "rptPriorChange" && column.sub !== "rptYoyPct") return null;
+  const rise = text.startsWith("+");
+  if (!rise && !text.startsWith("-")) return null;
+  return rise !== Boolean(column.lowerIsBetter) ? "good" : "bad";
+}
 
 export const FARROWING_COLUMNS: ReportColumn[] = [
   { group: "rptServiceTarget", sub: "rptTarget", cell: target("service_target") },
@@ -116,20 +127,23 @@ export const FARROWING_COLUMNS: ReportColumn[] = [
   ...triple("rptFarrowingRate", "farrowing_rate_pct", "farrowing_rate"),
   ...triple("rptTotalBornPerSow", "total_born_per_sow", "total_born"),
   ...triple("rptBaPerSow", "born_alive_per_sow", "born_alive"),
-  ...triple("rptBornDead", "born_dead", "born_dead"),
-  ...triple("rptMummified", "mummified", "mummified"),
-  ...triple("rptActiveWeekMortality", "active_week_mortality", "active_week_mortality"),
-  ...triple("rptPreWeanMortality", "pre_wean_mortality_pct", "pre_wean_mortality"),
+  ...triple("rptBornDead", "born_dead", "born_dead", true),
+  ...triple("rptMummified", "mummified", "mummified", true),
+  ...triple("rptActiveWeekMortality", "active_week_mortality", "active_week_mortality", true),
+  ...triple("rptPreWeanMortality", "pre_wean_mortality_pct", "pre_wean_mortality", true),
   ...triple("rptAvgWeaningWeight", "avg_weaning_weight_kg", "weaning_weight"),
-  // The Litter Mass KPI is one litter's weaned mass, so it is the average litter's target, not the farm total's.
-  ...triple("rptLitterMassTotal", "litter_mass_total_kg", null),
-  ...triple("rptLitterMassAvg", "litter_mass_avg_kg", "litter_mass"),
+  ...triple("rptLitterMassTotal", "litter_mass_total_kg", "total_litter_mass"),
   ...triple("rptWeanPerSow", "wean_per_sow", "wean_per_sow"),
   ...triple("rptGiltBodyLoss", "gilt_body_loss_pct", "gilt_body_loss"),
   ...triple("rptGiltsServed", "gilts_served", "gilt_service_target"),
   ...triple("rptSecondParityServed", "second_parity_served", "second_parity_service_target"),
   { group: "rptPriorYearSows", sub: "rptPriorYear", cell: prior("sows_served") },
 ];
+
+/** The column indexes that open a new group — where the screen and the PDF draw the group's separating line. */
+export function groupStarts(columns: ReportColumn[]): Set<number> {
+  return new Set(columns.map((c, i) => (i > 0 && columns[i - 1].group !== c.group ? i : -1)).filter((i) => i >= 0));
+}
 
 /** Consecutive columns of one group, for the two-row header. */
 export function columnGroups(columns: ReportColumn[]): Array<{ group: TranslationKeys; span: number }> {

@@ -191,7 +191,7 @@ export const TARGET_METRICS = {
   active_week_mortality: 'ACTIVE_WEEK_MORTALITY',
   pre_wean_mortality: 'PRE_WEAN_MORTALITY',
   weaning_weight: 'WEANING_WEIGHT',
-  litter_mass: 'LITTER_MASS',
+  total_litter_mass: 'TOTAL_LITTER_MASS', // the batch's weaned litters together, not one litter (Rishi, 21 Oct)
   wean_per_sow: 'WEAN_PER_SOW',
   gilt_body_loss: 'GILT_BODY_LOSS',
   gilt_service_target: 'GILT_SERVICE_TARGET',

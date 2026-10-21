@@ -4273,3 +4273,39 @@ Found testing the count in frtest:
   ("MASTITIS is a MORTALITY reason; choose an ADJUSTMENT reason.").
 - Still open: a company needs its own ADJUSTMENT reasons — frtest had only the tenant templates until ADJ-001 and
   ADJ-002 were added to it on 20 Oct.
+
+## 20 Oct 2026 — Each company owns its masters; the menu follows permissions (Rishi)
+
+**Companies are separate.** A company reads only its own master rows — never a tenant template, never another
+company's. Tenant template rows stay for the tenant workspace only; new companies still start blank (12 Oct).
+- Existing companies were given their own copy of the tenant rows they relied on, once (option a), by
+  `scripts/adopt-tenant-masters.ts` (`planTemplateAdoption`): rows a company already had (same code; a stage by line
+  of business and code) were matched, the rest copied, and the company's records moved off tenant rows (frtest: 557
+  bio-asset ledger rows, 22 inventory ledger rows, batch lines; tcdemo: 17 batches and schedulers on a tenant
+  QUARANTINE stage). Afterwards no company record references a tenant row in any of the five local tenants.
+- The "own rows or tenant rows" fallbacks were removed: item kinds, breeds on the Animal Register, exchange rates,
+  feed forecast stages and lifecycle, feed alert rules and periods, batch stage lookup, period close, item templates,
+  an item's GL account, location occupancy, alert-rule clashes, the number-series list, the Farrowing Report targets.
+- **Production and QC Parameters** are masters now (`MASTER_TABLES`): scoped list, record check by id, created in the
+  workspace's company. They had been read and updated by id alone, across companies.
+- **The Item list carried no company filter at all**: its controller is mounted on two paths
+  (`@Controller(['item','items'])`) and the guard only scoped single-path controllers (`masterControllerPath`).
+
+**The menu shows only what the user's role can open** (`utils/nav-permissions.ts`): each link carries the grant its
+page's API reads; groups keep their open children; an empty group is hidden. Admins see everything. In frtest the
+storekeeper's and mill manager's menus lost 17 and 18 entries that led to "no permission".
+
+**The dashboard is for every user, by their permissions.** It loads batches and animals only for a role that may see
+them (it used to stop at "Insufficient permissions" for the storekeeper and mill manager); each card, chart, quick
+action and the Piggery GM view shows only when the user may open what it links to. A role with neither batches nor
+animals gets **Your work** — a tile for each page it may open.
+
+## 21 Oct 2026 — Farrowing Report matches the client's column list (Rishi)
+
+- **The report follows the client's column list**: each group is Actual, Target and Prior YR, and every group with a
+  Prior YR keeps its Change vs Prior YR and YoY % columns (20 Oct; Rishi, 21 Oct: "for all groups to have these two
+  columns"). The Average Litter Mass group is taken out. "BA per Sow" reads **Born Alive**. A thicker
+  line opens each group, on screen and in the PDF; Sow Batch stays in view when the table scrolls.
+- **Total Litter Mass has a target**: the new KPI `TOTAL_LITTER_MASS` (KG) — the weaned mass of all of a batch's
+  litters together — set on the breed's Farrowing stage. This replaces the per-litter `LITTER_MASS` target in the
+  report. frtest: average 850 kg with a 10 % Lower tolerance, so the target shows as ≥ 765.

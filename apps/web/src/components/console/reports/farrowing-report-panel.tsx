@@ -11,7 +11,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { EmptyState } from "@/components/ui/states";
 import { Toast } from "@/components/ui/toast";
-import { columnGroups, FARROWING_COLUMNS, NA, type FarrowingReport } from "./farrowing-report-columns";
+import { changeTone, columnGroups, FARROWING_COLUMNS, groupStarts, NA, type FarrowingReport } from "./farrowing-report-columns";
 import { exportFarrowingPdf } from "./farrowing-report-pdf";
 
 type Row = Record<string, any>;
@@ -25,9 +25,25 @@ const S = {
   sub: { color: "var(--text-secondary)" },
   muted: { color: "var(--text-muted)" },
   input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
-  head: { backgroundColor: "var(--surface-raised)", color: "var(--text-secondary)", borderColor: "var(--border)" },
+  // A tinted header: --surface-raised is the rows' white in the light theme, so the header did not stand apart.
+  head: { backgroundColor: "var(--surface-secondary)", color: "var(--text-secondary)", borderColor: "var(--border)" },
   cell: { borderColor: "var(--border)" },
+  // Each group of columns (Actual · Target · Prior YR · Change · YoY %) is set off from the next by a light, wider line.
+  groupEdge: { borderLeft: "2px solid var(--border-strong)" },
+  // The header's last line, a shade darker than the row lines, so the header reads apart from the rows under it.
+  headEnd: { borderBottom: "1px solid var(--border-strong)" },
+  up: { color: "var(--success)" },
+  down: { color: "var(--danger)" },
 };
+
+// The first column of every group after the first.
+const STARTS = groupStarts(FARROWING_COLUMNS);
+
+// Both header rows stay in view. Every header cell sticks at top 0 by default (global.css), which left the sub-header
+// row lying over the group row; the group row has a fixed height and the sub-header row sticks just below it.
+const GROUP_ROW_PX = 34;
+
+
 
 const PARITIES = Array.from({ length: 10 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }));
 
@@ -211,15 +227,15 @@ export default function FarrowingReportPanel() {
           <ScrollTable label={t("rptFarrowingReport")}>
             <thead>
               <tr>
-                <th rowSpan={2} data-sticky-col className="border-b border-r px-3 py-2 font-semibold" style={S.head}>{t("rptFarmCol")}</th>
-                <th rowSpan={2} className="border-b border-r px-3 py-2 font-semibold" style={S.head}>{t("rptSowBatch")}</th>
+                <th rowSpan={2} data-sticky-col className="border-b border-r px-3 py-2 font-semibold" style={{ ...S.head, ...S.headEnd, color: "var(--text-primary)" }}>{t("rptFarmCol")}</th>
+                <th rowSpan={2} className="border-b border-r px-3 py-2 font-semibold" style={{ ...S.head, ...S.headEnd, color: "var(--text-primary)" }}>{t("rptSowBatch")}</th>
                 {groups.map((g, i) => (
-                  <th key={`${g.group}-${i}`} colSpan={g.span} className="border-b border-r px-3 py-2 text-center font-semibold" style={S.head}>{t(g.group)}</th>
+                  <th key={`${g.group}-${i}`} colSpan={g.span} className="border-b border-r px-3 text-center font-semibold whitespace-nowrap" style={{ ...S.head, color: "var(--text-primary)", height: GROUP_ROW_PX, ...(i > 0 ? S.groupEdge : {}) }}>{t(g.group)}</th>
                 ))}
               </tr>
               <tr>
                 {FARROWING_COLUMNS.map((c, i) => (
-                  <th key={i} className="border-b border-r px-3 py-1.5 text-center text-[11px] font-medium" style={S.head}>{t(c.sub)}</th>
+                  <th key={i} className="border-b border-r px-3 py-1.5 text-center text-[11px] font-medium whitespace-nowrap" style={{ ...S.head, ...S.headEnd, top: GROUP_ROW_PX, ...(STARTS.has(i) ? S.groupEdge : {}) }}>{t(c.sub)}</th>
                 ))}
               </tr>
             </thead>
@@ -238,8 +254,10 @@ export default function FarrowingReportPanel() {
                   {FARROWING_COLUMNS.map((c, i) => {
                     const text = c.cell(row, t);
                     const faint = text === t("rptNotAvailable") || text === NA;
+                    const change = changeTone(c, text);
+                    const tone = faint ? S.muted : change === "good" ? S.up : change === "bad" ? S.down : S.primary;
                     return (
-                      <td key={i} className="border-b border-r px-3 py-2 text-right whitespace-nowrap tabular-nums" style={{ ...S.cell, ...(faint ? S.muted : S.primary) }}>{text}</td>
+                      <td key={i} className="border-b border-r px-3 py-2 text-right whitespace-nowrap tabular-nums" style={{ ...S.cell, ...tone, ...(STARTS.has(i) ? S.groupEdge : {}) }}>{text}</td>
                     );
                   })}
                 </tr>
