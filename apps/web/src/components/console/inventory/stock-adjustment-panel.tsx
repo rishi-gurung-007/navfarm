@@ -857,20 +857,15 @@ export default function StockAdjustmentPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     UOM
                   </label>
-                  <select
+                  <SearchableSelect
                     value={draftLine.uom}
-                    onChange={(e) => setDraftLine((l) => ({ ...l, uom: e.target.value }))}
-                    className={`${inputCls} nf-select text-xs`}
-                    style={S.input}
+                    onChange={(next) => setDraftLine((l) => ({ ...l, uom: next }))}
+                    options={[{ value: "", label: "Select" }, ...uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))]}
+                    valueKey="value" labelKey="label" placeholder="Select" searchPlaceholder="Search UOM…" noMatchesLabel="No matches found"
+                    triggerClassName={`${inputCls} nf-select text-xs`}
+                    triggerStyle={S.input}
                     disabled={!draftLine.item_id}
-                  >
-                    <option value="">Select</option>
-                    {uoms.map((u) => (
-                      <option key={u.uom_code} value={u.uom_code}>
-                        {u.uom_code}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
                 {/* Unit Cost (Cols 2) */}

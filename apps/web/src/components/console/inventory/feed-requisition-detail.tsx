@@ -188,6 +188,15 @@ export function FeedRequisitionDetail({
   const transfers = view.transfers ?? [];
   const chosenTransfer = transfers.find((transfer) => transfer.transfer_id === transferId) ?? null;
   const chosenShipment = chosenTransfer?.open_shipments.find((shipment) => shipment.shipment_id === shipmentId) ?? null;
+  useEffect(() => {
+    const candidates = panel === "receive" ? transfers.filter((transfer) => transfer.open_shipments.length > 0) : transfers;
+    if (candidates.length !== 1) return;
+    const candidate = candidates[0];
+    if (transferId !== candidate.transfer_id) setTransferId(candidate.transfer_id);
+    if (panel === "receive" && candidate.open_shipments.length === 1 && shipmentId !== candidate.open_shipments[0].shipment_id) {
+      setShipmentId(candidate.open_shipments[0].shipment_id);
+    }
+  }, [panel, transfers, transferId, shipmentId]);
   const entered = (value: string | undefined) => {
     if (!value?.trim()) return null;
     const quantity = Number(value);
@@ -205,6 +214,9 @@ export function FeedRequisitionDetail({
   const shipValid = !!chosenTransfer
     && shipLines.every((line) => withinCap(shipQty[line.requisition_line_id!], line.balance_to_ship))
     && shipBody.length > 0;
+  const shipNowTotal = shipBody.reduce((total, line) => total + line.quantity, 0);
+  const shipRemainingTotal = shipLines.reduce((total, line) => total + line.balance_to_ship, 0);
+  const fillRemainingShipQty = () => setShipQty(Object.fromEntries(shipLines.map((line) => [line.requisition_line_id!, String(line.balance_to_ship)])));
   const receiveLines = (chosenShipment?.lines ?? []).filter((line) => !!line.requisition_line_id && line.remaining_to_receive > 1e-9);
   const bagSizeKg = Number(view.header?.bag_size_kg ?? 50) || 50;
   // W2T: what each receipt line shows and checks (Requisition rows 139-148).
@@ -242,6 +254,8 @@ export function FeedRequisitionDetail({
   const resetReceiptInputs = () => { setReceiveQty({}); setReceiveReason({}); setReceiveBags({}); setReceiveNote({}); };
   const lineNumber = (requisitionLineId: string, fallback: number) =>
     lines.find((line) => line.line_id === requisitionLineId)?.line_seq ?? fallback;
+  const receiveNowTotal = receiptRows.reduce((total, row) => total + (row.quantity ?? 0), 0);
+  const outstandingTotal = receiptRows.reduce((total, row) => total + row.outstanding, 0);
 
   const release = () => run(async () => {
     const result = unwrap<RequisitionView>(await api.post(`/feed-requisition/${view.requisition_id}/release`, {}));
@@ -360,147 +374,110 @@ export function FeedRequisitionDetail({
         />
       </div>
       {/* Rishi, 11 Oct: Transfer Shipment opens in its own dialog stacked on the requisition. */}
-      <Dialog open={panel === "ship" && actions.shipment.enabled} onClose={() => setPanel(null)} title={t("crqShip")} presentation="compact" maxWidth="xl"
-        footer={<Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
-        <div className="flex flex-wrap items-end gap-3">
-          {dateField}
-          {transferField}
-          {shipLines.map((line, index) => {
-            const key = line.requisition_line_id!;
-            return (
-              <Field key={key} className="w-40" label={t("crqShipQtyFor", { line: lineNumber(key, index + 1) })} htmlFor={`feed-ship-${key}`}>
-                <input id={`feed-ship-${key}`} type="number" min={0} max={line.balance_to_ship} className="nf-input-sm text-right"
-                  value={shipQty[key] ?? ""} onChange={(event) => setShipQty((current) => ({ ...current, [key]: event.target.value }))} />
-              </Field>
-            );
-          })}
+      <Dialog open={panel === "ship" && actions.shipment.enabled} onClose={() => setPanel(null)} title={t("crqShip")} presentation="compact" maxWidth="xl" className="w-[min(96vw,78rem)]"
+        footer={<div className="flex w-full flex-wrap items-center justify-between gap-3"><span className="text-xs text-(--text-secondary)">{t("crqShipSummary", { lines: shipLines.length, remaining: kgText(shipRemainingTotal, "0"), selected: kgText(shipNowTotal, "0") })}</span><Button size="sm" onClick={postShipment} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button></div>}>
+        <div className="space-y-4">
+          <div className="grid gap-3 rounded-md border border-(--border) bg-(--surface-raised) p-3 sm:grid-cols-2 lg:grid-cols-3">
+            {dateField}
+            {transferField}
+            <div className="flex items-end"><Button variant="outline" size="sm" onClick={fillRemainingShipQty} disabled={!shipLines.length}>{t("crqFillRemaining")}</Button></div>
+          </div>
+          {shipLines.length ? <div className="space-y-3" aria-label={t("crqShipmentLines")}>
+            {shipLines.map((line, index) => {
+              const key = line.requisition_line_id!;
+              const reqLine = lines.find((candidate) => candidate.line_id === key);
+              const enteredQty = entered(shipQty[key]);
+              const remainingAfter = enteredQty === null ? line.balance_to_ship : Math.max(0, line.balance_to_ship - enteredQty);
+              const invalid = enteredQty !== null && (enteredQty <= 0 || enteredQty > line.balance_to_ship);
+              return <section key={key} className="rounded-md border border-(--border) p-3 sm:p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-(--text-secondary)">{t("w2tColLine")} {lineNumber(key, index + 1)}</div>
+                    <div className="font-mono text-sm">{line.item_code ? <RecordLink code={line.item_code} href={line.item_id ? itemHref(line.item_id) : null} /> : t("rqNotApplicable")}</div>
+                    <div className="text-sm text-(--text-secondary)">{line.item_name || t("rqNotApplicable")}</div>
+                    <div className="mt-1 text-xs">{labelOf(FEED_TYPE_LABEL, reqLine?.feed_type ?? null, t)}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-5 gap-y-1 text-right text-xs sm:grid-cols-4">
+                    <div><div className="text-(--text-secondary)">{t("w2tColRequested")}</div><div className="font-semibold">{kgText(reqLine?.requested_qty_kg ?? line.quantity, "0")} KG</div></div>
+                    <div><div className="text-(--text-secondary)">{t("w2tColMillApproved")}</div><div className="font-semibold">{kgText(reqLine?.mill_approved_qty_kg, t("rqNotApplicable"))} KG</div></div>
+                    <div><div className="text-(--text-secondary)">{t("crqAlreadyShipped")}</div><div className="font-semibold">{kgText(line.qty_shipped, "0")} KG</div></div>
+                    <div><div className="text-(--text-secondary)">{t("crqRemainingToShip")}</div><div className="font-semibold text-(--accent)">{kgText(line.balance_to_ship, "0")} KG</div></div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,16rem)_1fr] lg:items-end">
+                  <Field label={t("crqShipQtyFor", { line: lineNumber(key, index + 1) })} htmlFor={`feed-ship-${key}`} error={invalid ? t("crqShipQtyHint", { remaining: kgText(line.balance_to_ship, "0") }) : undefined}>
+                    <input id={`feed-ship-${key}`} type="number" min={0} max={line.balance_to_ship} className="nf-input-sm text-right" value={shipQty[key] ?? ""} onChange={(event) => setShipQty((current) => ({ ...current, [key]: event.target.value }))} />
+                  </Field>
+                  <div className="text-xs text-(--text-secondary)">{t("crqRemainingAfter", { quantity: kgText(remainingAfter, "0") })}</div>
+                </div>
+              </section>;
+            })}
+          </div> : <div className="rounded-md border border-dashed border-(--border) p-6 text-center text-sm text-(--text-secondary)">{t("crqNoShipmentLines")}</div>}
         </div>
       </Dialog>
-      <Dialog open={panel === "receive" && actions.receipt.enabled} onClose={() => setPanel(null)} title={t("crqReceive")} presentation="compact" maxWidth="xl"
-        footer={<Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button>}>
-        <div className="flex flex-wrap items-end gap-3">
-          {dateField}
-          {transferField}
-          <Field className="w-48" label={t("crqShipment")} htmlFor="feed-shipment">
-            <div className="relative w-48">
-              <SearchableSelect
-                value={shipmentId}
-                onChange={(val) => { setShipmentId(val); resetReceiptInputs(); }}
-                disabled={!chosenTransfer}
-                options={[
-                  { value: "", label: t("crqChoose") },
-                  ...((chosenTransfer?.open_shipments ?? []).map((shipment) => ({
-                    value: shipment.shipment_id,
-                    label: shipment.shipment_no,
-                  }))),
-                ]}
-                columnHeaders={false}
-                triggerClassName="nf-input-sm w-48 h-9"
-              />
-              <select
-                id="feed-shipment"
-                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-                tabIndex={-1}
-                value={shipmentId}
-                onChange={(event) => { setShipmentId(event.target.value); resetReceiptInputs(); }}
-                disabled={!chosenTransfer}
-              >
-                <option value="">{t("crqChoose")}</option>
-                {(chosenTransfer?.open_shipments ?? []).map((shipment) => (
-                  <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>
-                ))}
-              </select>
-            </div>
-          </Field>
-          {chosenTransfer && (
-            <a className="pb-1.5 text-xs font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>
-              {t("w2tOpenTransfer", { no: chosenTransfer.transfer_no })}
-            </a>
-          )}
-          {chosenTransfer && chosenShipment && (
-            <a className="pb-1.5 text-xs font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>
-              {t("w2tOpenShipment", { no: chosenShipment.shipment_no })}
-            </a>
-          )}
-          {receiptRows.length > 0 && (
-            <div className="w-full overflow-x-auto">
-              <table className="w-full border-collapse text-left text-xs" aria-label={t("w2tReceiptLines")}>
-                <thead>
-                  <tr style={{ color: "var(--text-secondary)" }}>
-                    <th className="px-2 py-1">{t("w2tColLine")}</th>
-                    <th className="px-2 py-1">{t("w2tColItem")}</th>
-                    <th className="px-2 py-1">{t("w2tColFeedType")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColRequested")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColMillApproved")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColShipped")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColPrevReceived")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColOutstanding")}</th>
-                    <th className="px-2 py-1">{t("w2tColCompartment")}</th>
-                    <th className="px-2 py-1 text-right">{t("w2tColVariance")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {receiptRows.map((row) => {
-                    const n = lineNumber(row.key, row.index + 1);
-                    const na = t("rqNotApplicable");
-                    return (
-                      <tr key={row.key} className="align-top border-t" style={{ borderColor: "var(--row-border)" }}>
-                        <td className="px-2 py-1">{n}</td>
-                        <td className="px-2 py-1">
-                          <div className="font-mono">{(row.reqLine?.item_code ?? row.transferLine?.item_code)
-                            ? <RecordLink code={row.reqLine?.item_code ?? row.transferLine?.item_code} href={(row.reqLine?.item_id ?? row.transferLine?.item_id) ? itemHref((row.reqLine?.item_id ?? row.transferLine?.item_id)!) : null} />
-                            : na}</div>
-                          <div style={{ color: "var(--text-secondary)" }}>{row.reqLine?.item_description ?? row.transferLine?.item_name ?? na}</div>
-                        </td>
-                        <td className="px-2 py-1">{labelOf(FEED_TYPE_LABEL, row.reqLine?.feed_type ?? null, t)}</td>
-                        <td className="px-2 py-1 text-right">{kgText(row.reqLine?.requested_qty_kg ?? row.reqLine?.quantity, na)}</td>
-                        <td className="px-2 py-1 text-right">{kgText(row.reqLine?.mill_approved_qty_kg, na)}</td>
-                        <td className="px-2 py-1 text-right">{kgText(row.shipped, na)}</td>
-                        <td className="px-2 py-1 text-right">{kgText(row.previouslyReceived, na)}</td>
-                        <td className="px-2 py-1 text-right">{kgText(row.outstanding, na)}</td>
-                        <td className="px-2 py-1">
-                          {row.line.compartment_no ?? na}
-                          {row.line.loading_sheet_no && <div style={{ color: "var(--text-secondary)" }}>{t("w2tLoadingSheet")}: <RecordLink code={row.line.loading_sheet_no} href={row.line.loading_sheet_id ? loadingSheetHref(row.line.loading_sheet_id) : null} /></div>}
-                        </td>
-                        <td className="px-2 py-1 text-right">{row.variance === null ? na : kgText(row.variance, na)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="flex flex-col gap-2 pt-2">
-                {receiptRows.map((row) => {
-                  const n = lineNumber(row.key, row.index + 1);
-                  return (
-                    <div key={row.key} className="flex flex-wrap items-end gap-3">
-                      <Field className="w-40" label={t("crqReceiveQtyFor", { line: n })} htmlFor={`feed-receive-${row.key}`}>
-                        <input id={`feed-receive-${row.key}`} type="number" min={0} max={row.line.remaining_to_receive} className="nf-input-sm text-right"
-                          value={receiveQty[row.key] ?? ""} onChange={(event) => setReceiveQty((current) => ({ ...current, [row.key]: event.target.value }))} />
-                      </Field>
-                      <Field className="w-44" label={t("w2tDeliveryNoteFor", { line: n })} htmlFor={`feed-receive-note-${row.key}`}>
-                        <input id={`feed-receive-note-${row.key}`} type="text" maxLength={80} className="nf-input-sm"
-                          value={receiveNote[row.key] ?? ""} onChange={(event) => setReceiveNote((current) => ({ ...current, [row.key]: event.target.value }))} />
-                      </Field>
-                      {row.bagged && (
-                        <Field className="w-36" label={t("w2tBagCountFor", { line: n })} htmlFor={`feed-receive-bags-${row.key}`}
-                          error={row.bagsOk ? undefined : t("w2tBagCountHint", { size: bagSizeKg })}>
-                          <input id={`feed-receive-bags-${row.key}`} type="number" min={1} step={1} className="nf-input-sm text-right"
-                            value={receiveBags[row.key] ?? ""} onChange={(event) => setReceiveBags((current) => ({ ...current, [row.key]: event.target.value }))} />
-                        </Field>
-                      )}
-                      {row.reasonNeeded && (
-                        <Field className="min-w-56 flex-1" label={t("w2tVarianceReasonFor", { line: n })} htmlFor={`feed-receive-reason-${row.key}`}
-                          error={row.reasonOk ? undefined : t("w2tVarianceReasonRequired")}>
-                          <input id={`feed-receive-reason-${row.key}`} type="text" maxLength={500} className="nf-input-sm"
-                            value={receiveReason[row.key] ?? ""} onChange={(event) => setReceiveReason((current) => ({ ...current, [row.key]: event.target.value }))} />
-                        </Field>
-                      )}
-                    </div>
-                  );
-                })}
+      <Dialog open={panel === "receive" && actions.receipt.enabled} onClose={() => setPanel(null)} title={t("crqReceive")} presentation="compact" maxWidth="xl" className="w-[min(96vw,78rem)]"
+        footer={<div className="flex w-full flex-wrap items-center justify-between gap-3"><span className="text-xs text-(--text-secondary)">{receiptRows.length ? t("w2tReceiptSummary", { lines: receiptRows.length, outstanding: kgText(outstandingTotal, "0"), receiving: kgText(receiveNowTotal, "0") }) : t("w2tChooseShipment")}</span><Button size="sm" onClick={postReceipt} disabled={busy || !receiveValid}>{t("crqPostReceipt")}</Button></div>}>
+        <div className="space-y-4">
+          <div className="grid gap-3 rounded-md border border-(--border) bg-(--surface-raised) p-3 sm:grid-cols-2 lg:grid-cols-4">
+            {dateField}
+            {transferField}
+            <Field className="w-full" label={t("crqShipment")} htmlFor="feed-shipment">
+              <div className="relative w-full">
+                <SearchableSelect value={shipmentId} onChange={(val) => { setShipmentId(val); resetReceiptInputs(); }} disabled={!chosenTransfer}
+                  options={[{ value: "", label: t("crqChoose") }, ...((chosenTransfer?.open_shipments ?? []).map((shipment) => ({ value: shipment.shipment_id, label: shipment.shipment_no })))]}
+                  columnHeaders={false} triggerClassName="nf-input-sm h-9 w-full" />
+                <select id="feed-shipment" className="pointer-events-none absolute inset-0 h-full w-full opacity-0" tabIndex={-1} value={shipmentId}
+                  onChange={(event) => { setShipmentId(event.target.value); resetReceiptInputs(); }} disabled={!chosenTransfer}>
+                  <option value="">{t("crqChoose")}</option>
+                  {(chosenTransfer?.open_shipments ?? []).map((shipment) => <option key={shipment.shipment_id} value={shipment.shipment_id}>{shipment.shipment_no}</option>)}
+                </select>
               </div>
+            </Field>
+            <div className="flex flex-wrap items-end gap-2 text-xs">
+              {chosenTransfer && <a className="font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>{t("w2tOpenTransfer", { no: chosenTransfer.transfer_no })}</a>}
+              {chosenTransfer && chosenShipment && <a className="font-medium underline" style={{ color: "var(--accent)" }} href={transferHref(chosenTransfer.transfer_id)}>{t("w2tOpenShipment", { no: chosenShipment.shipment_no })}</a>}
             </div>
-          )}
+          </div>
+          {receiptRows.length > 0 ? (
+            <div className="space-y-3" aria-label={t("w2tReceiptLines")}>
+              {receiptRows.map((row) => {
+                const n = lineNumber(row.key, row.index + 1);
+                const na = t("rqNotApplicable");
+                const compartments = row.line.compartments?.length ? row.line.compartments : row.line.compartment_no ? row.line.compartment_no.split(",").map((compartment_no) => ({ compartment_no: compartment_no.trim(), kg_loaded: 0, loaded_by: null })) : [];
+                return <section key={row.key} className="rounded-md border border-(--border) p-3 sm:p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-(--text-secondary)">{t("w2tColLine")} {n}</div>
+                      <div className="font-mono text-sm">{(row.reqLine?.item_code ?? row.transferLine?.item_code) ? <RecordLink code={row.reqLine?.item_code ?? row.transferLine?.item_code} href={(row.reqLine?.item_id ?? row.transferLine?.item_id) ? itemHref((row.reqLine?.item_id ?? row.transferLine?.item_id)!) : null} /> : na}</div>
+                      <div className="text-sm text-(--text-secondary)">{row.reqLine?.item_description ?? row.transferLine?.item_name ?? na}</div>
+                      <div className="mt-1 text-xs">{labelOf(FEED_TYPE_LABEL, row.reqLine?.feed_type ?? null, t)}</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-5 gap-y-1 text-right text-xs sm:grid-cols-3 lg:grid-cols-6">
+                      <div><div className="text-(--text-secondary)">{t("w2tColRequested")}</div><div className="font-semibold">{kgText(row.reqLine?.requested_qty_kg ?? row.reqLine?.quantity, na)} KG</div></div>
+                      <div><div className="text-(--text-secondary)">{t("w2tColMillApproved")}</div><div className="font-semibold">{kgText(row.reqLine?.mill_approved_qty_kg, na)} KG</div></div>
+                      <div><div className="text-(--text-secondary)">{t("w2tColShipped")}</div><div className="font-semibold">{kgText(row.shipped, na)} KG</div></div>
+                      <div><div className="text-(--text-secondary)">{t("w2tColPrevReceived")}</div><div className="font-semibold">{kgText(row.previouslyReceived, na)} KG</div></div>
+                      <div><div className="text-(--text-secondary)">{t("w2tColOutstanding")}</div><div className="font-semibold text-(--accent)">{kgText(row.outstanding, na)} KG</div></div>
+                      <div><div className="text-(--text-secondary)">{t("w2tColVariance")}</div><div className={`font-semibold ${row.variance && row.variance > 0 ? "text-(--danger)" : ""}`}>{row.variance === null ? na : `${kgText(row.variance, na)} KG`}</div></div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-(--text-secondary)">{t("w2tColCompartment")}:</span>
+                    {compartments.length ? compartments.map((compartment, index) => <span key={`${compartment.compartment_no}-${index}`} className="rounded-full border border-(--border) bg-(--surface-raised) px-2 py-1 whitespace-nowrap">{compartment.compartment_no}{compartment.kg_loaded > 0 ? ` · ${kgText(compartment.kg_loaded, na)} KG` : ""}</span>) : <span>{na}</span>}
+                    {row.line.loading_sheet_no && <><span className="text-(--text-secondary)">{t("w2tLoadingSheet")}:</span><RecordLink code={row.line.loading_sheet_no} href={row.line.loading_sheet_id ? loadingSheetHref(row.line.loading_sheet_id) : null} /></>}
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Field label={t("crqReceiveQtyFor", { line: n })} htmlFor={`feed-receive-${row.key}`} error={row.quantity !== null && (row.quantity <= 0 || row.quantity > row.outstanding) ? t("w2tReceiveQtyHint", { outstanding: kgText(row.outstanding, "0") }) : undefined}>
+                      <input id={`feed-receive-${row.key}`} type="number" min={0} max={row.line.remaining_to_receive} className="nf-input-sm text-right" value={receiveQty[row.key] ?? ""} onChange={(event) => setReceiveQty((current) => ({ ...current, [row.key]: event.target.value }))} />
+                    </Field>
+                    <Field label={t("w2tDeliveryNoteFor", { line: n })} htmlFor={`feed-receive-note-${row.key}`}><input id={`feed-receive-note-${row.key}`} type="text" maxLength={80} className="nf-input-sm" value={receiveNote[row.key] ?? ""} onChange={(event) => setReceiveNote((current) => ({ ...current, [row.key]: event.target.value }))} /></Field>
+                    {row.bagged && <Field label={t("w2tBagCountFor", { line: n })} htmlFor={`feed-receive-bags-${row.key}`} error={row.bagsOk ? undefined : t("w2tBagCountHint", { size: bagSizeKg })}><input id={`feed-receive-bags-${row.key}`} type="number" min={1} step={1} className="nf-input-sm text-right" value={receiveBags[row.key] ?? ""} onChange={(event) => setReceiveBags((current) => ({ ...current, [row.key]: event.target.value }))} /></Field>}
+                    {row.reasonNeeded && <Field className="sm:col-span-2 lg:col-span-1" label={t("w2tVarianceReasonFor", { line: n })} htmlFor={`feed-receive-reason-${row.key}`} error={row.reasonOk ? undefined : t("w2tVarianceReasonRequired")}><input id={`feed-receive-reason-${row.key}`} type="text" maxLength={500} className="nf-input-sm" value={receiveReason[row.key] ?? ""} onChange={(event) => setReceiveReason((current) => ({ ...current, [row.key]: event.target.value }))} /></Field>}
+                  </div>
+                </section>;
+              })}
+            </div>
+          ) : <div className="rounded-md border border-dashed border-(--border) p-6 text-center text-sm text-(--text-secondary)">{t("w2tChooseShipment")}</div>}
         </div>
       </Dialog>
       {lastReceipt && (

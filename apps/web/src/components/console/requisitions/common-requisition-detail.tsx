@@ -21,6 +21,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Dialog, DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { getStoredUser, hasPermission } from "@/hooks/useAuth";
@@ -269,11 +270,11 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
             <Field className="w-48" label={t("crqShipment")} htmlFor="crq-shipment">
-              <select id="crq-shipment" className="nf-input-sm nf-select" style={inputStyle} value={shipmentId}
+              <Select id="crq-shipment" className="nf-input-sm nf-select w-full" style={inputStyle} value={shipmentId}
                 onChange={(e) => { setShipmentId(e.target.value); setRecvQty({}); }}>
                 <option value="">{t("crqChoose")}</option>
                 {openShipments.map((s) => <option key={s.shipment_id} value={s.shipment_id}>{s.shipment_no}</option>)}
-              </select>
+              </Select>
             </Field>
             {recvLines.map((l) => {
               const key = l.requisition_line_id;

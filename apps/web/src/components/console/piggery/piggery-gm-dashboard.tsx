@@ -219,10 +219,10 @@ export default function PiggeryGmDashboard() {
   const facilityLocations = data?.facilityLocations ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* ── Filter Bar: Period, Year & Date Range (From / To) ── */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius-lg)] border p-4 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border p-3 shadow-xs" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="flex flex-wrap items-center gap-2.5">
 
           {/* Date Range Inputs: From / To */}
           <form onSubmit={handleApplyCustomDates} className="flex flex-wrap items-center gap-2">
@@ -317,9 +317,9 @@ export default function PiggeryGmDashboard() {
       </StatRow>
 
       {/* ── Reproductive & Breeding Intelligence (3 Cards Grid) ── */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
         {/* Card 1: Farrowing & Litters */}
-        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">Farrowing & Litters</h3>
@@ -330,15 +330,15 @@ export default function PiggeryGmDashboard() {
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div className="rounded-[var(--radius-sm)] border p-3" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+          <div className="grid grid-cols-2 gap-2.5 pt-1">
+            <div className="rounded-[var(--radius-sm)] border p-2.5" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Born Live</span>
               <p className="mt-1 font-mono text-xl font-bold" style={{ color: "var(--success)" }}>
                 {reproductiveIntelligence.totalPigletsBornLive}
               </p>
               <span className="text-[10px] text-[var(--text-secondary)]">{reproductiveIntelligence.avgBornAlivePerLitter} avg/litter</span>
             </div>
-            <div className="rounded-[var(--radius-sm)] border p-3" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+            <div className="rounded-[var(--radius-sm)] border p-2.5" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">Weaned</span>
               <p className="mt-1 font-mono text-xl font-bold text-[var(--accent)]">
                 {reproductiveIntelligence.totalPigletsWeaned}
@@ -353,9 +353,9 @@ export default function PiggeryGmDashboard() {
             {reproductiveIntelligence.recentLitters.length === 0 ? (
               <p className="mt-2 text-xs text-[var(--text-muted)] italic">No litters recorded in this date range.</p>
             ) : (
-              <div className="mt-2 divide-y text-xs border rounded-[var(--radius-sm)] overflow-hidden" style={{ borderColor: "var(--border)" }}>
+              <div className="mt-1.5 divide-y overflow-hidden rounded-[var(--radius-sm)] border text-xs" style={{ borderColor: "var(--border)" }}>
                 {reproductiveIntelligence.recentLitters.map((l) => (
-                  <div key={l.farrowId} className="flex items-center justify-between p-2.5 hover:bg-[var(--surface-raised)]">
+                  <div key={l.farrowId} className="flex items-center justify-between p-2 hover:bg-[var(--surface-raised)]">
                     <div>
                       <span className="font-semibold text-[var(--text-primary)]">{l.sowCode}</span>
                       <span className="ml-2 font-mono text-[10px] text-[var(--text-muted)]">{l.farrowingDate}</span>
@@ -373,7 +373,7 @@ export default function PiggeryGmDashboard() {
         </div>
 
         {/* Card 2: Breeding Pipeline */}
-        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">Mating & Insemination</h3>
@@ -384,26 +384,26 @@ export default function PiggeryGmDashboard() {
             </span>
           </div>
 
-          <div className="space-y-2.5 pt-1">
-            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="font-medium text-[var(--text-secondary)]">Confirmed Pregnant</span>
               <span className="font-mono font-bold" style={{ color: "var(--success)" }}>
                 {reproductiveIntelligence.conceptionPipeline.confirmedPregnant} Sows
               </span>
             </div>
-            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="font-medium text-[var(--text-secondary)]">Completed / Weaned</span>
               <span className="font-mono font-bold text-[var(--accent)]">
                 {reproductiveIntelligence.conceptionPipeline.completedWeaned} Sows
               </span>
             </div>
-            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="font-medium text-[var(--text-secondary)]">Failed / Repeat</span>
               <span className="font-mono font-bold" style={{ color: "var(--danger)" }}>
                 {reproductiveIntelligence.conceptionPipeline.repeatFailed} Sows
               </span>
             </div>
-            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}>
               <span className="font-medium text-[var(--text-secondary)]">AI vs Natural Mating</span>
               <span className="font-mono font-semibold text-[var(--text-primary)]">
                 {reproductiveIntelligence.conceptionPipeline.aiInseminationCount} AI · {reproductiveIntelligence.conceptionPipeline.naturalMatingCount} Natural
@@ -413,14 +413,14 @@ export default function PiggeryGmDashboard() {
         </div>
 
         {/* Card 3: Herd Parity & Stage Structure */}
-        <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+        <div className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
           <div>
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Herd Parity & Stage Structure</h3>
             <p className="text-xs text-[var(--text-secondary)]">Actual parity distribution across registered herd</p>
           </div>
 
           {/* Parity Breakdown Bars */}
-          <div className="space-y-2 pt-1">
+          <div className="space-y-1.5 pt-1">
             {[
               { label: "Parity 0 (Gilts)", count: activeHerdSummary.parityDistribution.p0Gilts.count, pct: activeHerdSummary.parityDistribution.p0Gilts.pct },
               { label: "Parity 1", count: activeHerdSummary.parityDistribution.p1.count, pct: activeHerdSummary.parityDistribution.p1.pct },
@@ -443,7 +443,7 @@ export default function PiggeryGmDashboard() {
       </div>
 
       {/* ── Facility Locations & Farm Table (100% Live) ── */}
-      <div className="rounded-[var(--radius-md)] border p-5 shadow-xs space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+      <div className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Live Triple C Facility & Production Sites</h3>

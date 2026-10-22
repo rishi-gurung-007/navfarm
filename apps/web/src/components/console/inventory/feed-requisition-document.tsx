@@ -28,6 +28,7 @@ import { formatDateShort } from "@/utils/date-short";
 import {
   CONSOLIDATION_NEXT_ACTION_LABEL, CONSOLIDATION_STATUS_LABEL, DOC_TYPE_LABEL, FEED_TYPE_LABEL, PRIORITY_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf,
 } from "./requisition-labels";
+import { RequisitionDocumentShell } from "../requisitions/requisition-document-shell";
 
 export interface FeedRequisitionBreakdownRow {
   batch_id: string;
@@ -193,6 +194,8 @@ export interface FeedRequisitionOpenShipmentLine {
   loading_sheet_id?: string | null;
   loading_sheet_no?: string | null;
   compartment_no?: string | null;
+  compartments?: Array<{ compartment_no: string; kg_loaded: number; loaded_by?: string | null }>;
+  loading_total_kg?: number | null;
   quantity: number;
   qty_received: number;
   remaining_to_receive: number;
@@ -428,7 +431,7 @@ export function FeedRequisitionDocument({
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    <RequisitionDocumentShell>
       <FieldGroup>
         <FeedRequisitionHeaderFields values={{
           reqNo: view.req_no,
@@ -681,7 +684,7 @@ export function FeedRequisitionDocument({
           </ScrollTable>
         </div>
       </FieldGroup>
-    </div>
+    </RequisitionDocumentShell>
   );
 }
 

@@ -10,6 +10,7 @@ import { useState } from "react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Select } from "@/components/ui/select";
 
 interface ShedOption { shed_id: string; shed_code: string; shed_name: string; farm_id: string | null; is_active?: boolean }
 
@@ -63,7 +64,7 @@ export function BatchShedField({
         {t("blShed")}
       </label>
       <div className="mt-1 flex items-center gap-2">
-        <select
+        <Select
           id={`shed-${batch.batch_id}`}
           className="nf-input-sm nf-select min-w-0 flex-1"
           value={value}
@@ -74,7 +75,7 @@ export function BatchShedField({
           {options.map((s) => (
             <option key={s.shed_id} value={s.shed_id}>{s.shed_name || s.shed_code}</option>
           ))}
-        </select>
+        </Select>
         <Button size="sm" variant="outline" onClick={save} disabled={saving || value === (batch.shed_id ?? "")}>
           {t("blSaveShed")}
         </Button>

@@ -21,7 +21,14 @@ const sheet = {
   mill_loading_bin_id: "bin-1", mill_loading_bin_code: "MILL-001/BIN-001", mill_loading_bin_name: "Bin 1",
   requested_qty_kg: "6050", mill_approved_qty_kg: "6000", scheduled_qty_kg: "6000", adjustment_reason: null,
   requested_delivery_date: "2026-10-12", compartment_no: "C1", kg_loaded: "6000", loaded_by_name: "Mill Loader 01",
-  loaded_at: "2026-10-11 09:30:00", status: "LOADED", shipment_no: "TS-0001", transfer_id: "tr-1", transfer_no: "TO-0001",
+  loaded_at: "2026-10-11 09:30:00", status: "LOADED", shipment_no: "TS-0001", transfer_id: "tr-1", transfer_no: "TO-0001", truck_no: "TRK-01",
+};
+const withCompartments = {
+  ...sheet,
+  compartments: [
+    { compartment_id: "cp-1", line_no: 10000, compartment_no: "C1", kg_loaded: "3000", loaded_by: "Loader One", loaded_by_name: "Loader One", loaded_at: "2026-10-11 09:00:00" },
+    { compartment_id: "cp-2", line_no: 20000, compartment_no: "C2", kg_loaded: "3000", loaded_by: "Loader Two", loaded_by_name: "Loader Two", loaded_at: "2026-10-11 09:15:00" },
+  ],
 };
 const notified = { ...sheet, status: "DISPATCHED", dispatch_notification_status: "SENT", dispatch_notification_message: "Loading sheet X has left the mill", dispatch_notification_at: "2026-10-11 10:00:00" };
 const other = { ...sheet, loading_sheet_id: "ls-2", loading_sheet_no: "LOAD-REQ-GRS-2026-00001-10000", status: "DRAFT", loaded_by_name: null, loaded_at: null };
@@ -73,8 +80,25 @@ describe("FeedLoadingPanel", () => {
     expect(screen.getByText("flsColLoadedAt")).toBeTruthy();
     expect(within(row).getByText("12/10/26")).toBeTruthy();
     expect(within(row).getByText("fcdDiet:8")).toBeTruthy();
-    expect((within(row).getByLabelText(`flsLoadedByFor:${sheet.loading_sheet_no}`) as HTMLInputElement).value).toBe("Mill Loader 01");
+    fireEvent.click(within(row).getByRole("button", { name: "flsEditCompartments" }));
+    expect((within(screen.getByRole("dialog")).getByLabelText(`flsLoadedByFor:${sheet.loading_sheet_no}`) as HTMLInputElement).value).toBe("Mill Loader 01");
     expect(within(row).getByText(/^\d{2}\/\d{2}\/26 \d{2}:\d{2}$/)).toBeTruthy();
+  });
+
+  it("shows detailed compartment lines under the loading sheet", async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [withCompartments, other] });
+    render(<FeedLoadingPanel />);
+    const row = (await screen.findByText(sheet.loading_sheet_no)).closest("tr")!;
+    expect(within(row).getByText(/C1 · 3,000 KG/)).toBeTruthy();
+    expect(within(row).getByText(/C2 · 3,000 KG/)).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: "flsEditCompartments" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByDisplayValue("C1")).toBeTruthy();
+    expect(dialog.getByDisplayValue("C2")).toBeTruthy();
+    expect((dialog.getAllByDisplayValue("3000") as HTMLInputElement[])).toHaveLength(2);
+    expect(dialog.getByDisplayValue("Loader One")).toBeTruthy();
+    expect(dialog.getByDisplayValue("Loader Two")).toBeTruthy();
+    expect(within(row).getByText("flsTruck: TRK-01")).toBeTruthy();
   });
 
   it("says the status in words from the shared loading map (row 77)", async () => {
@@ -101,8 +125,13 @@ describe("FeedLoadingPanel", () => {
   it("sends the Loaded By name with Save", async () => {
     render(<FeedLoadingPanel />);
     const row = (await screen.findByText(other.loading_sheet_no)).closest("tr")!;
-    fireEvent.change(within(row).getByLabelText(`flsLoadedByFor:${other.loading_sheet_no}`), { target: { value: "Mill Loader 02" } });
-    fireEvent.click(within(row).getByRole("button", { name: "flsSave" }));
+    fireEvent.click(within(row).getByRole("button", { name: "flsEditCompartments" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "flsAddCompartment" }));
+    fireEvent.change(dialog.getByLabelText(`flsLoadedByFor:${other.loading_sheet_no}`), { target: { value: "Mill Loader 02" } });
+    fireEvent.change(dialog.getByLabelText(`flsCompartmentFor:${other.loading_sheet_no}`), { target: { value: "C1" } });
+    fireEvent.change(dialog.getByLabelText(`flsLoadedFor:${other.loading_sheet_no}`), { target: { value: "6000" } });
+    fireEvent.click(dialog.getByRole("button", { name: "flsSave" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledWith("/feed-requisition/loading-sheets/ls-2", expect.objectContaining({ loadedBy: "Mill Loader 02" })));
   });
 

@@ -26,6 +26,7 @@ import { InlineAlert } from "@/components/ui/alert";
 import { showToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { ScrollTable } from "@/components/ui/scroll-table";
@@ -197,18 +198,18 @@ export function RequisitionsHub() {
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <Field label={t("rhType")} htmlFor="rh-type">
-            <select id="rh-type" className="nf-input-sm nf-select" style={inputStyle} value={type}
+            <Select id="rh-type" fullWidth={false} className="nf-input-sm nf-select w-36" style={inputStyle} value={type}
               onChange={(e) => { setType(e.target.value); setOpen(null); }}>
               <option value="">{t("rhAll")}</option>
               {TYPES.map((k) => <option key={k} value={k}>{labelOf(DOC_TYPE_LABEL, k, t)}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label={t("rhStatus")} htmlFor="rh-status">
-            <select id="rh-status" className="nf-input-sm nf-select" style={inputStyle} value={status}
+            <Select id="rh-status" fullWidth={false} className="nf-input-sm nf-select w-32" style={inputStyle} value={status}
               onChange={(e) => { setStatus(e.target.value); setOpen(null); }}>
               <option value="">{t("rhAll")}</option>
               {STATUSES.map((s) => <option key={s} value={s}>{labelOf(REQ_STATUS_LABEL, s, t)}</option>)}
-            </select>
+            </Select>
           </Field>
           <FeedFarmSelect
             id="rh-farm"

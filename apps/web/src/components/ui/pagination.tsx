@@ -2,6 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useLanguage } from "../../hooks/useLanguage";
+import { Select } from "./select";
 
 const S = {
   sub: { color: "var(--text-secondary)" },
@@ -37,15 +38,16 @@ export function Pagination({ page, pageSize, total, onPageChange, onPageSizeChan
           <span className="font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>{total}</span>
         </span>
         {onPageSizeChange && (
-          <select
+          <Select
             value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
             aria-label={t("gRowsPerPage")}
-            className="nf-input-sm nf-select"
+            fullWidth={false}
+            className="nf-input-sm nf-select w-[7.5rem]"
             style={S.input}
           >
             {pageSizeOptions.map((n) => (<option key={n} value={n}>{t("paginationPerPage", { n })}</option>))}
-          </select>
+          </Select>
         )}
       </div>
       <div className="flex items-center gap-1.5">

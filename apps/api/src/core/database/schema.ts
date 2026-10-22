@@ -4322,6 +4322,8 @@ export const stockTransfer = mysqlTable('stock_transfer', {
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   transfer_no: varchar('transfer_no', { length: 50 }).notNull(),
+  // Vehicle/truck identity supplied when the transfer is shipped; loading instructions group by this value.
+  vehicle_no: varchar('vehicle_no', { length: 80 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
   from_warehouse_id: varchar('from_warehouse_id', { length: 36 }).notNull(),
   to_warehouse_id: varchar('to_warehouse_id', { length: 36 }).notNull(),
@@ -4844,6 +4846,21 @@ export const feedLoadingSheet = mysqlTable('feed_loading_sheet', {
 }, (table) => ({
   lineUnique: uniqueIndex('uq_feed_loading_sheet_consolidation_line').on(table.consolidation_line_id),
   tenantStatusIdx: index('idx_feed_loading_sheet_tenant_status').on(table.tenant_id, table.status),
+}));
+
+/** Detailed loading facts; the parent sheet retains compatibility totals. */
+export const feedLoadingSheetCompartment = mysqlTable('feed_loading_sheet_compartment', {
+  compartment_id: varchar('compartment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  loading_sheet_id: varchar('loading_sheet_id', { length: 36 }).notNull().references(() => feedLoadingSheet.loading_sheet_id, { onDelete: 'cascade' }),
+  line_no: int('line_no').notNull(),
+  compartment_no: varchar('compartment_no', { length: 50 }).notNull(),
+  kg_loaded: decimal('kg_loaded', { precision: 14, scale: 4 }).notNull(),
+  loaded_by: varchar('loaded_by', { length: 36 }),
+  loaded_at: timestamp('loaded_at', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  lineUnique: uniqueIndex('uq_feed_loading_sheet_compartment').on(table.loading_sheet_id, table.line_no),
+  sheetIdx: index('idx_feed_loading_sheet_compartment_sheet').on(table.loading_sheet_id),
 }));
 
 /**

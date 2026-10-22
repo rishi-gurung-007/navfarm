@@ -38,7 +38,7 @@ export interface FarrowingReportRow {
 }
 
 export interface FarrowingReport {
-  farm: { farm_id: string; farm_name: string };
+  farm: { farm_id: string; farm_code: string; farm_name: string };
   filters: { date_from: string; date_to: string; batch_no: string | null; parity: number | null; sow_code: string | null };
   generated_at: string;
   rows: FarrowingReportRow[];
@@ -65,7 +65,7 @@ export class FarrowingReportService {
     const companyId = scope.companyId || query.companyId || null;
 
     const [farm] = await this.db
-      .select({ farm_id: schema.locationMaster.location_id, farm_name: schema.locationMaster.location_name, company_id: schema.locationMaster.company_id })
+      .select({ farm_id: schema.locationMaster.location_id, farm_code: schema.locationMaster.location_code, farm_name: schema.locationMaster.location_name, company_id: schema.locationMaster.company_id })
       .from(schema.locationMaster)
       .where(and(eq(schema.locationMaster.location_id, query.farmId), eq(schema.locationMaster.tenant_id, tenantId)))
       .limit(1);
@@ -161,7 +161,7 @@ export class FarrowingReportService {
 
     const batchNo = query.batchId ? selected[0].batch_no : null;
     return {
-      farm: { farm_id: farm.farm_id, farm_name: farm.farm_name },
+      farm: { farm_id: farm.farm_id, farm_code: farm.farm_code, farm_name: farm.farm_name },
       filters: { date_from: query.dateFrom, date_to: query.dateTo, batch_no: batchNo, parity: query.parity ?? null, sow_code: sowCode },
       generated_at: new Date().toISOString(),
       rows,

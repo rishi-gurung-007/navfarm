@@ -42,6 +42,7 @@ import { useFeedFarm } from "./use-feed-farm";
 import { FeedFarmSelect } from "./feed-farm-select";
 import { DOC_TYPE_LABEL, FEED_TYPE_LABEL, PURPOSE_LABEL, REQ_STATUS_LABEL, SOURCE_LABEL, SUPPLY_LABEL, labelOf, variantOf } from "./requisition-labels";
 import type { RequisitionView } from "./requisitions-panel";
+import { RequisitionDocumentShell } from "../requisitions/requisition-document-shell";
 
 interface Destination { location_id: string; location_code: string; location_name?: string | null; location_type: string; feed_in_bags?: boolean | null }
 interface FeedItem { item_id: string; item_code: string; item_name: string; item_type?: string | null; feed_form?: string | null }
@@ -65,7 +66,13 @@ const COLUMNS = [
 ] as const;
 
 /** The settings the header needs (GET /feed-settings, resolved for the farm). */
-interface HeaderSettings { truckTargetKg: number; bulkMultipleKg: number; bagSizeKg: number }
+type SettingSource = "FARM" | "COMPANY" | "SYSTEM";
+interface HeaderSettings {
+  truckTargetKg: number; bulkMultipleKg: number; bagSizeKg: number;
+  /** Where each value came from: the farm's override, the company's Feed Planning, or the default (Rishi, 21 Oct). */
+  sources?: { truckTargetKg?: SettingSource; bulkMultipleKg?: SettingSource };
+}
+const SOURCE_KEY = { FARM: "rqdFromFarm", COMPANY: "rqdFromCompany", SYSTEM: "rqdFromDefault" } as const;
 
 function feedFormOfTypeCode(code?: string | null): FeedType | null {
   const c = String(code ?? "").toUpperCase().replace(/[_-]+/g, " ");
@@ -195,7 +202,7 @@ export function RequisitionNewDialog({
       .then((res: any) => {
         const raw = unwrap<Partial<HeaderSettings>>(res);
         if (alive && typeof raw?.truckTargetKg === "number" && typeof raw?.bulkMultipleKg === "number") {
-          setSettings({ truckTargetKg: raw.truckTargetKg, bulkMultipleKg: raw.bulkMultipleKg, bagSizeKg: typeof raw.bagSizeKg === "number" ? raw.bagSizeKg : 0 });
+          setSettings({ truckTargetKg: raw.truckTargetKg, bulkMultipleKg: raw.bulkMultipleKg, bagSizeKg: typeof raw.bagSizeKg === "number" ? raw.bagSizeKg : 0, sources: raw.sources });
         }
       })
       .catch(() => {
@@ -235,6 +242,7 @@ export function RequisitionNewDialog({
 
   const setLine = (i: number, patch: Partial<Draft>) => setLines((cur) => cur.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   // Req. r26 counts bulk only; r27 is a target, never a block (cp. 17). The same helper as the document's.
+  const sourceNote = (source?: SettingSource) => (source ? ` (${t(SOURCE_KEY[source])})` : "");
   const { bulkTotal, trips, baggedCount, baggedKg, baggedBags } = bulkTotalAndTrips(
     lines.map((l) => ({ feedType: feedTypeOfDraft(l, destinations, items), kg: Number(l.kg) > 0 ? Number(l.kg) : 0 })),
     settings?.truckTargetKg ?? 0,
@@ -304,7 +312,7 @@ export function RequisitionNewDialog({
           <ChoiceCard label={t("rqNewItemPurchase")} hint="" icon={Package} onClick={() => onCommon?.({ docType: "ITEM", purpose: "PURCHASE" })} />
         </div>
       ) : (
-      <div className="flex flex-col gap-4 text-xs">
+      <RequisitionDocumentShell className="text-xs">
         {/*
           * Task 18b (Rishi 4 Oct: "I can't see the header fields ... only
           * lines"): laid out like FeedRequisitionDocument — the workbook's
@@ -342,12 +350,12 @@ export function RequisitionNewDialog({
             farmName: chosenFarm?.name,
             nextDiet: t("rqNo"),
             farmTotal: t("rqdFarmTotalValue", { total: bulkTotal.toLocaleString("en-US") }),
-            truckTarget: settings ? t("rqdTruckTargetValue", { target: settings.truckTargetKg.toLocaleString("en-US"), trips }) : null,
+            truckTarget: settings ? `${t("rqdTruckTargetValue", { target: settings.truckTargetKg.toLocaleString("en-US"), trips })}${sourceNote(settings.sources?.truckTargetKg)}` : null,
             baggedTotal: baggedCount === 0 ? null
               : settings && settings.bagSizeKg > 0
                 ? t("rqdBaggedTotalValue", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US"), size: settings.bagSizeKg.toLocaleString("en-US") })
                 : t("rqdBaggedTotalNoSize", { kg: baggedKg.toLocaleString("en-US"), bags: baggedBags.toLocaleString("en-US") }),
-            bulkMultiple: settings ? t("rqdKgValue", { kg: settings.bulkMultipleKg.toLocaleString("en-US") }) : null,
+            bulkMultiple: settings ? `${t("rqdKgValue", { kg: settings.bulkMultipleKg.toLocaleString("en-US") })}${sourceNote(settings.sources?.bulkMultipleKg)}` : null,
             requiredDate: earliest ? formatDateShort(earliest) : t("rqnFromLines"),
             supply: labelOf(SUPPLY_LABEL, "MILL", t),
             purpose: labelOf(PURPOSE_LABEL, "INTERNAL_TRANSFER", t),
@@ -428,7 +436,7 @@ export function RequisitionNewDialog({
             </ScrollTable>
           </div>
         </FieldGroup>
-      </div>
+      </RequisitionDocumentShell>
       )}
     </Dialog>
   );

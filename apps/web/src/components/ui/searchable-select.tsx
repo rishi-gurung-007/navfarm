@@ -25,6 +25,8 @@ export interface SearchableSelectProps {
   disabled?: boolean;
   loading?: boolean;
   onClear?: () => void;
+  /** Keep the trigger at its content/explicit width instead of filling its parent. */
+  fullWidth?: boolean;
   triggerClassName?: string;
   triggerStyle?: React.CSSProperties;
 }
@@ -55,6 +57,7 @@ export function SearchableSelect({
   disabled,
   loading,
   onClear,
+  fullWidth = true,
   triggerClassName,
   triggerStyle,
 }: SearchableSelectProps) {
@@ -186,6 +189,7 @@ export function SearchableSelect({
       disabled={disabled}
       loading={loading}
       onClear={onClear}
+      fullWidth={fullWidth}
       triggerClassName={triggerClassName}
       triggerStyle={triggerStyle}
     />

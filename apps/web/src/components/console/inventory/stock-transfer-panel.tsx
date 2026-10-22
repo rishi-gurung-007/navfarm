@@ -1829,23 +1829,20 @@ export default function StockTransferPanel() {
                     <label className="nf-text-label" style={S.sub}>
                       Transport Mode
                     </label>
-                    <select
+                    <SearchableSelect
                       value={header.transport_mode}
                       disabled={!!editingTransfer && editingTransfer.status !== "DRAFT" && !canUserShip(editingTransfer)}
-                      onChange={(e) => setHeader((h) => ({ ...h, transport_mode: e.target.value }))}
-                      className={`${inputCls} nf-select ${
+                      onChange={(next) => setHeader((h) => ({ ...h, transport_mode: next }))}
+                      options={TRANSPORT_MODE_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
+                      valueKey="value" labelKey="label" placeholder="Select transport mode"
+                      searchPlaceholder="Search transport mode…" noMatchesLabel="No matches found"
+                      triggerClassName={`${inputCls} nf-select ${
                         editingTransfer && editingTransfer.status !== "DRAFT" && !canUserShip(editingTransfer)
                           ? "opacity-75 cursor-not-allowed"
                           : ""
                       }`}
-                      style={S.input}
-                    >
-                      {TRANSPORT_MODE_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
+                      triggerStyle={S.input}
+                    />
                   </div>
 
                   {/* Vehicle / Truck No */}
@@ -2503,20 +2500,15 @@ export default function StockTransferPanel() {
                             {/* UOM */}
                             <TableCell className="align-top px-2 py-2 w-24 min-w-[95px]">
                               {!editingTransfer ? (
-                                <select
+                                <SearchableSelect
                                   value={line.uom}
-                                  onChange={(e) => setLineField(idx, "uom", e.target.value)}
-                                  className={`${inputCls} nf-select text-xs pl-2.5 pr-6`}
-                                  style={S.input}
+                                  onChange={(next) => setLineField(idx, "uom", next)}
+                                  options={[{ value: "", label: "Select" }, ...uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))]}
+                                  valueKey="value" labelKey="label" placeholder="Select" searchPlaceholder="Search UOM…" noMatchesLabel="No matches found"
+                                  triggerClassName={`${inputCls} nf-select text-xs pl-2.5 pr-6`}
+                                  triggerStyle={S.input}
                                   disabled={!line.item_id}
-                                >
-                                  <option value="">Select</option>
-                                  {uoms.map((u) => (
-                                    <option key={u.uom_code} value={u.uom_code}>
-                                      {u.uom_code}
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                               ) : (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
                                   {line.uom}

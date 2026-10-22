@@ -7,7 +7,7 @@ import * as schema from '../../../core/database/schema';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import { activeBinAssignments } from './feed-bin-assignments.query';
 import { resolveLoadingBinId } from './feed-requisition-transfer.rules';
-import type { DispatchFeedLoadingSheetDto, UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
+import type { DispatchFeedLoadingSheetDto, FeedLoadingSheetCompartmentDto, UpdateFeedLoadingSheetDto } from './dto/feed-requisition.dto';
 
 /** Row 60: LOAD-<Req No>-<Line No>. */
 export const loadingSheetNo = (reqNo: string, lineSeq: number) => `LOAD-${reqNo}-${lineSeq}`;
@@ -80,6 +80,10 @@ export class FeedLoadingService {
     const [sheet] = await this.db.select().from(schema.feedLoadingSheet).where(and(eq(schema.feedLoadingSheet.loading_sheet_id, id), eq(schema.feedLoadingSheet.tenant_id, tenantId))).limit(1);
     if (!sheet) throw new NotFoundException('Loading instruction sheet not found.');
     if (sheet.status !== 'DRAFT' && sheet.status !== 'LOADED') throw new ConflictException('Only draft loading sheets may be edited.');
+    if (dto.compartments !== undefined) {
+      await this.replaceCompartments(sheet, dto.compartments, tenantId);
+      return this.findOne(id, tenantId);
+    }
     const kg = dto.kgLoaded ?? (sheet.kg_loaded == null ? null : Number(sheet.kg_loaded));
     if (dto.kgLoaded !== undefined && (!Number.isFinite(dto.kgLoaded) || dto.kgLoaded < 0)) throw new BadRequestException('KG loaded must be a non-negative number.');
     if (dto.kgLoaded !== undefined && dto.kgLoaded > Number(sheet.scheduled_qty_kg)) throw new ConflictException('KG loaded cannot exceed the mill-approved allocation.');
@@ -186,13 +190,18 @@ export class FeedLoadingService {
     const consolidationLineById = new Map(consolidationLines.map((line) => [line.id, line]));
     // Row 72: Loaded By is the mill staff name. The column holds either the
     // name the mill typed or, for sheets saved before that, the user's id.
-    const loaderIds = [...new Set(rows.map((row) => row.loaded_by).filter((id): id is string => !!id && UUID.test(id)))];
+    const sheetIds = rows.map((row) => row.loading_sheet_id);
+    const compartments = sheetIds.length ? await this.db.select().from(schema.feedLoadingSheetCompartment)
+      .where(inArray(schema.feedLoadingSheetCompartment.loading_sheet_id, sheetIds)) : [];
+    const loaderIds = [...new Set([
+      ...rows.map((row) => row.loaded_by),
+      ...compartments.map((row) => row.loaded_by),
+    ].filter((id): id is string => !!id && UUID.test(id)))];
     const users = loaderIds.length ? await this.db.select({ id: schema.userMaster.user_id, name: schema.userMaster.full_name })
       .from(schema.userMaster).where(inArray(schema.userMaster.user_id, loaderIds)) : [];
     const userById = new Map(users.map((user) => [user.id, user.name]));
     const transfers = await transfersByRequisitionLine(this.db, rows.map((row) => row.requisition_line_id));
     // Req r75/r76: the MILL_DISPATCH alert raised at dispatch is the dispatch notification; read it by its subject.
-    const sheetIds = rows.map((row) => row.loading_sheet_id);
     const alerts = await this.db.select({ subject_id: schema.feedAlert.subject_id, message: schema.feedAlert.message, raised_at: schema.feedAlert.raised_at })
       .from(schema.feedAlert).where(and(
         eq(schema.feedAlert.event_type, 'MILL_DISPATCH'), eq(schema.feedAlert.subject_type, 'LOADING_SHEET'),
@@ -202,12 +211,25 @@ export class FeedLoadingService {
       )).orderBy(desc(schema.feedAlert.raised_at));
     const alertBySheet = new Map<string, { message: string; raised_at: string }>();
     for (const alert of alerts) if (!alertBySheet.has(alert.subject_id)) alertBySheet.set(alert.subject_id, alert);
+    const compartmentsBySheet = new Map<string, typeof compartments>();
+    for (const compartment of compartments) {
+      const current = compartmentsBySheet.get(compartment.loading_sheet_id) ?? [];
+      current.push(compartment);
+      compartmentsBySheet.set(compartment.loading_sheet_id, current);
+    }
     return rows.map(({ loaded_by, ...row }) => {
       const location = (id: string | null) => (id ? locationById.get(id) : undefined);
       const item = itemById.get(row.item_id);
       const transfer = transfers.get(row.requisition_line_id);
+      const detail = (compartmentsBySheet.get(row.loading_sheet_id) ?? []).sort((a, b) => a.line_no - b.line_no);
+      const totalLoaded = detail.length ? detail.reduce((total, compartment) => total + Number(compartment.kg_loaded), 0).toFixed(4) : row.kg_loaded;
       return {
         ...row,
+        kg_loaded: totalLoaded,
+        compartments: detail.map((compartment) => ({
+          ...compartment,
+          loaded_by_name: !compartment.loaded_by ? null : UUID.test(compartment.loaded_by) ? userById.get(compartment.loaded_by) ?? null : compartment.loaded_by,
+        })),
         adjustment_reason: consolidationLineById.get(row.consolidation_line_id)?.adjustmentReason ?? null,
         requisition_no: reqById.get(row.requisition_id)?.no ?? null,
         farm_code: location(row.farm_id)?.code ?? null,
@@ -222,11 +244,49 @@ export class FeedLoadingService {
         loaded_by_name: !loaded_by ? null : UUID.test(loaded_by) ? userById.get(loaded_by) ?? null : loaded_by,
         transfer_id: transfer?.transfer_id ?? null,
         transfer_no: transfer?.transfer_no ?? null,
+        truck_no: transfer?.vehicle_no ?? null,
         dispatch_notification_status: alertBySheet.has(row.loading_sheet_id) ? 'SENT' : 'NOT_SENT',
         dispatch_notification_message: alertBySheet.get(row.loading_sheet_id)?.message ?? null,
         dispatch_notification_at: alertBySheet.get(row.loading_sheet_id)?.raised_at ?? null,
       };
     });
+  }
+
+  private async replaceCompartments(
+    sheet: typeof schema.feedLoadingSheet.$inferSelect,
+    input: FeedLoadingSheetCompartmentDto[],
+    tenantId: string,
+  ) {
+    const lines = input.map((line, index) => ({
+      ...line,
+      compartmentNo: line.compartmentNo.trim(),
+      loadedBy: line.loadedBy?.trim() || null,
+      loadedAt: line.loadedAt?.trim() ? line.loadedAt.trim().replace('T', ' ').slice(0, 19) : null,
+      lineNo: (index + 1) * 10000,
+    }));
+    if (lines.some((line) => !line.compartmentNo)) throw new BadRequestException('Every loading compartment needs a compartment number.');
+    if (new Set(lines.map((line) => line.compartmentNo)).size !== lines.length) throw new ConflictException('A loading sheet cannot repeat a compartment number.');
+    const total = lines.reduce((sum, line) => sum + line.kgLoaded, 0);
+    if (!Number.isFinite(total) || total > Number(sheet.scheduled_qty_kg)) throw new ConflictException('Total KG loaded cannot exceed the mill-approved allocation.');
+    if (lines.some((line) => !Number.isFinite(line.kgLoaded) || line.kgLoaded <= 0)) throw new BadRequestException('Each loading compartment must have positive KG loaded.');
+    const existing = await this.db.select({ id: schema.feedLoadingSheetCompartment.compartment_id })
+      .from(schema.feedLoadingSheetCompartment)
+      .where(eq(schema.feedLoadingSheetCompartment.loading_sheet_id, sheet.loading_sheet_id));
+    if (existing.length) await this.db.delete(schema.feedLoadingSheetCompartment)
+      .where(eq(schema.feedLoadingSheetCompartment.loading_sheet_id, sheet.loading_sheet_id));
+    if (lines.length) await this.db.insert(schema.feedLoadingSheetCompartment).values(lines.map((line) => ({
+      compartment_id: line.compartmentId ?? randomUUID(), loading_sheet_id: sheet.loading_sheet_id, line_no: line.lineNo,
+      compartment_no: line.compartmentNo, kg_loaded: String(line.kgLoaded), loaded_by: line.loadedBy,
+      loaded_at: line.loadedAt,
+    })));
+    const loadedAt = lines.map((line) => line.loadedAt).filter(Boolean).sort().at(-1) ?? null;
+    await this.db.update(schema.feedLoadingSheet).set({
+      compartment_no: lines.map((line) => line.compartmentNo).join(', ') || null,
+      kg_loaded: lines.length ? total.toFixed(4) : null,
+      loaded_by: lines[0]?.loadedBy ?? null,
+      loaded_at: loadedAt,
+      status: lines.length ? 'LOADED' : 'DRAFT',
+    }).where(and(eq(schema.feedLoadingSheet.loading_sheet_id, sheet.loading_sheet_id), eq(schema.feedLoadingSheet.tenant_id, tenantId)));
   }
 }
 
@@ -237,10 +297,11 @@ export async function transfersByRequisitionLine(db: MySql2Database<typeof schem
     requisition_line_id: schema.stockTransferLine.requisition_line_id,
     transfer_id: schema.stockTransfer.transfer_id,
     transfer_no: schema.stockTransfer.transfer_no,
+    vehicle_no: schema.stockTransfer.vehicle_no,
   }).from(schema.stockTransferLine)
     .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
     .where(and(inArray(schema.stockTransferLine.requisition_line_id, ids), isNull(schema.stockTransfer.deleted_at))) : [];
-  const byLine = new Map<string, { transfer_id: string; transfer_no: string }>();
-  for (const row of rows) if (row.requisition_line_id && !byLine.has(row.requisition_line_id)) byLine.set(row.requisition_line_id, { transfer_id: row.transfer_id, transfer_no: row.transfer_no });
+  const byLine = new Map<string, { transfer_id: string; transfer_no: string; vehicle_no: string | null }>();
+  for (const row of rows) if (row.requisition_line_id && !byLine.has(row.requisition_line_id)) byLine.set(row.requisition_line_id, { transfer_id: row.transfer_id, transfer_no: row.transfer_no, vehicle_no: row.vehicle_no ?? null });
   return byLine;
 }

@@ -2,7 +2,6 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { getTableName } from 'drizzle-orm';
-import * as schema from '../../../core/database/schema';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';

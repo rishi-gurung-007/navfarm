@@ -15,7 +15,7 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
 
   const filters = [
-    `${t("rptFarm")}: ${report.farm.farm_name}`,
+    `${t("rptFarm")}: ${report.farm.farm_code} - ${report.farm.farm_name}`,
     `${t("rptDateFrom")}: ${report.filters.date_from}`,
     `${t("rptDateTo")}: ${report.filters.date_to}`,
     `${t("rptBatch")}: ${report.filters.batch_no ?? t("rptAll")}`,
@@ -31,15 +31,13 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
 
   const head = [
     [
-      { content: t("rptFarmCol"), rowSpan: 2 },
       { content: t("rptSowBatch"), rowSpan: 2 },
       ...columnGroups(FARROWING_COLUMNS).map((g) => ({ content: latin1(t(g.group)), colSpan: g.span })),
     ],
     FARROWING_COLUMNS.map((c) => latin1(t(c.sub))),
   ];
   const body = report.rows.map((row) => [
-    row.is_total ? t("rptFarmTotal") : report.farm.farm_name,
-    row.is_total ? "" : `${row.batch_no}\n${t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}`,
+    row.is_total ? t("rptFarmTotal") : `${row.batch_no}\n${t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}`,
     ...FARROWING_COLUMNS.map((c) => latin1(c.cell(row, t))),
   ]);
 
@@ -51,17 +49,17 @@ export async function exportFarrowingPdf(report: FarrowingReport, t: T): Promise
     margin: { left: 6, right: 6 },
     styles: { fontSize: 4, cellPadding: 0.4, halign: "right", lineWidth: 0.1 },
     headStyles: { fillColor: [235, 238, 242], textColor: 30, halign: "center", valign: "middle", fontStyle: "bold" },
-    columnStyles: { 0: { halign: "left" }, 1: { halign: "left" } },
+    columnStyles: { 0: { halign: "left" } },
     theme: "grid",
     didParseCell: (data: any) => {
       if (data.section === "body" && report.rows[data.row.index]?.is_total) data.cell.styles.fontStyle = "bold";
-      // A wider, light line before each group of columns, as on the screen (columns 0 and 1 are the Farm and the Sow Batch).
-      if (starts.has(data.column.index - 2)) {
+      // A wider, light line before each group of columns, as on the screen (column 0 is the Sow Batch).
+      if (starts.has(data.column.index - 1)) {
         data.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.5 };
         data.cell.styles.lineColor = [190, 194, 202];
       }
       // Change and YoY %: good news green, bad news red, as on the screen.
-      const column = FARROWING_COLUMNS[data.column.index - 2];
+      const column = FARROWING_COLUMNS[data.column.index - 1];
       const tone = data.section === "body" && column ? changeTone(column, String(data.cell.raw ?? "")) : null;
       if (tone) data.cell.styles.textColor = tone === "good" ? [47, 125, 91] : [183, 41, 62];
     },

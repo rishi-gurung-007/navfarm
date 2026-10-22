@@ -18,6 +18,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toast } from "@/components/ui/toast";
+import { Select } from "@/components/ui/select";
 import { api } from "@/services/api-client";
 
 type Row = Record<string, any>;
@@ -411,7 +412,7 @@ export default function AnimalSerialAssignmentModal({
                             <span>{assignedSerial || NA}</span>
                           </div>
                         ) : (
-                          <select
+                          <Select
                             value={assignedSerial}
                             onChange={(e) => handleSelectSerial(animal.animal_id, e.target.value)}
                             className="nf-input-sm w-full font-mono text-xs rounded border px-2 py-1 outline-none focus:border-[var(--accent)]"
@@ -437,7 +438,7 @@ export default function AnimalSerialAssignmentModal({
                                 </option>
                               );
                             })}
-                          </select>
+                          </Select>
                         )}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-[11px]" style={S.sub}>

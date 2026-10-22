@@ -195,13 +195,14 @@ export class BioAssetLedgerService {
         batch_no: B.batch_no,
         animal_id: B.animal_id,
         animal_code: schema.animalRegister.animal_code,
-        source_receipt_id: schema.animalRegister.source_receipt_id,
+        source_receipt_id: sql<string | null>`COALESCE(${schema.animalRegister.source_receipt_id}, ${schema.goodsReceiptLine.receipt_id})`,
         status: B.status,
         created_by: B.created_by,
         created_at: B.created_at,
       })
       .from(B)
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, B.bio_asset_item_id))
+      .leftJoin(schema.goodsReceiptLine, eq(schema.goodsReceiptLine.line_id, B.document_line_id))
       .leftJoin(loc, eq(loc.location_id, B.warehouse_id))
       .leftJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, B.animal_id))
       .where(and(...conditions))

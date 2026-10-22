@@ -86,7 +86,7 @@ describe('farm scope on previously exempt operational services', () => {
 
   it('bounds QR pack lists through their batch', async () => {
     const test = harness();
-    await new QrCodeService(test.cls, audit).findAll({} as any, 'tenant-1');
+    await new QrCodeService(test.cls, audit, {} as any).findAll({} as any, 'tenant-1');
     expect(test.sqlFor(schema.qrCodeMaster)).toContain('FROM batch_header br');
   });
 
@@ -95,7 +95,7 @@ describe('farm scope on previously exempt operational services', () => {
       [schema.itemMaster, [{ item_id: 'item-1', item_code: 'ITEM-1', is_qr_enabled: true }]],
       [schema.batchHeader, []],
     ]);
-    await expect(new QrCodeService(test.cls, audit).create({ item_id: 'item-1', batch_id: 'batch-1' } as any, 'tenant-1')).rejects.toThrow('not found');
+    await expect(new QrCodeService(test.cls, audit, {} as any).create({ item_id: 'item-1', batch_id: 'batch-1' } as any, 'tenant-1')).rejects.toThrow('not found');
     const sql = test.sqlFor(schema.batchHeader);
     expect(sql).toContain('`batch_header`.`lob_id` = ?');
     expect(sql).toContain('`batch_header`.`company_id` = ?');

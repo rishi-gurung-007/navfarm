@@ -1395,11 +1395,11 @@ export default function CompanyTab({
                           <Field className="sm:col-span-3" label={t("ctFeedMaxForecastDays")} htmlFor="feed-max-days" hint={t("ctFeedMaxForecastDaysHint")} required>
                             <Input id="feed-max-days" type="number" min={1} max={45} value={feedForm.maxForecastDays} onChange={(e) => setFeedForm({ ...feedForm, maxForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target">
-                            <Input id="feed-truck-target" type="number" min={0.01} step="0.01" value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target" hint={t("ctFeedBlankUsesDefault", { value: "30,000" })}>
+                            <Input id="feed-truck-target" type="number" min={0.01} step="0.01" placeholder="30000" value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple">
-                            <Input id="feed-bulk-multiple" type="number" min={0.01} step="0.01" value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple" hint={t("ctFeedBlankUsesDefault", { value: "3,000" })}>
+                            <Input id="feed-bulk-multiple" type="number" min={0.01} step="0.01" placeholder="3000" value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
                         </FieldGroup>
 

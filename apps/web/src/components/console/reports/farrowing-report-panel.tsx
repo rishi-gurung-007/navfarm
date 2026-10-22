@@ -227,8 +227,7 @@ export default function FarrowingReportPanel() {
           <ScrollTable label={t("rptFarrowingReport")}>
             <thead>
               <tr>
-                <th rowSpan={2} data-sticky-col className="border-b border-r px-3 py-2 font-semibold" style={{ ...S.head, ...S.headEnd, color: "var(--text-primary)" }}>{t("rptFarmCol")}</th>
-                <th rowSpan={2} className="border-b border-r px-3 py-2 font-semibold" style={{ ...S.head, ...S.headEnd, color: "var(--text-primary)" }}>{t("rptSowBatch")}</th>
+                <th rowSpan={2} data-sticky-col className="border-b border-r px-3 py-2 font-semibold" style={{ ...S.head, ...S.headEnd, color: "var(--text-primary)" }}>{t("rptSowBatch")}</th>
                 {groups.map((g, i) => (
                   <th key={`${g.group}-${i}`} colSpan={g.span} className="border-b border-r px-3 text-center font-semibold whitespace-nowrap" style={{ ...S.head, color: "var(--text-primary)", height: GROUP_ROW_PX, ...(i > 0 ? S.groupEdge : {}) }}>{t(g.group)}</th>
                 ))}
@@ -243,10 +242,7 @@ export default function FarrowingReportPanel() {
               {report.rows.map((row) => (
                 <tr key={row.batch_id ?? "total"} style={row.is_total ? { backgroundColor: "var(--surface-raised)", fontWeight: 600 } : undefined}>
                   <td data-sticky-col className="border-b border-r px-3 py-2 whitespace-nowrap" style={{ ...S.cell, ...S.primary, backgroundColor: row.is_total ? "var(--surface-raised)" : "var(--surface)" }}>
-                    {row.is_total ? t("rptFarmTotal") : report.farm.farm_name}
-                  </td>
-                  <td className="border-b border-r px-3 py-2 whitespace-nowrap" style={{ ...S.cell, ...S.primary }}>
-                    {row.is_total ? "" : row.batch_no}
+                    {row.is_total ? t("rptFarmTotal") : row.batch_no}
                     {!row.is_total && (
                       <div className="text-[10px]" style={S.muted}>{t("rptPriorBatch", { batch: row.prior_batch_no ?? NA })}</div>
                     )}

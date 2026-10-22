@@ -21,6 +21,7 @@ describe('FeedLoadingService', () => {
   const db: any = {
     select: jest.fn(() => chain(queue.shift() ?? [])),
     insert: jest.fn(() => ({ values: async (values: unknown) => { inserted.push(values); } })),
+    delete: jest.fn(() => ({ where: async () => undefined })),
     update: jest.fn(() => ({ set: (values: unknown) => { updated.push(values); return { where: async () => undefined }; } })),
   };
   const service = new FeedLoadingService(transactionCls(db));
@@ -35,7 +36,7 @@ describe('FeedLoadingService', () => {
     created_at: '2026-10-10 00:00:00', updated_at: '2026-10-10 00:00:00',
   };
   /** decorate's reads, in order: locations, items, requisitions, consolidation lines, users, transfers. */
-  const decorateReads = (overrides: { users?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; transfers?: unknown[]; alerts?: unknown[] } = {}) => queue.push(
+  const decorateReads = (overrides: { users?: unknown[]; locations?: unknown[]; items?: unknown[]; reqs?: unknown[]; compartments?: unknown[]; transfers?: unknown[]; alerts?: unknown[] } = {}) => queue.push(
     overrides.locations ?? [
       { id: 'farm-1', code: 'MUL100', name: 'Mulberry' },
       { id: 'silo-1', code: 'MUL100/SILO-01', name: 'Silo 1' },
@@ -44,8 +45,9 @@ describe('FeedLoadingService', () => {
     overrides.items ?? [{ id: 'item-8', code: 'ICAT-004-ITM-0008', name: 'Weaner Grower Mash', diet_no: 8 }],
     overrides.reqs ?? [{ id: 'req-1', no: 'REQ-MUL100-2026-00001' }],
     [{ id: 'cl-1', adjustmentReason: 'Mill capacity' }],
+    overrides.compartments ?? [],
     overrides.users ?? [{ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'Mill Loader One' }],
-    overrides.transfers ?? [{ requisition_line_id: 'rl-1', transfer_id: 'tr-1', transfer_no: 'TO-0001' }],
+    overrides.transfers ?? [{ requisition_line_id: 'rl-1', transfer_id: 'tr-1', transfer_no: 'TO-0001', vehicle_no: 'TRK-01' }],
     overrides.alerts ?? [],
   );
 
@@ -98,8 +100,23 @@ describe('FeedLoadingService', () => {
       requisition_no: 'REQ-MUL100-2026-00001', farm_code: 'MUL100', destination_silo_code: 'MUL100/SILO-01',
       item_code: 'ICAT-004-ITM-0008', mill_loading_bin_code: 'MILL-001/BIN-001', transfer_id: 'tr-1', transfer_no: 'TO-0001',
       adjustment_reason: 'Mill capacity',
+      truck_no: 'TRK-01',
     });
     expect(row).not.toHaveProperty('loaded_by');
+  });
+
+  it('returns compartment lines under the loading sheet and keeps the parent loaded quantity as their total', async () => {
+    queue.push([sheet]);
+    decorateReads({ compartments: [
+      { compartment_id: 'cp-1', loading_sheet_id: 'ls-1', line_no: 10000, compartment_no: 'C1', kg_loaded: '3000.0000', loaded_by: 'Loader One', loaded_at: '2026-10-11 09:00:00' },
+      { compartment_id: 'cp-2', loading_sheet_id: 'ls-1', line_no: 20000, compartment_no: 'C2', kg_loaded: '3000.0000', loaded_by: 'Loader Two', loaded_at: '2026-10-11 09:15:00' },
+    ] });
+    const row: any = await service.findOne('ls-1', 't-1');
+    expect(row.compartments).toEqual([
+      expect.objectContaining({ compartment_id: 'cp-1', compartment_no: 'C1', kg_loaded: '3000.0000', loaded_by: 'Loader One' }),
+      expect.objectContaining({ compartment_id: 'cp-2', compartment_no: 'C2', kg_loaded: '3000.0000', loaded_by: 'Loader Two' }),
+    ]);
+    expect(row.kg_loaded).toBe('6000.0000');
   });
 
   it('W5B (Req r75, r76): reports the dispatch notification as Sent with its content, or Not sent when none was raised', async () => {
@@ -146,6 +163,23 @@ describe('FeedLoadingService', () => {
     decorateReads();
     await service.update('ls-1', { compartmentNo: 'C1', kgLoaded: 6000, loadedBy: '  Mill Loader 01 ' }, 't-1', { userId: 'user-1' });
     expect(updated[0]).toMatchObject({ loaded_by: 'Mill Loader 01', status: 'LOADED' });
+  });
+
+  it('replaces detailed compartment lines and writes compatibility totals to the parent sheet', async () => {
+    queue.push([{ ...sheet, status: 'DRAFT', compartment_no: null, kg_loaded: null, loaded_by: null, loaded_at: null }], [{ id: 'cp-old' }]);
+    jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+    await service.update('ls-1', {
+      compartments: [
+        { compartmentNo: 'C1', kgLoaded: 3000, loadedBy: 'Loader One', loadedAt: '2026-10-11T09:00:00' },
+        { compartmentNo: 'C2', kgLoaded: 3000, loadedBy: 'Loader Two', loadedAt: '2026-10-11T09:15:00' },
+      ],
+    }, 't-1', { userId: 'user-1' });
+    expect(db.delete).toHaveBeenCalled();
+    expect(inserted[0]).toEqual([
+      expect.objectContaining({ line_no: 10000, compartment_no: 'C1', kg_loaded: '3000', loaded_by: 'Loader One' }),
+      expect.objectContaining({ line_no: 20000, compartment_no: 'C2', kg_loaded: '3000', loaded_by: 'Loader Two' }),
+    ]);
+    expect(updated[0]).toMatchObject({ compartment_no: 'C1, C2', kg_loaded: '6000.0000', loaded_by: 'Loader One', status: 'LOADED' });
   });
 
   it('keeps an earlier Loaded By when a later save does not name one', async () => {

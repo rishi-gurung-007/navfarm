@@ -4347,3 +4347,25 @@ only for the animals which were in the batch on those previous days."
 - **`entryBlockedReason` takes the date**: a past date is blocked only if the batch had no animal that day, so an emptied
   batch still takes entries for the days it had animals; today is judged as before.
 - **Batch-wise batches are unchanged.** They keep no head count by date, so they are judged on the head count as it stands.
+
+## 21 Oct 2026 — Truck target and bulk multiple: farm, else company, else default (Rishi)
+
+- A feed requisition takes its Bulk Truck Target and Bulk Order Multiple from the farm's own override in Company
+  Settings → Feed Planning, else the company's Feed Planning value, else the default (30,000 kg / 3,000 kg). The
+  New Requisition header now says which: "(farm)", "(company)" or "(default)" (`GET /feed-settings` returns
+  `sources.truckTargetKg` / `sources.bulkMultipleKg`).
+- Feed Planning: the company fields say a blank uses the default; each farm override has "Use company value",
+  which clears it so the farm inherits again.
+- The farm record's old `feed_truck_target_kg` / `feed_bulk_multiple_kg` columns stay unused (requisitions stopped
+  reading them on 8 Oct); no screen shows them.
+- Next (after 24 Oct): Loading Instructions record compartments as lines under each loading sheet — compartment, kg,
+  loaded by, loaded at — grouped by truck; the sheet's own fields become totals so nothing reading them changes.
+
+## 21 Oct 2026 — Follow-up implementation decisions (Rishi)
+
+- The current uncommitted 21 Oct feed-settings, requisition, farrowing-report and master-data changes are retained and should be finished, reviewed, and tested.
+- Animal codes use the Number Series master. The current format is `PIG-YYYY-SEQ`; it must remain configurable through the number-series mechanism rather than being hardcoded into animal creation.
+- The local currency is **ZWL**. Base Currency remains the posted base currency, and Local Currency is mapped through the Currency master's rate.
+- The next feature priority is Loading Instructions compartment lines: compartment, quantity in kg, loaded by, and loaded at, grouped by truck, while preserving the existing loading-sheet totals.
+- Add regression tests for the compartment-line design before implementing it.
+- Bio-asset GRN migration 0200 requires regression coverage before live verification.

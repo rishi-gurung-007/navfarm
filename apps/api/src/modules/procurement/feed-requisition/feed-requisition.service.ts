@@ -2218,6 +2218,27 @@ export class FeedRequisitionService implements OnModuleInit {
         eq(schema.feedLoadingSheet.tenant_id, tenantId),
         inArray(schema.feedLoadingSheet.company_id, [...new Set(transfers.map((transfer) => transfer.company_id))]),
       )) : [];
+    // W2T: preserve detailed child rows for the receipt read model. The
+    // parent compartment_no remains for older consumers; the receipt UI uses
+    // these rows to show wrapped compartment + KG facts.
+    const loadingSheetIds = loadingSheets.map((sheet) => sheet.loading_sheet_id);
+    const loadingCompartments = loadingSheetIds.length ? await this.db
+      .select({
+        loading_sheet_id: schema.feedLoadingSheetCompartment.loading_sheet_id,
+        compartment_no: schema.feedLoadingSheetCompartment.compartment_no,
+        kg_loaded: schema.feedLoadingSheetCompartment.kg_loaded,
+        loaded_by: schema.feedLoadingSheetCompartment.loaded_by,
+        line_no: schema.feedLoadingSheetCompartment.line_no,
+      })
+      .from(schema.feedLoadingSheetCompartment)
+      .where(inArray(schema.feedLoadingSheetCompartment.loading_sheet_id, loadingSheetIds)) : [];
+    const compartmentsBySheet = new Map<string, typeof loadingCompartments>();
+    for (const compartment of loadingCompartments) {
+      const current = compartmentsBySheet.get(compartment.loading_sheet_id) ?? [];
+      current.push(compartment);
+      current.sort((a, b) => a.line_no - b.line_no);
+      compartmentsBySheet.set(compartment.loading_sheet_id, current);
+    }
     const sheetFor = (requisitionLineId: string | null, shipmentId: string) => {
       const forLine = loadingSheets.filter((sheet) => sheet.requisition_line_id === requisitionLineId);
       return forLine.find((sheet) => sheet.shipment_id === shipmentId) ?? forLine[0] ?? null;
@@ -2244,12 +2265,19 @@ export class FeedRequisitionService implements OnModuleInit {
           const receivedQty = receivedForShipment.get(`${shipment.shipment_id}:${line.line_id}`) ?? 0;
           const transferLine = transferLines.find((entry) => entry.transfer_line_id === line.line_id);
           const sheet = sheetFor(transferLine?.requisition_line_id ?? null, shipment.shipment_id);
+          const compartments = sheet ? (compartmentsBySheet.get(sheet.loading_sheet_id) ?? []).map((compartment) => ({
+            compartment_no: compartment.compartment_no,
+            kg_loaded: Number(compartment.kg_loaded),
+            loaded_by: compartment.loaded_by,
+          })) : [];
           return {
             line_id: line.line_id,
             requisition_line_id: transferLine?.requisition_line_id ?? null,
             loading_sheet_id: sheet?.loading_sheet_id ?? null,
             loading_sheet_no: sheet?.loading_sheet_no ?? null,
             compartment_no: sheet?.compartment_no ?? null,
+            compartments,
+            loading_total_kg: compartments.length ? compartments.reduce((total, compartment) => total + compartment.kg_loaded, 0) : null,
             quantity: shippedQty,
             qty_received: receivedQty,
             remaining_to_receive: Math.max(0, shippedQty - receivedQty),

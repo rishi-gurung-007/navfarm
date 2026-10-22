@@ -640,8 +640,8 @@ const animal: MasterDataConfig = {
     // three-option select (1/2/3) could not record any other grade. Stored as
     // text in the varchar(20) column; the API DTO validates the same range.
     { key: "grading", label: "Grading", type: "number", min: 0, max: 99, step: "1", maxLength: 2, helpText: "Whole number from 0 to 99.", section: "Bio-Asset" },
-    { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, required: true, entityEndpoint: "/stage", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], section: "Current Position" },
-    { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], helpText: "Choose where this animal is: a batch or a pen location on your farm.", section: "Current Position" },
+    { key: "current_stage_id", label: "Current Stage", type: "select-entity", createOnly: true, required: true, entityEndpoint: "/stage?breedId={value}", entityValueKey: "stage_id", entityLabelKeys: ["stage_code", "stage_name"], dependsOn: "breed_id", helpText: "Stages configured for the selected breed.", section: "Current Position" },
+    { key: "current_batch_id", label: "Current Batch", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/batch?status=ACTIVE&trackingMode=ANIMAL_WISE&breedId={value}", entityValueKey: "batch_id", entityLabelKeys: ["batch_no"], dependsOn: "breed_id", helpText: "Choose an active animal-wise batch for the selected breed.", section: "Current Position" },
     // Not a column: it only narrows the Current Location list to Sheds or Pens.
     { key: "location_type", label: "Location Type", type: "select", filterOnly: true, createOnly: true, defaultValue: "PEN", options: [{ value: "SHED", label: "Shed" }, { value: "PEN", label: "Pen" }], helpText: "Choose whether the animal is kept in a whole Shed or in a Pen.", section: "Current Position" },
     { key: "current_location_id", label: "Current Location", type: "select-entity", searchable: true, createOnly: true, entityEndpoint: "/location", entityValueKey: "location_id", entityLabelKeys: ["location_code", "location_name"], dependsOn: "location_type", dependsOnMode: "query", queryParams: { location_type: "locationType" }, helpText: "Choose where this animal is: a batch or a location on your farm.", section: "Current Position" },
@@ -649,7 +649,7 @@ const animal: MasterDataConfig = {
     // CreateAnimalDto does not accept them and the API runs
     // forbidNonWhitelisted — sending them on create would 400 the whole form.
     // A sow transferred in with a parity history gets it on the first edit.
-    { key: "parity_count", label: "Parity Count", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, helpText: "Completed pregnancies, incremented on weaning. Rolled up from farrowing records, so a manual figure is replaced at the next weaning.", section: "Bio-Asset" },
+    { key: "parity_count", label: "Parity Count", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, hideStoredWhenHidden: true, helpText: "Completed pregnancies, incremented on weaning. Rolled up from farrowing records, so a manual figure is replaced at the next weaning.", section: "Bio-Asset" },
     { key: "total_piglets_born_live", label: "Total Piglets Born Live", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "total_piglets_weaned", label: "Total Piglets Weaned", type: "number", min: 0, editOnly: true, visibleWhen: { anyOf: [{ key: "gender", equals: "F" }] }, section: "Bio-Asset" },
     { key: "productive_life_start", label: "Productive Life Start", type: "date", section: "Production" },
@@ -1525,7 +1525,7 @@ const reason: MasterDataConfig = {
     // Template column D is "Description"; the schema/API field is reason_name
     // (entrenched elsewhere — unique index, seed scripts, tests) — relabelled
     // here rather than renamed, so this is the only place the word "Name" is gone.
-    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 150 },
+    { key: "reason_name", label: "Description", type: "text", required: true, maxLength: 50 },
     // Multi-select over real stage_master rows, with an "All Stages" option
     // standing in for "no restriction" (the column's own meaning when empty —
     // see allOption in types.ts). This is what reason.service.ts actually

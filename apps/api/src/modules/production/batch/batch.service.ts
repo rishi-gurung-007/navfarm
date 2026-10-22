@@ -1761,6 +1761,10 @@ export class BatchService {
       conditions.push(eq(schema.batchHeader.status, query.status));
     if (query.lobId)
       conditions.push(eq(schema.batchHeader.lob_id, query.lobId));
+    if (query.breedId)
+      conditions.push(eq(schema.batchHeader.breed_id, query.breedId));
+    if (query.trackingMode)
+      conditions.push(eq(schema.batchHeader.tracking_mode, query.trackingMode));
     if (query.search)
       conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { NA } from "@/utils/na";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, Sparkles, ListChecks, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -260,6 +260,8 @@ export default function GoodsReceiptPanel() {
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
+  const requestedRecordId = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("recordId") || "";
+  const openedRecordIdRef = useRef("");
 
   const companyId = getActiveCompanyId();
 
@@ -486,6 +488,17 @@ export default function GoodsReceiptPanel() {
       setError(err?.message || t("grpFailedToLoadReceiptDetails"));
     }
   };
+
+  useEffect(() => {
+    if (!requestedRecordId || requestedRecordId === openedRecordIdRef.current || loading || viewing) return;
+    const row = rows.find((candidate) => candidate.receipt_id === requestedRecordId);
+    if (row) {
+      openedRecordIdRef.current = requestedRecordId;
+      void openView(row);
+    }
+    // The URL is the one-shot source for opening a receipt; the existing list remains unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedRecordId, loading, rows, viewing]);
 
   const handlePost = async () => {
     if (!viewing) return;
@@ -775,23 +788,15 @@ export default function GoodsReceiptPanel() {
                         />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
-                        <select
+                        <SearchableSelect
                           value={line.uom}
-                          onChange={(e) => setLineField(idx, "uom", e.target.value)}
+                          onChange={(next) => setLineField(idx, "uom", next)}
                           disabled={!line.item_id || !!items.find((it) => it.item_id === line.item_id)?.uom_primary}
-                          className={`${lineInputCls} nf-select appearance-none pr-7 disabled:cursor-not-allowed disabled:opacity-70`}
-                          style={S.input}
-                        >
-                          <option value="">{t("grpSelectEllipsis")}</option>
-                          {line.uom && !uoms.some((u) => u.uom_code === line.uom) && (
-                            <option value={line.uom}>{line.uom}</option>
-                          )}
-                          {uoms.map((u) => (
-                            <option key={u.uom_code} value={u.uom_code}>
-                              {u.uom_code}
-                            </option>
-                          ))}
-                        </select>
+                          options={[{ value: "", label: t("grpSelectEllipsis") }, ...(line.uom && !uoms.some((u) => u.uom_code === line.uom) ? [{ value: line.uom, label: line.uom }] : []), ...uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))]}
+                          valueKey="value" labelKey="label" placeholder={t("grpSelectEllipsis")} searchPlaceholder="Search UOM…" noMatchesLabel="No matches found"
+                          triggerClassName={`${lineInputCls} nf-select appearance-none pr-7 disabled:cursor-not-allowed disabled:opacity-70`}
+                          triggerStyle={S.input}
+                        />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <input

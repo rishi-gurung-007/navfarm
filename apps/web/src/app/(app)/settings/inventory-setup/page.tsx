@@ -27,6 +27,7 @@ import { Toast } from "@/components/ui/toast";
 import { Dialog } from "@/components/ui/dialog";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/states";
 import { confirmAction } from "@/components/ui/confirm-dialog";
+import { Select } from "@/components/ui/select";
 
 export interface MasterMeta {
   key: string;
@@ -376,7 +377,7 @@ export default function InventorySetupPage() {
         {companies.length > 1 && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-[var(--text-secondary)]">Switch Company:</span>
-            <select
+            <Select
               value={selectedCompanyId}
               onChange={(e) => handleCompanyChange(e.target.value)}
               className="nf-input nf-select text-xs py-1.5 px-3 min-w-[200px]"
@@ -386,7 +387,7 @@ export default function InventorySetupPage() {
                   {c.company_name} {c.is_primary ? "(Primary)" : ""}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
       </div>
@@ -625,7 +626,7 @@ export default function InventorySetupPage() {
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-1.5">
                             {seriesList.length > 0 ? (
-                              <select
+                              <Select
                                 value={cfg.default_series_id || ""}
                                 onChange={(e) => handleDefaultSeriesChange(masterKey, e.target.value)}
                                 disabled={!cfg.enabled}
@@ -638,7 +639,7 @@ export default function InventorySetupPage() {
                                   </option>
                                 ))}
                                 <option value="__CREATE_NEW__">+ Add New Series for {master.label}...</option>
-                              </select>
+                              </Select>
                             ) : (
                               <button
                                 type="button"
@@ -752,7 +753,7 @@ export default function InventorySetupPage() {
               <label className="block text-xs font-medium text-[var(--text-primary)] mb-1">
                 Default Valuation Method
               </label>
-              <select
+              <Select
                 value={localGeneral.default_costing_method || "FIFO"}
                 onChange={(e) => setLocalGeneral((prev) => ({ ...prev, default_costing_method: e.target.value }))}
                 className="w-full max-w-xs nf-input nf-select text-xs py-1.5"
@@ -761,7 +762,7 @@ export default function InventorySetupPage() {
                 <option value="AVERAGE">Average Costing</option>
                 <option value="STANDARD">Standard Costing</option>
                 <option value="LIFO">LIFO (Last In, First Out)</option>
-              </select>
+              </Select>
             </div>
           </div>
         </div>

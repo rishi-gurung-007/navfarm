@@ -506,9 +506,8 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           ["Batch", labels.batches?.[createdValues.current_batch_id] || ""],
           ["Pen", labels.locations?.[createdValues.current_location_id] || ""],
           ["Dam", fmt(lineage.dam_code)], ["Sire", fmt(lineage.sire_code)],
-          // source_receipt_id, not source_grn_id: the column is named after
-          // this codebase's goods_receipt table rather than the spec's "GRN".
-          ["Source receipt", fmt(row.source_receipt_id)], ["Born from batch", fmt(row.source_batch_id)],
+          // The API resolves the internal source_receipt_id to the business-facing GRN number.
+          ["Source GRN", fmt(row.source_grn_no)], ["Born from batch", fmt(row.source_batch_id)],
           ["Acquisition cost", fmtAmount(row.acquisition_cost)],
         ],
       });
@@ -653,6 +652,12 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             />
             <ReadField label="Entry type" value={fmt(row.entry_type)} />
             <ReadField label="Entry date" value={fmt(row.entry_date)} />
+            <ReadField
+              label="Source GRN"
+              value={row.source_grn_no
+                ? <a className="text-(--accent) hover:underline" href={`/inventory/goods-receipt?recordId=${encodeURIComponent(row.source_grn_id)}`}>{fmt(row.source_grn_no)}</a>
+                : ""}
+            />
             <ReadField label="Sire" value={fmt(lineage.sire_code)} mono />
             <ReadField label="Dam" value={fmt(lineage.dam_code)} mono />
             <ReadField mono label="RFID" value={fmt(row.rfid_tag)} />

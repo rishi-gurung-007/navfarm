@@ -45,7 +45,7 @@ export interface FarrowingReportRow {
 }
 
 export interface FarrowingReport {
-  farm: { farm_id: string; farm_name: string };
+  farm: { farm_id: string; farm_code: string; farm_name: string };
   filters: { date_from: string; date_to: string; batch_no: string | null; parity: number | null; sow_code: string | null };
   generated_at: string;
   rows: FarrowingReportRow[];

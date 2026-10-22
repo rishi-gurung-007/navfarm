@@ -57,7 +57,10 @@ describe('FeedSettingsService.resolve', () => {
       financeVariancePct: 5, financeVarianceAmount: null,
     }));
     expect(result).not.toHaveProperty('leadTimeDays'); // 3 Oct ruling 6: no lead time for internal feed (Req. row 29)
-    expect(result.sources).toEqual({ logistics: 'FARM', submissionSchedule: 'FARM', companySetting: 'COMPANY' });
+    expect(result.sources).toEqual({
+      truckTargetKg: 'COMPANY', bulkMultipleKg: 'FARM',
+      logistics: 'FARM', submissionSchedule: 'FARM', companySetting: 'COMPANY',
+    });
   });
 
   it('returns typed documented fallbacks and nullable schedules when no settings row exists', async () => {

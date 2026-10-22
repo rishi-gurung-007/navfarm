@@ -36,7 +36,7 @@ describe('BreedingService', () => {
    * fixture is therefore in 'batch-1' and live unless a test says otherwise (current_batch_id: null, is_active: false).
    */
   const rows = new (class extends Map<unknown, unknown[]> {
-    set(key: unknown, value: unknown[]) {
+    override set(key: unknown, value: unknown[]) {
       return super.set(key, key === schema.animalRegister ? value.map((a) => ({ is_active: true, current_batch_id: 'batch-1', ...(a as object) })) : value);
     }
   })();

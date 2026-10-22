@@ -320,10 +320,10 @@ export default function JournalPanel() {
                 {lines.map((line, idx) => (
                   <TableRow key={idx}>
                     <TableCell className="px-2 py-1.5">
-                      <select value={line.gl_account_id} onChange={(e) => setLineField(idx, "gl_account_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
+                      <Select value={line.gl_account_id} onChange={(e) => setLineField(idx, "gl_account_id", e.target.value)} className={`${inputCls} nf-select`} style={S.input}>
                         <option value="">{t("jpSelectPlaceholder")}</option>
                         {glAccounts.map((a) => <option key={a.gl_account_id} value={a.gl_account_id}>{a.account_name || a.account_code}</option>)}
-                      </select>
+                      </Select>
                     </TableCell>
                     <TableCell className="px-2 py-1.5 w-28"><input type="number" value={line.debit_amount} onChange={(e) => setLineField(idx, "debit_amount", e.target.value)} className={inputCls} style={S.input} /></TableCell>
                     <TableCell className="px-2 py-1.5 w-28"><input type="number" value={line.credit_amount} onChange={(e) => setLineField(idx, "credit_amount", e.target.value)} className={inputCls} style={S.input} /></TableCell>

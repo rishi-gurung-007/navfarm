@@ -16,6 +16,7 @@ import { Dialog } from "../../../../components/ui/dialog";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../../../components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Select } from "@/components/ui/select";
 
 const S = {
   surface:  { backgroundColor: "var(--surface)",        borderColor: "var(--border)" },
@@ -368,13 +369,13 @@ export default function TenantDetailPage() {
         <form onSubmit={handleUpgrade} className="space-y-5">
           <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider" style={S.sub}>{t("admNewPlan")}</label>
-            <select value={selectedPlan} onChange={(e) => setSelectedPlan(e.target.value)}
+            <Select value={selectedPlan} onChange={(e) => setSelectedPlan(e.target.value)}
               className="min-h-11 w-full rounded-lg border px-4 text-sm nf-select" style={S.input}>
               <option value="">— Select a plan —</option>
               {plans.map((p) => (
                 <option key={p.plan_id} value={p.plan_id}>{p.plan_name} — {p.billing_cycle} · ${p.price}</option>
               ))}
-            </select>
+            </Select>
           </div>
           {selectedPlan && selectedPlan === tenant?.plan_id && (
             <p className="text-xs" style={S.muted}>{t("admCurrentPlan")}</p>

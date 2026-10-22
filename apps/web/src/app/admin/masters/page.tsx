@@ -12,6 +12,7 @@ import { Field } from "../../../components/ui/field";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../../components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Select } from "@/components/ui/select";
 
 /** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
 const sortCountries = (rows: any) =>
@@ -318,13 +319,13 @@ export default function AdminMastersPage() {
                     </div>
                   ))}
                   <Field label={t("blLabelCostingMethod")}>
-                    <select value={nobForm.default_costing_method}
+                    <Select value={nobForm.default_costing_method}
                       onChange={(e) => setNobForm({ ...nobForm, default_costing_method: e.target.value })}
                       className={`${inputCls} nf-select`} style={S.input}>
                       <option value="FIFO">FIFO</option>
                       <option value="STANDARD">{t("blCostingStandard")}</option>
                       <option value="BIO">{t("admBioAssetIas41")}</option>
-                    </select>
+                    </Select>
                   </Field>
                   <div className="col-span-2 flex flex-col-reverse gap-3 border-t border-(--border) pt-5 sm:flex-row sm:justify-end">
                     <button type="submit" disabled={savingNob}
@@ -440,12 +441,12 @@ export default function AdminMastersPage() {
                     </Field>
                   ))}
                   <Field label={t("admSymbolPosition")}>
-                    <select value={currForm.symbol_position}
+                    <Select value={currForm.symbol_position}
                       onChange={(e) => setCurrForm({ ...currForm, symbol_position: e.target.value })}
                       className={`${inputCls} nf-select`} style={S.input}>
                       <option value="BEFORE">{t("admBeforeAmount")}</option>
                       <option value="AFTER">{t("admAfterAmount")}</option>
-                    </select>
+                    </Select>
                   </Field>
                   <div className="col-span-2 flex flex-col-reverse gap-3 border-t border-(--border) pt-5 sm:flex-row sm:justify-end">
                     <button type="submit" disabled={savingCurr}
@@ -501,12 +502,12 @@ export default function AdminMastersPage() {
                     </Field>
                   ))}
                   <Field label={t("admScriptDirection")}>
-                    <select value={langForm.script}
+                    <Select value={langForm.script}
                       onChange={(e) => setLangForm({ ...langForm, script: e.target.value })}
                       className={`${inputCls} nf-select`} style={S.input}>
                       <option value="LTR">{t("admLtr")}</option>
                       <option value="RTL">{t("admRtl")}</option>
-                    </select>
+                    </Select>
                   </Field>
                   <div className="col-span-2 flex flex-col-reverse gap-3 border-t border-(--border) pt-5 sm:flex-row sm:justify-end">
                     <button type="submit" disabled={savingLang}
@@ -748,12 +749,12 @@ export default function AdminMastersPage() {
                       placeholder={t("admPhWeightedAverage")} className={inputCls} style={S.input} />
                   </Field>
                   <Field label={t("admAutoPostVariance")}>
-                    <select value={costingForm.variance_auto}
+                  <Select value={costingForm.variance_auto}
                       onChange={(e) => setCostingForm({ ...costingForm, variance_auto: e.target.value })}
                       className={`${inputCls} nf-select`} style={S.input}>
                       <option value="NO">No</option>
                       <option value="YES">Yes</option>
-                    </select>
+                  </Select>
                   </Field>
                   <div />
                   {[

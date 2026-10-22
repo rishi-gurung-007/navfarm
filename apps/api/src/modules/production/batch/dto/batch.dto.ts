@@ -778,6 +778,17 @@ export class QueryBatchDto {
   @IsString()
   lobId?: string;
 
+  @ApiProperty({ description: 'Filter by breed UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  breedId?: string;
+
+  @ApiProperty({ description: 'Filter by tracking mode', required: false, enum: ['BATCH_WISE', 'ANIMAL_WISE'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(TRACKING_MODES)
+  trackingMode?: string;
+
   @ApiProperty({
     description:
       'Batches have no is_active flag — findAll already excludes soft-deleted rows unconditionally. Declared so pickers can send the same isActive param every other list endpoint accepts without a 400.',

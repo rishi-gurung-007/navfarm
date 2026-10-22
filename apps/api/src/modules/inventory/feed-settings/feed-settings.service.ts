@@ -97,12 +97,19 @@ export class FeedSettingsService {
       effective.productionWeekday = merged.productionWeekday;
     }
 
+    // Where one logistics value came from (Rishi, 21 Oct): the farm's own override, else the company's Feed Planning
+    // value, else the application default — the requisition header names it.
+    const fieldSource = (key: 'truck_target_kg' | 'bulk_multiple_kg') =>
+      farmSetting?.[key] != null ? 'FARM' as const : companySetting?.[key] != null ? 'COMPANY' as const : 'SYSTEM' as const;
+
     return {
       companyId,
       farmId: effectiveFarmId ?? null,
       timezoneId: company.default_timezone_id,
       ...effective,
       sources: {
+        truckTargetKg: fieldSource('truck_target_kg'),
+        bulkMultipleKg: fieldSource('bulk_multiple_kg'),
         logistics: hasFarmLogistics ? 'FARM' as const : companySetting ? 'COMPANY' as const : 'SYSTEM' as const,
         submissionSchedule: hasFarmSubmission ? 'FARM' as const : companySetting ? 'COMPANY' as const : 'SYSTEM' as const,
         companySetting: companySetting ? 'COMPANY' as const : 'SYSTEM' as const,

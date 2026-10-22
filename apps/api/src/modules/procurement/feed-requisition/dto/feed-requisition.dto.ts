@@ -29,12 +29,23 @@ export class CreateFeedConsolidationDto extends FeedConsolidationQueryDto {
   lines!: FeedConsolidationLineDto[];
 }
 
+/** One detailed truck-compartment loading fact under a Loading Instruction Sheet. */
+export class FeedLoadingSheetCompartmentDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() compartmentId?: string;
+  @ApiProperty() @IsString() @MaxLength(50) compartmentNo!: string;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) kgLoaded!: number;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(36) loadedBy?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() loadedAt?: string;
+}
+
 /** Loading Instruction Sheet rows 70–72: what the mill records at loading. */
 export class UpdateFeedLoadingSheetDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) compartmentNo?: string;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) kgLoaded?: number;
   /** Row 72: the mill staff name confirming loading (stored in feed_loading_sheet.loaded_by, 36 characters). */
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(36, { message: 'Loaded By can be at most 36 characters.' }) loadedBy?: string;
+  @ApiPropertyOptional({ type: [FeedLoadingSheetCompartmentDto] }) @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => FeedLoadingSheetCompartmentDto)
+  compartments?: FeedLoadingSheetCompartmentDto[];
 }
 
 /** Row 76: dispatch may carry the mill's typed estimated arrival (local date and time, YYYY-MM-DDTHH:mm). */

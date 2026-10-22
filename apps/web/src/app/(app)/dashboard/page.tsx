@@ -54,6 +54,7 @@ import { useCompanyCurrency } from "../../../hooks/useCompanyCurrency";
 import { LoadingState, ErrorState } from "../../../components/ui/states";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { ConsolePage } from "../../../components/ui/console-page";
+import { Select } from "../../../components/ui/select";
 import { StatRow, StatCard } from "../../../components/ui/stat-row";
 import { resolveLobFamily } from "@/lib/lob";
 import PiggeryGmDashboard from "@/components/console/piggery/piggery-gm-dashboard";
@@ -64,8 +65,8 @@ const CHART_COLORS = ["var(--accent)", "var(--success)", "var(--info)", "var(--w
 
 function ChartCard({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-      <div className="flex items-center justify-between mb-4">
+    <div className="rounded-[var(--radius-md)] border p-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+      <div className="mb-3 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">{title}</h3>
           {subtitle && <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{subtitle}</p>}
@@ -309,19 +310,20 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Filters Bar ── */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2.5 md:w-auto md:max-w-[52rem]">
           {/* Tenant Scope Filters: Company + LOB */}
           {scope === "TENANT" && (
             <>
               {companies.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Building2 className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashCompanyColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashCompanyColon")}</span>
+                  <Select
                     value={filterTenantCompany}
                     onChange={(e) => setFilterTenantCompany(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "10.5rem", maxWidth: "min(10.5rem, calc(100vw - 10rem))" }}
                   >
                     <option value="ALL">{t("dashAllCompanies", { n: companies.length })}</option>
                     {companies.map((c) => (
@@ -329,19 +331,20 @@ export default function DashboardPage() {
                         {c.company_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
 
               {availableLobs.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Filter className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
+                  <Select
                     value={filterLob}
                     onChange={(e) => setFilterLob(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "10rem", maxWidth: "min(10rem, calc(100vw - 8rem))" }}
                   >
                     <option value="ALL">{t("dashAllLobs", { n: availableLobs.length })}</option>
                     {availableLobs.map((lob) => (
@@ -349,7 +352,7 @@ export default function DashboardPage() {
                         {lob}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -358,14 +361,15 @@ export default function DashboardPage() {
           {/* Company Scope Filters: LOB + Operational Area */}
           {scope === "COMPANY" && availableLobs.length > 0 && (
             <>
-              <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+              <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                 <Filter className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                <span style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
-                <select
+                <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
+                <Select
                   value={filterLob}
                   onChange={(e) => setFilterLob(e.target.value)}
-                  className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                  style={{ color: "var(--text-primary)" }}
+                  fullWidth={false}
+                  className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                  style={{ color: "var(--text-primary)", width: "10rem", maxWidth: "min(10rem, calc(100vw - 8rem))" }}
                 >
                   <option value="ALL">{t("dashAllCompanyLobs", { n: availableLobs.length })}</option>
                   {availableLobs.map((lob) => (
@@ -373,18 +377,19 @@ export default function DashboardPage() {
                       {lob}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               {operationalAreas.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Layers className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashOperationalAreaColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashOperationalAreaColon")}</span>
+                  <Select
                     value={filterArea}
                     onChange={(e) => setFilterArea(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "12rem", maxWidth: "min(12rem, calc(100vw - 12rem))" }}
                   >
                     <option value="ALL">{t("dashAllAreas", { n: operationalAreas.length })}</option>
                     {operationalAreas.map((a) => (
@@ -392,7 +397,7 @@ export default function DashboardPage() {
                         {a.area_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -401,19 +406,20 @@ export default function DashboardPage() {
           {/* Operational Area Badge + Batch view toggle */}
           {scope === "OPERATIONAL" && (
             <>
-              <div className="flex items-center gap-2 rounded-[var(--radius-pill)] px-3 py-1.5 text-xs font-semibold" style={{ backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)" }}>
+              <div className="flex h-11 items-center gap-2 rounded-[var(--radius-pill)] px-3 text-xs font-semibold" style={{ backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)" }}>
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--success)" }} />
                 <span>{activeArea?.area_name || activeLob}</span>
               </div>
               {batches.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Layers className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashBatchColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashBatchColon")}</span>
+                  <Select
                     value={batchViewMode}
                     onChange={(e) => setBatchViewMode(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "12rem", maxWidth: "min(12rem, calc(100vw - 8rem))" }}
                   >
                     <option value="ALL">{t("dashAllBatches", { n: batches.length })}</option>
                     {batches.map((b) => (
@@ -421,7 +427,7 @@ export default function DashboardPage() {
                         {b.batch_no}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -455,7 +461,7 @@ export default function DashboardPage() {
       )}
 
       {scope === "TENANT" && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* 4 Group KPI Stat Strips */}
           <StatRow>
             {can("/companies") && (
@@ -551,7 +557,7 @@ export default function DashboardPage() {
           </ChartCard>
 
           {/* Tenant Executive Multi-Company Benchmark Table */}
-          <div className="rounded-[var(--radius-md)] border p-5 space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <div className="rounded-[var(--radius-md)] border p-4 space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">{t("dashEntityMatrixTitle")}</h2>
@@ -643,13 +649,13 @@ export default function DashboardPage() {
       {/* ── 2. COMPANY SCOPE DASHBOARD (Company Overview & Operational Areas) ── */}
       {/* ========================================================================= */}
       {scope === "COMPANY" && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* 4 Company KPI Stat Strips */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {can("/operational-areas") && (
             <div
               onClick={() => router.push("/operational-areas")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -672,7 +678,7 @@ export default function DashboardPage() {
             {can("/livestock") && (
             <div
               onClick={() => router.push("/livestock")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -697,7 +703,7 @@ export default function DashboardPage() {
             {can("/batches") && (
             <div
               onClick={() => router.push("/batches")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -722,7 +728,7 @@ export default function DashboardPage() {
             {can("/finance/journal") && (
             <div
               onClick={() => router.push("/finance/journal")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -746,7 +752,7 @@ export default function DashboardPage() {
           </div>
 
           {can("/batches") && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ChartCard title={t("dashBatchesByOpArea")} subtitle={t("dashBatchesByOpAreaDesc")}>
               {operationalAreas.length === 0 ? (
                 <EmptyChartState label={t("dashNoOpAreasConfigured")} />
@@ -809,8 +815,8 @@ export default function DashboardPage() {
 
           {/* Operational Area Cards */}
           {can("/operational-areas") && (
-          <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="flex items-center justify-between mb-4">
+          <div className="rounded-[var(--radius-md)] border p-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+            <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">{t("dashOpAreasCount", { n: companyVisibleAreas.length })}</h2>
                 <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
@@ -822,7 +828,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {companyVisibleAreas.length === 0 && (
                 <p className="text-xs col-span-full text-center py-6" style={{ color: "var(--text-muted)" }}>
                   {t("dashNoOpAreasMatchFilters")}
@@ -834,7 +840,7 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={area.area_id}
-                    className="flex flex-col justify-between rounded-[var(--radius-sm)] border p-4 transition-all hover:bg-[var(--surface)]"
+                    className="flex flex-col justify-between rounded-[var(--radius-sm)] border p-3 transition-all hover:bg-[var(--surface)]"
                     style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}
                   >
                     <div>
@@ -898,10 +904,10 @@ export default function DashboardPage() {
             {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
                 so a role without the Animal Register sees the batch view only. */}
             {can("/livestock") && (
-            <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            <div className="flex items-center gap-2 border-b pb-2" style={{ borderColor: "var(--border)" }}>
               <button
                 onClick={() => setPiggeryViewMode("gm")}
-                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
                   piggeryViewMode === "gm"
                     ? "bg-[var(--accent)] text-white shadow-xs"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
@@ -913,7 +919,7 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setPiggeryViewMode("operations")}
-                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
                   piggeryViewMode === "operations"
                     ? "bg-[var(--accent)] text-white shadow-xs"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"

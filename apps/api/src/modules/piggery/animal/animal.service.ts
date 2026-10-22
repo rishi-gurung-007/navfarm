@@ -863,16 +863,27 @@ export class AnimalService {
   }
 
   async findOne(id: string) {
-    const [animal] = await this.db
-      .select()
+    const [row] = await this.db
+      .select({
+        animal: schema.animalRegister,
+        source_grn_id: schema.goodsReceipt.receipt_id,
+        source_grn_no: schema.goodsReceipt.receipt_no,
+        source_grn_date: schema.goodsReceipt.posting_date,
+      })
       .from(schema.animalRegister)
+      .leftJoin(schema.goodsReceipt, eq(schema.goodsReceipt.receipt_id, schema.animalRegister.source_receipt_id))
       .where(and(eq(schema.animalRegister.animal_id, id), ...animalScopeConditions(farmScope(this.cls))))
       .limit(1);
 
-    if (!animal) {
+    if (!row) {
       throw new NotFoundException(`Animal with ID '${id}' not found.`);
     }
-    return animal;
+    return {
+      ...row.animal,
+      source_grn_id: row.source_grn_id,
+      source_grn_no: row.source_grn_no,
+      source_grn_date: row.source_grn_date,
+    };
   }
 
   async findAll(query: QueryAnimalDto, tenantId: string) {

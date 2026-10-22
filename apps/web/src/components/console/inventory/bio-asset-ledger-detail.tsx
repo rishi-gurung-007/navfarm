@@ -103,7 +103,7 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
         </div>
         <div className="flex items-center gap-2">
           {(isGrn || entry.source_grn_no) && (
-            <Button variant="outline" size="sm" className="flex items-center gap-1.5 text-xs" onClick={() => router.push('/inventory/goods-receipt')}>
+            <Button variant="outline" size="sm" className="flex items-center gap-1.5 text-xs" onClick={() => entry.source_receipt_id ? router.push(`/inventory/goods-receipt?recordId=${encodeURIComponent(entry.source_receipt_id)}`) : router.push('/inventory/goods-receipt')}>
               <ExternalLink className="h-3.5 w-3.5" /> View GRN
             </Button>
           )}
@@ -203,7 +203,7 @@ export default function BioAssetLedgerDetail({ entryId, initialData, onClose }: 
                 ? <a className="text-(--accent) hover:underline" href={`/master-data/animal?recordId=${encodeURIComponent(entry.animal_id)}`}>{entry.animal_code || entry.document_no}</a>
                 : NA}
             </Field>
-            <Field label="Source GRN">{entry.source_grn_no ? <span className="font-mono">{entry.source_grn_no}{entry.source_entry_no ? ` (entry ${entry.source_entry_no})` : ''}</span> : isGrn ? <span className="font-mono">{entry.document_no}</span> : NA}</Field>
+            <Field label="Source GRN">{entry.source_grn_no ? <a className="font-mono text-(--accent) hover:underline" href={`/inventory/goods-receipt?recordId=${encodeURIComponent(entry.source_receipt_id)}`}>{entry.source_grn_no}{entry.source_entry_no ? ` (entry ${entry.source_entry_no})` : ''}</a> : isGrn ? <span className="font-mono">{entry.document_no}</span> : NA}</Field>
             <Field label="Lot No.">{entry.lot_no || 'Not Lot Tracked'}</Field>
             <Field label="Production Batch No.">{entry.batch_no || NA}</Field>
             <Field label="Status">{entry.status || NA}</Field>

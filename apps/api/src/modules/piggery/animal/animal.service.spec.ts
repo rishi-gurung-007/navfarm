@@ -13,7 +13,12 @@ import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cl
 describe('AnimalService', () => {
   let service: AnimalService;
   let module: TestingModule;
-  let batchService: { addTransaction: jest.Mock };
+  let batchService: {
+    addTransaction: jest.Mock;
+    recordAnimalEntry: jest.Mock;
+    recordAnimalExit: jest.Mock;
+    postAnimalDisposalJournal: jest.Mock;
+  };
   let numberSeriesService: NumberSeriesService;
   let cls: ReturnType<typeof transactionCls>;
 
