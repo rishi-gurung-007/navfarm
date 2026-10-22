@@ -1,3 +1,4 @@
+import { NA } from "@/utils/na";
 import type { PiggeryStage } from "./piggery-lifecycle-stepper";
 
 /**
@@ -100,7 +101,7 @@ export function buildLifecycleStages({
     const movedOn = log.find((e) => e.from_stage_code === row.stage_code);
     const to = movedOn ? movedOn.transferred_at.slice(0, 10) : isCurrent ? endOfDay : undefined;
 
-    let daysRange = row.typical_duration_days ? `${row.typical_duration_days} days (standard)` : "—";
+    let daysRange = row.typical_duration_days ? `${row.typical_duration_days} days (standard)` : NA;
     let dateRange: string | undefined;
 
     if (from) {

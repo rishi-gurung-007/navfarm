@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useRef, useState } from "react";
 import {
   Heart,
@@ -908,16 +909,16 @@ export function BreedingPanel() {
             <ImpactCard
               title="When you save"
               rows={[
-                ["Filed under batch", batches.find((b) => b.batch_id === matingForm.batch_id)?.batch_no ?? "—"],
-                ["Sow", matingSow?.animal_code ?? "—"],
-                ["Sire", matingBoar?.animal_code ?? (matingLot?.pooled ? "pooled — not one boar" : "—")],
+                ["Filed under batch", batches.find((b) => b.batch_id === matingForm.batch_id)?.batch_no ?? NA],
+                ["Sow", matingSow?.animal_code ?? NA],
+                ["Sire", matingBoar?.animal_code ?? (matingLot?.pooled ? "pooled — not one boar" : NA)],
                 [
                   "Semen from stock",
                   matingForm.mating_type === "AI" && matingLot
                     ? `−${Number(matingForm.semen_dose_qty) || 0} dose (${lotState(matingLot, matingForm.mating_date).left - (Number(matingForm.semen_dose_qty) || 0)} left in ${matingLot.lot_no ?? "lot"})`
                     : "none",
                 ],
-                ["Expected farrowing", matingForm.expected_farrowing_date || "—"],
+                ["Expected farrowing", matingForm.expected_farrowing_date || NA],
                 ["Sow status", matingForm.conception_result === "CONFIRMED" ? "becomes PREGNANT" : "unchanged until the check"],
               ]}
               note="An AI service that names a lot takes its doses out of inventory in the same save."
@@ -1223,12 +1224,12 @@ export function BreedingPanel() {
             <ImpactCard
               title="When you save"
               rows={[
-                ["Filed under batch", batches.find((b) => b.batch_id === farrowForm.batch_id)?.batch_no ?? "—"],
+                ["Filed under batch", batches.find((b) => b.batch_id === farrowForm.batch_id)?.batch_no ?? NA],
                 ["Born", `${farrowTotalBorn} (${farrowLive} live)`],
                 ["Piglet lot", farrowNetLitter > 0 ? `${farrowNetLitter} × ${pigletItem?.item_name ?? "item not chosen"}` : "none"],
-                ["Sow", farrowSow ? `${farrowSow.animal_code} → LACTATING` : "—"],
-                ["Litter no.", farrowSow ? `${(Number(farrowSow.parity_count) || 0) + 1} (parity completes at weaning)` : "—"],
-                ["Weaning planned", farrowForm.farrowing_date ? addDays(farrowForm.farrowing_date, 28) : "—"],
+                ["Sow", farrowSow ? `${farrowSow.animal_code} → LACTATING` : NA],
+                ["Litter no.", farrowSow ? `${(Number(farrowSow.parity_count) || 0) + 1} (parity completes at weaning)` : NA],
+                ["Weaning planned", farrowForm.farrowing_date ? addDays(farrowForm.farrowing_date, 28) : NA],
               ]}
               note="The live piglets become a head-count lot in a new batch, at nil value — the value of births is not decided yet — and no inventory ledger line is written for them."
             />
@@ -1508,9 +1509,9 @@ export function BreedingPanel() {
             <ImpactCard
               title="When you save"
               rows={[
-                ["Filed under batch", batches.find((b) => b.batch_id === semenForm.batch_id)?.batch_no ?? "—"],
-                ["Boars", semenChosenBoars.length ? semenChosenBoars.map((b) => b.animal_code).join(" + ") : "—"],
-                ["Lot", semenChosenBoars.length > 1 ? "one pooled lot" : semenChosenBoars.length ? "single-boar lot" : "—"],
+                ["Filed under batch", batches.find((b) => b.batch_id === semenForm.batch_id)?.batch_no ?? NA],
+                ["Boars", semenChosenBoars.length ? semenChosenBoars.map((b) => b.animal_code).join(" + ") : NA],
+                ["Lot", semenChosenBoars.length > 1 ? "one pooled lot" : semenChosenBoars.length ? "single-boar lot" : NA],
                 ["Into inventory", semenItem && Number(semenForm.doses_collected) > 0 ? `+${Number(semenForm.doses_collected)} × ${semenItem.item_name}` : "nothing — no item chosen"],
                 ["Expires", semenItem?.shelf_life_days && semenForm.collection_date ? addDays(semenForm.collection_date, Number(semenItem.shelf_life_days)) : "no shelf life on the item"],
                 ["Cost per dose", "worked out on save"],

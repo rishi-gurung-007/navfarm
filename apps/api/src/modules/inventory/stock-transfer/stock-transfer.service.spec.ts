@@ -867,11 +867,10 @@ describe('StockTransferService', () => {
       mockGetStockBalance.mockResolvedValue([
         { item_id: 'item-1', lot_no: 'LOT-99', uom: 'KG', on_hand_qty: 100 },
       ]);
-      mockDbUpdate.mockReturnValue({
-        set: jest.fn().mockReturnValue({
+      const set = jest.fn().mockReturnValue({
           where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
-        }),
       });
+      mockDbUpdate.mockReturnValue({ set });
 
       const result = await service.ship(
         'tr-1',
@@ -884,6 +883,7 @@ describe('StockTransferService', () => {
         'tenant-1',
       );
       expect(result.status).toBe('IN_TRANSIT');
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ vehicle_no: 'TRK-9901' }));
     });
 
     it('refuses to receive a transfer that is not in IN_TRANSIT status', async () => {

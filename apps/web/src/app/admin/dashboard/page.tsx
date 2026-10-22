@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -125,7 +126,7 @@ export default function AdminDashboardPage() {
         style={{ backgroundColor: "var(--border)", borderColor: "var(--border)" }}
       >
         {/* Total Tenants */}
-        <div className="p-5" style={S.surface}>
+        <div className="p-4" style={S.surface}>
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("registeredTenants")}</span>
             <Building className="w-4 h-4" style={S.accent} />
@@ -139,7 +140,7 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Total Pricing Plans */}
-        <div className="p-5" style={S.surface}>
+        <div className="p-4" style={S.surface}>
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("pricingPlans")}</span>
             <Layers className="w-4 h-4" style={S.accent} />
@@ -151,7 +152,7 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Database Health */}
-        <div className="p-5" style={S.surface}>
+        <div className="p-4" style={S.surface}>
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("controlPlaneHost")}</span>
             <Database className="w-4 h-4" style={S.accent} />
@@ -164,7 +165,7 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Platform Uptime */}
-        <div className="p-5" style={S.surface}>
+        <div className="p-4" style={S.surface}>
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("platformUptime")}</span>
             <Activity className="w-4 h-4" style={S.accent} />
@@ -181,7 +182,7 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-1 overflow-hidden rounded-[var(--radius-lg)] border lg:grid-cols-3" style={S.surface}>
 
         {/* Plan Breakdown */}
-        <div className="lg:col-span-1 border-b p-6 space-y-6 lg:border-b-0 lg:border-r" style={S.border}>
+        <div className="lg:col-span-1 border-b p-5 space-y-5 lg:border-b-0 lg:border-r" style={S.border}>
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wider" style={S.sub}>{t("tenantSubscriptionShare")}</h3>
             <p className="text-xs" style={S.muted}>{t("planDistributionAcrossActive")}</p>
@@ -234,7 +235,7 @@ export default function AdminDashboardPage() {
                   <div className="flex items-center gap-3">
                     <span className="text-[11px] font-semibold border px-2.5 py-0.5 rounded-[var(--radius-pill)]"
                       style={{ backgroundColor: "var(--accent-muted)", color: "var(--accent)", borderColor: "var(--accent)" }}>
-                      {tItem.plan_id?.replace("PLAN_", "") || "—"}
+                      {tItem.plan_id?.replace("PLAN_", "") || NA}
                     </span>
                     <span className="text-[11px] font-semibold" style={tItem.is_active !== false ? { color: "var(--success)" } : S.muted}>
                       {tItem.is_active !== false ? t("active") : t("inactive")}
@@ -299,7 +300,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] font-mono" style={S.muted}>
-                      {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                      {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : NA}
                     </div>
                   </div>
                 </div>

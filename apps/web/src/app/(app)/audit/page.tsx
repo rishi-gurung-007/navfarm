@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ChevronRight, ChevronDown } from "lucide-react";
@@ -68,10 +69,57 @@ function sameValue(a: unknown, b: unknown) {
   }
 }
 
-/** One value, rendered so a JSON blob or a timestamp is readable rather than raw. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A plain value as text: an id shortened (the full one on hover), a nested value as "key: value" pairs. */
+function PlainValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined || value === "") return <span style={{ color: "var(--text-muted)" }}>{NA}</span>;
+  if (typeof value === "boolean") return <>{value ? "Yes" : "No"}</>;
+  if (typeof value === "string" && UUID.test(value)) {
+    return <span className="font-mono" title={value} style={{ color: "var(--text-muted)" }}>{value.slice(0, 8)}…</span>;
+  }
+  if (Array.isArray(value)) return <>{value.map((v) => (typeof v === "object" && v !== null ? Object.values(v).join(" ") : String(v))).join(", ")}</>;
+  if (typeof value === "object") {
+    return <>{Object.entries(value as Record<string, unknown>).map(([k, v]) => `${fieldLabel(k)}: ${v ?? NA}`).join(" · ")}</>;
+  }
+  return <>{String(value)}</>;
+}
+
+/** A list of rows (KPI lines, journal lines, transfer lines) as a table, one column per field the rows carry. */
+function RowsTable({ rows }: { rows: Record<string, unknown>[] }) {
+  const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[10px]">
+        <thead>
+          <tr>
+            {keys.map((k) => (
+              <th key={k} className="border-b px-1.5 py-1 text-left font-semibold whitespace-nowrap" style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}>
+                {fieldLabel(k)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {keys.map((k) => (
+                <td key={k} className="border-b px-1.5 py-1 align-top" style={{ borderColor: "var(--row-border)", color: "var(--text-primary)" }}>
+                  <PlainValue value={r[k]} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** One value, rendered so a list, a nested record, an id or a timestamp is readable rather than raw. */
 function AuditValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   if (value === null || value === undefined || value === "") {
-    return <span style={{ color: "var(--text-muted)" }}>—</span>;
+    return <span style={{ color: "var(--text-muted)" }}>{NA}</span>;
   }
   if (typeof value === "boolean") {
     return <span style={{ color: "var(--text-primary)" }}>{value ? "Yes" : "No"}</span>;
@@ -86,16 +134,26 @@ function AuditValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
       );
     }
   }
+  if (Array.isArray(value)) {
+    if (!value.length) return <span style={{ color: "var(--text-muted)" }}>{NA}</span>;
+    if (value.every((v) => v && typeof v === "object" && !Array.isArray(v))) return <RowsTable rows={value as Record<string, unknown>[]} />;
+    return <span style={{ color: "var(--text-primary)" }}><PlainValue value={value} /></span>;
+  }
   if (typeof value === "object") {
     return (
-      <pre
-        className="overflow-x-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] p-2 font-mono text-[10px] leading-relaxed"
-        style={{ backgroundColor: "var(--surface)", color: "var(--text-primary)", border: "1px solid var(--border)" }}
-      >
-        {JSON.stringify(value, null, 2)}
-      </pre>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
+          <React.Fragment key={k}>
+            <dt style={{ color: "var(--text-muted)" }}>{fieldLabel(k)}</dt>
+            <dd className="break-words" style={{ color: "var(--text-primary)" }}>
+              {v && typeof v === "object" ? <AuditValue fieldKey={k} value={v} /> : <PlainValue value={v} />}
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
     );
   }
+  if (typeof value === "string" && UUID.test(value)) return <PlainValue value={value} />;
   return (
     <span className="break-words" style={{ color: "var(--text-primary)" }}>
       {String(value)}
@@ -117,7 +175,6 @@ function DiffRow({ fieldKey, before, after, changed, t }: {
         <span className="text-[11px] font-semibold" style={{ color: "var(--text-primary)" }}>
           {fieldLabel(fieldKey)}
         </span>
-        <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>{fieldKey}</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         <div
@@ -205,8 +262,8 @@ function AuditDetail({ log, t }: { log: any; t: Translate }) {
             {log.entity_label || log.entity_name}
           </div>
           {log.entity_code && <div className="font-mono">{log.entity_code}</div>}
-          <div className="break-all font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
-            {log.entity_name} · {log.entity_id}
+          <div className="break-all text-[10px]" style={{ color: "var(--text-muted)" }}>
+            {fieldLabel(log.entity_name ?? "")} · <span className="font-mono">{log.entity_id}</span>
           </div>
         </MetaBlock>
       </div>
@@ -250,8 +307,8 @@ function AuditDetail({ log, t }: { log: any; t: Translate }) {
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t pt-2 text-[10px]" style={{ borderColor: "var(--row-border)", color: "var(--text-muted)" }}>
-        <span>{t("auditIpAddress")}: <span className="font-mono">{log.ip_address || "—"}</span></span>
-        <span className="break-all">{t("auditUserAgent")}: <span className="font-mono">{log.user_agent || "—"}</span></span>
+        <span>{t("auditIpAddress")}: <span className="font-mono">{log.ip_address || NA}</span></span>
+        <span className="break-all">{t("auditUserAgent")}: <span className="font-mono">{log.user_agent || NA}</span></span>
       </div>
     </div>
   );
@@ -384,18 +441,22 @@ export default function AuditPage() {
                       </TableCell>
                       <TableCell className="px-5 font-mono" style={{ color: "var(--text-muted)" }}>{idx + 1}</TableCell>
                       <TableCell className="px-5 font-mono whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
-                        {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                        {log.created_at ? new Date(log.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : NA}
                       </TableCell>
                       <TableCell className="px-5">{actionBadge(log.action)}</TableCell>
                       <TableCell className="px-5 font-medium" style={{ color: "var(--text-primary)" }}>
-                        {log.entity_label || log.entity_name}
-                        {log.entity_code && (
-                          <span className="ml-1 font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
-                            {log.entity_code}
+                        {log.entity_label || log.entity_code || fieldLabel(log.entity_name ?? "")}
+                        {log.entity_label && log.entity_code && (
+                          <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+                            {" · "}{log.entity_code}
                           </span>
                         )}
-                        <div className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
-                          {log.entity_name} ({log.entity_id?.substring(0, 8)}…)
+                        {/* The record's kind; its id only when the entry names nothing better. */}
+                        <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                          {fieldLabel(log.entity_name ?? "")}
+                          {!log.entity_label && !log.entity_code && log.entity_id && (
+                            <span className="font-mono" title={log.entity_id}> ({log.entity_id.substring(0, 8)}…)</span>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="px-5" style={{ color: "var(--text-secondary)" }}>

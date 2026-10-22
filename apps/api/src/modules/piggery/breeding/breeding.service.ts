@@ -858,21 +858,10 @@ export class BreedingService {
       );
     }
 
-    // A litter's lot that has nothing left in it — all weaned and moved on, or all lost — is finished: closed like any
-    // bio-asset batch whose herd is gone, so it does not sit ACTIVE at nil head (and nil feed) forever.
+    // A litter's lot left with nothing in it — all weaned and moved on, or all lost — stays ACTIVE at nil head until a
+    // user closes it (Rishi, 19 Oct: a batch is closed by a user, never by a posting). Data entry refuses it meanwhile.
     if (farrow.piglet_batch_id && (farrow.piglets_weaned || 0) === 0 && (await this.pigletHead(farrow.piglet_batch_id)) <= 1e-9) {
-      await this.db
-        .update(schema.batchHeader)
-        .set({
-          status: 'CLOSED',
-          actual_end_date: dto.weaning_date,
-          closing_quantity: '0.0000',
-          closed_at: sql`CURRENT_TIMESTAMP`,
-          closed_by: userPayload?.userId || null,
-          updated_by: userPayload?.userId || null,
-        })
-        .where(and(eq(schema.batchHeader.batch_id, farrow.piglet_batch_id), eq(schema.batchHeader.status, 'ACTIVE')));
-      pigletNote += ' The piglet lot is empty and was closed.';
+      pigletNote += ' The piglet lot is now empty; close it from the batch when you are done with it.';
     }
 
     await this.db

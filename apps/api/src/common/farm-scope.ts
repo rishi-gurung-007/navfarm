@@ -300,3 +300,32 @@ export async function assertLocationOnActiveFarm(db: Db, scope: FarmScope, locat
     throw new ForbiddenException(`${label} is not on your active farm.`);
   }
 }
+
+/**
+ * Which farms a caller may be offered in a farm picker, as WHERE conditions — null when the answer is "none at all":
+ * a farm login its own farm; a company or operational-area workspace that company's active farms (the area's line
+ * of business when restricted); a tenant administrator in the tenant-wide workspace every company's. The location
+ * master cannot answer this for the tenant workspace, which reads only template locations, so screens that pick a
+ * farm (the feed screens, the reports) read it from here.
+ */
+export function farmPickerConditions(scope: FarmScope, tenantId: string, userType: string | undefined): SQL[] | null {
+  const L = schema.locationMaster;
+  const conditions: SQL[] = [
+    eq(L.tenant_id, tenantId),
+    eq(L.location_type, 'FARM'),
+    isNull(L.parent_location_id),
+    eq(L.is_active, true),
+    isNull(L.deleted_at),
+  ];
+  if (isFarmBoundUserType(userType)) {
+    if (!scope.farmId) return null;
+    conditions.push(eq(L.location_id, scope.farmId));
+    if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
+  } else if (scope.companyId) {
+    conditions.push(eq(L.company_id, scope.companyId));
+    if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
+  } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
+    return null;
+  }
+  return conditions;
+}

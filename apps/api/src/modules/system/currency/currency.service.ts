@@ -50,10 +50,9 @@ export class CurrencyService {
     }).from(schema.exchangeRate).where(and(
       eq(schema.exchangeRate.from_currency_id, fromCurrencyId),
       eq(schema.exchangeRate.to_currency_id, toCurrencyId),
-      or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id)),
+      eq(schema.exchangeRate.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     ));
-    const scoped = rows.filter((row) => row.company_id === companyId);
-    const visible = scoped.length ? scoped : rows.filter((row) => row.company_id === null);
+    const visible = rows.filter((row) => row.company_id === companyId);
     visible.sort((a, b) => String(b.rate_date).localeCompare(String(a.rate_date)) || String(b.created_at).localeCompare(String(a.created_at)));
     const selected = visible[0];
     if (!selected) return { status: 'MISSING_RATE' as const, companyId, fromCurrencyId, toCurrencyId };
@@ -63,7 +62,7 @@ export class CurrencyService {
       rate: Number(selected.rate),
       rateDate: selected.rate_date,
       createdAt: selected.created_at,
-      scope: selected.company_id === companyId ? 'COMPANY' as const : 'LEGACY' as const,
+      scope: 'COMPANY' as const,
     };
   }
 
@@ -108,7 +107,7 @@ export class CurrencyService {
   async listExchangeRates(companyId?: string | null) {
     const to = alias(schema.currencyMaster, 'to_currency');
     const conditions = companyId
-      ? [or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id))!]
+      ? [eq(schema.exchangeRate.company_id, companyId)]
       : [];
     return this.db
       .select({

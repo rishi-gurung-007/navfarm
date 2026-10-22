@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import {
   CalendarClock,
@@ -882,10 +883,10 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
                                 {line.line_type === "DESCRIPTIVE"
-                                  ? (line.kpi_metric ? line.kpi_metric.replace(/_/g, " ") : "—")
+                                  ? (line.kpi_metric ? line.kpi_metric.replace(/_/g, " ") : NA)
                                   : line.line_type === "RESOURCE"
-                                  ? (resObj?.resource_name || line.resource_id || "—")
-                                  : (itemObj?.item_name || line.item_description || "—")}
+                                  ? (resObj?.resource_name || line.resource_id || NA)
+                                  : (itemObj?.item_name || line.item_description || NA)}
                                 {itemObj?.withdrawal_days ? (
                                   <span className="ml-1 text-[10px] font-bold text-amber-600">({itemObj.withdrawal_days}d w/d)</span>
                                 ) : null}
@@ -894,8 +895,8 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span>
                                     {line.line_type === "DESCRIPTIVE"
-                                      ? (line.std_value != null ? line.std_value : "—")
-                                      : (line.standard_qty != null ? line.standard_qty : "—")}
+                                      ? (line.std_value != null ? line.std_value : NA)
+                                      : (line.standard_qty != null ? line.standard_qty : NA)}
                                   </span>
                                   {uom && (
                                     <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">

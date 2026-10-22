@@ -6,7 +6,7 @@ import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
 import { headsAt, loadBatchDeaths } from '../../production/batch-heads';
-import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
+import { activeFarmOfCompany, batchScopeConditions, farmPickerConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
 import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
 import { resolveNextStageDiets, type NextStageDiet } from './next-stage-diet';
@@ -28,6 +28,7 @@ import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFac
 import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
 import { FeedPlanService } from './feed-plan.service';
 import { resolveItemFeedForm } from '../../../common/feed-form';
+import { storeHoldingMost } from '../../../common/farm-store';
 import { MillCapacityService } from './mill-capacity.service';
 import type { DietCapacity } from './mill-capacity.rules';
 
@@ -1417,33 +1418,9 @@ export class FeedForecastService {
     return byFarm;
   }
 
-  /**
-   * Which farms this caller may be offered, as WHERE conditions — null when the
-   * answer is "none at all". Shared by GET /feed-forecast/farms and D32's
-   * farm-settings list so the two can never disagree about whose farms a user
-   * sees.
-   */
+  /** Which farms this caller may be offered (farmPickerConditions), shared by GET /feed-forecast/farms and D32's list. */
   private farmListConditions(tenantId: string, userType: string | undefined): SQL[] | null {
-    const scope = farmScope(this.cls);
-    const L = schema.locationMaster;
-    const conditions: SQL[] = [
-      eq(L.tenant_id, tenantId),
-      eq(L.location_type, 'FARM'),
-      isNull(L.parent_location_id),
-      eq(L.is_active, true),
-      isNull(L.deleted_at),
-    ];
-    if (isFarmBoundUserType(userType)) {
-      if (!scope.farmId) return null;
-      conditions.push(eq(L.location_id, scope.farmId));
-      if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
-    } else if (scope.companyId) {
-      conditions.push(eq(L.company_id, scope.companyId));
-      if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
-    } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
-      return null;
-    }
-    return conditions;
+    return farmPickerConditions(farmScope(this.cls), tenantId, userType);
   }
 
   async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {
@@ -2090,9 +2067,12 @@ export class FeedForecastService {
     const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId, farm.id);
     const calculationHorizon = forecastDemandHorizon({ batches, feedRows }, opts.horizonTo);
 
-    // The farm's STORE (D6 fallback). One per farm in every template; if a farm
-    // somehow has two, the first by code is used — the forecast needs one pool.
-    const storeRow = activeOfType('STORE')[0];
+    // The farm's STORE (D6 fallback) — the forecast needs one pool. A farm with several stores keeps its feed
+    // in one of them, so the pool is the store holding the most of this farm's feed; first by code only when
+    // none holds any. First-by-code alone picked the AI store on a farm whose feed sits in PSTORE-FEED.
+    const stores = activeOfType('STORE');
+    const feedStoreId = await storeHoldingMost(this.db, stores.map((s) => s.location_id), [...new Set(feedRows.map((r) => r.itemId))]);
+    const storeRow = stores.find((s) => s.location_id === feedStoreId) ?? stores[0];
     const stockIds = [...linkedSiloIds, ...(storeRow ? [storeRow.location_id] : [])];
     // Q6 / D19: the opening is the ledger strictly before the stock date; posted
     // non-feeding movements from it on, and the outstanding part of open
@@ -2495,7 +2475,7 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.stageMaster.tenant_id, tenantId),
-          or(isNull(schema.stageMaster.company_id), eq(schema.stageMaster.company_id, farm.companyId)),
+          eq(schema.stageMaster.company_id, farm.companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           inArray(schema.stageMaster.lob_id, lobIds),
           isNull(schema.stageMaster.deleted_at),
         ),
@@ -2542,7 +2522,7 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.breedLifecycleStages.tenant_id, tenantId),
-          or(isNull(schema.breedLifecycleStages.company_id), eq(schema.breedLifecycleStages.company_id, companyId)),
+          eq(schema.breedLifecycleStages.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           // Default rows (no farm) and this farm's overrides only (Master Setup r30/r39).
           farmId ? or(isNull(schema.breedLifecycleStages.farm_id), eq(schema.breedLifecycleStages.farm_id, farmId)) : isNull(schema.breedLifecycleStages.farm_id),
           inArray(schema.breedLifecycleStages.breed_id, breedIds),

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -11,6 +12,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { formatQuantity } from "@/lib/utils";
+import { Select } from "@/components/ui/select";
 
 const PAGE_SIZE = 25;
 
@@ -197,9 +199,9 @@ export default function QcParameterPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.param_type}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.param_type === "NUMERIC"
-                        ? `${row.min_value != null ? formatQuantity(row.min_value) : "—"} – ${row.max_value != null ? formatQuantity(row.max_value) : "—"} ${row.uom || ""}`
+                        ? `${row.min_value != null ? formatQuantity(row.min_value) : NA} – ${row.max_value != null ? formatQuantity(row.max_value) : NA} ${row.uom || ""}`
                         : row.param_type === "GRADE"
-                        ? (row.grade_scale ? Object.keys(row.grade_scale).join(", ") : "—")
+                        ? (row.grade_scale ? Object.keys(row.grade_scale).join(", ") : NA)
                         : t("qcpTrueFalse")}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>{row.is_mandatory ? t("qcpYes") : t("qcpNo")}</TableCell>
@@ -231,17 +233,17 @@ export default function QcParameterPanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpNatureOfBusiness")} <span className="text-(--danger)">*</span></label>
-              <select value={nobId} onChange={(e) => { setNobId(e.target.value); setForm((f) => ({ ...f, lob_id: "" })); }} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={nobId} onChange={(e) => { setNobId(e.target.value); setForm((f) => ({ ...f, lob_id: "" })); }} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="">{t("qcpSelectEllipsis")}</option>
                 {nobs.map((n) => <option key={n.nob_id} value={n.nob_id}>{n.nob_name || n.nob_code}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpLineOfBusiness")} <span className="text-(--danger)">*</span></label>
-              <select value={form.lob_id} onChange={(e) => setForm((f: Row) => ({ ...f, lob_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input} disabled={!nobId}>
+              <Select value={form.lob_id} onChange={(e) => setForm((f: Row) => ({ ...f, lob_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input} disabled={!nobId}>
                 <option value="">{nobId ? t("qcpSelectEllipsis") : t("qcpSelectNatureOfBusinessFirst")}</option>
                 {lobs.map((l) => <option key={l.lob_id} value={l.lob_id}>{l.lob_name || l.lob_code}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpCode")} <span className="text-(--danger)">*</span></label>
@@ -253,16 +255,16 @@ export default function QcParameterPanel() {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpType")}</label>
-              <select value={form.param_type} onChange={(e) => setForm((f: Row) => ({ ...f, param_type: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={form.param_type} onChange={(e) => setForm((f: Row) => ({ ...f, param_type: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                 {PARAM_TYPES.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("qcpMandatory")}</label>
-              <select value={form.is_mandatory ? "yes" : "no"} onChange={(e) => setForm((f: Row) => ({ ...f, is_mandatory: e.target.value === "yes" }))} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={form.is_mandatory ? "yes" : "no"} onChange={(e) => setForm((f: Row) => ({ ...f, is_mandatory: e.target.value === "yes" }))} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="yes">{t("qcpMandatoryYesOption")}</option>
                 <option value="no">{t("qcpMandatoryNoOption")}</option>
-              </select>
+              </Select>
             </div>
 
             {form.param_type === "NUMERIC" && (
@@ -277,10 +279,10 @@ export default function QcParameterPanel() {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>{t("qcpUom")}</label>
-                  <select value={form.uom} onChange={(e) => setForm((f: Row) => ({ ...f, uom: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+                  <Select value={form.uom} onChange={(e) => setForm((f: Row) => ({ ...f, uom: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                     <option value="">{t("qcpSelectEllipsis")}</option>
                     {uoms.map((u) => <option key={u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
-                  </select>
+              </Select>
                 </div>
               </>
             )}

@@ -12,6 +12,21 @@ import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 
 import { BreedingService } from '../../piggery/breeding/breeding.service';
+
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('./entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+// Where an animal stood on the entry date is read from the movement log (animal-membership.spec.ts). These suites
+// queue the animal's own row; the placement is taken from it, as the register's current state always was.
+const mockPlacements = new Map<string, { batch_id: string | null; stage_id: string | null }>();
+const placed = <T extends { animal_id: string; current_batch_id: string | null; current_stage_id: string | null }>(animal: T): T => {
+  mockPlacements.set(animal.animal_id, { batch_id: animal.current_batch_id, stage_id: animal.current_stage_id });
+  return animal;
+};
+jest.mock('./animal-membership', () => ({
+  animalPlacementOn: jest.fn(async (_db: unknown, animalId: string) => mockPlacements.get(animalId) ?? { batch_id: null, stage_id: null }),
+}));
+
 const breedingMock = { recordFarrowing: jest.fn(), recordWeaning: jest.fn(), recordSemenCollection: jest.fn() };
 // The closed-period guard (r32) is its own unit (monthly-stock-take.rules.spec.ts); these
 // tests queue db.select results in order, so the guard's read is stubbed here.
@@ -101,6 +116,7 @@ describe('BatchDailyDataService', () => {
   };
 
   beforeEach(async () => {
+    mockPlacements.clear();
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     siloFeedService.currentItems.mockReset();
@@ -616,12 +632,12 @@ describe('BatchDailyDataService', () => {
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue([
-                {
+                placed({
                   animal_id: 'a-1',
                   animal_code: 'PIG-0001',
                   current_batch_id: 'batch-1',
                   current_stage_id: 'stage-gestation',
-                },
+                }),
               ]),
             }),
           }),
@@ -639,6 +655,41 @@ describe('BatchDailyDataService', () => {
           'tenant-123',
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    describe('an animal-wise entry is judged by where the animal was ON the entry date (Rishi, 21 Oct)', () => {
+      const readOnce = (rows: unknown[]) =>
+        mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+      const queueToAnimal = () => {
+        readOnce([{ line_id: 'line-1', scheduler_id: 'sched-1', is_active: true, line_type: 'DESCRIPTIVE', item_id: null, lot_required: false }]);
+        readOnce([stageHeader]);
+        readOnce([{ tracking_mode: 'ANIMAL_WISE', batch_no: 'BATCH-000132' }]);
+        // The register has her in flush now - she was in gestation on the entry date.
+        readOnce([{ animal_id: 'a-1', animal_code: 'PIG-2025-0019', current_batch_id: 'batch-1', current_stage_id: 'stage-flush' }]);
+      };
+      const post = () =>
+        service.postEntry('batch-1', { line_id: 'line-1', entry_date: '2026-08-09', entered_value: 190, animal_id: 'a-1' } as any, 'tenant-123');
+      const asked = () => post().then(() => '', (e) => String(e?.message ?? e));
+
+      it('accepts a past-dated entry for an animal that was at the line\'s stage then and has moved on since', async () => {
+        queueToAnimal();
+        mockPlacements.set('a-1', { batch_id: 'batch-1', stage_id: 'stage-flush' });
+        const { animalPlacementOn } = jest.requireMock('./animal-membership');
+        expect(await asked()).not.toMatch(/was not (in batch|at this line)/);
+        expect(animalPlacementOn).toHaveBeenCalledWith(expect.anything(), 'a-1', '2026-08-09');
+      });
+
+      it('refuses it, naming the animal and the date, when she was in another batch then', async () => {
+        queueToAnimal();
+        mockPlacements.set('a-1', { batch_id: 'batch-other', stage_id: 'stage-flush' });
+        expect(await asked()).toBe("Animal 'PIG-2025-0019' was not in batch 'BATCH-000132' on 2026-08-09, so no entry can be recorded for it that day.");
+      });
+
+      it('refuses it, naming the animal and the date, when she was at another stage then', async () => {
+        queueToAnimal();
+        mockPlacements.set('a-1', { batch_id: 'batch-1', stage_id: 'stage-gestation' });
+        expect(await asked()).toMatch(/Animal 'PIG-2025-0019' was not at this line's stage on 2026-08-09/);
+      });
     });
 
     it('posts the exact named animal as a MORTALITY through the batch path for a MORTALITY_COUNT entry, leaving the stage headcount to the register', async () => {
@@ -681,12 +732,12 @@ describe('BatchDailyDataService', () => {
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue([
-                {
+                placed({
                   animal_id: 'a-1',
                   animal_code: 'PIG-0001',
                   current_batch_id: 'batch-1',
                   current_stage_id: 'stage-flush',
-                },
+                }),
               ]),
             }),
           }),
@@ -775,7 +826,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([outLine]))
         .mockReturnValueOnce(lim([hdr]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' })]))
         .mockReturnValueOnce(lim([])) // lock
         .mockReturnValueOnce(lim([])) // idempotency
         .mockReturnValueOnce(lim([piglet])) // item
@@ -822,7 +873,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([outLine]))
         .mockReturnValueOnce(lim([hdr]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'sow-1', animal_code: 'SOW-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' })]))
         .mockReturnValueOnce(lim([])) // lock
         .mockReturnValueOnce(lim([{ entry_id: 'x', posted: true, posting_reference: 'f-1', entered_value: '9.000000', entered_text: null, lot_no: null, serial_no: null }]))
         .mockReturnValueOnce(lim([{ farrow_id: 'f-1' }])); // the reference is a farrowing record
@@ -845,7 +896,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([{ ...outLine, item_id: 'item-semen', activity_name: 'Boar Semen Collection' }]))
         .mockReturnValueOnce(lim([hdr]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' })]))
         .mockReturnValueOnce(lim([])) // lock
         .mockReturnValueOnce(lim([])) // idempotency
         .mockReturnValueOnce(lim([{ item_id: 'item-semen', item_type: 'RAW_MATERIAL', is_biological_asset: false, uom_primary: 'DOSE' }]))
@@ -875,7 +926,7 @@ describe('BatchDailyDataService', () => {
           .mockReturnValueOnce(lim([semenLine]))
           .mockReturnValueOnce(lim([hdr]))
           .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-          .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' }]))
+          .mockReturnValueOnce(lim([placed({ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-farrow' })]))
           .mockReturnValueOnce(lim([])) // lock
           .mockReturnValueOnce(lim([])) // idempotency
           .mockReturnValueOnce(lim([semenItem]))
@@ -935,7 +986,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([outLine]))
         .mockReturnValueOnce(lim([hdr]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'STANDARD' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' })]))
         .mockReturnValueOnce(lim([])) // lock
         .mockReturnValueOnce(lim([])) // idempotency
         .mockReturnValueOnce(lim([{ item_id: 'item-semen', tenant_id: 'tenant-123', is_active: true, is_biological_asset: false, uom_primary: 'DOSE' }]))
@@ -957,7 +1008,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([outLine]))
         .mockReturnValueOnce(lim([hdr]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'boar-1', animal_code: 'B-1', current_batch_id: 'batch-1', current_stage_id: 'st-boar' })]))
         .mockReturnValueOnce(lim([]))
         .mockReturnValueOnce(lim([]))
         .mockReturnValueOnce(lim([{ item_id: 'item-x', tenant_id: 'other-tenant', is_active: true }]));
@@ -979,7 +1030,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([{ ...outLine, item_id: 'item-piglet', lot_required: false, activity_name: 'Piglet Output' }]))
         .mockReturnValueOnce(lim([{ ...hdr, stage_id: 'st-lact' }]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'sow-1', animal_code: 'S-1', current_batch_id: 'batch-1', current_stage_id: 'st-lact' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'sow-1', animal_code: 'S-1', current_batch_id: 'batch-1', current_stage_id: 'st-lact' })]))
         .mockReturnValueOnce(lim([]))
         .mockReturnValueOnce(lim([]))
         .mockReturnValueOnce(lim([{ item_id: 'item-piglet', is_biological_asset: true, uom_primary: 'HEAD' }]))
@@ -1049,7 +1100,7 @@ describe('BatchDailyDataService', () => {
         .mockReturnValueOnce(lim([death]))
         .mockReturnValueOnce(lim([xferHeader]))
         .mockReturnValueOnce(lim([{ tracking_mode: 'ANIMAL_WISE', company_id: 'comp-1', costing_method: 'BIO_ASSET' }]))
-        .mockReturnValueOnce(lim([{ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' }]))
+        .mockReturnValueOnce(lim([placed({ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' })]))
         .mockReturnValueOnce(lim([])) // lock (reopened)
         .mockReturnValueOnce(lim([{ entry_id: 'x', posted: true, entered_value: '1.000000', entered_text: null, lot_no: null, serial_no: null }])); // already posted: 1 death
 
@@ -1060,7 +1111,7 @@ describe('BatchDailyDataService', () => {
     });
 
     it('moves exactly the named animal of an animal-wise batch — nobody is picked for the farmer', async () => {
-      selects('ANIMAL_WISE', [[{ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' }]]);
+      selects('ANIMAL_WISE', [[placed({ animal_id: 'a-7', animal_code: 'PIG-7', current_batch_id: 'batch-1', current_stage_id: 'st-1' })]]);
 
       await service.postEntry('batch-1', { line_id: 'line-xfer', entry_date: '2026-10-01', animal_id: 'a-7', destination_batch_id: 'batch-2' } as any, 'tenant-123');
 

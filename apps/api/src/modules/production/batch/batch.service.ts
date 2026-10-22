@@ -8,7 +8,9 @@ import {
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL } from 'drizzle-orm';
+import { eq, ne, and, or, like, isNull, inArray, desc, asc, gt, sql, SQL, count } from 'drizzle-orm';
+import { animalsInBatchOn, loadBatchMembership } from '../batch-daily-data/animal-membership';
+import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
@@ -1513,7 +1515,7 @@ export class BatchService {
           eq(schema.stageMaster.is_active, true),
           isNull(schema.stageMaster.deleted_at),
           batch.company_id
-            ? or(eq(schema.stageMaster.company_id, batch.company_id), isNull(schema.stageMaster.company_id))
+            ? eq(schema.stageMaster.company_id, batch.company_id)
             : undefined,
         ),
       )
@@ -1759,6 +1761,10 @@ export class BatchService {
       conditions.push(eq(schema.batchHeader.status, query.status));
     if (query.lobId)
       conditions.push(eq(schema.batchHeader.lob_id, query.lobId));
+    if (query.breedId)
+      conditions.push(eq(schema.batchHeader.breed_id, query.breedId));
+    if (query.trackingMode)
+      conditions.push(eq(schema.batchHeader.tracking_mode, query.trackingMode));
     if (query.search)
       conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
 
@@ -2072,7 +2078,10 @@ export class BatchService {
         state_id: stateId,
         batch_id: id,
         stage,
-        current_quantity: batch.opening_quantity?.toString() || '1',
+        // The head the batch holds now. closing_quantity is kept in step by transfers and deaths; the opening
+        // figure re-created a herd that had left — a sow group emptied by transfer came back at 8 head the
+        // first time a late consumption touched it, and so never read as empty again.
+        current_quantity: (batch.closing_quantity ?? batch.opening_quantity)?.toString() || '1',
         nca_book_value: stage === 'MATURE' ? (Number(batch.opening_quantity || 1) * 28000).toString() : '0.0000',
       });
       [bioState] = await this.db
@@ -2308,6 +2317,13 @@ export class BatchService {
    * The costs the batch has accumulated stay with the animals still in it: how a leaving animal takes her share of
    * them is a decision for the client (decisions.md, 9 Oct, Phase 8).
    */
+  /**
+   * One registered animal leaves her batch other than by death (sold, culled, slaughtered): the batch's head
+   * count, its bio-asset head and the carrying value she takes with her, the movement log, the stage counts.
+   * Returns the book value she leaves with — her own, the batch's average per head when she has none, and
+   * whatever more the batch still carries when she is its last live animal (what it capitalised while it held
+   * her) — or null when she was in no ACTIVE bio-asset batch, so the caller falls back to her own book value.
+   */
   async recordAnimalExit(
     animal: {
       animal_id: string;
@@ -2315,19 +2331,20 @@ export class BatchService {
       current_batch_id: string | null;
       current_stage_id: string | null;
       current_location_id: string | null;
+      book_value?: string | null;
     },
     exitType: string,
     exitDate: string,
     tenantId: string,
     userPayload?: UserContext,
-  ): Promise<void> {
-    if (!animal.current_batch_id) return;
+  ): Promise<{ valueRelieved: number | null; batch: typeof schema.batchHeader.$inferSelect | null }> {
+    if (!animal.current_batch_id) return { valueRelieved: null, batch: null };
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
       .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
       .limit(1);
-    if (!batch || batch.status !== 'ACTIVE') return;
+    if (!batch || batch.status !== 'ACTIVE') return { valueRelieved: null, batch: null };
 
     await this.db
       .update(schema.batchHeader)
@@ -2337,14 +2354,41 @@ export class BatchService {
         updated_at: toMysqlTimestamp(),
       })
       .where(eq(schema.batchHeader.batch_id, batch.batch_id));
+    let valueRelieved: number | null = null;
     if (batch.costing_method === 'BIO_ASSET') {
-      await this.db
-        .update(schema.batchBioAssetState)
-        .set({
-          current_quantity: sql`GREATEST(0, ${schema.batchBioAssetState.current_quantity} - 1)`,
-          updated_at: toMysqlTimestamp(),
-        })
-        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      const [state] = await this.db
+        .select()
+        .from(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+        .limit(1);
+      if (state) {
+        // Her head left the state but her value used to stay behind in it, so a batch emptied this way
+        // closed at nil head still carrying the value of every animal sold or culled out of it.
+        const nca = Number(state.nca_book_value) || 0;
+        const qty = Number(state.current_quantity) || 0;
+        const [otherLive] = await this.db
+          .select({ animal_id: schema.animalRegister.animal_id })
+          .from(schema.animalRegister)
+          .where(and(
+            eq(schema.animalRegister.current_batch_id, batch.batch_id),
+            eq(schema.animalRegister.is_active, true),
+            ne(schema.animalRegister.animal_id, animal.animal_id),
+          ))
+          .limit(1);
+        // An animal-wise batch's state holds only the value that came in by transfer, so it can hold less than
+        // she is worth: she still leaves at her own value, and the state stops at nil.
+        const own = animal.book_value != null ? Number(animal.book_value) : null;
+        const hers = own ?? (qty > 0 ? nca / qty : 0);
+        valueRelieved = Number((otherLive ? hers : Math.max(hers, nca)).toFixed(4));
+        await this.db
+          .update(schema.batchBioAssetState)
+          .set({
+            current_quantity: sql`GREATEST(0, ${schema.batchBioAssetState.current_quantity} - 1)`,
+            nca_book_value: Math.max(0, nca - valueRelieved).toFixed(4),
+            updated_at: toMysqlTimestamp(),
+          })
+          .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      }
     }
     await this.movementLog.record({
       tenantId,
@@ -2360,6 +2404,134 @@ export class BatchService {
       userId: userPayload?.userId,
     });
     await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+    return { valueRelieved, batch };
+  }
+
+  /**
+   * One animal registered straight into an ACTIVE batch (POST /animal with current_batch_id): the batch's head
+   * count, its bio-asset head and value, the movement log and the stage counts take her in, as a transfer in
+   * would. They did not, so an animal-wise batch's closing quantity fell behind its live animals. Returns the
+   * batch she joined, or null when it is not ACTIVE (a DRAFT batch counts its animals when it activates).
+   */
+  async recordAnimalEntry(
+    animal: {
+      animal_id: string;
+      company_id: string;
+      current_batch_id: string | null;
+      current_stage_id: string | null;
+      current_location_id: string | null;
+      book_value?: string | null;
+    },
+    entryDate: string,
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<typeof schema.batchHeader.$inferSelect | null> {
+    if (!animal.current_batch_id) return null;
+    const [batch] = await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
+      .limit(1)
+      .for('update');
+    if (!batch || batch.status !== 'ACTIVE') return null;
+
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        closing_quantity: sql`COALESCE(${schema.batchHeader.closing_quantity}, ${schema.batchHeader.opening_quantity}, 0) + 1`,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.batchHeader.batch_id, batch.batch_id));
+    if (batch.costing_method === 'BIO_ASSET') {
+      const value = Number(animal.book_value) || 0;
+      const [state] = await this.db
+        .select({ state_id: schema.batchBioAssetState.state_id })
+        .from(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+        .limit(1);
+      if (state) {
+        await this.db
+          .update(schema.batchBioAssetState)
+          .set({
+            current_quantity: sql`${schema.batchBioAssetState.current_quantity} + 1`,
+            nca_book_value: sql`${schema.batchBioAssetState.nca_book_value} + ${value.toFixed(4)}`,
+            updated_at: toMysqlTimestamp(),
+          })
+          .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      } else {
+        await this.db.insert(schema.batchBioAssetState).values({
+          state_id: randomUUID(),
+          batch_id: batch.batch_id,
+          stage: 'PREMATURE',
+          current_quantity: '1.0000',
+          nca_book_value: value.toFixed(4),
+        });
+      }
+    }
+    await this.movementLog.record({
+      tenantId,
+      companyId: animal.company_id,
+      animalId: animal.animal_id,
+      movementType: 'ASSIGN',
+      eventDate: entryDate,
+      toBatchId: batch.batch_id,
+      toStageId: animal.current_stage_id,
+      toLocationId: animal.current_location_id,
+      entryNo: batch.batch_no,
+      userId: userPayload?.userId,
+    });
+    await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+    return batch;
+  }
+
+  /**
+   * The GL side of one animal sold or culled out of the herd — the same two entries the batch-level sale
+   * posts (disposeBioAsset): Dr Trade Receivables / Cr Biological Assets for the proceeds
+   * (BIO_SALE_PROCEEDS), then the gain or loss taking the asset credit to the book value that left
+   * (BIO_DISPOSAL_SOLD). A cull with no proceeds posts the whole book value as a loss.
+   */
+  async postAnimalDisposalJournal(params: {
+    tenantId: string;
+    companyId: string;
+    documentNo: string;
+    postingDate: string;
+    bookValue: number;
+    proceeds: number;
+    nobId?: string | null;
+    lobId?: string | null;
+    stageId?: string | null;
+    label: string;
+    userId?: string;
+  }): Promise<void> {
+    const common = {
+      tenantId: params.tenantId,
+      companyId: params.companyId,
+      documentNo: params.documentNo,
+      postingDate: params.postingDate,
+      nobId: params.nobId || undefined,
+      lobId: params.lobId || undefined,
+      stageId: params.stageId || undefined,
+      userId: params.userId,
+    };
+    if (params.proceeds >= 0.005) {
+      await this.glPostingService.postBatchCostEntry({
+        ...common,
+        transactionType: 'BIO_SALE_PROCEEDS',
+        amount: params.proceeds,
+        description: `${params.label} — ${params.documentNo}, 1 head`,
+      });
+    }
+    const gainLoss = params.proceeds - params.bookValue;
+    if (Math.abs(gainLoss) >= 0.005) {
+      await this.glPostingService.postBatchCostEntry({
+        ...common,
+        transactionType: 'BIO_DISPOSAL_SOLD',
+        amount: Math.abs(gainLoss),
+        description: `Disposal (${params.label.toLowerCase()}) — ${params.documentNo}`,
+        reverseDirection: gainLoss < 0,
+      });
+    }
   }
 
   /** One death event as a unit: every animal posts, or none does. */
@@ -3603,47 +3775,40 @@ export class BatchService {
       };
 
       if (batch.tracking_mode === 'ANIMAL_WISE') {
-        const liveAnimals =
-          (await this.db
-            .select({
-              animal_id: schema.animalRegister.animal_id,
-              current_stage_id: schema.animalRegister.current_stage_id,
-            })
-            .from(schema.animalRegister)
-            .where(
-              and(
-                eq(schema.animalRegister.current_batch_id, batch.batch_id),
-                eq(schema.animalRegister.is_active, true),
-              ),
-            )) || [];
-        const activeStageIds = new Set(
-          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
-        );
-        // A stage is owed a day's entry only from the day its animals entered it. Counting
-        // from the batch start, sows moved into Farrowing on 13 Sep made 9 Sep the next
-        // pending date — a day they had already been posted on, under Insemination.
-        const stageStart = new Map<string, string>();
-        for (const sId of activeStageIds) {
-          const entered = await this.schedulerHeaderService.stageEntryDate(batch.batch_id, sId as string);
-          stageStart.set(sId as string, entered && entered > startDate ? entered : startDate);
-        }
+        // A day is owed only for the animals the batch HAD that day, at the stage each was at then (Rishi, 21 Oct):
+        // a day with none is not owed, and a stage nobody was in that day is not asked for. Reading today's animals
+        // instead made days pending that nobody could enter, and asked for animals that had not yet arrived.
+        const membership = await loadBatchMembership(this.db, batch.batch_id);
+        // A stage is only owed where the batch has a scheduler for it: without one the screen offers no entry, so a
+        // day could never be completed. Stages are compared by code, as the entry screen groups them.
+        const schedulerStages = await this.db
+          .select({ stage_id: schema.schedulerHeader.stage_id })
+          .from(schema.schedulerHeader)
+          .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
+        const stageIds = [...new Set([...schedulerStages.map((r) => r.stage_id), ...locks.map((l: any) => l.stage_id)])];
+        const stageRows = stageIds.length
+          ? await this.db
+              .select({ stage_id: schema.stageMaster.stage_id, stage_code: schema.stageMaster.stage_code })
+              .from(schema.stageMaster)
+              .where(inArray(schema.stageMaster.stage_id, stageIds))
+          : [];
+        const codeOf = new Map(stageRows.map((r) => [r.stage_id, r.stage_code]));
+        const stageKey = (id: string) => codeOf.get(id) || id;
+        const scheduledKeys = new Set(schedulerStages.map((r) => stageKey(r.stage_id)));
 
         let cursor = startDate;
         let count = 0;
         while (count < 365) {
-          let isComplete = false;
-          if (activeStageIds.size === 0) {
-            isComplete = locks.some((l: any) => l.entry_date === cursor);
-          } else {
-            const lockedStages = new Set(
-              locks
-                .filter((l: any) => l.entry_date === cursor)
-                .map((l: any) => l.stage_id),
-            );
-            isComplete = Array.from(activeStageIds)
-              .filter((sId) => (stageStart.get(sId as string) ?? startDate) <= cursor)
-              .every((sId) => lockedStages.has(sId!));
+          const owedStages = new Set<string>();
+          for (const m of membership.on(cursor)) {
+            if (!m.stage_id) continue;
+            const key = stageKey(m.stage_id);
+            if (scheduledKeys.has(key)) owedStages.add(key);
           }
+          const lockedStages = new Set(
+            locks.filter((l: any) => l.entry_date === cursor).map((l: any) => stageKey(l.stage_id)),
+          );
+          const isComplete = Array.from(owedStages).every((key) => lockedStages.has(key));
 
           if (!isComplete) {
             return cursor;
@@ -3853,7 +4018,13 @@ export class BatchService {
    * form. ANIMAL_WISE batches have no single current stage, so they delegate
    * to getDataEntryByStage() instead — see that method's comment.
    */
+  /** The Data Entry screen's lines, with why the batch takes no entry when it does not (see entry-blocked.ts). */
   async getDataEntry(id: string, dateStr: string, stageId?: string) {
+    const result = await this.getDataEntryLines(id, dateStr, stageId);
+    return { ...result, entry_blocked_reason: await entryBlockedReason(this.db, id, dateStr) };
+  }
+
+  private async getDataEntryLines(id: string, dateStr: string, stageId?: string) {
     const batch = await this.findOne(id);
     if (batch.tracking_mode === 'ANIMAL_WISE') {
       return this.getDataEntryByStage(batch, dateStr);
@@ -4241,15 +4412,17 @@ export class BatchService {
     batch: Awaited<ReturnType<BatchService['findOne']>>,
     dateStr: string,
   ) {
-    const liveAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batch.batch_id),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The animals in the batch ON this date, each at the stage it was at that day (Rishi, 21 Oct): a past day asks
+    // for those animals only, at their stage then — not for whoever is in the batch now.
+    const members = await animalsInBatchOn(this.db, batch.batch_id, dateStr);
+    const memberStage = new Map(members.map((m) => [m.animal_id, m.stage_id]));
+    const memberRows = members.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(inArray(schema.animalRegister.animal_id, members.map((m) => m.animal_id)))
+      : [];
+    const liveAnimals = memberRows.map((a) => ({ ...a, current_stage_id: memberStage.get(a.animal_id) ?? null }));
 
     const animalStageIds = [
       ...new Set(
@@ -4646,19 +4819,18 @@ export class BatchService {
       }
     }
 
-    const allStageAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batchId),
-          eq(schema.animalRegister.current_stage_id, stageId),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The stage's animals ON the date being posted - those the batch had then at this stage, whether or not they
+    // are still there (Rishi, 21 Oct).
+    const stageMembers = (await animalsInBatchOn(this.db, batchId, dateStr)).filter((m) => m.stage_id === stageId);
+    const allStageAnimals = stageMembers.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(inArray(schema.animalRegister.animal_id, stageMembers.map((m) => m.animal_id)))
+      : [];
     if (!allStageAnimals.length) {
       throw new BadRequestException(
-        'No animals are currently in this stage — nothing to post.',
+        `No animals were in this stage on ${dateStr} — nothing to post.`,
       );
     }
 
@@ -4700,7 +4872,7 @@ export class BatchService {
       const match = allStageAnimals.find((a) => a.animal_id === animalId);
       if (!match) {
         throw new BadRequestException(
-          `Animal '${animalId}' is not active in this stage — cannot post.`,
+          `Animal '${animalId}' was not in this stage on ${dateStr} — cannot post.`,
         );
       }
       if (alreadyPostedAnimalIds.has(animalId)) {
@@ -5354,6 +5526,42 @@ export class BatchService {
     return { lines, dayOfStage };
   }
 
+  /**
+   * A user closes a bio-asset batch (Rishi, 19 Oct: a batch is closed by a user, never by a posting). Its value went
+   * out with its animals — by disposal, harvest or transfer — so there is nothing to allocate: it may close only once
+   * it holds no head on its bio-asset state and, for an animal-wise batch, no live animal.
+   */
+  private async closeEmptyBioAsset(batch: Awaited<ReturnType<BatchService['findOne']>>, dto: CloseBatchDto, userPayload?: UserContext) {
+    const [state] = await this.db
+      .select({ current_quantity: schema.batchBioAssetState.current_quantity })
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+      .limit(1);
+    const [{ live }] = await this.db
+      .select({ live: count() })
+      .from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.current_batch_id, batch.batch_id), eq(schema.animalRegister.is_active, true)));
+    const head = Math.max(Number(state?.current_quantity ?? 0), Number(live));
+    if (head > 1e-9) {
+      throw new BadRequestException(
+        `Batch '${batch.batch_no}' still holds ${head} head. Move, sell or dispose of them before closing it.`,
+      );
+    }
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        status: 'CLOSED',
+        actual_end_date: dto.actual_end_date || new Date().toISOString().slice(0, 10),
+        closing_quantity: '0.0000',
+        closed_at: toMysqlTimestamp(),
+        closed_by: userPayload?.userId || null,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(and(eq(schema.batchHeader.batch_id, batch.batch_id), eq(schema.batchHeader.status, 'ACTIVE')));
+    return this.findOne(batch.batch_id);
+  }
+
   async close(
     id: string,
     dto: CloseBatchDto,
@@ -5362,10 +5570,9 @@ export class BatchService {
   ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
-    if (batch.costing_method === 'BIO_ASSET') {
-      throw new BadRequestException(
-        "BIO_ASSET batches don't close via this action — use the dispose endpoint to exit animals from the herd; the batch closes automatically once the herd is fully disposed.",
-      );
+    if (batch.costing_method === 'BIO_ASSET') return this.closeEmptyBioAsset(batch, dto, userPayload);
+    if (!dto.output_lines?.length) {
+      throw new BadRequestException('Closing a batch needs its output lines, with cost splits adding up to 100.');
     }
 
     const totalSplitPct = dto.output_lines.reduce(
@@ -5746,6 +5953,18 @@ export class BatchService {
     return bioState;
   }
 
+  /** A sale's customer must be one of the batch's company (or tenant-wide), and still active. */
+  private async assertCustomerOfCompany(customerId: string, companyId: string, tenantId: string) {
+    const [customer] = await this.db
+      .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
+      .from(schema.customerMaster)
+      .where(and(eq(schema.customerMaster.customer_id, customerId), eq(schema.customerMaster.tenant_id, tenantId)))
+      .limit(1);
+    if (!customer || (customer.company_id && customer.company_id !== companyId) || customer.is_active === false) {
+      throw new BadRequestException('The customer is not an active customer of this company.');
+    }
+  }
+
   private assertBioAsset(batch: { costing_method: string }, action: string) {
     if (batch.costing_method !== 'BIO_ASSET') {
       throw new BadRequestException(
@@ -6077,10 +6296,28 @@ export class BatchService {
       if (dto.sale_proceeds === undefined || dto.sale_proceeds === null) {
         throw new BadRequestException('A sale disposal needs the sale proceeds.');
       }
+      if (dto.customer_id) await this.assertCustomerOfCompany(dto.customer_id, batch.company_id, tenantId);
+      // The sale: Dr Trade Receivables / Cr Biological Assets for the proceeds (BIO_SALE_PROCEEDS), then the
+      // gain or loss below takes the asset credit down to the book value sold. Before this only the gain
+      // posted — Dr Biological Assets / Cr Disposal Gain — so a sale raised the asset it should have relieved
+      // and no receivable was ever owed.
+      if (dto.sale_proceeds > 0) {
+        await this.glPostingService.postBatchCostEntry({
+          tenantId,
+          companyId: batch.company_id,
+          transactionType: 'BIO_SALE_PROCEEDS',
+          amount: dto.sale_proceeds,
+          documentNo: batch.batch_no,
+          postingDate: dto.posting_date,
+          description: `Sale — ${batch.batch_no}, ${dto.quantity} head`,
+          nobId: batch.nob_id || undefined,
+          lobId: batch.lob_id,
+          stageId: batch.stage_id || undefined,
+          userId: userPayload?.userId,
+        });
+      }
       const gainLoss = dto.sale_proceeds - nbvDisposed;
       if (Math.abs(gainLoss) >= 0.005) {
-        // Only the bio-asset-relief + gain/loss recognition posts here — no
-        // Sales/AR module exists yet to hang the cash/receivable side off of.
         await this.glPostingService.postBatchCostEntry({
           tenantId,
           companyId: batch.company_id,
@@ -6126,6 +6363,7 @@ export class BatchService {
         bioState.stage === 'MATURE' ? 'AMORTIZED_COST' : 'COST_ACCUMULATION',
       nob_id: batch.nob_id,
       lob_id: batch.lob_id,
+      customer_id: dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
       created_by: userPayload?.userId || null,
     });
 
@@ -6145,19 +6383,16 @@ export class BatchService {
       }
     }
 
-    let closedNow = false;
+    // The last head out leaves the batch at nil head, still ACTIVE: a batch is closed by a user, never by a
+    // posting (Rishi, 19 Oct). POST /batch/:id/close accepts a bio-asset batch once it holds no head.
+    const closedNow = false;
     if (newQty <= 0) {
-      closedNow = true;
       await this.db
         .update(schema.batchHeader)
         .set({
-          status: 'CLOSED',
-          actual_end_date: dto.posting_date,
           closing_quantity: '0.0000',
           total_cost: newNca.toString(),
           unit_cost: '0.000000',
-          closed_at: toMysqlTimestamp(),
-          closed_by: userPayload?.userId || null,
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })

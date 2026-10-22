@@ -10,6 +10,7 @@ import { Field } from "../../../components/ui/field";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../../components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Select } from "@/components/ui/select";
 
 const s = {
   input: { borderColor: "var(--input-border)", backgroundColor: "var(--input-bg)", color: "var(--input-text)" },
@@ -152,11 +153,11 @@ export default function AdminPlansPage() {
             ))}
 
             <Field label={t("admBillingCycle")}>
-              <select value={form.billing_cycle} onChange={(e) => setForm({ ...form, billing_cycle: e.target.value })}
+              <Select value={form.billing_cycle} onChange={(e) => setForm({ ...form, billing_cycle: e.target.value })}
                 className={`${inputCls} nf-select`} style={s.input}>
                 <option value="MONTHLY">{t("monthly")}</option>
                 <option value="ANNUAL">{t("admAnnual")}</option>
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("admMaxCompanies")}>

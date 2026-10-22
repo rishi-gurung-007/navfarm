@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from "react";
 import { 
   Tag, 
@@ -17,6 +18,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toast } from "@/components/ui/toast";
+import { Select } from "@/components/ui/select";
 import { api } from "@/services/api-client";
 
 type Row = Record<string, any>;
@@ -252,7 +254,7 @@ export default function AnimalSerialAssignmentModal({
             </div>
             <div className="text-sm font-semibold flex items-center gap-1.5" style={S.primary}>
               <Package className="w-4 h-4 text-[var(--text-muted)]" />
-              <span>{line.item_label || line.item_name || "—"}</span>
+              <span>{line.item_label || line.item_name || NA}</span>
               {line.uom && (
                 <span className="text-xs font-mono font-normal" style={S.muted}>
                   ({line.uom})
@@ -374,7 +376,7 @@ export default function AnimalSerialAssignmentModal({
                   const selectedOption = availableSerials.find((s) => s.serial_no === assignedSerial);
                   const expiryText = selectedOption?.expiry_date
                     ? String(selectedOption.expiry_date).slice(0, 10)
-                    : "—";
+                    : NA;
 
                   return (
                     <tr
@@ -407,10 +409,10 @@ export default function AnimalSerialAssignmentModal({
                         {isPosted ? (
                           <div className="flex items-center gap-1.5 font-mono text-xs" style={S.sub}>
                             <Lock className="w-3 h-3 text-[var(--text-muted)]" />
-                            <span>{assignedSerial || "—"}</span>
+                            <span>{assignedSerial || NA}</span>
                           </div>
                         ) : (
-                          <select
+                          <Select
                             value={assignedSerial}
                             onChange={(e) => handleSelectSerial(animal.animal_id, e.target.value)}
                             className="nf-input-sm w-full font-mono text-xs rounded border px-2 py-1 outline-none focus:border-[var(--accent)]"
@@ -436,7 +438,7 @@ export default function AnimalSerialAssignmentModal({
                                 </option>
                               );
                             })}
-                          </select>
+                          </Select>
                         )}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-[11px]" style={S.sub}>

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -1014,8 +1015,8 @@ export default function StockTransferPanel() {
 
   const warehouseLabel = (id: string) => {
     const w = warehouses.find((wh) => wh.warehouse_id === id);
-    if (!w) return "—";
-    return w.warehouse_code ? `${w.warehouse_code} (${w.warehouse_name})` : w.warehouse_name || "—";
+    if (!w) return NA;
+    return w.warehouse_code ? `${w.warehouse_code} (${w.warehouse_name})` : w.warehouse_name || NA;
   };
   const warehouseCode = (id: string, rowCodeOrName?: string | null) => warehouseCodeOf(warehouses, id, rowCodeOrName, notAvailable);
   const warehouseName = (id: string) => {
@@ -1828,23 +1829,20 @@ export default function StockTransferPanel() {
                     <label className="nf-text-label" style={S.sub}>
                       Transport Mode
                     </label>
-                    <select
+                    <SearchableSelect
                       value={header.transport_mode}
                       disabled={!!editingTransfer && editingTransfer.status !== "DRAFT" && !canUserShip(editingTransfer)}
-                      onChange={(e) => setHeader((h) => ({ ...h, transport_mode: e.target.value }))}
-                      className={`${inputCls} nf-select ${
+                      onChange={(next) => setHeader((h) => ({ ...h, transport_mode: next }))}
+                      options={TRANSPORT_MODE_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
+                      valueKey="value" labelKey="label" placeholder="Select transport mode"
+                      searchPlaceholder="Search transport mode…" noMatchesLabel="No matches found"
+                      triggerClassName={`${inputCls} nf-select ${
                         editingTransfer && editingTransfer.status !== "DRAFT" && !canUserShip(editingTransfer)
                           ? "opacity-75 cursor-not-allowed"
                           : ""
                       }`}
-                      style={S.input}
-                    >
-                      {TRANSPORT_MODE_OPTIONS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
+                      triggerStyle={S.input}
+                    />
                   </div>
 
                   {/* Vehicle / Truck No */}
@@ -2189,7 +2187,7 @@ export default function StockTransferPanel() {
                                 />
                               ) : (
                                 <div className="flex h-11 items-center px-1 font-mono text-xs opacity-75">
-                                  {it?.item_code || "—"}
+                                  {it?.item_code || NA}
                                 </div>
                               )}
                             </TableCell>
@@ -2502,20 +2500,15 @@ export default function StockTransferPanel() {
                             {/* UOM */}
                             <TableCell className="align-top px-2 py-2 w-24 min-w-[95px]">
                               {!editingTransfer ? (
-                                <select
+                                <SearchableSelect
                                   value={line.uom}
-                                  onChange={(e) => setLineField(idx, "uom", e.target.value)}
-                                  className={`${inputCls} nf-select text-xs pl-2.5 pr-6`}
-                                  style={S.input}
+                                  onChange={(next) => setLineField(idx, "uom", next)}
+                                  options={[{ value: "", label: "Select" }, ...uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))]}
+                                  valueKey="value" labelKey="label" placeholder="Select" searchPlaceholder="Search UOM…" noMatchesLabel="No matches found"
+                                  triggerClassName={`${inputCls} nf-select text-xs pl-2.5 pr-6`}
+                                  triggerStyle={S.input}
                                   disabled={!line.item_id}
-                                >
-                                  <option value="">Select</option>
-                                  {uoms.map((u) => (
-                                    <option key={u.uom_code} value={u.uom_code}>
-                                      {u.uom_code}
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                               ) : (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
                                   {line.uom}
@@ -2576,7 +2569,7 @@ export default function StockTransferPanel() {
                                       </button>
                                     );
                                   }
-                                  return <span className="text-muted-foreground text-xs opacity-50">—</span>;
+                                  return <span className="text-muted-foreground text-xs opacity-50">{NA}</span>;
                                 })()}
                               </div>
                             </TableCell>
@@ -2585,7 +2578,7 @@ export default function StockTransferPanel() {
                             <TableCell className="align-top px-2 py-2 w-32 min-w-[125px]">
                               {editingTransfer && editingTransfer.status !== "DRAFT" ? (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
-                                  {line.shipment_date || "—"}
+                                  {line.shipment_date || NA}
                                 </div>
                               ) : (
                                 <input
@@ -2602,7 +2595,7 @@ export default function StockTransferPanel() {
                             <TableCell className="align-top px-2 py-2 w-32 min-w-[125px]">
                               {editingTransfer && editingTransfer.status === "RECEIVED" ? (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
-                                  {line.receipt_date || "—"}
+                                  {line.receipt_date || NA}
                                 </div>
                               ) : (
                                 <input
@@ -2790,9 +2783,9 @@ export default function StockTransferPanel() {
                                   {shipments.map((s, sIdx) => {
                                     const it = items.find((i) => i.item_id === s.item_id);
                                     const parsedRem = parseRemarksHelper(s.remarks || editingTransfer.remarks);
-                                    const vehicle = parsedRem?.["Vehicle"] || header.vehicle_no || "—";
-                                    const driver = parsedRem?.["Driver"] || header.driver_name || "—";
-                                    const tracking = s.serial_no || s.lot_no || "—";
+                                    const vehicle = parsedRem?.["Vehicle"] || header.vehicle_no || NA;
+                                    const driver = parsedRem?.["Driver"] || header.driver_name || NA;
+                                    const tracking = s.serial_no || s.lot_no || NA;
 
                                     return (
                                       <TableRow key={s.ledger_id || sIdx} className="border-b border-(--row-border)">
@@ -2805,7 +2798,7 @@ export default function StockTransferPanel() {
                                         </TableCell>
                                         <TableCell className="px-3 py-2">{s.uom}</TableCell>
                                         <TableCell className="px-3 py-2">
-                                          {vehicle !== "—" || driver !== "—" ? `${vehicle} (${driver})` : "—"}
+                                          {vehicle !== NA || driver !== NA ? `${vehicle} (${driver})` : NA}
                                         </TableCell>
                                         <TableCell className="px-3 py-2 font-mono text-[11px] max-w-[200px] truncate" title={tracking}>
                                           {tracking}
@@ -2884,11 +2877,11 @@ export default function StockTransferPanel() {
                                           const isDoaOnlyTwin = r.external_reference_no === "DOA_IN_TRANSIT";
                                           // A current receipt's quantity includes its DOA, which is written off against it.
                                           const goodVal = isDoaOnlyTwin ? 0 : Math.max(0, Number(r.quantity) - (grossDoa ? doaVal : 0));
-                                          const tracking = r.serial_no || r.lot_no || "—";
+                                          const tracking = r.serial_no || r.lot_no || NA;
                                           const author = getUserDisplayName(r.created_by_id || r.created_by, r.created_by_name);
                                           const displayRemarks = doaVal > 0
                                             ? (r.remarks || `DOA in-transit loss auto-adjusted (${doaVal.toLocaleString()} ${r.uom || "units"}) [MRT-017]`)
-                                            : (r.remarks || "—");
+                                            : (r.remarks || NA);
 
                                           return (
                                             <TableRow key={r.ledger_id || rIdx} className="border-b border-(--row-border)">
@@ -3042,7 +3035,7 @@ export default function StockTransferPanel() {
                       <div>
                         <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Item</span>
                         <span className="font-semibold text-(--text-primary)">{itemCodeOf(items, line.item_id, line.item_code, notAvailable)}</span>
-                        <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || "—"}</p>
+                        <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || NA}</p>
                       </div>
                       <div>
                         <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Route</span>
@@ -3169,7 +3162,7 @@ export default function StockTransferPanel() {
                         <div className="flex items-center justify-between">
                           <div>
                             <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Assigned Lot #</span>
-                            <span className="font-mono font-bold text-sm text-(--text-primary)">{line.lot_no || "—"}</span>
+                            <span className="font-mono font-bold text-sm text-(--text-primary)">{line.lot_no || NA}</span>
                           </div>
                           <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-500 border border-amber-500/30">
                             <Barcode className="h-3.5 w-3.5" /> Lot Tracked
@@ -3197,8 +3190,8 @@ export default function StockTransferPanel() {
                   <div className="rounded-[var(--radius-md)] border p-3 grid grid-cols-2 sm:grid-cols-4 gap-2" style={S.raised}>
                     <div>
                       <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Item</span>
-                      <span className="font-semibold text-(--text-primary)">{it?.item_code || "—"}</span>
-                      <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || "—"}</p>
+                      <span className="font-semibold text-(--text-primary)">{it?.item_code || NA}</span>
+                      <p className="text-[11px] text-(--text-secondary) truncate">{it?.item_name || NA}</p>
                     </div>
                     <div>
                       <span className="text-[10px] uppercase font-semibold text-(--text-muted) block">Transfer-from Location</span>

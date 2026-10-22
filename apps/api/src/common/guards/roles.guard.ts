@@ -1,7 +1,7 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PATH_METADATA } from '@nestjs/common/constants';
-import { enforceMasterRequest } from '../master-data-scope';
+import { enforceMasterRequest, masterControllerPath } from '../master-data-scope';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, isNull } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
@@ -39,8 +39,8 @@ export class RolesGuard implements CanActivate {
     // otherwise never validated against what the user is actually assigned to.
     await this.enforceScope(request, user);
     const controller = context.getClass();
-    const controllerPath = controller ? Reflect.getMetadata(PATH_METADATA, controller) as string | undefined : undefined;
-    if (typeof controllerPath === 'string') await enforceMasterRequest(this.cls, request, controllerPath);
+    const controllerPath = masterControllerPath(controller ? Reflect.getMetadata(PATH_METADATA, controller) as string | string[] | undefined : undefined);
+    if (controllerPath) await enforceMasterRequest(this.cls, request, controllerPath);
 
     // Farm scope depends on the operational area validated by enforceScope
     // above, so it must resolve after that call, never before it.

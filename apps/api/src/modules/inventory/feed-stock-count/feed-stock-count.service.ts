@@ -25,7 +25,7 @@ import {
   CreateFeedStockCountDto, QueryFeedStockCountDto, UpdateFeedStockCountDto,
 } from './dto/feed-stock-count.dto';
 import { approvalRoute, assertVarianceReason, RateEvidence, varianceFact, VarianceFact } from './feed-stock-count.rules';
-import { assertStockTakeDate, assertStockTakePeriod, stockTakeNo } from './monthly-stock-take.rules';
+import { assertStockTakeDate, assertStockTakePeriod, physicalCountNo, stockTakeNo } from './monthly-stock-take.rules';
 
 /** The approval_request.doc_type the count module registers with the engine. */
 export const FEED_STOCK_COUNT_APPROVAL_DOC_TYPE = 'FEED_STOCK_VARIANCE';
@@ -39,8 +39,6 @@ type Actor = {
 
 type UserCtx = { userId?: string; userType?: string } | undefined;
 
-/** MySQL holds UTC wall-clock strings; this is the instant they represent. */
-const utcInstant = (mysqlUtc: string): Date => new Date(`${mysqlUtc.replace(' ', 'T')}Z`);
 const nowTs = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 /** A rejected count stays correctable rather than becoming a dead document. */
@@ -256,7 +254,8 @@ export class FeedStockCountService implements OnModuleInit {
     assertVarianceReason(fact, reasonId);
     if (!fact.reasonRequired) return null;
     if (!reasonId) throw new BadRequestException('A Reason Master row is required for this variance.');
-    const reason = await this.reasons.findActiveForOperationalScope(reasonId, tenantId, scope);
+    // A stock variance is explained by a stock-adjustment reason, not by a mortality or cull one (20 Oct).
+    const reason = await this.reasons.findActiveForOperationalScope(reasonId, tenantId, scope, 'ADJUSTMENT');
     return reason.reason_id;
   }
 
@@ -293,9 +292,6 @@ export class FeedStockCountService implements OnModuleInit {
     return kind === 'MILL' ? this.settings.resolve(companyId, locationId, 'MILL') : this.settings.resolve(companyId, locationId);
   }
 
-  private countNo(farmId: string, countedAtEpochSeconds: number): string {
-    return `FSC-${farmId}-${countedAtEpochSeconds}`;
-  }
 
   /**
    * What a new count may cover: exactly the silo/item ledger pairs `create`
@@ -432,24 +428,23 @@ export class FeedStockCountService implements OnModuleInit {
         });
       }
 
-      const year = monthly ? Number(String(period!.stock_take_date ?? period!.end_date).slice(0, 4)) : 0;
-      const prefix = monthly
-        ? `ST-${kind === 'MILL' ? 'MILL' : (farm as { location_code?: string }).location_code ?? dto.farmId}-${year}-`
-        : '';
-      let count_no = this.countNo(dto.farmId, instant.epochSeconds);
+      // Monthly: the year of the period's stock take; weekly: the year of the day the count was taken.
+      const year = Number((monthly ? String(period!.stock_take_date ?? period!.end_date) : postingDate).slice(0, 4));
+      const farmCode = (farm as { location_code?: string }).location_code ?? dto.farmId;
+      const prefix = monthly ? `ST-${kind === 'MILL' ? 'MILL' : farmCode}-${year}-` : `PC-${farmCode}-${year}-`;
+      let count_no = '';
       for (let attempt = 1; ; attempt += 1) {
-        if (monthly) {
-          // MAX of the sequence already issued under this prefix, not COUNT(*)+1: a deleted or concurrent take must not
-          // hand out a number twice. The company-wide unique key on count_no is the backstop; a clash retries.
-          const [{ n }] = await this.db.select({ n: sql<number | null>`MAX(CAST(SUBSTRING_INDEX(${schema.feedStockCount.count_no}, '-', -1) AS UNSIGNED))` })
-            .from(schema.feedStockCount).where(and(
-              eq(schema.feedStockCount.tenant_id, tenantId),
-              eq(schema.feedStockCount.company_id, dto.companyId),
-              eq(schema.feedStockCount.count_type, 'MONTHLY'),
-              like(schema.feedStockCount.count_no, `${prefix}%`),
-            ));
-          count_no = stockTakeNo(kind === 'MILL' ? 'FEED_MILL' : 'FARM', (farm as { location_code?: string }).location_code ?? dto.farmId, year, Number(n ?? 0) + 1);
-        }
+        // MAX of the sequence already issued under this prefix, not COUNT(*)+1: a deleted or concurrent count must not
+        // hand out a number twice. The company-wide unique key on count_no is the backstop; a clash retries.
+        const [{ n }] = await this.db.select({ n: sql<number | null>`MAX(CAST(SUBSTRING_INDEX(${schema.feedStockCount.count_no}, '-', -1) AS UNSIGNED))` })
+          .from(schema.feedStockCount).where(and(
+            eq(schema.feedStockCount.tenant_id, tenantId),
+            eq(schema.feedStockCount.company_id, dto.companyId),
+            eq(schema.feedStockCount.count_type, monthly ? 'MONTHLY' : 'WEEKLY'),
+            like(schema.feedStockCount.count_no, `${prefix}%`),
+          ));
+        const seq = Number(n ?? 0) + 1;
+        count_no = monthly ? stockTakeNo(kind === 'MILL' ? 'FEED_MILL' : 'FARM', farmCode, year, seq) : physicalCountNo(farmCode, year, seq);
         try {
           await this.db.insert(schema.feedStockCount).values({
             count_id: countId, count_no, tenant_id: tenantId, company_id: dto.companyId, farm_id: dto.farmId,
@@ -459,7 +454,7 @@ export class FeedStockCountService implements OnModuleInit {
           break;
         } catch (error) {
           const clash = (error as { code?: string })?.code === 'ER_DUP_ENTRY';
-          if (clash && monthly && attempt < 5 && String((error as { message?: string }).message).includes(NO_UNIQUE_KEY)) continue;
+          if (clash && attempt < 5 && String((error as { message?: string }).message).includes(NO_UNIQUE_KEY)) continue;
           if (clash) throw new ConflictException('A physical count already exists for this farm occurrence.');
           throw error;
         }
@@ -641,7 +636,7 @@ export class FeedStockCountService implements OnModuleInit {
           if (!line.reason_id) throw new BadRequestException('Every nonzero variance requires a Reason Master row before submission.');
           await this.reasons.findActiveForOperationalScope(line.reason_id, tenantId, {
             companyId: count.company_id, nobId: farm.nob_id, lobId: farm.lob_id,
-          });
+          }, 'ADJUSTMENT');
         } else if (line.reason_id) {
           throw new BadRequestException('Zero variance must not carry a reason.');
         }
@@ -792,7 +787,14 @@ export class FeedStockCountService implements OnModuleInit {
         }
       }
       const effective = await this.resolveSettings(count.company_id, count.farm_id, kindOfCount(count));
-      const postingDate = this.postingDate(utcInstant(count.counted_at), effective.timezoneId);
+      // counted_at was written with FROM_UNIXTIME, so it holds the session's wall clock, not UTC: read the instant back
+      // with UNIX_TIMESTAMP. Reading it as UTC moved a count taken on 20 Oct to a posting date of 21 Oct.
+      const [{ epoch }] = await this.db
+        .select({ epoch: sql<number>`UNIX_TIMESTAMP(${schema.feedStockCount.counted_at})` })
+        .from(schema.feedStockCount)
+        .where(eq(schema.feedStockCount.count_id, countId))
+        .limit(1);
+      const postingDate = this.postingDate(new Date(Number(epoch) * 1000), effective.timezoneId);
       const bySilo = new Map<string, typeof variance>();
       for (const line of variance) {
         bySilo.set(line.silo_id, [...(bySilo.get(line.silo_id) ?? []), line]);

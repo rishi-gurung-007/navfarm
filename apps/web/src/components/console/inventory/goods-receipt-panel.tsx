@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { NA } from "@/utils/na";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2, Search, Loader2, Inbox, Eye, CheckCircle2, Pencil, Sparkles, ListChecks, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Dialog } from "@/components/ui/dialog";
@@ -130,7 +131,7 @@ function TrackingLinesDialog({
           <div className="grid grid-cols-2 gap-3 rounded-[var(--radius-md)] border p-3 sm:grid-cols-3" style={S.raised}>
             <div>
               <span className="block text-[10px] font-semibold uppercase" style={S.muted}>{t("grpTrkItem")}</span>
-              <span className="font-mono font-semibold" style={S.primary}>{item?.item_code || "—"}</span>
+              <span className="font-mono font-semibold" style={S.primary}>{item?.item_code || NA}</span>
               <p className="truncate text-[11px]" style={S.sub}>{item?.item_name || ""}</p>
             </div>
             <div>
@@ -259,6 +260,8 @@ export default function GoodsReceiptPanel() {
 
   const [viewing, setViewing] = useState<Row | null>(null);
   const [posting, setPosting] = useState(false);
+  const requestedRecordId = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("recordId") || "";
+  const openedRecordIdRef = useRef("");
 
   const companyId = getActiveCompanyId();
 
@@ -486,6 +489,17 @@ export default function GoodsReceiptPanel() {
     }
   };
 
+  useEffect(() => {
+    if (!requestedRecordId || requestedRecordId === openedRecordIdRef.current || loading || viewing) return;
+    const row = rows.find((candidate) => candidate.receipt_id === requestedRecordId);
+    if (row) {
+      openedRecordIdRef.current = requestedRecordId;
+      void openView(row);
+    }
+    // The URL is the one-shot source for opening a receipt; the existing list remains unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedRecordId, loading, rows, viewing]);
+
   const handlePost = async () => {
     if (!viewing) return;
     setPosting(true);
@@ -502,10 +516,10 @@ export default function GoodsReceiptPanel() {
     }
   };
 
-  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || "—";
+  const warehouseLabel = (id: string) => warehouses.find((w) => w.warehouse_id === id)?.warehouse_name || NA;
   // Code and name are two columns (Rishi, 14 Oct).
-  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
-  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || "—";
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const itemName = (id: string) => items.find((i) => i.item_id === id)?.item_name || NA;
 
   return (
     <div className="flex flex-col gap-4">
@@ -584,7 +598,7 @@ export default function GoodsReceiptPanel() {
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{row.receipt_no}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{row.posting_date}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{warehouseLabel(row.warehouse_id)}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.external_reference_no || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.external_reference_no || NA}</TableCell>
                     <TableCell className="text-right">
                       <StatusBadge status={row.status} />
                     </TableCell>
@@ -751,7 +765,7 @@ export default function GoodsReceiptPanel() {
                           columnHeaders={["Description", "Tracking"]}
                           getLabelParts={(itemRow: any) => [
                             itemRow.item_name || itemRow.item_code || "",
-                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : "—",
+                            itemRow.is_lot_tracked ? "LOT" : itemRow.is_serial_tracked ? "SERIAL NS" : NA,
                           ]}
                           getLabel={(itemRow: any) =>
                             itemRow
@@ -774,23 +788,15 @@ export default function GoodsReceiptPanel() {
                         />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
-                        <select
+                        <SearchableSelect
                           value={line.uom}
-                          onChange={(e) => setLineField(idx, "uom", e.target.value)}
+                          onChange={(next) => setLineField(idx, "uom", next)}
                           disabled={!line.item_id || !!items.find((it) => it.item_id === line.item_id)?.uom_primary}
-                          className={`${lineInputCls} nf-select appearance-none pr-7 disabled:cursor-not-allowed disabled:opacity-70`}
-                          style={S.input}
-                        >
-                          <option value="">{t("grpSelectEllipsis")}</option>
-                          {line.uom && !uoms.some((u) => u.uom_code === line.uom) && (
-                            <option value={line.uom}>{line.uom}</option>
-                          )}
-                          {uoms.map((u) => (
-                            <option key={u.uom_code} value={u.uom_code}>
-                              {u.uom_code}
-                            </option>
-                          ))}
-                        </select>
+                          options={[{ value: "", label: t("grpSelectEllipsis") }, ...(line.uom && !uoms.some((u) => u.uom_code === line.uom) ? [{ value: line.uom, label: line.uom }] : []), ...uoms.map((u) => ({ value: u.uom_code, label: u.uom_code }))]}
+                          valueKey="value" labelKey="label" placeholder={t("grpSelectEllipsis")} searchPlaceholder="Search UOM…" noMatchesLabel="No matches found"
+                          triggerClassName={`${lineInputCls} nf-select appearance-none pr-7 disabled:cursor-not-allowed disabled:opacity-70`}
+                          triggerStyle={S.input}
+                        />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-24 min-w-[85px]">
                         <input
@@ -805,7 +811,7 @@ export default function GoodsReceiptPanel() {
                         />
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-32 text-right font-mono" style={S.primary}>
-                        {lineTotal(line) === null ? <span style={S.muted}>—</span> : formatMoney(lineTotal(line))}
+                        {lineTotal(line) === null ? <span style={S.muted}>{NA}</span> : formatMoney(lineTotal(line))}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
                         {isLot || isSerial ? (() => {
@@ -893,7 +899,7 @@ export default function GoodsReceiptPanel() {
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColStatus")}</p><StatusBadge status={viewing.status} className="mt-1" /></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpPostingDate")}</p><p style={S.primary}>{viewing.posting_date}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpWarehouse")}</p><p style={S.primary}>{warehouseLabel(viewing.warehouse_id)}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColReference")}</p><p style={S.primary}>{viewing.external_reference_no || "—"}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpColReference")}</p><p style={S.primary}>{viewing.external_reference_no || NA}</p></div>
               {viewing.posted_at && <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("grpPostedAt")}</p><p style={S.primary}>{viewing.posted_at}</p></div>}
             </div>
 
@@ -917,9 +923,9 @@ export default function GoodsReceiptPanel() {
                       <TableCell className="px-3 py-2" style={S.primary}>{itemName(l.item_id)}</TableCell>
                       <TableCell className="px-3 py-2 font-mono" style={S.primary}>{formatQuantity(l.quantity, l.uom)}</TableCell>
                       <TableCell className="px-3 py-2" style={S.primary}>{l.uom}</TableCell>
-                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>{l.rate != null ? formatMoney(l.rate) : "—"}</TableCell>
+                      <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>{l.rate != null ? formatMoney(l.rate) : NA}</TableCell>
                       <TableCell className="px-3 py-2 text-right font-mono" style={S.primary}>
-                        {l.amount != null ? formatMoney(l.amount) : l.rate != null ? formatMoney(Number(l.rate) * Number(l.quantity || 0)) : "—"}
+                        {l.amount != null ? formatMoney(l.amount) : l.rate != null ? formatMoney(Number(l.rate) * Number(l.quantity || 0)) : NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono text-xs" style={S.primary}>
                         {l.lot_no ? (
@@ -933,7 +939,7 @@ export default function GoodsReceiptPanel() {
                             {l.serial_no}
                           </span>
                         ) : (
-                          <span style={S.muted}>—</span>
+                          <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
                     </TableRow>

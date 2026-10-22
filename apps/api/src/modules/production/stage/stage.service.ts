@@ -1,7 +1,7 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -234,6 +234,18 @@ export class StageService {
     conditions.push(...masterScopeConditions(this.cls, schema.stageMaster, query.companyId));
     if (query.nobId) conditions.push(eq(schema.stageMaster.nob_id, query.nobId));
     if (query.lobId) conditions.push(eq(schema.stageMaster.lob_id, query.lobId));
+    if (query.breedId) {
+      conditions.push(inArray(
+        schema.stageMaster.stage_id,
+        this.db.select({ stage_id: schema.breedLifecycleStages.stage_id })
+          .from(schema.breedLifecycleStages)
+          .where(and(
+            eq(schema.breedLifecycleStages.breed_id, query.breedId),
+            eq(schema.breedLifecycleStages.is_active, true),
+            isNull(schema.breedLifecycleStages.retired_at),
+          )),
+      ));
+    }
     if (query.stageCategory) conditions.push(eq(schema.stageMaster.stage_category, query.stageCategory));
     if (query.isActive !== undefined) conditions.push(eq(schema.stageMaster.is_active, query.isActive));
     if (query.search) {

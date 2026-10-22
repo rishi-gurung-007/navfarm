@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { 
@@ -117,9 +118,9 @@ export default function InventoryLedgerPanel() {
   warehouses.forEach((w) => warehouseMap.set(w.warehouse_id, w));
 
   const getLocationCode = (id?: string) => {
-    if (!id) return "—";
+    if (!id) return NA;
     const wh = warehouseMap.get(id);
-    if (!wh) return "—";
+    if (!wh) return NA;
     return wh.location_code || wh.warehouse_code || wh.warehouse_name;
   };
 
@@ -495,9 +496,9 @@ export default function InventoryLedgerPanel() {
                               {rem.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                               <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
                             </span>
-                          ) : "—"
+                          ) : NA
                         ) : (
-                          <span style={S.muted}>—</span>
+                          <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
 
@@ -534,7 +535,7 @@ export default function InventoryLedgerPanel() {
 
                       {/* Production Batch No. */}
                       <TableCell className="whitespace-nowrap font-mono text-xs" style={row.batch_no ? S.primary : S.muted}>
-                        {row.batch_no || "—"}
+                        {row.batch_no || NA}
                       </TableCell>
 
                       {/* Action */}

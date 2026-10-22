@@ -34,6 +34,16 @@ describe('ReasonService active operational lookup', () => {
     ]));
   });
 
+  it('refuses a reason of another category when one is required', async () => {
+    const row = { reason_id: 'reason-1', category: 'MORTALITY', reason_name: 'MASTITIS', is_active: true, status: 'ACTIVE', deleted_at: null };
+    const chain: any = { from: () => chain, where: () => chain, limit: async () => [row] };
+    const service = new ReasonService(transactionCls({ select: jest.fn(() => chain) }), {} as any, {} as any);
+    const scope = { companyId: 'company-1', nobId: 'livestock', lobId: 'piggery' };
+    await expect(service.findActiveForOperationalScope('reason-1', 'tenant-1', scope, 'ADJUSTMENT'))
+      .rejects.toThrow('MASTITIS is a MORTALITY reason; choose an ADJUSTMENT reason.');
+    await expect(service.findActiveForOperationalScope('reason-1', 'tenant-1', scope)).resolves.toMatchObject({ reason_id: 'reason-1' });
+  });
+
   it('rejects a reason that is outside the requested operational scope', async () => {
     const chain: any = { from: () => chain, where: () => chain, limit: async () => [] };
     const service = new ReasonService(

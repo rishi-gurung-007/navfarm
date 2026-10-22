@@ -127,6 +127,13 @@ export function FeedFarmOverrides({ companyId }: { companyId: string }) {
                       {override == null
                         ? t("fsetInheritedValue", { value: format(effective) })
                         : t("fsetFarmValue", { value: format(effective) })}
+                      {/* Clears the override, so the farm inherits the company's value again (Rishi, 21 Oct). */}
+                      {draft[key] !== "" && (
+                        <button type="button" className="ml-2 underline text-[var(--accent)]"
+                          onClick={() => setDrafts((current) => ({ ...current, [farm.farmId]: { ...current[farm.farmId], [key]: "" } }))}>
+                          {t("fsetUseCompanyValue")}
+                        </button>
+                      )}
                     </span>
                   </Field>
                 );

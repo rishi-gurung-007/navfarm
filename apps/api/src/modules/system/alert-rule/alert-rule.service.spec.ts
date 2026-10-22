@@ -126,17 +126,17 @@ describe('AlertRuleService', () => {
         .rejects.toThrow(ConflictException);
     });
 
-    it('a company rule also clashes with an active tenant-wide rule, whatever its farm filter', async () => {
+    it('a company rule clashes only with its own company\'s rules, never a tenant-wide one (20 Oct)', async () => {
       for (const farm_id of [null, 'farm-1']) {
         selectQueue.push([]);
         await (service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: 'co-1', farm_id, is_active: true }, 'tenant-1');
         const q = rendered();
-        // (own company [and farm filter]) OR tenant-wide
-        expect(q.sql).toContain('or `alert_rule`.`company_id` is null)');
+        // own company [and farm filter] only
+        expect(q.sql).not.toContain('`alert_rule`.`company_id` is null');
         if (farm_id) expect(q.sql).toContain('`alert_rule`.`farm_id` = ?');
         expect(q.params).toContain('co-1');
       }
-      selectQueue.push([{ rule_id: 'tenant-rule', notification_code: 'FEED-BELOW-L1' }]);
+      selectQueue.push([{ rule_id: 'own-rule', notification_code: 'FEED-BELOW-L1' }]);
       await expect((service as any).assertSingleLowRule({ event_type: 'FEED_BELOW_L1', company_id: 'co-1', farm_id: 'farm-1', is_active: true }, 'tenant-1'))
         .rejects.toThrow(ConflictException);
     });

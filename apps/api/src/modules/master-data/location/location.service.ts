@@ -1864,14 +1864,7 @@ export class LocationService {
       eq(schema.locationMaster.is_active, true),
       isNull(schema.locationMaster.deleted_at),
     ];
-    if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.locationMaster.company_id, companyId),
-          isNull(schema.locationMaster.company_id)
-        )
-      );
-    }
+    if (companyId) conditions.push(eq(schema.locationMaster.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     const scope = farmScope(this.cls);
     conditions.push(...farmLocationScopeConditions(farmScope(this.cls), schema.locationMaster.location_id));
 
@@ -1932,6 +1925,7 @@ export class LocationService {
         shed_id: schema.batchHeader.shed_id,
         opening_quantity: schema.batchHeader.opening_quantity,
         closing_quantity: schema.batchHeader.closing_quantity,
+        uom: schema.batchHeader.uom,
       })
       .from(schema.batchHeader)
       // Only a batch-wise batch is a head count with no animal rows. An animal-wise batch's animals are
@@ -1954,6 +1948,8 @@ export class LocationService {
 
     const batchCountMap: Record<string, number> = {};
     for (const b of batches) {
+      // Occupancy is head. A batch kept in KG (a cutting run, a carcass lot) takes no pen places.
+      if (b.uom && b.uom.toUpperCase() !== 'HEAD') continue;
       const locId = b.location_id || b.shed_id;
       if (locId) {
         // The head on hand now (closing), falling back to what the batch opened with before anything moved.
@@ -1963,7 +1959,9 @@ export class LocationService {
 
     return locations.map(({ location, parent }) => {
       const animalHeadcount = animalCountMap[location.location_id] || 0;
-      const batchHeadcount = batchCountMap[location.location_id] || (location.shed_id ? batchCountMap[location.shed_id] || 0 : 0);
+      // A batch held at a shed counts at that shed only. Falling back to the shed's count put the whole
+      // batch on every crate and pen under it — each one-sow crate of a farrowing line read over capacity.
+      const batchHeadcount = batchCountMap[location.location_id] || 0;
       const totalOccupancy = animalHeadcount + batchHeadcount;
       const maxCap = location.max_capacity ? Number(location.max_capacity) : null;
       const utilizationPct = maxCap && maxCap > 0 ? Math.round((totalOccupancy / maxCap) * 100) : null;
@@ -1975,6 +1973,7 @@ export class LocationService {
         location_code: location.location_code,
         location_name: location.location_name,
         location_type: location.location_type,
+        parent_location_id: location.parent_location_id || null,
         parent_name: parent?.location_name || 'General',
         max_capacity: maxCap,
         capacity_uom: location.capacity_uom || 'HEAD',

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { entityDisplayText } from "@/utils/code-name";
 import { ageBetween, formatAge } from "./utils/age";
@@ -222,9 +223,9 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
   const v = row[key];
   if (v === null || v === undefined || v === "") {
     if (key === "stage" || key === "stage_id") {
-      return row.stage || row.stage_name || row.stage_code || "—";
+      return row.stage || row.stage_name || row.stage_code || NA;
     }
-    return "—";
+    return NA;
   }
   const formatted = formatColumnValue(v, col);
   if (formatted !== undefined) return formatted;
@@ -232,7 +233,7 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
   // all, because every object fell through to JSON.stringify.
-  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : "—";
+  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : NA;
   if (typeof v === "object") return JSON.stringify(v);
   // Opt-in only (col.decimals set) — a plain numeric column still prints
   // whatever the API returned, same as always. The stored precision (e.g.
@@ -711,9 +712,15 @@ export function MasterDataTable({
   // The stacked dialog open over the record dialog, by name ("KPIs & Alerts", "Feed Consumption"), or null.
   const [openSubDialog, setOpenSubDialog] = useState<string | null>(null);
   const visibleFields = (
-    editing
+      editing
       ? formFields
           .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+          // Location edit forms must stay aligned with their create forms. The
+          // SILO feed facts are computed read-only values for the record view,
+          // not fields the user is asked to enter when creating or editing a
+          // silo. Keep editOnly for other masters whose update API exposes
+          // fields that are intentionally absent at creation time.
+          .filter((f) => !(config.key === "location" && form.location_type === "SILO" && f.editOnly))
           .filter((f) => {
             if (config.key === "stage") return true;
             if (isFieldVisible(f, form)) return true;
@@ -2236,11 +2243,19 @@ export function MasterDataTable({
       }
       if (f.type === "select") {
         return (
-          <select {...accessibility} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
-            value={String(value ?? "")} onChange={(e) => setField(f.key, e.target.value)}>
-            <option value="">{f.placeholder || "None — use the prefix"}</option>
-            {choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
+          <SearchableSelect
+            id={accessibility.id}
+            ariaLabel={accessibility["aria-label"]}
+            value={String(value ?? "")}
+            onChange={(next) => setField(f.key, next)}
+            options={[{ value: "", label: f.placeholder || "None — use the prefix" }, ...choices]}
+            valueKey="value"
+            labelKey="label"
+            placeholder={f.placeholder || "None — use the prefix"}
+            searchPlaceholder={t("searchPlaceholder")}
+            noMatchesLabel={t("mdNoMatches")}
+            disabled={fieldDisabled}
+          />
         );
       }
       const list: string[] = Array.isArray(value) ? value : [];
@@ -2307,15 +2322,15 @@ export function MasterDataTable({
             <span className="text-[11px]" style={S.sub}>Example</span>
             <div className="mt-0.5 font-mono text-xs" style={S.primary}>{shown}</div>
           </div>
-          <select className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled || !remaining.length}
-            value="" onChange={(e) => {
+          <SearchableSelect triggerClassName={`${inputCls} nf-select`} disabled={fieldDisabled || !remaining.length}
+            value="" onChange={(next) => {
               // A date joins the list already carrying its part, so the row has
               // something to show and the stored value is complete from the start.
-              if (e.target.value) setField(f.key, [...list, dateFields.has(e.target.value) ? `${e.target.value}:YEAR` : e.target.value]);
-            }}>
-            <option value="">{remaining.length ? "Add a field…" : "Every field is already used"}</option>
-            {remaining.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
+              if (next) setField(f.key, [...list, dateFields.has(next) ? `${next}:YEAR` : next]);
+            }}
+            options={[{ value: "", label: remaining.length ? "Add a field…" : "Every field is already used" }, ...remaining]}
+            valueKey="value" labelKey="label" placeholder={remaining.length ? "Add a field…" : "Every field is already used"}
+            searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} />
           {list.map((entry, idx) => {
             const key = fieldOf(entry);
             const label = choices.find((c) => c.value === key)?.label ?? key;
@@ -2328,11 +2343,18 @@ export function MasterDataTable({
                     series: the animal code wants the year of birth, a daily
                     document wants the whole date. Asked here, on the row. */}
                 {dateFields.has(key) && !fieldDisabled && (
-                  <select className="rounded border px-1.5 py-0.5 text-[11px]" style={S.input} value={datePart}
-                    onChange={(e) => setField(f.key, list.map((v, i) => i === idx ? `${key}:${e.target.value}` : v))}>
-                    <option value="YEAR">Year only</option>
-                    <option value="DATE">Full date</option>
-                  </select>
+                  <SearchableSelect
+                    triggerClassName="rounded border px-1.5 py-0.5 text-[11px]"
+                    triggerStyle={S.input}
+                    value={datePart}
+                    onChange={(next) => setField(f.key, list.map((v, i) => i === idx ? `${key}:${next}` : v))}
+                    options={[{ value: "YEAR", label: "Year only" }, { value: "DATE", label: "Full date" }]}
+                    valueKey="value"
+                    labelKey="label"
+                    placeholder="Year only"
+                    searchPlaceholder={t("searchPlaceholder")}
+                    noMatchesLabel={t("mdNoMatches")}
+                  />
                 )}
                 {!fieldDisabled && <>
                   <button type="button" onClick={() => move(idx, -1)} disabled={idx === 0} aria-label="Move earlier" className="rounded px-1.5 disabled:opacity-30" style={S.sub}>↑</button>
@@ -2493,16 +2515,16 @@ export function MasterDataTable({
                       // accepted "IM", "im" and "intramuscular" as three
                       // different answers, and its Triggered by — which decides
                       // what the scheduler counts from — could be nonsense.
-                      <select id={rowFieldId} className={`${inputCls} nf-select`} style={S.input} disabled={fieldDisabled}
+                      <SearchableSelect id={rowFieldId} triggerClassName={`${inputCls} nf-select`} disabled={fieldDisabled}
                         value={String(row[col.key] || (col.defaultFromField ? form[col.defaultFromField] ?? "" : ""))}
-                        onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: e.target.value } : r))}>
-                        <option value="">{(() => {
+                        onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
+                        options={[{ value: "", label: (() => {
                           const inherited = col.defaultFromField ? String(form[col.defaultFromField] ?? "") : "";
                           const inheritedLabel = (col.options || []).find((o) => o.value === inherited)?.label;
                           return inheritedLabel ? tLabel(inheritedLabel) : (col.placeholder || t("selectPlaceholder"));
-                        })()}</option>
-                        {(col.options || []).map((o) => <option key={o.value} value={o.value}>{tLabel(o.label)}</option>)}
-                      </select>
+                        })() }, ...(col.options || []).map((o) => ({ value: o.value, label: tLabel(o.label) }))]}
+                        valueKey="value" labelKey="label" placeholder={col.placeholder || t("selectPlaceholder")}
+                        searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} />
                     ) : (
                       <input id={rowFieldId} className={inputCls} style={S.input} disabled={fieldDisabled}
                         type={col.type === "number" ? "number" : "text"} step={col.step} min={col.min} max={col.max} placeholder={col.placeholder}
@@ -3167,31 +3189,22 @@ export function MasterDataTable({
             <div className="flex flex-wrap items-center gap-2">
               {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
                 <>
-                  <select
-                    aria-label="Filter by nature of business"
+                  <SearchableSelect
+                    ariaLabel="Filter by nature of business"
                     value={nobFilter}
-                    onChange={(e) => { setNobFilter(e.target.value); setLobFilter(""); }}
-                    className="nf-input-sm nf-select"
-                    style={S.input}
-                  >
-                    <option value="">{t("allNob")}</option>
-                    {nobFilterOptions.map((n) => (
-                      <option key={n.nob_id} value={n.nob_id}>{n.nob_code}</option>
-                    ))}
-                  </select>
-                  <select
-                    aria-label="Filter by line of business"
+                    onChange={(next) => { setNobFilter(next); setLobFilter(""); }}
+                    options={[{ value: "", label: t("allNob") }, ...nobFilterOptions.map((n) => ({ value: n.nob_id, label: `${n.nob_code} — ${n.nob_name || n.nob_code}` }))]}
+                    valueKey="value" labelKey="label" placeholder={t("allNob")}
+                    searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} triggerClassName="nf-input-sm"
+                  />
+                  <SearchableSelect
+                    ariaLabel="Filter by line of business"
                     value={lobFilter}
-                    onChange={(e) => setLobFilter(e.target.value)}
-                    className="nf-input-sm nf-select"
-                    style={S.input}
-                    disabled={!nobFilter}
-                  >
-                    <option value="">{nobFilter ? t("allLob") : t("selectNobFirst")}</option>
-                    {lobFilterOptions.map((l) => (
-                      <option key={l.lob_id} value={l.lob_id}>{l.lob_code}</option>
-                    ))}
-                  </select>
+                    onChange={setLobFilter}
+                    options={[{ value: "", label: nobFilter ? t("allLob") : t("selectNobFirst") }, ...lobFilterOptions.map((l) => ({ value: l.lob_id, label: `${l.lob_code} — ${l.lob_name || l.lob_code}` }))]}
+                    valueKey="value" labelKey="label" placeholder={nobFilter ? t("allLob") : t("selectNobFirst")}
+                    searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} disabled={!nobFilter} triggerClassName="nf-input-sm"
+                  />
                 </>
               )}
 
@@ -3251,31 +3264,22 @@ export function MasterDataTable({
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
               <>
-                <select
-                  aria-label="Filter by nature of business"
+                <SearchableSelect
+                  ariaLabel="Filter by nature of business"
                   value={nobFilter}
-                  onChange={(e) => { setNobFilter(e.target.value); setLobFilter(""); }}
-                  className="nf-input-sm nf-select"
-                  style={S.input}
-                >
-                  <option value="">{t("allNob")}</option>
-                  {nobFilterOptions.map((n) => (
-                    <option key={n.nob_id} value={n.nob_id}>{n.nob_code}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter by line of business"
+                  onChange={(next) => { setNobFilter(next); setLobFilter(""); }}
+                  options={[{ value: "", label: t("allNob") }, ...nobFilterOptions.map((n) => ({ value: n.nob_id, label: `${n.nob_code} — ${n.nob_name || n.nob_code}` }))]}
+                  valueKey="value" labelKey="label" placeholder={t("allNob")}
+                  searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} triggerClassName="nf-input-sm"
+                />
+                <SearchableSelect
+                  ariaLabel="Filter by line of business"
                   value={lobFilter}
-                  onChange={(e) => setLobFilter(e.target.value)}
-                  className="nf-input-sm nf-select"
-                  style={S.input}
-                  disabled={!nobFilter}
-                >
-                  <option value="">{nobFilter ? t("allLob") : t("selectNobFirst")}</option>
-                  {lobFilterOptions.map((l) => (
-                    <option key={l.lob_id} value={l.lob_id}>{l.lob_code}</option>
-                  ))}
-                </select>
+                  onChange={setLobFilter}
+                  options={[{ value: "", label: nobFilter ? t("allLob") : t("selectNobFirst") }, ...lobFilterOptions.map((l) => ({ value: l.lob_id, label: `${l.lob_code} — ${l.lob_name || l.lob_code}` }))]}
+                  valueKey="value" labelKey="label" placeholder={nobFilter ? t("allLob") : t("selectNobFirst")}
+                  searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} disabled={!nobFilter} triggerClassName="nf-input-sm"
+                />
               </>
             )}
             <div className="relative">

@@ -21,15 +21,27 @@ export interface ForecastQueryState {
   periodId: string;
 }
 
+/**
+ * Forecasts run forward from the planning date only, so no date field may hold
+ * an earlier day: an earlier pick is raised to the planning date. A blank date
+ * stays blank (the API applies its default) and so does any date when there is
+ * no planning date yet.
+ */
+export function clampToPlanning(date: string, planningDate: string): string {
+  return date && planningDate && date < planningDate ? planningDate : date;
+}
+
 export function forecastQueryString(s: ForecastQueryState): string {
   const p = new URLSearchParams({ farmId: s.farmId, view: s.view });
+  const from = clampToPlanning(s.from, s.planningDate);
+  const to = clampToPlanning(s.to, s.planningDate);
   if (s.planningDate) p.set("planningDate", s.planningDate);
   if (s.view === "PERIOD") {
     // Field spec: the period's From/To "are pulled from the Reporting Period Master, not typed manually".
     if (s.periodId) p.set("periodId", s.periodId);
   } else {
-    if (s.from) p.set("from", s.from);
-    if (s.view === "CUSTOM" && s.to) p.set("to", s.to);
+    if (from) p.set("from", from);
+    if (s.view === "CUSTOM" && to) p.set("to", to);
   }
   return p.toString();
 }

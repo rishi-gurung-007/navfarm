@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Search,
@@ -192,7 +193,7 @@ export default function BatchAnimalAssignmentPanel() {
         const mapped: BatchOption[] = registeredOnly.map((b: any) => ({
           id: b.batch_id,
           code: b.batch_no,
-          breed: b.breed_name || b.breed_code || "—",
+          breed: b.breed_name || b.breed_code || NA,
           stage: b.current_stage_code || "ACTIVE",
           period: b.start_date ? `${b.start_date} to ${b.expected_end_date || "ongoing"}` : "",
           lobId: b.lob_id || undefined,
@@ -239,7 +240,7 @@ export default function BatchAnimalAssignmentPanel() {
           const breedRow = breeds.find((b) => b.breed_id === a.breed_id);
           const stageId = a.current_stage_id || currentBatch?.stageId || "";
           const stageRow = stages.find((s) => s.stage_id === stageId) || stages.find((s) => s.stage_code === currentBatch?.stage);
-          const stageCode = stageRow?.stage_code || currentBatch?.stage || "—";
+          const stageCode = stageRow?.stage_code || currentBatch?.stage || NA;
           const stageName = stageRow?.stage_name || "";
           const statusRaw = a.status || "ACTIVE";
           const status: AnimalAssignmentRow["status"] =
@@ -251,14 +252,14 @@ export default function BatchAnimalAssignmentPanel() {
             animalId: a.animal_code,
             rfid: a.rfid_tag || undefined,
             sex: a.gender === "M" ? "Male (Boar)" : a.animal_type === "PIGLET" ? "Piglet" : a.animal_type === "GILT" ? "Female (Gilt)" : "Female (Sow)",
-            breed: breedRow?.breed_name || breedRow?.breed_code || a.breed_name || "—",
-            dob: dob || "—",
+            breed: breedRow?.breed_name || breedRow?.breed_code || a.breed_name || NA,
+            dob: dob || NA,
             ageDays,
-            entryDate: a.entry_date || "—",
-            penLocation: loc?.location_name || loc?.location_code || "—",
+            entryDate: a.entry_date || NA,
+            penLocation: loc?.location_name || loc?.location_code || NA,
             locationId: a.current_location_id || "",
             weightKg: Number(a.current_weight_kg) || 0,
-            source: a.entry_type || "—",
+            source: a.entry_type || NA,
             status,
             stageId: stageRow?.stage_id || stageId,
             stageCode,
@@ -379,7 +380,7 @@ export default function BatchAnimalAssignmentPanel() {
         breed_id: currentBatch?.breedId || "", item_id: "", acquisition_cost: "", dob: "", rfid_tag: "",
         source_receipt_id: "", source_batch_id: "", notes: "", status: "ACTIVE",
       });
-      setToastMsg(t("baapAnimalRegisteredToast", { tag: regForm.rfid_tag || created?.rfid_tag || "—", id: created?.animal_code || "" }));
+      setToastMsg(t("baapAnimalRegisteredToast", { tag: regForm.rfid_tag || created?.rfid_tag || NA, id: created?.animal_code || "" }));
       setTimeout(() => setToastMsg(""), 3500);
       loadAssignedAnimals();
     } catch (err: any) {
@@ -564,7 +565,7 @@ export default function BatchAnimalAssignmentPanel() {
             </span>
           </div>
           <p className="text-xs text-[var(--text-muted)] mt-1.5 truncate">
-            {t("baapStageLabel")} <strong className="text-[var(--accent)]">{currentBatch?.stage || "—"}</strong> · {t("baapTimelineLabel")} <strong>{currentBatch?.period || "—"}</strong> · {t("baapAssignedLabel")} <strong className="text-[var(--text-primary)]">{t("baapHeadCount", { count: String(animals.length) })}</strong>
+            {t("baapStageLabel")} <strong className="text-[var(--accent)]">{currentBatch?.stage || NA}</strong> · {t("baapTimelineLabel")} <strong>{currentBatch?.period || NA}</strong> · {t("baapAssignedLabel")} <strong className="text-[var(--text-primary)]">{t("baapHeadCount", { count: String(animals.length) })}</strong>
           </p>
         </div>
 
@@ -812,7 +813,7 @@ export default function BatchAnimalAssignmentPanel() {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono font-bold text-[var(--text-primary)]">
-                          {animal.weightKg ? `${animal.weightKg.toFixed(1)} kg` : "—"}
+                          {animal.weightKg ? `${animal.weightKg.toFixed(1)} kg` : NA}
                         </td>
                         <td className="px-4 py-2.5 text-[var(--text-secondary)]">{animal.source}</td>
                         <td className="px-4 py-2.5">

@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -128,7 +129,7 @@ export function ReadField({
   mono,
   className,
   appearance = 'plain',
-  emptyText = '—',
+  emptyText = NA,
 }: {
   label: string;
   value: ReactNode;

@@ -2,6 +2,7 @@
 
 import { Globe, ChevronDown } from "lucide-react";
 import { useLanguage } from "../../hooks/useLanguage";
+import { Select } from "./select";
 
 // Each language's own name, in its own script — not the English name and
 // not a 2-letter code — so a reader who can't read English can still find
@@ -30,8 +31,9 @@ export function LanguageSelector() {
   return (
     <div className="nf-lang">
       <Globe size={14} className="nf-lang-icon" aria-hidden="true" />
-      <select
+      <Select
         value={language}
+        fullWidth={false}
         onChange={(e) => setLanguage(e.target.value as any)}
         aria-label={t("settingsLanguage")}
         className="nf-lang-select"
@@ -41,7 +43,7 @@ export function LanguageSelector() {
             {name}
           </option>
         ))}
-      </select>
+      </Select>
       <ChevronDown size={13} className="nf-lang-chevron" aria-hidden="true" />
     </div>
   );

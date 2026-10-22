@@ -140,12 +140,7 @@ export class ItemService {
       ),
     ];
     if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.glAccountMaster.company_id, companyId),
-          isNull(schema.glAccountMaster.company_id),
-        )!,
-      );
+      conditions.push(eq(schema.glAccountMaster.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     }
     const [acc] = await this.db
       .select({ id: schema.glAccountMaster.gl_account_id })

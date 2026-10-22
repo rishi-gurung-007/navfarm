@@ -1,3 +1,4 @@
+import { NA } from "@/utils/na";
 import { formatDateShort } from "@/utils/date-short";
 import { humanizeCode } from "@/components/console/inventory/requisition-labels";
 
@@ -15,6 +16,6 @@ export function formatColumnValue(value: unknown, col?: { format?: "date" | "cod
     const code = String(v);
     return col?.labels?.[code] ?? (col?.format === "codes" ? humanizeCode(code) : code);
   };
-  if (Array.isArray(value)) return value.length ? value.map(one).join(", ") : "—";
+  if (Array.isArray(value)) return value.length ? value.map(one).join(", ") : NA;
   return one(value);
 }

@@ -1840,6 +1840,7 @@ export class StockTransferService {
         .update(schema.stockTransfer)
         .set({
           status: 'IN_TRANSIT',
+          vehicle_no: dto.vehicle_no?.trim() || null,
           posting_date: shipmentPostingDate,
           remarks: formattedRemarks,
           posted_at: toMysqlTimestamp() as any,

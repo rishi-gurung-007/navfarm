@@ -23,6 +23,7 @@ import { api } from "@/lib/api-client";
 import { resolveLobFamily } from "@/lib/lob";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
+import { Select } from "@/components/ui/select";
 
 interface OperationalArea {
   area_id: string;
@@ -324,7 +325,7 @@ export default function OperationalAreasPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="nf-text-label mb-1 block text-(--text-muted)">{t("oaNobRequired")}</label>
-                  <select
+                  <Select
                     value={form.nob_id}
                     onChange={(e) => handleNobChange(e.target.value)}
                     className="w-full rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) p-2 text-xs text-(--text-primary)"
@@ -334,11 +335,11 @@ export default function OperationalAreasPage() {
                         {n.nob_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <label className="nf-text-label mb-1 block text-(--text-muted)">{t("oaLobRequired")}</label>
-                  <select
+                  <Select
                     value={form.lob_id}
                     onChange={(e) => setForm({ ...form, lob_id: e.target.value })}
                     className="w-full rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) p-2 text-xs text-(--text-primary)"
@@ -348,7 +349,7 @@ export default function OperationalAreasPage() {
                         {l.lob_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 

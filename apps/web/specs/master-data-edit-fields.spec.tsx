@@ -397,6 +397,59 @@ describe("master-data edit fields", () => {
     expect(screen.queryByRole("textbox", { name: "Above Threshold KG" })).toBeNull();
   });
 
+  it("does not show SILO computed fields in the edit form when creation does not ask for them", async () => {
+    const locationConfig = getConfig("location")!;
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url.startsWith("/location-type")) {
+        return Promise.resolve([
+          { type_code: "FARM", type_name: "Farm" },
+          { type_code: "SILO", type_name: "Silo" },
+        ]);
+      }
+      return Promise.resolve([
+        {
+          location_id: "loc-silo-1",
+          location_code: "LEA100/SILO-001",
+          location_name: "Feed Silo 1",
+          location_type: "SILO",
+          storage_type: "SILO",
+          parent_location_id: "farm-1",
+          silo_capacity_kg: 30000,
+          silo_capacity_uom: "KG",
+          silo_reorder_days: 2,
+          low_level_kg: 6000,
+          high_level_kg: 27000,
+          silo_feed_type: "BULK",
+          attached_sheds: [],
+          silo_feed_item: "FEED-001",
+          available_stock_kg: 12000,
+          system_balance_kg: 12000,
+          last_approved_count_kg: 12000,
+          last_approved_count_at: "2026-10-01",
+          last_feed_receipt_date: "2026-10-02",
+          first_shortage_date: "2026-10-20",
+          next_diet_change_date: "2026-10-15",
+          is_active: true,
+        },
+      ]);
+    });
+
+    renderTable(locationConfig);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for LEA100/SILO-001" }));
+    fireEvent.click(await screen.findByText("Edit"));
+
+    expect(await screen.findByRole("textbox", { name: "Silo Capacity" })).toBeTruthy();
+    expect(screen.getByRole("spinbutton", { name: "Below Feed Level KG" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Feed in Silo" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Available Stock KG" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "System Balance KG" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Last Approved Physical Count KG" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Last Approved Physical Count Date" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Last Feed Receipt Date" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "First Shortage Date" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Next Diet Change Date" })).toBeNull();
+  });
+
   it("shows active mills in Parent Mill options when creating a BIN", async () => {
     const locationConfig = getConfig("location")!;
     (api.get as jest.Mock).mockImplementation((url: string) => {

@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
@@ -57,12 +58,12 @@ function unwrap<T = any>(res: any): T {
 }
 
 function fmt(v: any): string {
-  if (v === null || v === undefined || v === '') return '—';
+  if (v === null || v === undefined || v === '') return NA;
   return String(v);
 }
 
 function formatDate(d?: string | null): string {
-  if (!d) return '—';
+  if (!d) return NA;
   try {
     const s = String(d).trim();
     if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
@@ -73,9 +74,9 @@ function formatDate(d?: string | null): string {
 }
 
 function formatMoney(amount?: number | string | null): string {
-  if (amount === null || amount === undefined || amount === '') return '—';
+  if (amount === null || amount === undefined || amount === '') return NA;
   const num = Number(amount);
-  if (isNaN(num)) return '—';
+  if (isNaN(num)) return NA;
   return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
@@ -273,7 +274,7 @@ export default function AnimalDetailsModal({
         totalLitterMassWeanedKg:
           s.total_litter_mass_weaned_kg !== null && s.total_litter_mass_weaned_kg !== undefined
             ? `${s.total_litter_mass_weaned_kg} kg`
-            : '—',
+            : NA,
       };
     }
 
@@ -319,7 +320,7 @@ export default function AnimalDetailsModal({
       totalBornDead: stillborn,
       totalMummified: mummified,
       mortalityPct: mortPct,
-      totalLitterMassWeanedKg: hasMass ? `${massWeaned.toFixed(1)} kg` : '—',
+      totalLitterMassWeanedKg: hasMass ? `${massWeaned.toFixed(1)} kg` : NA,
     };
   }, [isMale, breeding?.sow_summary, farrowings, animal]);
 
@@ -482,13 +483,13 @@ export default function AnimalDetailsModal({
             </div>
 
             <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <span>Breed: <strong className="text-[var(--text-primary)]">{current.breed || animal?.breed_name || '—'}</strong></span>
+              <span>Breed: <strong className="text-[var(--text-primary)]">{current.breed || animal?.breed_name || NA}</strong></span>
               <span>·</span>
-              <span>Stage: <strong className="text-[var(--accent)]">{current.stage || animal?.current_stage_code || '—'}</strong></span>
+              <span>Stage: <strong className="text-[var(--accent)]">{current.stage || animal?.current_stage_code || NA}</strong></span>
               <span>·</span>
-              <span>Batch: <strong className="text-[var(--text-primary)]">{current.batch || animal?.current_batch_no || '—'}</strong></span>
+              <span>Batch: <strong className="text-[var(--text-primary)]">{current.batch || animal?.current_batch_no || NA}</strong></span>
               <span>·</span>
-              <span>Pen: <strong className="text-[var(--text-primary)]">{current.location || '—'}</strong></span>
+              <span>Pen: <strong className="text-[var(--text-primary)]">{current.location || NA}</strong></span>
             </p>
           </div>
 
@@ -597,7 +598,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
                     <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Age</span>
                     <span className="text-base font-bold font-mono text-[var(--text-primary)] mt-0.5 block">
-                      {ageDays != null ? `${ageDays} Days` : '—'}
+                      {ageDays != null ? `${ageDays} Days` : NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
                       {ageWeeks != null ? `~${ageWeeks} weeks` : ''}
@@ -607,7 +608,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
                     <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Current Weight</span>
                     <span className="text-base font-bold font-mono text-[var(--text-primary)] mt-0.5 block">
-                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : '—'}
+                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
                       {activity?.current_weight_date ? `Recorded ${activity.current_weight_date}` : 'None recorded'}
@@ -625,7 +626,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-3">
                     <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block">Entry Type</span>
                     <span className="text-sm font-bold text-[var(--text-primary)] mt-0.5 block truncate">
-                      {human(animal?.entry_type) || '—'}
+                      {human(animal?.entry_type) || NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
                       {formatDate(animal?.entry_date)}
@@ -688,7 +689,7 @@ export default function AnimalDetailsModal({
                     <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Age at Entry</span>
                       <span className="font-medium text-[var(--text-primary)]">
-                        {animal?.age_at_entry_weeks != null ? `${animal.age_at_entry_weeks} weeks` : '—'}
+                        {animal?.age_at_entry_weeks != null ? `${animal.age_at_entry_weeks} weeks` : NA}
                       </span>
                     </div>
 
@@ -834,15 +835,15 @@ export default function AnimalDetailsModal({
                         <tbody className="divide-y divide-[var(--border)]">
                           {(lineage.litters as Row[]).map((l, idx) => (
                             <tr key={l.farrow_id || idx}>
-                              <td className="px-3 py-2 font-mono">{l.litter_number ?? '—'}</td>
+                              <td className="px-3 py-2 font-mono">{l.litter_number ?? NA}</td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{formatDate(l.farrowing_date)}</td>
-                              {animal?.gender === 'M' && <td className="px-3 py-2 font-mono">{l.dam_code || '—'}</td>}
-                              <td className="px-3 py-2 text-right font-mono">{l.piglets_born_live ?? '—'}</td>
+                              {animal?.gender === 'M' && <td className="px-3 py-2 font-mono">{l.dam_code || NA}</td>}
+                              <td className="px-3 py-2 text-right font-mono">{l.piglets_born_live ?? NA}</td>
                               <td className="px-3 py-2 text-right font-mono">{l.weaning_date ? l.piglets_weaned : 'not yet'}</td>
                               <td className="px-3 py-2 font-mono">
-                                {l.piglet_lot_no ? `${l.piglet_lot_no} · ${l.piglet_batch_no ?? ''}` : '—'}
+                                {l.piglet_lot_no ? `${l.piglet_lot_no} · ${l.piglet_batch_no ?? ''}` : NA}
                               </td>
-                              <td className="px-3 py-2 text-right font-mono">{l.head_now ?? '—'}</td>
+                              <td className="px-3 py-2 text-right font-mono">{l.head_now ?? NA}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -873,7 +874,7 @@ export default function AnimalDetailsModal({
                                 {off.animal_code}
                               </td>
                               <td className="px-3 py-2 text-[var(--text-primary)]">
-                                {off.gender === 'M' ? 'Male' : off.gender === 'F' ? 'Female' : '—'}
+                                {off.gender === 'M' ? 'Male' : off.gender === 'F' ? 'Female' : NA}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
                                 {formatDate(off.dob)}
@@ -948,7 +949,7 @@ export default function AnimalDetailsModal({
                                 {m.item_name || m.item_code || 'Standard Dose'}
                               </td>
                               <td className="px-3 py-2.5 font-mono text-[var(--text-secondary)] whitespace-nowrap">
-                                {m.dose_qty ? `${formatQuantity(m.dose_qty)} ${m.uom || 'dose'}` : '—'}
+                                {m.dose_qty ? `${formatQuantity(m.dose_qty)} ${m.uom || 'dose'}` : NA}
                               </td>
                               <td className="px-3 py-2.5 whitespace-nowrap">
                                 {m.withdrawal_days ? (
@@ -956,14 +957,14 @@ export default function AnimalDetailsModal({
                                     {m.withdrawal_days} days
                                   </span>
                                 ) : (
-                                  <span className="text-[var(--text-muted)]">—</span>
+                                  <span className="text-[var(--text-muted)]">{NA}</span>
                                 )}
                               </td>
                               <td className="px-3 py-2.5 text-[var(--text-secondary)]">
                                 {m.administered_by || 'Staff'}
                               </td>
                               <td className="px-3 py-2.5 text-[var(--text-muted)] max-w-xs truncate">
-                                {m.notes || '—'}
+                                {m.notes || NA}
                               </td>
                             </tr>
                           ))}
@@ -986,7 +987,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
                     <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Current Weight</span>
                     <span className="font-mono text-2xl font-bold text-[var(--accent)] block mt-1">
-                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : '—'}
+                      {activity?.current_weight_kg != null ? `${Number(activity.current_weight_kg).toFixed(1)} kg` : NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.current_weight_date ? `Last recorded ${activity.current_weight_date}` : 'No weight recorded yet'}
@@ -996,7 +997,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
                     <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Average Daily Gain</span>
                     <span className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400 block mt-1">
-                      {activity?.adg_g_per_day != null ? `${activity.adg_g_per_day} g/d` : '—'}
+                      {activity?.adg_g_per_day != null ? `${activity.adg_g_per_day} g/d` : NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.adg_g_per_day != null
@@ -1008,7 +1009,7 @@ export default function AnimalDetailsModal({
                   <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
                     <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] block">Body Condition Score</span>
                     <span className="font-mono text-2xl font-bold text-[var(--text-primary)] block mt-1">
-                      {activity?.latest_condition_score != null ? Number(activity.latest_condition_score).toFixed(1) : '—'}
+                      {activity?.latest_condition_score != null ? Number(activity.latest_condition_score).toFixed(1) : NA}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">Latest score, 1 to 5</span>
                   </div>
@@ -1151,9 +1152,9 @@ export default function AnimalDetailsModal({
                                     )}
                                   </td>
                                   <td className="px-3 py-2 font-mono font-bold text-[var(--accent)]">
-                                    {isMale ? m.sow_code || '—' : m.boar_code || (m.semen_lot_no ? 'pooled lot' : '—')}
+                                    {isMale ? m.sow_code || NA : m.boar_code || (m.semen_lot_no ? 'pooled lot' : NA)}
                                   </td>
-                                  <td className="px-3 py-2 text-[var(--text-secondary)]">{m.batch_no || '—'}</td>
+                                  <td className="px-3 py-2 text-[var(--text-secondary)]">{m.batch_no || NA}</td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
                                     {formatDate(m.preg_check_date)}
                                   </td>
@@ -1223,10 +1224,10 @@ export default function AnimalDetailsModal({
                                     {f.piglets_weaned || '0'}
                                   </td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                    {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : '—'}
+                                    {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : NA}
                                   </td>
                                   <td className="px-3 py-2 font-mono text-[var(--text-secondary)] whitespace-nowrap">
-                                    {f.piglet_batch_no ? `${f.piglet_batch_no} · ${f.piglet_lot_no ?? ''}` : '—'}
+                                    {f.piglet_batch_no ? `${f.piglet_batch_no} · ${f.piglet_lot_no ?? ''}` : NA}
                                   </td>
                                   <td className="px-3 py-2">
                                     <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-bold text-[var(--text-secondary)]">
@@ -1276,7 +1277,7 @@ export default function AnimalDetailsModal({
 
                     {timelineEvents.map((ev) => {
                       const open = openEventId === ev.id;
-                      const rows = ev.detail.filter(([, v]) => v && v !== '—');
+                      const rows = ev.detail.filter(([, v]) => v && v !== NA);
                       return (
                         <li key={ev.id} className="relative">
                           {/* Rail marker dot */}
@@ -1469,7 +1470,7 @@ export default function AnimalDetailsModal({
                                 {formatMoney(le.computed_cost || le.amount)}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
-                                {le.posting_reference || le.reference || '—'}
+                                {le.posting_reference || le.reference || NA}
                               </td>
                             </tr>
                           ))}

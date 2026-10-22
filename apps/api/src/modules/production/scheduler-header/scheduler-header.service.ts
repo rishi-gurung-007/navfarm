@@ -753,7 +753,10 @@ export class SchedulerHeaderService {
     const effectiveTo = dto.effective_to || (stage.typical_duration_days ? addDays(effectiveFrom, stage.typical_duration_days) : null);
     const locationId = batch.sub_location_id || batch.location_id || batch.shed_id || null;
 
-    let animalCount = dto.animal_count;
+    // An animal-wise stage's count is the register's: the animals at this stage now. A typed count is not
+    // taken for it — the count sync only runs when an animal moves, so a wrong figure stayed until then
+    // (a Gestation scheduler created over eight pregnant sows read 1).
+    let animalCount = batch.tracking_mode === 'ANIMAL_WISE' ? undefined : dto.animal_count;
     if (animalCount == null) {
       // Same 3-tier fallback as createForStage(): live animal_register count,
       // else the prior stage's own scheduler_header.animal_count (the only

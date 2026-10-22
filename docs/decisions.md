@@ -4161,3 +4161,211 @@ same run added CULLED and PRODUCTIVE_SOW.
 
 Not changed: the BATCH_WISE data-entry path still auto-creates for the batch's **own current stage** only
 (`batch.service.ts`, gated on `effectiveStageId === batch.stage_id`) — one stage, the one the batch is in.
+
+## 19 Oct 2026 — A batch is closed by a user, never by a posting; an empty batch takes no entries (Rishi)
+
+- **No automatic close.** Removed: closing a batch when a transfer takes its last head, when a disposal takes its
+  last head, and when weaning empties a piglet lot. Such a batch stays ACTIVE at nil head until a user closes it.
+  Batches already closed stay closed (no reopen feature).
+- **A user closes a bio-asset batch** through POST /batch/:id/close once it holds no head (no head on its
+  bio-asset state, no live animal). No output lines are taken — its value left with its animals. The batch screen
+  shows Close on such a batch.
+- **No data entry on an empty batch:** an animal-wise batch with no live animal, or a batch-wise batch whose head
+  count is 0. Posting refuses it and the Data Entry screen shows why and disables Save/Post (`entry-blocked.ts`).
+
+## 18 Oct 2026 — Reports: R07 Farrowing Report first, built like Voucher (Rishi)
+
+Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
+
+- **Reports** is its own sidebar item with a flyout, in company and operational-area scope, right after Voucher.
+  Each report gets its own view permission (`REPORTS` / `FARROWING` for this one), set in Role Permissions.
+- The page shows nothing until the filters are chosen and **Generate** is pressed. Export is **PDF**.
+- Filters: **Farm** (required), **Date From / Date To** (required — no Week filter), Batch, Parity, Per Sow (one sow's
+  figures). **Parity means parity at farrowing** (the litter number).
+- Week and Month columns and the lone "Day" cell are left out for now.
+- Actuals come from **batch data entry**. Posting a farrowing or weaning in data entry writes `farrowing_record`
+  (and a service writes `breeding_record`), so the report reads those; stillborn, mummified and birth weight come
+  from the Breeding screen onto the same litter.
+- **Targets** come from the breed lifecycle stages' KPI thresholds; none set → "Not available". The report reads
+  metric codes SERVICE_TARGET, FARROWING_TARGET, FARROWING_RATE, TOTAL_BORN, BORN_ALIVE, BORN_DEAD, MUMMIFIED,
+  ACTIVE_WEEK_MORTALITY, PRE_WEAN_MORTALITY, WEANING_WEIGHT, LITTER_MASS (the codes are ours; a target shows as the
+  lower–upper range).
+- **Prior year:** no data → "No data". Batches do not repeat across years, so prior year is the same farm and dates a
+  year earlier and is shown on the farm total row (ours).
+- Left out until the client explains them: Average Wean per Sow, Gilt Maternal Body Loss, Target Gilt Service,
+  2nd Parity Service Target, Prior Year Rate, YoY % Change.
+- **Total Litter Mass "ALL OR ONE"**: All = total mass of all weaned litters; One = the average litter.
+- **Active Week Mortality** = piglet deaths in the current week — taken as the Monday–Sunday week holding Date To (ours).
+- Farrowing Rate % follows the sheet's formula literally: sows farrowed ÷ sows served, both within the dates. Across a
+  date boundary this compares different cohorts (a batch served before Date From shows farrowings and no services).
+
+## 19 Oct 2026 — Farrowing Report prior year per batch; "N/A" for missing figures (Rishi)
+
+- **Prior year per batch row: the matching batch last year.** A batch's place is its first service date; its
+  prior-year batch is the farm's batch whose first service falls nearest the same date a year earlier, within a
+  week either side (`matchPriorBatch`). Its figures are read over the report's dates shifted back a year. The
+  farm total keeps the whole farm over those dates. No match → N/A. The matched batch is named under each batch.
+- **"N/A", never "—", where a figure is not available** — application-wide (Rishi: "for things where data is not
+  available … show N/A").
+- **Feed Forecast stays forward-only** from the Planning Date, and its date pickers must not offer dates before
+  the Planning Date.
+
+## 20 Oct 2026 — Farrowing Report: YoY on every group; Wean per Sow and Gilt Maternal Body Loss (Rishi)
+
+- **Change vs Prior YR and YoY % Change on every group that has a Prior YR** (sheet AY5 comment: "Year on Year
+  Change must be on every parameter"). Change = actual − prior (percentage points for the % metrics); YoY % =
+  (actual − prior) ÷ prior × 100. N/A when either is missing or the prior is 0. Rishi counts these as the sheet's
+  Prior Year Rate (AX) and YoY % Change (AY).
+- **Average Wean per Sow** (AK–AM) = piglets weaned ÷ litters weaned, over the litters whose **weaning date** falls in
+  the dates, whenever they farrowed. Target KPI `WEAN_PER_SOW`.
+- **Gilt Maternal Body Loss %** (AN–AP) = (weight before farrowing − weight at weaning) ÷ weight before farrowing × 100,
+  **gilts only** (parity 1), averaged over the gilt litters weaned in the dates that have both weights. Before
+  farrowing = the gilt's latest posted BODY_WEIGHT entry in the GESTATION stage on or before the farrowing date; at
+  weaning = her latest in LACTATION from farrowing to the weaning date. Target KPI `GILT_BODY_LOSS`.
+- A batch that only **weaned** litters in the dates now has a row (it used to need a service or a farrowing in them).
+- The PDF is at 4pt so the 72 columns fit one A3 page without values wrapping.
+
+## 20 Oct 2026 — Report targets from Average and Tolerance; service-target KPIs; client answers (Rishi)
+
+- **Report targets read the KPIs & Alerts row the way the form saves it:** Average Value and Tolerance (%) with its
+  side — upper = average × (1 + tolerance), lower = average × (1 − tolerance); Upper sets only the upper, Lower only
+  the lower. Rows that still store lower/upper limits keep working. One function (`production/lifecycle/kpi-limits.ts`)
+  serves both the scheduler's data-entry alerts and the reports, so they cannot disagree. Shown as a range, `≤ x`,
+  `≥ x`, or the average alone.
+- **Gilt Service Target and 2nd Parity Service Target are KPIs:** `GILT_SERVICE_TARGET` and
+  `SECOND_PARITY_SERVICE_TARGET` (HEAD), set on the breed's Insemination stage, shown as the Target of Gilts Served
+  and 2nd Parity Served. Week and Month columns stay out of R07.
+- **Litter Mass target belongs to the average litter**, not the farm's total litter mass.
+- **The report has its own farm list** (`GET /reports/farrowing/farms`, the feed screens' rule via
+  `farmPickerConditions`): a tenant administrator in the tenant-wide workspace was refused by the location master.
+- **Weaning is the stage in which the sow suckles her litter** — the piglets live on the sow's milk until they are
+  weaned. It is the Lactation stage; the weaning date ends it.
+- **Residual value is a per-kg rate** (currency per kg), not a percentage. Not built yet.
+- **Currency:** Base Currency (Settings → Finance) is the currency the application posts and reports in; Local
+  Currency maps it to the country's currency, at the exchange rate held in the Currency master.
+- **Kill Sheet and DOA are deferred.** They belong to the slaughter Transfer Order (BBP §10.1).
+
+## 20 Oct 2026 — Mill Production Output (Rishi)
+
+- **What it is:** the feed the mill produced into a loading BIN — production date, the BIN's diet assignment for that
+  date (which names the BIN and the feed), KG, lot when the feed is lot-tracked without a number series. Numbered
+  `MPO-000001`, posted when saved, not editable afterwards (a mistake is corrected by a stock adjustment). Inventory →
+  Feed Forecast → **Mill Production**. Spec 2026-10-03 §4.2 step 1 (R5), with the later rulings: stock sits in the BIN
+  (5 Oct), no production slots (11 Oct).
+- **Posting:** a positive inventory-ledger entry in the BIN (`MILL_PRODUCTION_OUTPUT` / `MILL_OUTPUT`) at the feed's
+  **standard cost** (refused when it has none; feeds are STANDARD-valued) and a journal through a **new `MILL_OUTPUT`
+  GL mapping** that finance sets under Master Data → GL Mappings. Without the mapping the posting is refused and
+  nothing is written. No raw-material consumption.
+- **Checks:** the assignment is active and for that date; its BIN is an active BIN of the company under an active
+  MILL; the feed is active, kept in KG, not serial-tracked; the posting period is open.
+- **Who:** permission `INVENTORY / MILL_OUTPUT` (view, create), granted to the Feed Mill Manager. A farm-bound login
+  acts for its farm's company, as on the consolidation and loading screens.
+- Until now frtest's BINs were stocked by GRNs referenced `MILL-PROD-…` (52 receipts, 8 Sep – 14 Oct); this replaces
+  that workaround.
+- Migration **0208** (Arun's unmerged branches already use 0205–0207).
+
+## 20 Oct 2026 — Physical stock count: transferred feed counts; posting on the count's own day (Rishi)
+
+Found testing the count in frtest:
+
+- **The count's system balance left out `TRANSFER` ledger rows** — feed a silo received by Transfer Order (and stock
+  shipped from a source). KINTYRE's silos read negative (Grower −24,993.9 KG against a true +23,506.1) and a posted
+  count added the transferred feed a second time. The balance now counts `POSITIVE`, `NEGATIVE` and `TRANSFER`, as
+  every other balance in the ledger service does.
+- **A count posted on the next day.** `counted_at` is written with `FROM_UNIXTIME` (the session's wall clock) but was
+  read back as UTC, so on a non-UTC database a count taken on 20 Oct posted its adjustments on 21 Oct. It is now read
+  back with `UNIX_TIMESTAMP`.
+- The three adjustments the faulty test count posted in frtest (ADJ-000037/38/39, +31,840.1 KG) were reversed by
+  ADJ-000040/41/42 on the same date. Dry Sow's genuine −223 KG (ADJ-000036) stays, dated 21 Oct.
+- **Count number:** a weekly physical count is numbered `PC-<FarmCode>-YYYY-NNNNN` (year of the count day), read like
+  the monthly take's `ST-…` (NAVFarm design; the workbook numbers only the monthly take). It replaced
+  `FSC-<farm uuid>-<epoch>`, which was cut short on the approval request. Counts already numbered `FSC-…` keep it.
+- **Reason category:** a count variance takes an `ADJUSTMENT` reason; another category is refused by name
+  ("MASTITIS is a MORTALITY reason; choose an ADJUSTMENT reason.").
+- Still open: a company needs its own ADJUSTMENT reasons — frtest had only the tenant templates until ADJ-001 and
+  ADJ-002 were added to it on 20 Oct.
+
+## 20 Oct 2026 — Each company owns its masters; the menu follows permissions (Rishi)
+
+**Companies are separate.** A company reads only its own master rows — never a tenant template, never another
+company's. Tenant template rows stay for the tenant workspace only; new companies still start blank (12 Oct).
+- Existing companies were given their own copy of the tenant rows they relied on, once (option a), by
+  `scripts/adopt-tenant-masters.ts` (`planTemplateAdoption`): rows a company already had (same code; a stage by line
+  of business and code) were matched, the rest copied, and the company's records moved off tenant rows (frtest: 557
+  bio-asset ledger rows, 22 inventory ledger rows, batch lines; tcdemo: 17 batches and schedulers on a tenant
+  QUARANTINE stage). Afterwards no company record references a tenant row in any of the five local tenants.
+- The "own rows or tenant rows" fallbacks were removed: item kinds, breeds on the Animal Register, exchange rates,
+  feed forecast stages and lifecycle, feed alert rules and periods, batch stage lookup, period close, item templates,
+  an item's GL account, location occupancy, alert-rule clashes, the number-series list, the Farrowing Report targets.
+- **Production and QC Parameters** are masters now (`MASTER_TABLES`): scoped list, record check by id, created in the
+  workspace's company. They had been read and updated by id alone, across companies.
+- **The Item list carried no company filter at all**: its controller is mounted on two paths
+  (`@Controller(['item','items'])`) and the guard only scoped single-path controllers (`masterControllerPath`).
+
+**The menu shows only what the user's role can open** (`utils/nav-permissions.ts`): each link carries the grant its
+page's API reads; groups keep their open children; an empty group is hidden. Admins see everything. In frtest the
+storekeeper's and mill manager's menus lost 17 and 18 entries that led to "no permission".
+
+**The dashboard is for every user, by their permissions.** It loads batches and animals only for a role that may see
+them (it used to stop at "Insufficient permissions" for the storekeeper and mill manager); each card, chart, quick
+action and the Piggery GM view shows only when the user may open what it links to. A role with neither batches nor
+animals gets **Your work** — a tile for each page it may open.
+
+## 21 Oct 2026 — Farrowing Report matches the client's column list (Rishi)
+
+- **The report follows the client's column list**: each group is Actual, Target and Prior YR, and every group with a
+  Prior YR keeps its Change vs Prior YR and YoY % columns (20 Oct; Rishi, 21 Oct: "for all groups to have these two
+  columns"). The Average Litter Mass group is taken out. "BA per Sow" reads **Born Alive**. A thicker
+  line opens each group, on screen and in the PDF; Sow Batch stays in view when the table scrolls.
+- **Total Litter Mass has a target**: the new KPI `TOTAL_LITTER_MASS` (KG) — the weaned mass of all of a batch's
+  litters together — set on the breed's Farrowing stage. This replaces the per-litter `LITTER_MASS` target in the
+  report. frtest: average 850 kg with a 10 % Lower tolerance, so the target shows as ≥ 765.
+
+## 21 Oct 2026 — Data entry follows who was in the batch on the day (Rishi)
+
+Rishi: "Some batches are never going to close, so even when there are no animals, no auto close — only the user closes
+a batch. On data entry for a batch, if there is no animal, do not allow the data entry; and if on any previous day
+there was no animal in the batch, then do not ask for that previous date's data entry; and if there were some, then
+only for the animals which were in the batch on those previous days."
+
+- **Membership is read for the date, not for today.** `animalsInBatchOn` / `animalPlacementOn`
+  (`batch-daily-data/animal-membership.ts`) replay `animal_movement_log`: the latest move on or before the date decides
+  the batch (a move into a batch counts from its own day; a cull, disposal, death or unassignment ends it), and the
+  latest move that set a stage decides the stage. Before an animal's first move it was where that move says it came
+  from; an animal the log never mentions is where the register has it while it is live. A stage change never decides the
+  batch, so a stage change dated after a transfer cannot put an animal back. Replayed for today, it reproduces the
+  register for every live animal of every animal-wise batch in frtest.
+- **Owed days** (`getNextPendingDate`): a day on which an animal-wise batch had no animal is not owed. A day with
+  animals is owed for the stages those animals were at then (a stage nobody was in that day is not asked for), and only
+  for stages the batch has a scheduler for - a stage without one has no entry screen, so its day could never complete.
+  A batch emptied since owes nothing after it emptied; days before still count.
+- **The entry form** (`GET /batch/:id/data-entry?date=`) lists the animals the batch had on that date, at their stage
+  that day. **POST STAGE DATA** for a past date checks the mandatory lines for those animals.
+- **Posting an entry** for an animal is accepted when it was in this batch and at the line's stage ON the entry date,
+  even if it has since moved stage or batch (a gestation weight dated before farrowing on a gilt now in Flush); it is
+  refused, naming the animal and the date, when it was not.
+- **`entryBlockedReason` takes the date**: a past date is blocked only if the batch had no animal that day, so an emptied
+  batch still takes entries for the days it had animals; today is judged as before.
+- **Batch-wise batches are unchanged.** They keep no head count by date, so they are judged on the head count as it stands.
+
+## 21 Oct 2026 — Truck target and bulk multiple: farm, else company, else default (Rishi)
+
+- A feed requisition takes its Bulk Truck Target and Bulk Order Multiple from the farm's own override in Company
+  Settings → Feed Planning, else the company's Feed Planning value, else the default (30,000 kg / 3,000 kg). The
+  New Requisition header now says which: "(farm)", "(company)" or "(default)" (`GET /feed-settings` returns
+  `sources.truckTargetKg` / `sources.bulkMultipleKg`).
+- Feed Planning: the company fields say a blank uses the default; each farm override has "Use company value",
+  which clears it so the farm inherits again.
+- The farm record's old `feed_truck_target_kg` / `feed_bulk_multiple_kg` columns stay unused (requisitions stopped
+  reading them on 8 Oct); no screen shows them.
+- Next (after 24 Oct): Loading Instructions record compartments as lines under each loading sheet — compartment, kg,
+  loaded by, loaded at — grouped by truck; the sheet's own fields become totals so nothing reading them changes.
+
+## 21 Oct 2026 — Follow-up implementation decisions (Rishi)
+
+- The current uncommitted 21 Oct feed-settings, requisition, farrowing-report and master-data changes are retained and should be finished, reviewed, and tested.
+- Animal codes use the Number Series master. The current format is `PIG-YYYY-SEQ`; it must remain configurable through the number-series mechanism rather than being hardcoded into animal creation.
+- The local currency is **ZWL**. Base Currency remains the posted base currency, and Local Currency is mapped through the Currency master's rate.
+- The next feature priority is Loading Instructions compartment lines: compartment, quantity in kg, loaded by, and loaded at, grouped by truck, while preserving the existing loading-sheet totals.
+- Add regression tests for the compartment-line design before implementing it.
+- Bio-asset GRN migration 0200 requires regression coverage before live verification.

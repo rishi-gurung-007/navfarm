@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -25,6 +26,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Toast } from "@/components/ui/toast";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { api } from "@/services/api-client";
+import { Select } from "@/components/ui/select";
 import { resolveLobFamily, type LobFamily } from "@/lib/lob";
 
 type Row = Record<string, any>;
@@ -226,7 +228,7 @@ export default function AreaSettingsPage() {
       <input
         type="text"
         disabled
-        value={value || "—"}
+        value={value || NA}
         className={`nf-input w-full cursor-not-allowed bg-[var(--surface-raised)] text-[var(--text-muted)] ${mono ? "font-mono" : ""}`}
       />
     </div>
@@ -330,7 +332,7 @@ export default function AreaSettingsPage() {
               <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-3">
                 <div>
                   <label className="nf-text-label">{t("asCostingMethod")}</label>
-                  <select
+                  <Select
                     value={settings.costing_method}
                     onChange={(e) => setSettings({ ...settings, costing_method: e.target.value })}
                     className="nf-input w-full font-medium"
@@ -338,12 +340,12 @@ export default function AreaSettingsPage() {
                     <option value="STANDARD">{t("asCostingStandard")}</option>
                     <option value="FIFO">{t("asCostingFifo")}</option>
                     <option value="BIO_ASSET">{t("asCostingBioAsset")}</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
                   <label className="nf-text-label">{t("asDefaultFeedUom")}</label>
-                  <select
+                  <Select
                     value={settings.default_feed_uom}
                     onChange={(e) => setSettings({ ...settings, default_feed_uom: e.target.value })}
                     className="nf-input w-full font-medium"
@@ -352,7 +354,7 @@ export default function AreaSettingsPage() {
                     <option value="TON">TON</option>
                     <option value="BAG">BAG</option>
                     <option value="LTR">LTR</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>

@@ -195,6 +195,20 @@ describe("FeedRequisitionDetail workflow actions", () => {
     }));
   });
 
+  it("auto-selects a single transfer and can fill the remaining shipment quantity", async () => {
+    const view = base({
+      document_status: "RELEASED",
+      actions: { release: action(false), shipment: action(true), receipt: action(false) },
+      transfers: [transfer()],
+    });
+    renderDetail(view);
+    fireEvent.click(screen.getByRole("button", { name: "crqShip" }));
+    await waitFor(() => expect(screen.getByLabelText('crqShipQtyFor:{"line":1}')).toBeTruthy());
+    expect(within(screen.getByRole("dialog", { name: "crqShip" })).queryByRole("table")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "crqFillRemaining" }));
+    expect((screen.getByLabelText('crqShipQtyFor:{"line":1}') as HTMLInputElement).value).toBe("1000");
+  });
+
   it("selects an open shipment and posts a bounded receipt", async () => {
     const linked = transfer({
       status: "IN_TRANSIT",
@@ -257,7 +271,8 @@ describe("FeedRequisitionDetail workflow actions", () => {
         open_shipments: [{
           shipment_id: "sh-1", shipment_no: "SH-00001", shipment_date: "2026-10-09",
           lines: [{ line_id: "tl-1", requisition_line_id: "rl-1", quantity: 6000, qty_received: 0, remaining_to_receive: 6000,
-            loading_sheet_id: "ls-1", loading_sheet_no: "LOAD-REQ-1", compartment_no: "1 and 2" }],
+            loading_sheet_id: "ls-1", loading_sheet_no: "LOAD-REQ-1", compartment_no: "1 and 2",
+            compartments: [{ compartment_no: "C1", kg_loaded: 3000, loaded_by: "Loader One" }, { compartment_no: "C2", kg_loaded: 3000, loaded_by: "Loader One" }], loading_total_kg: 6000 }],
         }],
       })] as any,
     });
@@ -268,11 +283,21 @@ describe("FeedRequisitionDetail workflow actions", () => {
       fireEvent.change(screen.getByLabelText("crqShipment"), { target: { value: "sh-1" } });
     };
 
+    it("auto-selects the only transfer and shipment and uses a responsive line card", async () => {
+      renderDetail(receivingView("BULK"));
+      fireEvent.click(screen.getByRole("button", { name: "crqReceive" }));
+      const dialog = screen.getByRole("dialog", { name: "crqReceive" });
+      await waitFor(() => expect(within(dialog).getByLabelText('crqReceiveQtyFor:{"line":1}')).toBeTruthy());
+      expect(within(dialog).queryByRole("table")).toBeNull();
+      expect(dialog.textContent).toContain("C1");
+      expect(dialog.textContent).toContain("C2");
+    });
+
     it("shows item, feed type, requested, mill approved, shipped, previously received, outstanding and compartment", () => {
       open(receivingView("BULK"));
-      const table = screen.getByRole("table", { name: "w2tReceiptLines" });
-      for (const text of ["FEED-R1", "Weaner Diet R1", "6,050", "6,000", "1 and 2"]) expect(within(table).getAllByText(new RegExp(text)).length).toBeGreaterThan(0);
-      expect(within(table).getByText(/LOAD-REQ-1/)).toBeTruthy();
+      const dialog = within(screen.getByRole("dialog", { name: "crqReceive" }));
+      for (const text of ["FEED-R1", "Weaner Diet R1", "6,050", "6,000", "C1", "C2", "3,000 KG"]) expect(screen.getByRole("dialog", { name: "crqReceive" }).textContent).toContain(text);
+      expect(dialog.getByText(/LOAD-REQ-1/)).toBeTruthy();
       expect(screen.queryByLabelText('w2tBagCountFor:{"line":1}')).toBeNull();
       expect(screen.getByText('w2tOpenTransfer:{"no":"TR-00001"}').getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
       expect(screen.getByText('w2tOpenShipment:{"no":"SH-00001"}').getAttribute("href")).toBe("/inventory/transfers?id=tr-1");
@@ -280,9 +305,9 @@ describe("FeedRequisitionDetail workflow actions", () => {
 
     it("W5B (Req r139, Silo r18, r20): the item and the loading sheet in the receipt table are links", () => {
       open(receivingView("BULK"));
-      const table = screen.getByRole("table", { name: "w2tReceiptLines" });
-      expect(within(table).getByRole("link", { name: "FEED-R1" }).getAttribute("href")).toBe("/master-data/item?recordId=feed-1");
-      expect(within(table).getByRole("link", { name: "LOAD-REQ-1" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=loading-instructions&id=ls-1");
+      const dialog = within(screen.getByRole("dialog", { name: "crqReceive" }));
+      expect(dialog.getByRole("link", { name: "FEED-R1" }).getAttribute("href")).toBe("/master-data/item?recordId=feed-1");
+      expect(dialog.getByRole("link", { name: "LOAD-REQ-1" }).getAttribute("href")).toBe("/inventory/feed-forecast?tab=loading-instructions&id=ls-1");
     });
 
     it("a part receipt with more still to come is short and needs a variance reason; a full one hides the field", () => {

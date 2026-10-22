@@ -21,8 +21,9 @@ export const companyTemplateTables = [...new Set(Object.values(MASTER_TABLES))].
 /** Pure planning phase: allocate every identity before remapping references.
  * Nullable links are deferred so stage transition cycles and category/location
  * trees can be inserted without disabling foreign-key checks. */
-export function planTemplateCopies(sets: TemplateRows[], companyId: string): TemplateCopy[] {
-  const identities = new Map<string, string>();
+export function planTemplateCopies(sets: TemplateRows[], companyId: string, preset?: Map<string, string>): TemplateCopy[] {
+  // preset: tenant rows the company already has (adoption) — referenced through, never copied.
+  const identities = new Map<string, string>(preset ?? []);
   const pending: TemplateCopy[] = [];
   const primaryKey = (table: AnyMySqlTable) => Object.entries(getTableColumns(table)).find(([, c]) => c.primary)?.[0];
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -83,7 +84,8 @@ export function planTemplateCopies(sets: TemplateRows[], companyId: string): Tem
   }
   const ordered: TemplateCopy[] = [];
   const inserted = new Set<string>();
-  const generated = new Set(identities.values());
+  const presetIds = new Set(preset?.values() ?? []);
+  const generated = new Set([...identities.values()].filter((id) => !presetIds.has(id)));
   while (pending.length) {
     const index = pending.findIndex((copy) => getTableConfig(copy.table).foreignKeys.every((fk) =>
       fk.reference().columns.every((column) => !generated.has(copy.row[column.name]) || inserted.has(copy.row[column.name]))));
@@ -93,6 +95,77 @@ export function planTemplateCopies(sets: TemplateRows[], companyId: string): Tem
     inserted.add(copy.row[primaryKey(copy.table)!]);
   }
   return ordered;
+}
+
+/** Tables without a unique code index, keyed by hand. */
+const NATURAL_KEY_OVERRIDES = new Map<AnyMySqlTable, string[]>([
+  [schema.breedMaster, ['breed_code']],
+  [schema.parameterMaster, ['parameter_code']],
+  [schema.qcParameterMaster, ['param_code']],
+]);
+
+/**
+ * The columns that identify a master row within its company: the scope unique index's columns other than the
+ * tenant, the company and the computed COALESCE(company_id) expression (a stage's line of business stays: two
+ * lines of business may each have a QUARANTINE).
+ */
+export function naturalKey(table: AnyMySqlTable): string[] {
+  const override = NATURAL_KEY_OVERRIDES.get(table);
+  if (override) return override;
+  const unique = getTableConfig(table).indexes.filter((index) => index.config.unique);
+  const scoped = unique.find((index) => /scope/.test(index.config.name)) ?? unique[0];
+  const columns = (scoped?.config.columns ?? [])
+    .map((column: any) => column?.name as string | undefined)
+    .filter((name): name is string => Boolean(name) && name !== 'tenant_id' && name !== 'company_id');
+  if (!columns.length) throw new BadRequestException(`Master ${getTableName(table)} has no code to match a company's own rows by.`);
+  return columns;
+}
+
+export interface TemplateAdoption {
+  copies: TemplateCopy[];
+  /** `table:tenantRowId` -> the company's row: the one it already had, or its new copy. */
+  identities: Map<string, string>;
+}
+
+/**
+ * Adoption into an existing company (Rishi, 20 Oct, option a): each tenant row the company already has — same
+ * natural key — is matched and referenced through; every other active tenant row is copied as the company's own.
+ * The identities are what moves the company's records off tenant rows afterwards.
+ */
+export function planTemplateAdoption(tenantSets: TemplateRows[], companySets: TemplateRows[], companyId: string): TemplateAdoption {
+  const primaryKey = (table: AnyMySqlTable): string => {
+    const key = Object.entries(getTableColumns(table)).find(([, c]) => c.primary)?.[0];
+    if (!key) throw new BadRequestException(`Template table ${getTableName(table)} has no primary key.`);
+    return key;
+  };
+  const matched = new Map<string, string>();
+  const toCopy: TemplateRows[] = [];
+  for (const { table, rows } of tenantSets) {
+    // A child without a company of its own (an item's attribute values, a formula's ingredients) has no code: it is
+    // copied with its parent.
+    if (!getTableColumns(table).company_id) {
+      toCopy.push({ table, rows });
+      continue;
+    }
+    const key = naturalKey(table);
+    const pk = primaryKey(table);
+    const keyOf = (row: Row) => key.map((column) => String(row[column] ?? '')).join('\u0000');
+    const own = new Map<string, Row[]>();
+    for (const row of companySets.find((set) => set.table === table)?.rows ?? []) {
+      own.set(keyOf(row), [...(own.get(keyOf(row)) ?? []), row]);
+    }
+    const unmatched: Row[] = [];
+    for (const row of rows) {
+      const same = own.get(keyOf(row));
+      if (same?.length === 1) matched.set(`${getTableName(table)}:${row[pk]}`, same[0][pk]);
+      else unmatched.push(row);
+    }
+    toCopy.push({ table, rows: unmatched });
+  }
+  const copies = planTemplateCopies(toCopy, companyId, matched);
+  const identities = new Map(matched);
+  for (const copy of copies) identities.set(`${getTableName(copy.table)}:${copy.originalId}`, copy.row[primaryKey(copy.table)]);
+  return { copies, identities };
 }
 
 /** NOT called on company creation any more (client ruling, 12 Oct: new companies

@@ -2,7 +2,6 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import { getTableName } from 'drizzle-orm';
-import * as schema from '../../../core/database/schema';
 import { BatchDailyDataService } from './batch-daily-data.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { BatchService } from '../batch/batch.service';
@@ -11,6 +10,15 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
+
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('./entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+// Where an animal stood on the entry date is read from the movement log (animal-membership.spec.ts); here it stands
+// where its register row says.
+jest.mock('./animal-membership', () => ({ animalPlacementOn: jest.fn() }));
+import { animalPlacementOn } from './animal-membership';
+
 
 jest.mock('../../../common/period-close', () => ({ assertPostingPeriodOpen: jest.fn().mockResolvedValue(undefined) }));
 
@@ -78,6 +86,10 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
       batch_mortality_animal: [],
     };
     updates = []; inserts = []; deletes = [];
+    (animalPlacementOn as jest.Mock).mockImplementation(async (_db: unknown, animalId: string) => {
+      const a = rows.animal_register.find((r) => r.animal_id === animalId);
+      return { batch_id: a?.current_batch_id ?? null, stage_id: a?.current_stage_id ?? null };
+    });
     movementLog = { record: jest.fn().mockResolvedValue('m-1') };
     addTx = jest.fn().mockResolvedValue({});
     const module = await Test.createTestingModule({

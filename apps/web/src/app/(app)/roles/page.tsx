@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "../../../services/api-client";
@@ -70,7 +71,7 @@ export default function RolesPage() {
         title={t("rolePermissions")}
         description={
           <>
-            {t("roleRbacScopesFor")} <span className="font-semibold" style={S.primary}>{activeCompany?.company_name || "—"}</span>
+            {t("roleRbacScopesFor")} <span className="font-semibold" style={S.primary}>{activeCompany?.company_name || NA}</span>
           </>
         }
       />

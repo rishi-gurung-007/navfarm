@@ -2,7 +2,7 @@ import { ClsService } from 'nestjs-cls';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { and } from 'drizzle-orm';
 import * as schema from '../core/database/schema';
-import { enforceMasterRequest, MasterScope, masterScopeConditions } from './master-data-scope';
+import { enforceMasterRequest, masterControllerPath, MasterScope, masterScopeConditions } from './master-data-scope';
 
 describe('master workspace scope', () => {
   const dialect = new MySqlDialect();
@@ -60,5 +60,15 @@ describe('master workspace scope', () => {
         enforceMasterRequest(store(), requestWith({ breed_id: value }), 'animal'),
       ).rejects.toThrow(/single identifier/i);
     });
+  });
+});
+
+describe('masterControllerPath', () => {
+  it('finds the master route of a controller mounted on several paths (20 Oct: @Controller([\'item\', \'items\']) skipped scoping)', () => {
+    expect(masterControllerPath(['item', 'items'])).toBe('item');
+    expect(masterControllerPath(['items', 'item'])).toBe('item');
+    expect(masterControllerPath('location')).toBe('location');
+    expect(masterControllerPath(['batch'])).toBe('batch');
+    expect(masterControllerPath(undefined)).toBeUndefined();
   });
 });

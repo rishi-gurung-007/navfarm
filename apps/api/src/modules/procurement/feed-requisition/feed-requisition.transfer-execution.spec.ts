@@ -158,6 +158,7 @@ describe('FeedRequisitionService transfer execution', () => {
       [{ shipment_id: 'sh-1', line_id: 'tl-1', quantity: '6' }],
       [{ shipment_id: 'sh-1', line_id: 'tl-1', quantity: '2' }],
       [{ requisition_line_id: 'rl-1', loading_sheet_id: 'ls-1', loading_sheet_no: 'LOAD-1', compartment_no: '1 and 2', shipment_id: 'sh-1' }],
+      [{ loading_sheet_id: 'ls-1', compartment_no: 'C1', kg_loaded: '3.0000', loaded_by: 'loader-1', line_no: 10000 }, { loading_sheet_id: 'ls-1', compartment_no: 'C2', kg_loaded: '3.0000', loaded_by: 'loader-1', line_no: 20000 }],
     ];
     const db: any = { select: jest.fn(() => {
       const result = queues.shift() ?? [];
@@ -180,6 +181,11 @@ describe('FeedRequisitionService transfer execution', () => {
       // W2T, Requisition row 148: the compartment from the loading sheet.
       loading_sheet_no: 'LOAD-1',
       compartment_no: '1 and 2',
+      compartments: [
+        { compartment_no: 'C1', kg_loaded: 3, loaded_by: 'loader-1' },
+        { compartment_no: 'C2', kg_loaded: 3, loaded_by: 'loader-1' },
+      ],
+      loading_total_kg: 6,
     }));
     expect(transfers[1].lines[0]).toEqual(expect.objectContaining({ qty_shipped: 0, qty_received: 0, balance_to_ship: 20 }));
   });

@@ -1,3 +1,4 @@
+import { NA } from "@/utils/na";
 import React, { useState, useEffect } from "react";
 import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
@@ -651,8 +652,8 @@ export default function CompanyTab({
                       <TableCell className="p-4" style={{ color: "var(--text-secondary)" }}>{comp.industry_type}</TableCell>
                       <TableCell className="p-4">
                         <div className="flex flex-col text-[10px] text-(--text-secondary) font-mono gap-0.5">
-                          <span>Tax: {comp.tax_id || "—"}</span>
-                          <span>Reg: {comp.registration_no || "—"}</span>
+                          <span>Tax: {comp.tax_id || NA}</span>
+                          <span>Reg: {comp.registration_no || NA}</span>
                         </div>
                       </TableCell>
                       <TableCell className="p-4 text-center">
@@ -1089,7 +1090,7 @@ export default function CompanyTab({
                         <ReadField label={t("ctStateProvince")} value={setupDetails?.address?.state_id} />
                         <ReadField mono label={t("ctCountryCode")} value={setupDetails?.address?.country_id} />
                         <ReadField mono label={t("ctPincodePostal")} value={setupDetails?.address?.pincode} />
-                        <ReadField mono className="sm:col-span-2" label={t("ctGpsCoordinates")} value={setupDetails?.address?.gps_latitude && setupDetails?.address?.gps_longitude ? `${formatExact(setupDetails.address.gps_latitude)}, ${formatExact(setupDetails.address.gps_longitude)}` : "—"} />
+                        <ReadField mono className="sm:col-span-2" label={t("ctGpsCoordinates")} value={setupDetails?.address?.gps_latitude && setupDetails?.address?.gps_longitude ? `${formatExact(setupDetails.address.gps_latitude)}, ${formatExact(setupDetails.address.gps_longitude)}` : NA} />
                       </div>
                     ) : (
                       <form onSubmit={handleSaveTab} className="flex flex-col gap-8">
@@ -1394,11 +1395,11 @@ export default function CompanyTab({
                           <Field className="sm:col-span-3" label={t("ctFeedMaxForecastDays")} htmlFor="feed-max-days" hint={t("ctFeedMaxForecastDaysHint")} required>
                             <Input id="feed-max-days" type="number" min={1} max={45} value={feedForm.maxForecastDays} onChange={(e) => setFeedForm({ ...feedForm, maxForecastDays: e.target.value === "" ? "" : Number(e.target.value) })} required />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target">
-                            <Input id="feed-truck-target" type="number" min={0.01} step="0.01" value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          <Field className="sm:col-span-3" label={t("ctFeedTruckTargetKg")} htmlFor="feed-truck-target" hint={t("ctFeedBlankUsesDefault", { value: "30,000" })}>
+                            <Input id="feed-truck-target" type="number" min={0.01} step="0.01" placeholder="30000" value={feedForm.truckTargetKg} onChange={(e) => setFeedForm({ ...feedForm, truckTargetKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
-                          <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple">
-                            <Input id="feed-bulk-multiple" type="number" min={0.01} step="0.01" value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
+                          <Field className="sm:col-span-3" label={t("ctFeedBulkMultipleKg")} htmlFor="feed-bulk-multiple" hint={t("ctFeedBlankUsesDefault", { value: "3,000" })}>
+                            <Input id="feed-bulk-multiple" type="number" min={0.01} step="0.01" placeholder="3000" value={feedForm.bulkMultipleKg} onChange={(e) => setFeedForm({ ...feedForm, bulkMultipleKg: e.target.value === "" ? "" : Number(e.target.value) })} />
                           </Field>
                         </FieldGroup>
 

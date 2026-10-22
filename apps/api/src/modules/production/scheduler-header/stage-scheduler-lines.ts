@@ -18,6 +18,7 @@ import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { wantedVaccinations } from '../lifecycle/vaccination-lines';
+import { kpiLimits } from '../lifecycle/kpi-limits';
 
 export interface StageLineDraft {
   line_type: 'CONSUMPTION' | 'OUTPUT' | 'DESCRIPTIVE' | 'RESOURCE';
@@ -56,7 +57,6 @@ const num = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
-const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
 /** Metrics that are counted (the day's total), not measured (the average of what was weighed or scored). */
 const COUNT_METRICS = new Set(['MORTALITY_COUNT', 'HEAD_COUNT', 'PIGLETS_BORN', 'LITTER_SIZE', 'EGG_COUNT']);
@@ -85,15 +85,7 @@ export function kpiLineDraft(
 ): StageLineDraft | null {
   const metric = typeof line.metric === 'string' ? line.metric.trim() : '';
   if (!metric) return null;
-  const avg = num(line.average_value);
-  const tol = num(line.tolerance_pct);
-  const side = typeof line.tolerance_type === 'string' ? line.tolerance_type.toUpperCase() : '';
-  let lower = num(line.lower_limit);
-  let upper = num(line.upper_limit);
-  if (avg !== null && tol !== null) {
-    if (side !== 'LOWER') upper = round4(avg * (1 + tol / 100));
-    if (side !== 'UPPER') lower = round4(avg * (1 - tol / 100));
-  }
+  const { average: avg, lower, upper } = kpiLimits(line);
   const weekly = String(ctx.period ?? '').toUpperCase() === 'WEEKLY';
   const from = num(line.from_day);
   const to = num(line.to_day);

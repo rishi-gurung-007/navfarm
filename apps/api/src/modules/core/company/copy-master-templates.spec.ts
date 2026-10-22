@@ -1,5 +1,5 @@
 import * as schema from '../../../core/database/schema';
-import { planTemplateCopies } from './copy-master-templates';
+import { naturalKey, planTemplateAdoption, planTemplateCopies } from './copy-master-templates';
 
 describe('company template snapshot', () => {
   it('remaps the vaccine, drug and resource ids inside a lifecycle stage\'s lists to the copied company (14 Oct)', () => {
@@ -87,5 +87,37 @@ describe('company template snapshot', () => {
     expect(one.prefix).toBe('FARM');
     expect(one.id).not.toBe(two.id);
     expect(inputs[0].rows[0].current_seq).toBe(99);
+  });
+
+  it('adopts into an existing company: matches rows it already has by code, copies the rest onto its own rows (20 Oct)', () => {
+    const plan = planTemplateAdoption([
+      { table: schema.itemCategoryMaster, rows: [{ category_id: 't-feed', category_code: 'FEED' }] },
+      { table: schema.itemMaster, rows: [
+        { item_id: 't-grower', item_code: 'GROWER', category_id: 't-feed' },
+        { item_id: 't-piglet', item_code: 'PIGLET', category_id: 't-feed' },
+      ] },
+    ], [
+      { table: schema.itemCategoryMaster, rows: [{ category_id: 'c-feed', category_code: 'FEED', company_id: 'company' }] },
+      { table: schema.itemMaster, rows: [{ item_id: 'c-grower', item_code: 'GROWER', company_id: 'company' }] },
+    ], 'company');
+
+    // FEED and GROWER exist in the company: matched, not copied.
+    expect(plan.identities.get('item_category_master:t-feed')).toBe('c-feed');
+    expect(plan.identities.get('item_master:t-grower')).toBe('c-grower');
+    // PIGLET is copied, pointing at the company's own category.
+    expect(plan.copies.map((c) => c.originalId)).toEqual(['t-piglet']);
+    const piglet = plan.copies[0];
+    expect(piglet.row).toMatchObject({ company_id: 'company', item_code: 'PIGLET' });
+    expect(piglet.row.item_id).not.toBe('t-piglet');
+    expect(piglet.row.category_id ?? piglet.deferred.category_id).toBe('c-feed');
+    expect(plan.identities.get('item_master:t-piglet')).toBe(piglet.row.item_id);
+  });
+
+  it('keys a stage by its line of business and code, a breed and the parameters by their codes', () => {
+    expect(naturalKey(schema.stageMaster)).toEqual(['lob_id', 'stage_code']);
+    expect(naturalKey(schema.itemMaster)).toEqual(['item_code']);
+    expect(naturalKey(schema.breedMaster)).toEqual(['breed_code']);
+    expect(naturalKey(schema.parameterMaster)).toEqual(['parameter_code']);
+    expect(naturalKey(schema.qcParameterMaster)).toEqual(['param_code']);
   });
 });

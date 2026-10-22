@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -48,6 +49,7 @@ import { BatchShedField } from '@/components/console/production/batch-shed-field
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { formatAmount, formatQuantity, formatRate, toInputNumber } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { confirmAction } from '@/components/ui/confirm-dialog';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
 
@@ -120,6 +122,7 @@ export default function BatchPanel() {
   const [items, setItems] = useState<Row[]>([]);
   const [uoms, setUoms] = useState<Row[]>([]);
   const [warehouses, setWarehouses] = useState<Row[]>([]);
+  const [customers, setCustomers] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
@@ -401,6 +404,10 @@ export default function BatchPanel() {
       .then((r) => setWarehouses(unwrap<Row[]>(r) || []))
       .catch(() => {});
     api
+      .get(`/customer?${qs}`)
+      .then((r) => setCustomers(unwrap<Row[]>(r) || []))
+      .catch(() => setCustomers([]));
+    api
       .get(`/batch?${qs}`)
       .then((r) => setBatches(unwrap<Row[]>(r) || []))
       .catch(() => {});
@@ -680,17 +687,17 @@ export default function BatchPanel() {
 
   const breedLabel = (breedId: string) => {
     const b = breeds.find((x) => x.breed_id === breedId);
-    return b ? b.breed_name || b.breed_code : '—';
+    return b ? b.breed_name || b.breed_code : NA;
   };
   const stageLabel = (stageId: string | null) => {
-    if (!stageId) return '—';
+    if (!stageId) return NA;
     const s = stages.find((x) => x.stage_id === stageId);
-    return s ? s.stage_code : '—';
+    return s ? s.stage_code : NA;
   };
   const locationLabel = (locationId: string | null) => {
-    if (!locationId) return '—';
+    if (!locationId) return NA;
     const l = locations.find((x) => x.location_id === locationId);
-    return l ? l.location_name : '—';
+    return l ? l.location_name : NA;
   };
   const animalAge = (a: Row) => {
     if (a.dob) {
@@ -712,7 +719,7 @@ export default function BatchPanel() {
         return String(totalWeeks);
       }
     }
-    return '—';
+    return NA;
   };
 
   const toggleAnimalSelected = (animalId: string) => {
@@ -1241,6 +1248,24 @@ export default function BatchPanel() {
     }
   };
 
+  // A bio-asset batch is closed by a user once it holds no head (Rishi, 19 Oct) — its value left with its animals,
+  // so there is nothing to allocate and no output lines to enter.
+  const handleCloseEmptyBioAsset = async () => {
+    if (!viewing) return;
+    if (!(await confirmAction({ title: t('blCloseBatchTitle', { batchNo: viewing.batch_no }), message: t('blCloseEmptyBioConfirm') }))) return;
+    setActing(true);
+    setCloseError('');
+    try {
+      await api.post(`/batch/${viewing.batch_id}/close`, { actual_end_date: new Date().toISOString().slice(0, 10) });
+      await refreshViewing();
+      load();
+    } catch (err: any) {
+      setCloseError(err?.message || t('blErrCloseBatch'));
+    } finally {
+      setActing(false);
+    }
+  };
+
   const openBioAction = (
     type: 'mature' | 'amortize' | 'fair-value' | 'dispose',
   ) => {
@@ -1256,6 +1281,7 @@ export default function BatchPanel() {
       output_quantity: '',
       warehouse_id: '',
       sale_proceeds: '',
+      customer_id: '',
     });
     setBioError('');
     setBioActionOpen(type);
@@ -1313,7 +1339,10 @@ export default function BatchPanel() {
         } else {
           if (!bioForm.sale_proceeds)
             throw new Error(t('blErrSaleProceedsRequired'));
+          if (!bioForm.customer_id)
+            throw new Error(t('blErrCustomerRequired'));
           payload.sale_proceeds = Number(bioForm.sale_proceeds);
+          payload.customer_id = bioForm.customer_id;
         }
       }
       await api.post(path, payload);
@@ -1328,12 +1357,12 @@ export default function BatchPanel() {
   };
 
   // Code and name are two columns in a table, the name elsewhere (Rishi, 14 Oct).
-  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || '—';
-  const itemName = (id: string) => { const it = items.find((i) => i.item_id === id); return it ? it.item_name || it.item_code : '—'; };
+  const itemCode = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const itemName = (id: string) => { const it = items.find((i) => i.item_id === id); return it ? it.item_name || it.item_code : NA; };
   const itemLabel = itemName;
   const batchLabel = (id: string) => {
     const b = batches.find((x) => x.batch_id === id);
-    return b ? b.batch_no : '—';
+    return b ? b.batch_no : NA;
   };
 
   // This LOB may require a passing QC record before a pack can be generated
@@ -1803,7 +1832,7 @@ export default function BatchPanel() {
                       className="whitespace-nowrap text-right"
                       style={S.primary}
                     >
-                      {row.unit_cost != null ? formatRate(row.unit_cost) : '—'}
+                      {row.unit_cost != null ? formatRate(row.unit_cost) : NA}
                     </TableCell>
                     <TableCell className="text-right">
                       <StatusBadge status={row.status} />
@@ -1880,7 +1909,7 @@ export default function BatchPanel() {
               <input
                 type="text"
                 disabled
-                value={fetchingPreview ? 'Generating preview…' : previewBatchNo || (editingBatchId ? '—' : 'Auto-generated on Create')}
+                value={fetchingPreview ? 'Generating preview…' : previewBatchNo || (editingBatchId ? NA : 'Auto-generated on Create')}
                 className={`${inputCls} font-mono font-semibold tracking-wide cursor-not-allowed opacity-70`}
                 style={{
                   ...S.input,
@@ -2842,7 +2871,7 @@ export default function BatchPanel() {
                               className="px-3 py-1.5 font-mono"
                               style={S.sub}
                             >
-                              {a.rfid_tag || '—'}
+                              {a.rfid_tag || NA}
                             </TableCell>
                             <TableCell className="px-3 py-1.5" style={S.sub}>
                               {a.animal_type} /{' '}
@@ -2873,7 +2902,7 @@ export default function BatchPanel() {
                                   Assigned
                                 </span>
                               ) : (
-                                <span style={S.sub}>{a.status || '—'}</span>
+                                <span style={S.sub}>{a.status || NA}</span>
                               )}
                             </TableCell>
                           </TableRow>
@@ -2953,7 +2982,7 @@ export default function BatchPanel() {
                   {t('blLabelBreedVariety')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.breed_name || viewing.breed_code || '—'}
+                  {viewing.breed_name || viewing.breed_code || NA}
                 </p>
               </div>
               <div>
@@ -2964,7 +2993,7 @@ export default function BatchPanel() {
                   {t('blLabelStartDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.start_date || '—'}
+                  {viewing.start_date || NA}
                 </p>
               </div>
               <div>
@@ -2975,7 +3004,7 @@ export default function BatchPanel() {
                   {t('blLabelExpectedEndDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.expected_end_date || '—'}
+                  {viewing.expected_end_date || NA}
                 </p>
               </div>
               <BatchShedField
@@ -3116,7 +3145,7 @@ export default function BatchPanel() {
                           {(viewing.stage_log || []).map((s: Row) => (
                             <TableRow key={s.log_id}>
                               <TableCell className="px-3 py-2" style={S.sub}>
-                                {s.from_stage_code || '—'}
+                                {s.from_stage_code || NA}
                               </TableCell>
                               <TableCell
                                 className="px-3 py-2 font-semibold"
@@ -3128,7 +3157,7 @@ export default function BatchPanel() {
                                 {s.transferred_at}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
-                                {s.remarks || '—'}
+                                {s.remarks || NA}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -3182,10 +3211,10 @@ export default function BatchPanel() {
                             <TableCell className="px-3 py-2" style={S.sub}>
                               {l.source_batch_id
                                 ? batchLabel(l.source_batch_id)
-                                : '—'}
+                                : NA}
                             </TableCell>
                             <TableCell className="px-3 py-2" style={S.sub}>
-                              {l.lot_no || l.serial_no || '—'}
+                              {l.lot_no || l.serial_no || NA}
                             </TableCell>
                             <TableCell className="px-3 py-2" style={S.primary}>
                               {formatQuantity(l.quantity, l.uom)} {l.uom}
@@ -3193,7 +3222,7 @@ export default function BatchPanel() {
                             <TableCell className="px-3 py-2" style={S.primary}>
                               {l.rate
                                 ? formatMoney(Number(l.rate).toFixed(2))
-                                : '—'}
+                                : NA}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -3264,7 +3293,7 @@ export default function BatchPanel() {
                             </p>
                             <p style={S.primary}>
                               {viewing.bio_asset_state
-                                .monthly_amortization_rate ?? '—'}
+                                .monthly_amortization_rate ?? NA}
                             </p>
                           </div>
                         </div>
@@ -3376,13 +3405,13 @@ export default function BatchPanel() {
                                   style={S.primary}
                                 >{itemName(e.bio_asset_item_id)}</TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
-                                  {e.stage ?? '—'}
+                                  {e.stage ?? NA}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {e.quantity != null ? formatQuantity(e.quantity) : '—'}
+                                  {e.quantity != null ? formatQuantity(e.quantity) : NA}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2 font-semibold"
@@ -3400,6 +3429,21 @@ export default function BatchPanel() {
                         </table>
                       </div>
                     </div>
+                  )}
+
+                {viewing.status === 'ACTIVE' &&
+                  viewing.costing_method === 'BIO_ASSET' &&
+                  Number(viewing.bio_asset_state?.current_quantity ?? 0) <= 0 &&
+                  Number(viewing.closing_quantity ?? 0) <= 0 && (
+                    <Button
+                      size="sm"
+                      onClick={handleCloseEmptyBioAsset}
+                      disabled={acting}
+                      style={{ backgroundColor: 'var(--success)', color: '#fff' }}
+                      className="gap-1.5 self-start"
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> {t('blCloseBatch')}
+                    </Button>
                   )}
 
                 {viewing.status === 'ACTIVE' &&
@@ -3554,8 +3598,8 @@ export default function BatchPanel() {
                                 >
                                   {v.variance_type}
                                 </TableCell>
-                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemCode(v.item_id) : '—'}</TableCell>
-                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemName(v.item_id) : '—'}</TableCell>
+                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemCode(v.item_id) : NA}</TableCell>
+                                <TableCell className="px-3 py-2" style={S.sub}>{v.item_id ? itemName(v.item_id) : NA}</TableCell>
                                 <TableCell
                                   className="px-3 py-2"
                                   style={S.primary}
@@ -3816,8 +3860,8 @@ export default function BatchPanel() {
               <span style={S.primary}>
                 {viewing?.breed_id
                   ? breeds.find((b) => b.breed_id === viewing.breed_id)
-                      ?.breed_name || '—'
-                  : '—'}
+                      ?.breed_name || NA
+                  : NA}
               </span>
             </p>
             <p style={S.sub}>
@@ -3825,8 +3869,8 @@ export default function BatchPanel() {
               <span style={S.primary}>
                 {viewing?.shed_id
                   ? sheds.find((s) => s.shed_id === viewing.shed_id)
-                      ?.shed_name || '—'
-                  : '—'}
+                      ?.shed_name || NA
+                  : NA}
               </span>
             </p>
             <p style={S.sub}>
@@ -4513,6 +4557,18 @@ export default function BatchPanel() {
               ) : (
                 <div className="flex flex-col gap-1.5">
                   <label className="nf-text-label" style={S.sub}>
+                    {t('blLabelCustomer')}
+                  </label>
+                  <SearchableSelect
+                    ariaLabel={t('blLabelCustomer')}
+                    value={bioForm.customer_id}
+                    onChange={(v) => setBioForm((f: Row) => ({ ...f, customer_id: v }))}
+                    options={customers.filter((c) => c.is_active !== false)}
+                    valueKey="customer_id"
+                    getLabel={(c) => `${c.customer_code ?? ''} ${c.customer_name ?? ''}`.trim()}
+                    placeholder={t('blSelectEllipsis')}
+                  />
+                  <label className="nf-text-label" style={S.sub}>
                     {t('blLabelSaleProceeds')}
                   </label>
                   <input
@@ -4785,7 +4841,7 @@ export default function BatchPanel() {
                           </p>
                           <p className="text-[10px]" style={S.muted}>
                             {p.param_type === 'NUMERIC'
-                              ? `${p.min_value != null ? formatQuantity(p.min_value) : '—'}–${p.max_value != null ? formatQuantity(p.max_value) : '—'} ${p.uom || ''}`
+                              ? `${p.min_value != null ? formatQuantity(p.min_value) : NA}–${p.max_value != null ? formatQuantity(p.max_value) : NA} ${p.uom || ''}`
                               : p.param_type}
                           </p>
                         </div>

@@ -1,5 +1,5 @@
 import {
-  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, nothingToCount, periodCloseBlockers, stockTakeNo,
+  assertPeriodCanClose, assertStockTakeDate, assertStockTakePeriod, nothingToCount, periodCloseBlockers, physicalCountNo, stockTakeNo,
 } from './monthly-stock-take.rules';
 import { approvalRoute, assertVarianceReason, varianceFact } from './feed-stock-count.rules';
 import { assertPeriodWindowOpen, assertPostingPeriodOpen, closedPeriodFor } from '../../../common/period-close';
@@ -11,6 +11,8 @@ describe('Monthly stock take — creation', () => {
   it('numbers farm and mill takes per r30', () => {
     expect(stockTakeNo('FARM', 'F01', 2026, 7)).toBe('ST-F01-2026-00007');
     expect(stockTakeNo('FEED_MILL', 'IGNORED', 2026, 12)).toBe('ST-MILL-2026-00012');
+    // A weekly physical count reads like the monthly take (20 Oct), not FSC-<farm uuid>-<epoch>.
+    expect(physicalCountNo('POR100', 2026, 1)).toBe('PC-POR100-2026-00001');
   });
 
   it('dates a monthly take on the period Stock Take Date, or its end date when that is null (r35)', () => {

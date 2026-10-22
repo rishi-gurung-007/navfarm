@@ -1386,6 +1386,37 @@ export const binDietAssignment = mysqlTable('bin_diet_assignment', {
   itemDateIndex: index('idx_bin_diet_item_date').on(table.feed_item_id, table.production_date),
 }));
 
+/**
+ * Mill Production Output (Rishi, 20 Oct; spec 2026-10-03 §4.2 step 1, R5): feed the mill produced into a loading BIN —
+ * production date, BIN, the feed item assigned to that BIN for the date, KG. Posting puts the KG into the BIN's stock
+ * at the item's standard cost (inventory ledger MILL_OUTPUT) and journals it through the MILL_OUTPUT GL mapping. No
+ * raw-material consumption. Posted when saved; one row per output.
+ */
+export const millProductionOutput = mysqlTable('mill_production_output', {
+  output_id: varchar('output_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  output_no: varchar('output_no', { length: 30 }).notNull(),
+  production_date: date('production_date', { mode: 'string' }).notNull(),
+  mill_location_id: varchar('mill_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  bin_location_id: varchar('bin_location_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  assignment_id: varchar('assignment_id', { length: 36 }).references(() => binDietAssignment.assignment_id, { onDelete: 'restrict' }),
+  item_id: varchar('item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+  quantity_kg: decimal('quantity_kg', { precision: 18, scale: 4 }).notNull(),
+  rate: decimal('rate', { precision: 18, scale: 6 }).notNull(),
+  amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+  lot_no: varchar('lot_no', { length: 80 }),
+  remarks: varchar('remarks', { length: 500 }),
+  ledger_id: varchar('ledger_id', { length: 36 }),
+  journal_id: varchar('journal_id', { length: 36 }),
+  status: varchar('status', { length: 20 }).default('POSTED').notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqCompanyNo: uniqueIndex('uq_mill_output_company_no').on(table.company_id, table.output_no),
+  binDateIndex: index('idx_mill_output_bin_date').on(table.bin_location_id, table.production_date),
+}));
+
 // ==========================================
 // DRIZZLE SCHEMA RELATIONSHIPS
 // ==========================================
@@ -4011,6 +4042,8 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   costing_method: varchar('costing_method', { length: 30 }), // COST_ACCUMULATION, AMORTIZED_COST, FAIR_VALUE
   nob_id: varchar('nob_id', { length: 36 }).references(() => nobMaster.nob_id, { onDelete: 'restrict' }),
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
+  // 0205: who bought the animals on a SOLD exit — the sale's receivable belongs to this customer.
+  customer_id: varchar('customer_id', { length: 36 }).references(() => customerMaster.customer_id, { onDelete: 'restrict' }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
@@ -4289,6 +4322,8 @@ export const stockTransfer = mysqlTable('stock_transfer', {
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   transfer_no: varchar('transfer_no', { length: 50 }).notNull(),
+  // Vehicle/truck identity supplied when the transfer is shipped; loading instructions group by this value.
+  vehicle_no: varchar('vehicle_no', { length: 80 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
   from_warehouse_id: varchar('from_warehouse_id', { length: 36 }).notNull(),
   to_warehouse_id: varchar('to_warehouse_id', { length: 36 }).notNull(),
@@ -4811,6 +4846,21 @@ export const feedLoadingSheet = mysqlTable('feed_loading_sheet', {
 }, (table) => ({
   lineUnique: uniqueIndex('uq_feed_loading_sheet_consolidation_line').on(table.consolidation_line_id),
   tenantStatusIdx: index('idx_feed_loading_sheet_tenant_status').on(table.tenant_id, table.status),
+}));
+
+/** Detailed loading facts; the parent sheet retains compatibility totals. */
+export const feedLoadingSheetCompartment = mysqlTable('feed_loading_sheet_compartment', {
+  compartment_id: varchar('compartment_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  loading_sheet_id: varchar('loading_sheet_id', { length: 36 }).notNull().references(() => feedLoadingSheet.loading_sheet_id, { onDelete: 'cascade' }),
+  line_no: int('line_no').notNull(),
+  compartment_no: varchar('compartment_no', { length: 50 }).notNull(),
+  kg_loaded: decimal('kg_loaded', { precision: 14, scale: 4 }).notNull(),
+  loaded_by: varchar('loaded_by', { length: 36 }),
+  loaded_at: timestamp('loaded_at', { mode: 'string' }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  lineUnique: uniqueIndex('uq_feed_loading_sheet_compartment').on(table.loading_sheet_id, table.line_no),
+  sheetIdx: index('idx_feed_loading_sheet_compartment_sheet').on(table.loading_sheet_id),
 }));
 
 /**

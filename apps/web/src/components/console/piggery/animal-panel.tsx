@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import {
   Search, Loader2, Inbox, Eye, AlertCircle, ChevronRight, Scan,
@@ -76,7 +77,7 @@ const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
 };
 
 function formatDate(d?: string | null) {
-  if (!d) return "—";
+  if (!d) return NA;
   return new Date(d).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -139,12 +140,13 @@ export default function AnimalPanel() {
   // ── Reference data ──────────────────────────────────────────────────────────
   // Company-wide breed lookup for the list table, loaded once on mount.
   const [breedLookup, setBreedLookup] = useState<Record<string, string>>({});
-  const breedName = (id?: string | null) => (id && breedLookup[id]) || id || "—";
+  const breedName = (id?: string | null) => (id && breedLookup[id]) || id || NA;
   const [medItems, setMedItems] = useState<Row[]>([]); // MEDICINE + VACCINE filtered
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages]   = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
   const [reasons, setReasons] = useState<Row[]>([]);
+  const [customers, setCustomers] = useState<Row[]>([]);
 
   // ── Fast Scanner Modal ──────────────────────────────────────────────────
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -219,6 +221,7 @@ export default function AnimalPanel() {
     api.get(`/stage?limit=100`).then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/location${qs}`).then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => {});
     api.get(`/reason${qs.replace(/^\?/, "?isActive=true&")}`).then((r) => setReasons(unwrap<Row[]>(r) || [])).catch(() => {});
+    api.get(`/customer${qs}`).then((r) => setCustomers((unwrap<Row[]>(r) || []).filter((c: Row) => c.is_active !== false))).catch(() => setCustomers([]));
     api.get(`/item${qs.replace(/^\?/, "?isActive=true&isBlocked=false&")}`).then((r) => {
       const all = unwrap<Row[]>(r) || [];
       setMedItems(all.filter((i: Row) => !i.is_blocked && i.is_active !== false && ["MEDICINE", "VACCINE"].includes(i.item_type)));
@@ -259,6 +262,7 @@ export default function AnimalPanel() {
         disposal_value: disposeForm.disposal_value ? Number(disposeForm.disposal_value) : undefined,
         exit_weight_kg: disposeForm.exit_weight_kg ? Number(disposeForm.exit_weight_kg) : undefined,
         disposal_destination: disposeForm.disposal_destination?.trim() || undefined,
+        customer_id: disposeForm.disposal_type === "SOLD" ? disposeForm.customer_id || undefined : undefined,
         out_of_production_date:
           disposeForm.disposal_type === "CULLED" ? disposeForm.out_of_production_date || undefined : undefined,
         notes: disposeForm.notes || undefined,
@@ -375,7 +379,7 @@ export default function AnimalPanel() {
                   <StatusBadge status={row.status || "ACTIVE"} label={statusLabel(row.status || "ACTIVE")} />
                 </TableCell>
                 <TableCell style={S.muted}>{formatDate(row.entry_date)}</TableCell>
-                <TableCell style={S.muted}>{row.rfid_tag || "—"}</TableCell>
+                <TableCell style={S.muted}>{row.rfid_tag || NA}</TableCell>
                 <TableCell>
                   <button
                     aria-label={t("anpViewAnimal")}
@@ -518,6 +522,21 @@ export default function AnimalPanel() {
                 <input id="dispose-oop" type="date" className={inputCls} value={disposeForm.out_of_production_date || ""} onChange={(e) => setDisposeForm((f) => ({ ...f, out_of_production_date: e.target.value }))} />
               </div>
             </>
+          )}
+
+          {disposeForm.disposal_type === "SOLD" && (
+            <div>
+              <label className="nf-label">{t("blLabelCustomer")}</label>
+              <SearchableSelect
+                ariaLabel={t("blLabelCustomer")}
+                value={disposeForm.customer_id || ""}
+                onChange={(v) => setDisposeForm((f) => ({ ...f, customer_id: v }))}
+                options={customers}
+                valueKey="customer_id"
+                getLabel={(c) => `${c.customer_code ?? ""} ${c.customer_name ?? ""}`.trim()}
+                placeholder={t("blSelectEllipsis")}
+              />
+            </div>
           )}
 
           <div className="grid grid-cols-2 gap-3">

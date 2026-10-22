@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { mergeLifecycleFeedRows } from "./utils/master-csv";
 import { useState, useRef } from "react";
 import {
@@ -812,7 +813,7 @@ export default function MasterDataImportModal({
                         )}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono font-semibold text-(--text-primary)">
-                        {r.payload.breed_code || r.payload.lifecycle_code || r.raw.breed_code || r.raw.lifecycle_code || "—"}
+                        {r.payload.breed_code || r.payload.lifecycle_code || r.raw.breed_code || r.raw.lifecycle_code || NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 text-(--text-secondary)">
                         {config.key === "breed" ? (
@@ -836,7 +837,7 @@ export default function MasterDataImportModal({
                           </div>
                         ) : config.key === "breed-lifecycle-stage" ? (
                           <span>
-                            {r.payload.breed_code || r.raw.breed_code} ➔ {r.payload.stage_code || r.raw.stage_code} ({r.payload.category || "—"}, {r.payload.period_from}-{r.payload.period_to} {r.payload.calc_unit})
+                            {r.payload.breed_code || r.raw.breed_code} ➔ {r.payload.stage_code || r.raw.stage_code} ({r.payload.category || NA}, {r.payload.period_from}-{r.payload.period_to} {r.payload.calc_unit})
                           </span>
                         ) : (
                           <span>{Object.values(r.payload).slice(0, 3).join(", ")}</span>

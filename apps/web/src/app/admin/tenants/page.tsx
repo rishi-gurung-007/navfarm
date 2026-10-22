@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -15,6 +16,7 @@ import { Badge } from "../../../components/ui/badge";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "../../../components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { Select } from "@/components/ui/select";
 
 const S = {
   surface:  { backgroundColor: "var(--surface)",        borderColor: "var(--border)" },
@@ -206,13 +208,13 @@ export default function AdminTenantsPage() {
       >
           <form onSubmit={handleUpgrade} className="space-y-5">
             <label className="block text-xs font-semibold uppercase tracking-wider" style={S.sub}>{t("admNewPlan")}</label>
-            <select value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}
+            <Select value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)}
               className="min-h-11 w-full rounded-lg border px-3 text-sm nf-select" style={S.input}>
               <option value="">— Select new plan —</option>
               {plans.map((p) => (
                 <option key={p.plan_id} value={p.plan_id}>{p.plan_name} ({p.billing_cycle})</option>
               ))}
-            </select>
+            </Select>
             <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end" style={S.border}>
               <button type="submit" disabled={!selectedPlanId || upgrading}
                 className="min-h-10 rounded-lg bg-(--accent) px-5 text-sm font-semibold text-white hover:bg-(--accent-hover) disabled:opacity-50">
@@ -247,11 +249,11 @@ export default function AdminTenantsPage() {
                       <div>{tenant.tenant_name}</div>
                       <div className="text-[10px] font-mono mt-0.5" style={S.muted}>{tenant.tenant_code}</div>
                     </TableCell>
-                    <TableCell className="px-5" style={S.sub}>{tenant.billing_email || "—"}</TableCell>
+                    <TableCell className="px-5" style={S.sub}>{tenant.billing_email || NA}</TableCell>
                     <TableCell className="px-5">
                       {/* Plan tier is neutral metadata, not a status — colouring it
                           brand-red made every row shout for attention. */}
-                      <Badge variant="neutral">{tenant.plan_id?.replace("PLAN_", "") || "—"}</Badge>
+                      <Badge variant="neutral">{tenant.plan_id?.replace("PLAN_", "") || NA}</Badge>
                     </TableCell>
                     <TableCell className="px-5">
                       <span className={`text-[11px] font-semibold border px-2 py-0.5 rounded-[var(--radius-xs)] inline-flex items-center gap-1 ${active ? "bg-(--success-muted) text-(--success) border-(--success)" : "bg-(--surface-raised) text-(--text-secondary) border-(--border)"}`}>
@@ -357,13 +359,13 @@ export default function AdminTenantsPage() {
                       className="w-full border rounded-[var(--radius-sm)] px-3 py-2.5 text-sm focus-visible:border-(--input-border-focus)" style={S.input} />
                   </Field>
                   <Field label={t("admPricingPlanRequired")}>
-                    <select required value={createForm.plan_id}
+                    <Select required value={createForm.plan_id}
                       onChange={e => setCreateForm(f => ({ ...f, plan_id: e.target.value }))}
                       className="w-full border rounded-[var(--radius-sm)] px-3 py-2.5 text-sm focus-visible:border-(--input-border-focus) nf-select" style={S.input}>
                       <option value="PLAN_BASIC">{t("admPlanBasic")}</option>
                       <option value="PLAN_PRO">{t("admPlanPro")}</option>
                       <option value="PLAN_ENTERPRISE">{t("admPlanEnterprise")}</option>
-                    </select>
+                    </Select>
                   </Field>
                 </div>
               </div>

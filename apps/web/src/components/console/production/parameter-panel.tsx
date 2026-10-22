@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import { Plus, Search, Loader2, Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -11,6 +12,7 @@ import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
 import { formatQuantity, formatRate } from "@/lib/utils";
+import { Select } from "@/components/ui/select";
 
 const PAGE_SIZE = 25;
 
@@ -154,11 +156,11 @@ export default function ParameterPanel() {
 
   const itemLabel = (id: string) => {
     const it = items.find((i) => i.item_id === id);
-    return it ? it.item_name || it.item_code : "—";
+    return it ? it.item_name || it.item_code : NA;
   };
   const resourceLabel = (id: string) => {
     const r = resources.find((x) => x.resource_id === id);
-    return r ? r.resource_name || r.resource_code : "—";
+    return r ? r.resource_name || r.resource_code : NA;
   };
 
   return (
@@ -169,10 +171,10 @@ export default function ParameterPanel() {
           <p className="mt-0.5 text-xs" style={S.sub}>{t("paramSubtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="nf-input-sm px-2" style={S.input}>
+          <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} fullWidth={false} className="nf-input-sm w-36 px-2" style={S.input}>
             <option value="">{t("paramAllTypes")}</option>
             {PARAMETER_TYPES.map((pt) => <option key={pt} value={pt}>{pt}</option>)}
-          </select>
+          </Select>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("paramSearchPlaceholder")} className="nf-input-sm pl-8 pr-3" style={S.input} />
@@ -209,10 +211,10 @@ export default function ParameterPanel() {
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{row.parameter_code}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>{row.parameter_name}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.parameter_type}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.item_id ? itemLabel(row.item_id) : row.resource_id ? resourceLabel(row.resource_id) : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{row.item_id ? itemLabel(row.item_id) : row.resource_id ? resourceLabel(row.resource_id) : NA}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{row.qty_method}</TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>
-                      {row.default_qty_per_unit ? `${formatRate(row.default_qty_per_unit)}/unit` : row.default_qty_per_batch ? `${formatQuantity(row.default_qty_per_batch)}/batch` : "—"} {row.default_uom || ""}
+                      {row.default_qty_per_unit ? `${formatRate(row.default_qty_per_unit)}/unit` : row.default_qty_per_batch ? `${formatQuantity(row.default_qty_per_batch)}/batch` : NA} {row.default_uom || ""}
                     </TableCell>
                   </TableRow>
                 ))
@@ -250,42 +252,42 @@ export default function ParameterPanel() {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("paramFieldType")}</label>
-              <select value={form.parameter_type} onChange={(e) => setForm((f: Row) => ({ ...f, parameter_type: e.target.value, item_id: "", resource_id: "" }))} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={form.parameter_type} onChange={(e) => setForm((f: Row) => ({ ...f, parameter_type: e.target.value, item_id: "", resource_id: "" }))} className={`${inputCls} nf-select`} style={S.input}>
                 {PARAMETER_TYPES.map((pt) => <option key={pt} value={pt}>{pt}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("paramFieldQtyMethod")}</label>
-              <select value={form.qty_method} onChange={(e) => setForm((f: Row) => ({ ...f, qty_method: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={form.qty_method} onChange={(e) => setForm((f: Row) => ({ ...f, qty_method: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                 {QTY_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+              </Select>
             </div>
 
             {["CONSUMPTION", "OUTPUT"].includes(form.parameter_type) && (
               <div className="flex flex-col gap-1.5">
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldItem")}</label>
-                <select value={form.item_id} onChange={(e) => setForm((f: Row) => ({ ...f, item_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+                <Select value={form.item_id} onChange={(e) => setForm((f: Row) => ({ ...f, item_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramSelectPlaceholder")}</option>
                   {(form.parameter_type === "CONSUMPTION" ? consumableItems : items).map((it) => <option key={it.item_id} value={it.item_id}>{it.item_name || it.item_code}</option>)}
-                </select>
+                </Select>
               </div>
             )}
             {form.parameter_type === "OVERHEAD" && (
               <div className="flex flex-col gap-1.5">
                 <label className="nf-text-label" style={S.sub}>{t("paramFieldResourceOptional")}</label>
-                <select value={form.resource_id} onChange={(e) => setForm((f: Row) => ({ ...f, resource_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+                <Select value={form.resource_id} onChange={(e) => setForm((f: Row) => ({ ...f, resource_id: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                   <option value="">{t("paramNone")}</option>
                   {resources.map((r) => <option key={r.resource_id} value={r.resource_id}>{r.resource_name || r.resource_code}</option>)}
-                </select>
+                </Select>
               </div>
             )}
 
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>{t("paramFieldDefaultUom")}</label>
-              <select value={form.default_uom} onChange={(e) => setForm((f: Row) => ({ ...f, default_uom: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
+              <Select value={form.default_uom} onChange={(e) => setForm((f: Row) => ({ ...f, default_uom: e.target.value }))} className={`${inputCls} nf-select`} style={S.input}>
                 <option value="">{t("paramSelectPlaceholder")}</option>
                 {uoms.map((u) => <option key={u.uom_code} value={u.uom_code}>{u.uom_code}</option>)}
-              </select>
+              </Select>
             </div>
 
             {form.qty_method === "PER_UNIT" && (

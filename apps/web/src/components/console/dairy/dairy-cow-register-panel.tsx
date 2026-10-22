@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
@@ -105,7 +106,7 @@ export default function DairyCowRegisterPanel() {
   }, [load]);
 
   const breedName = (id?: string | null) =>
-    breeds.find((b) => b.breed_id === id)?.breed_name || "—";
+    breeds.find((b) => b.breed_id === id)?.breed_name || NA;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -203,7 +204,7 @@ export default function DairyCowRegisterPanel() {
         />
         <StatCard
           label={t("dyAvgYieldPerCow")}
-          value={stats.avg === null ? "—" : `${stats.avg.toFixed(1)} L`}
+          value={stats.avg === null ? NA : `${stats.avg.toFixed(1)} L`}
           sub={stats.avg === null ? t("dyNoYieldToday") : t("dyDailyParlorAverage")}
           
         />
@@ -308,15 +309,15 @@ export default function DairyCowRegisterPanel() {
                           <p className="text-[10px] font-normal text-[var(--text-secondary)]">{cow.rfid_tag}</p>
                         )}
                       </td>
-                      <td className="p-3 font-mono text-[11px] text-[var(--text-secondary)]">{cow.rfid_tag || "—"}</td>
+                      <td className="p-3 font-mono text-[11px] text-[var(--text-secondary)]">{cow.rfid_tag || NA}</td>
                       <td className="p-3">{cow.breed_name || breedName(cow.breed_id)}</td>
-                      <td className="p-3 text-center font-mono font-bold">{cow.parity_count || "—"}</td>
-                      <td className="p-3 text-center font-mono">{dim === null ? "—" : t("dyDaysShort", { n: String(dim) })}</td>
+                      <td className="p-3 text-center font-mono font-bold">{cow.parity_count || NA}</td>
+                      <td className="p-3 text-center font-mono">{dim === null ? NA : t("dyDaysShort", { n: String(dim) })}</td>
                       <td className="p-3 text-right font-mono font-bold text-[var(--accent)]">
-                        {milk ? `${Number(milk.quantity_litres).toFixed(1)} L` : "—"}
+                        {milk ? `${Number(milk.quantity_litres).toFixed(1)} L` : NA}
                       </td>
                       <td className="p-3 text-right font-mono text-[11px]">
-                        {milk?.fat_pct ? `${Number(milk.fat_pct).toFixed(2)}% / ${Number(milk.snf_pct || 0).toFixed(2)}%` : "—"}
+                        {milk?.fat_pct ? `${Number(milk.fat_pct).toFixed(2)}% / ${Number(milk.snf_pct || 0).toFixed(2)}%` : NA}
                       </td>
                       <td className="p-3 text-right"><StatusBadge status={cow.status} /></td>
                     </tr>

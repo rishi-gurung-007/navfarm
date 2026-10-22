@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/components/ui/dialog";
@@ -141,7 +142,7 @@ export default function ProfilePage() {
             <div>
               <dt className="text-[12px]" style={{ color: "var(--text-muted)" }}>{t("profileMemberSince")}</dt>
               <dd className="text-[14px]" style={{ color: "var(--text-primary)" }}>
-                {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : "—"}
+                {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : NA}
               </dd>
             </div>
           </dl>

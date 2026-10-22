@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useState, useRef, useEffect } from "react";
 import {
   Scan, Search, Loader2, CheckCircle2, Pill, HeartPulse,
@@ -23,7 +24,7 @@ function unwrap<T = any>(res: any): T {
 }
 
 function formatDate(d?: string | null) {
-  if (!d) return "—";
+  if (!d) return NA;
   return new Date(d).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -275,7 +276,7 @@ export default function RfidScannerModal({
               <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 pt-3 border-t">
                 <div>
                   <span className="block text-[10px] uppercase font-semibold" style={S.muted}>{t("rfmRfidTag")}</span>
-                  <span className="font-mono font-medium" style={S.primary}>{animal.rfid_tag || "—"}</span>
+                  <span className="font-mono font-medium" style={S.primary}>{animal.rfid_tag || NA}</span>
                 </div>
                 <div>
                   <span className="block text-[10px] uppercase font-semibold" style={S.muted}>{t("rfmCurrentStage")}</span>
@@ -428,7 +429,7 @@ export default function RfidScannerModal({
                               <td className="px-2.5 py-1.5 font-mono" style={S.primary}>{formatDate(m.mating_date)}</td>
                               <td className="px-2.5 py-1.5" style={S.sub}>{m.mating_type || "AI"}</td>
                               <td className="px-2.5 py-1.5 font-mono font-bold" style={S.accent}>
-                                {animal.gender === "M" || animal.animal_type === "BOAR" ? m.sow_code || "—" : m.boar_code || m.semen_lot_no || "—"}
+                                {animal.gender === "M" || animal.animal_type === "BOAR" ? m.sow_code || NA : m.boar_code || m.semen_lot_no || NA}
                               </td>
                               <td className="px-2.5 py-1.5">
                                 <span
@@ -496,10 +497,10 @@ export default function RfidScannerModal({
                                 {f.piglets_weaned || 0}
                               </td>
                               <td className="px-2.5 py-1.5 font-mono" style={S.sub}>
-                                {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : "—"}
+                                {f.avg_weaning_weight_kg ? `${formatQuantity(f.avg_weaning_weight_kg)} kg` : NA}
                               </td>
                               <td className="px-2.5 py-1.5 font-mono text-[10px]" style={S.sub}>
-                                {f.piglet_batch_no || "—"}
+                                {f.piglet_batch_no || NA}
                               </td>
                             </tr>
                           ))}

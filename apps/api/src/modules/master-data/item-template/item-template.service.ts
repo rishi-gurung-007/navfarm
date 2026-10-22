@@ -109,12 +109,7 @@ export class ItemTemplateService {
     }
 
     if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.itemTemplate.company_id, companyId),
-          isNull(schema.itemTemplate.company_id),
-        )!,
-      );
+      conditions.push(eq(schema.itemTemplate.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     }
 
     const query = this.db
@@ -182,12 +177,7 @@ export class ItemTemplateService {
     }
 
     if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.itemTemplate.company_id, companyId),
-          isNull(schema.itemTemplate.company_id),
-        )!,
-      );
+      conditions.push(eq(schema.itemTemplate.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     }
 
     const rows = await this.db

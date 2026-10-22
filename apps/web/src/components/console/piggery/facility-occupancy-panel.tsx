@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import {
   Loader2, Building2, AlertTriangle, ShieldCheck,
@@ -75,7 +76,14 @@ export default function FacilityOccupancyPanel() {
     loadOccupancy();
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const totalCapacity = locations.reduce((sum, l) => sum + (l.max_capacity || 0), 0);
+  // Head places only, counted once: a store's KG or doses are not pen places, and a farm's or shed's
+  // capacity already holds the pens and crates under it, so only the innermost location with a head
+  // capacity adds to the total.
+  const isHeadPlace = (l: any) => l.max_capacity && (l.capacity_uom || "HEAD").toUpperCase() === "HEAD";
+  const headParents = new Set(locations.filter(isHeadPlace).map((l: any) => l.parent_location_id).filter(Boolean));
+  const totalCapacity = locations
+    .filter((l: any) => isHeadPlace(l) && !headParents.has(l.location_id))
+    .reduce((sum, l) => sum + (l.max_capacity || 0), 0);
   const totalOccupied = locations.reduce((sum, l) => sum + (l.current_occupancy || 0), 0);
   const totalQuarantinePens = locations.filter((l) => l.biosecurity_status === "QUARANTINE_ACTIVE").length;
   const totalOverCapacity = locations.filter((l) => l.is_over_capacity).length;
@@ -95,7 +103,7 @@ export default function FacilityOccupancyPanel() {
         <StatCard
           icon={Building2}
           label={t("fopTotalCapacity")}
-          value={totalCapacity > 0 ? totalCapacity.toLocaleString() : "—"}
+          value={totalCapacity > 0 ? totalCapacity.toLocaleString() : NA}
           unit={t("fopHead")}
           sub={t("fopConfiguredLocationsPens", { count: locations.length })}
         />

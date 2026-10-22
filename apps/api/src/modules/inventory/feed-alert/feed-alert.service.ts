@@ -401,7 +401,7 @@ export class FeedAlertService {
     const window = Math.max(0, ...rules.map((r) => r.thresholdValue ?? 3));
     const P = schema.reportingPeriod;
     const periods = await this.db.select().from(P).where(and(
-      eq(P.tenant_id, ctx.tenantId), or(eq(P.company_id, ctx.companyId), isNull(P.company_id)), isNull(P.deleted_at),
+      eq(P.tenant_id, ctx.tenantId), eq(P.company_id, ctx.companyId), isNull(P.deleted_at),
       sql`${P.stock_take_date} >= DATE_SUB(${today}, INTERVAL 62 DAY)`,
     ));
     const L = schema.locationMaster;
@@ -586,11 +586,11 @@ export class FeedAlertService {
     return rows.map((r) => r.code);
   }
 
-  /** Every rule of the company (or tenant-wide) that could apply to this farm — inactive ones too, but never a soft-deleted one: its open alerts resolve as RULE_OFF either way. */
+  /** Every rule of the company that could apply to this farm — inactive ones too, but never a soft-deleted one: its open alerts resolve as RULE_OFF either way. */
   private async loadRules(companyId: string, farmId: string, tenantId: string): Promise<AlertRuleFact[]> {
     const rows = await this.db.select().from(schema.alertRule).where(and(
       eq(schema.alertRule.tenant_id, tenantId),
-      or(eq(schema.alertRule.company_id, companyId), isNull(schema.alertRule.company_id)),
+      eq(schema.alertRule.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
       or(eq(schema.alertRule.farm_id, farmId), isNull(schema.alertRule.farm_id)),
       isNull(schema.alertRule.deleted_at),
     ));

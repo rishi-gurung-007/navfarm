@@ -1,5 +1,13 @@
 "use client";
 
+import { NA } from "@/utils/na";
+import {
+  fetchAllPages,
+  biologicalCensus,
+  activeBatches,
+  activeBatchValuation,
+  batchHead,
+} from "./dashboard-counts";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -46,16 +54,19 @@ import { useCompanyCurrency } from "../../../hooks/useCompanyCurrency";
 import { LoadingState, ErrorState } from "../../../components/ui/states";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { ConsolePage } from "../../../components/ui/console-page";
+import { Select } from "../../../components/ui/select";
 import { StatRow, StatCard } from "../../../components/ui/stat-row";
 import { resolveLobFamily } from "@/lib/lob";
 import PiggeryGmDashboard from "@/components/console/piggery/piggery-gm-dashboard";
+import { canOpen } from "@/utils/nav-permissions";
+import type { TranslationKeys } from "@/utils/translations";
 
 const CHART_COLORS = ["var(--accent)", "var(--success)", "var(--info)", "var(--warning)", "#8a6fd6", "#4fb0a5"];
 
 function ChartCard({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-      <div className="flex items-center justify-between mb-4">
+    <div className="rounded-[var(--radius-md)] border p-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+      <div className="mb-3 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">{title}</h3>
           {subtitle && <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{subtitle}</p>}
@@ -83,6 +94,25 @@ const tooltipStyle = {
   color: "var(--text-primary)",
 };
 
+/** The pages a stores, mill or finance role works in, as dashboard tiles — each shown only when the role may open it. */
+const WORK_TILES: Array<{ href: string; labelKey: TranslationKeys }> = [
+  { href: "/inventory/balance", labelKey: "invStockBalance" },
+  { href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
+  { href: "/inventory/transfers", labelKey: "invTransfers" },
+  { href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
+  { href: "/inventory/ledger", labelKey: "invLedger" },
+  { href: "/inventory/feed-forecast?tab=forecast", labelKey: "navFeedForecast" },
+  { href: "/inventory/feed-forecast?tab=mill-production", labelKey: "mpoTab" },
+  { href: "/inventory/feed-forecast?tab=physical-count", labelKey: "fftTabPhysicalCount" },
+  { href: "/requisitions", labelKey: "navRequisition" },
+  { href: "/approvals", labelKey: "approvals" },
+  { href: "/alerts", labelKey: "navAlerts" },
+  { href: "/finance/journal", labelKey: "financeCosting" },
+  { href: "/expenses/expense", labelKey: "navExpenses" },
+  { href: "/reports/farrowing", labelKey: "rptFarrowingReport" },
+  { href: "/master-data/location", labelKey: "masterData" },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const { t } = useLanguage();
@@ -109,6 +139,8 @@ export default function DashboardPage() {
   // hardcoded behavior, but is now a real, switchable selection.
   const [batchViewMode, setBatchViewMode] = useState<string>("ALL");
   const [piggeryViewMode, setPiggeryViewMode] = useState<"gm" | "operations">("gm");
+  // Each card, chart and section shows only what the user's role may open (Rishi, 20 Oct): the menu's own rule.
+  const can = (href: string) => canOpen(user, href);
 
   useEffect(() => {
     const token = getStoredToken();
@@ -138,6 +170,7 @@ export default function DashboardPage() {
       // active company's name/id is already in storedUser.companies, so
       // skip both tenant-wide calls instead of syncing data nothing reads.
       const isTenantScope = currentScope === "TENANT";
+      const scopeParam = compId && !isTenantScope ? `companyId=${compId}&` : "";
       const [tenant, compRes, areasRes, batchRes, animalRes] = await Promise.all([
         isTenantScope ? api.get(`/tenant/${tenantId}`).catch(() => null) : Promise.resolve(null),
         isTenantScope ? api.get(`/company/tenant/${tenantId}`).catch(() => []) : Promise.resolve(storedUser.companies || []),
@@ -146,8 +179,15 @@ export default function DashboardPage() {
         // not swallowed into empty arrays: a farm-scoped 403 rendered as
         // "0 herd / no batches recorded yet", which reads as lost data rather
         // than as the wrong-farm refusal it is.
-        api.get(`/batch${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=100` : "?limit=100"}`),
-        api.get(`/animal${compId && currentScope !== "TENANT" ? `?companyId=${compId}&limit=500` : "?limit=500"}`),
+        // Every page is fetched: a single `?limit=100` counted only the first 100 batches.
+        // Only what the role may see: a storekeeper's dashboard used to stop at "Insufficient permissions" (20 Oct).
+        canOpen(storedUser, "/batches")
+          ? fetchAllPages((limit, offset) => api.get(`/batch?${scopeParam}limit=${limit}&offset=${offset}`))
+          : Promise.resolve([] as any[]),
+        // The animal list answers nothing without a company, so tenant scope asks per company below.
+        isTenantScope || !canOpen(storedUser, "/livestock")
+          ? Promise.resolve([] as any[])
+          : fetchAllPages((limit, offset) => api.get(`/animal?${scopeParam}limit=${limit}&offset=${offset}`)),
       ]);
 
       setTenantInfo(tenant);
@@ -160,8 +200,19 @@ export default function DashboardPage() {
       }
       setCompanies(companyList);
       if (Array.isArray(areasRes)) setOperationalAreas(areasRes);
-      setBatches(Array.isArray(batchRes) ? batchRes : (batchRes?.data ?? []));
-      setAnimals(Array.isArray(animalRes) ? animalRes : (animalRes?.data ?? []));
+      setBatches(batchRes);
+      // Tenant scope: every company's live animals (a companyless /animal returned none, so the census left out
+      // the whole registered herd).
+      const tenantAnimals = isTenantScope
+        ? (
+            await Promise.all(
+              companyList.map((c: any) =>
+                fetchAllPages((limit, offset) => api.get(`/animal?limit=${limit}&offset=${offset}`, { asCompany: c.company_id })),
+              ),
+            )
+          ).flat()
+        : animalRes;
+      setAnimals(tenantAnimals);
     } catch (e: any) {
       setError(e?.message || t("dashLoadFailed"));
     } finally {
@@ -259,19 +310,20 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Filters Bar ── */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2.5 md:w-auto md:max-w-[52rem]">
           {/* Tenant Scope Filters: Company + LOB */}
           {scope === "TENANT" && (
             <>
               {companies.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Building2 className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashCompanyColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashCompanyColon")}</span>
+                  <Select
                     value={filterTenantCompany}
                     onChange={(e) => setFilterTenantCompany(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "10.5rem", maxWidth: "min(10.5rem, calc(100vw - 10rem))" }}
                   >
                     <option value="ALL">{t("dashAllCompanies", { n: companies.length })}</option>
                     {companies.map((c) => (
@@ -279,19 +331,20 @@ export default function DashboardPage() {
                         {c.company_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
 
               {availableLobs.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Filter className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
+                  <Select
                     value={filterLob}
                     onChange={(e) => setFilterLob(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "10rem", maxWidth: "min(10rem, calc(100vw - 8rem))" }}
                   >
                     <option value="ALL">{t("dashAllLobs", { n: availableLobs.length })}</option>
                     {availableLobs.map((lob) => (
@@ -299,7 +352,7 @@ export default function DashboardPage() {
                         {lob}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -308,14 +361,15 @@ export default function DashboardPage() {
           {/* Company Scope Filters: LOB + Operational Area */}
           {scope === "COMPANY" && availableLobs.length > 0 && (
             <>
-              <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+              <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                 <Filter className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                <span style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
-                <select
+                <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashLobColon")}</span>
+                <Select
                   value={filterLob}
                   onChange={(e) => setFilterLob(e.target.value)}
-                  className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                  style={{ color: "var(--text-primary)" }}
+                  fullWidth={false}
+                  className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                  style={{ color: "var(--text-primary)", width: "10rem", maxWidth: "min(10rem, calc(100vw - 8rem))" }}
                 >
                   <option value="ALL">{t("dashAllCompanyLobs", { n: availableLobs.length })}</option>
                   {availableLobs.map((lob) => (
@@ -323,18 +377,19 @@ export default function DashboardPage() {
                       {lob}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               {operationalAreas.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Layers className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashOperationalAreaColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashOperationalAreaColon")}</span>
+                  <Select
                     value={filterArea}
                     onChange={(e) => setFilterArea(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "12rem", maxWidth: "min(12rem, calc(100vw - 12rem))" }}
                   >
                     <option value="ALL">{t("dashAllAreas", { n: operationalAreas.length })}</option>
                     {operationalAreas.map((a) => (
@@ -342,7 +397,7 @@ export default function DashboardPage() {
                         {a.area_name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -351,19 +406,20 @@ export default function DashboardPage() {
           {/* Operational Area Badge + Batch view toggle */}
           {scope === "OPERATIONAL" && (
             <>
-              <div className="flex items-center gap-2 rounded-[var(--radius-pill)] px-3 py-1.5 text-xs font-semibold" style={{ backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)" }}>
+              <div className="flex h-11 items-center gap-2 rounded-[var(--radius-pill)] px-3 text-xs font-semibold" style={{ backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)" }}>
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: "var(--success)" }} />
                 <span>{activeArea?.area_name || activeLob}</span>
               </div>
               {batches.length > 0 && (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                <div className="flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-xs font-medium" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <Layers className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span style={{ color: "var(--text-secondary)" }}>{t("dashBatchColon")}</span>
-                  <select
+                  <span className="shrink-0 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{t("dashBatchColon")}</span>
+                  <Select
                     value={batchViewMode}
                     onChange={(e) => setBatchViewMode(e.target.value)}
-                    className="min-w-0 max-w-full truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{ color: "var(--text-primary)" }}
+                    fullWidth={false}
+                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
+                    style={{ color: "var(--text-primary)", width: "12rem", maxWidth: "min(12rem, calc(100vw - 8rem))" }}
                   >
                     <option value="ALL">{t("dashAllBatches", { n: batches.length })}</option>
                     {batches.map((b) => (
@@ -371,7 +427,7 @@ export default function DashboardPage() {
                         {b.batch_no}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               )}
             </>
@@ -382,10 +438,33 @@ export default function DashboardPage() {
       {/* ========================================================================= */}
       {/* ── 1. TENANT SCOPE DASHBOARD (Group Multi-Entity Command Center) ── */}
       {/* ========================================================================= */}
+      {/* A role without batches or animals (stores, mill, finance) gets its own work, not an empty or refused
+          dashboard (20 Oct): one tile per page it may open. */}
+      {scope !== "TENANT" && !can("/batches") && !can("/livestock") && (
+        <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <h2 className="text-sm font-semibold">{t("dashYourWork")}</h2>
+          <p className="mb-4 text-xs" style={{ color: "var(--text-secondary)" }}>{t("dashYourWorkDesc")}</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {WORK_TILES.filter((tile) => can(tile.href)).map((tile) => (
+              <Link
+                key={tile.href}
+                href={tile.href}
+                className="nf-press flex items-center justify-between rounded-[var(--radius-sm)] border px-4 py-3 text-sm font-medium transition-colors hover:bg-[var(--surface-raised)]"
+                style={{ borderColor: "var(--border)", color: "var(--text-primary)" }}
+              >
+                <span>{t(tile.labelKey)}</span>
+                <ChevronRight className="h-4 w-4" style={{ color: "var(--accent)" }} />
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {scope === "TENANT" && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* 4 Group KPI Stat Strips */}
           <StatRow>
+            {can("/companies") && (
             <StatCard
               icon={Building2}
               label={t("dashOperatingCompanies")}
@@ -399,10 +478,12 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/livestock") && (
             <StatCard
               icon={Activity}
               label={t("dashBiologicalCensus")}
-              value={tenantScopedAnimals.length > 0 ? tenantScopedAnimals.length : tenantScopedBatches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0)}
+              value={biologicalCensus(tenantScopedBatches, tenantScopedAnimals)}
               unit={t("dashHeadCount")}
               onClick={() => router.push("/livestock")}
               sub={
@@ -412,10 +493,12 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/batches") && (
             <StatCard
               icon={Layers}
               label={t("dashActiveBatches")}
-              value={tenantScopedBatches.filter(b => b.status === "ACTIVE" || !b.status).length}
+              value={activeBatches(tenantScopedBatches).length}
               unit={t("dashInProgress")}
               onClick={() => router.push("/batches")}
               sub={
@@ -425,10 +508,12 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
+            {can("/finance/journal") && (
             <StatCard
               icon={DollarSign}
               label={t("dashGroupBatchValuation")}
-              value={formatMoney(tenantScopedBatches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0))}
+              value={formatMoney(activeBatchValuation(tenantScopedBatches))}
               unit={t("dashWip")}
               onClick={() => router.push("/finance/journal")}
               sub={
@@ -438,6 +523,7 @@ export default function DashboardPage() {
                 </span>
               }
             />
+            )}
           </StatRow>
 
           {/* Batches & Population by Company */}
@@ -453,7 +539,7 @@ export default function DashboardPage() {
                     return {
                       name: c.company_name?.length > 18 ? `${c.company_name.slice(0, 18)}…` : c.company_name,
                       Batches: cBatches.length,
-                      Population: cAnimals.length > 0 ? cAnimals.length : cBatches.reduce((s, b) => s + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0),
+                      Population: biologicalCensus(cBatches, cAnimals),
                     };
                   })}
                   margin={{ top: 4, right: 8, left: -16, bottom: 0 }}
@@ -471,7 +557,7 @@ export default function DashboardPage() {
           </ChartCard>
 
           {/* Tenant Executive Multi-Company Benchmark Table */}
-          <div className="rounded-[var(--radius-md)] border p-5 space-y-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+          <div className="rounded-[var(--radius-md)] border p-4 space-y-3" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">{t("dashEntityMatrixTitle")}</h2>
@@ -509,9 +595,7 @@ export default function DashboardPage() {
                     const compAreas = operationalAreas.filter((a) => a.company_id === comp.company_id);
                     const compAnimals = animals.filter((a) => a.company_id === comp.company_id);
                     const compBatches = batches.filter((b) => b.company_id === comp.company_id);
-                    const compHeadcount = compAnimals.length > 0
-                      ? compAnimals.length
-                      : compBatches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
+                    const compHeadcount = biologicalCensus(compBatches, compAnimals);
 
                     return (
                       <tr key={comp.company_id} className="hover:bg-[var(--surface-raised)] transition-colors">
@@ -565,12 +649,13 @@ export default function DashboardPage() {
       {/* ── 2. COMPANY SCOPE DASHBOARD (Company Overview & Operational Areas) ── */}
       {/* ========================================================================= */}
       {scope === "COMPANY" && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* 4 Company KPI Stat Strips */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {can("/operational-areas") && (
             <div
               onClick={() => router.push("/operational-areas")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -588,10 +673,12 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/livestock") && (
             <div
               onClick={() => router.push("/livestock")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -602,7 +689,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {animals.length > 0 ? animals.length : batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0)}
+                  {biologicalCensus(batches, animals)}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashHeadCount")}</span>
               </div>
@@ -611,10 +698,12 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/batches") && (
             <div
               onClick={() => router.push("/batches")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -625,7 +714,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {batches.filter(b => b.status === "ACTIVE" || !b.status).length}
+                  {activeBatches(batches).length}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashBatchesWord")}</span>
               </div>
@@ -634,10 +723,12 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
 
+            {can("/finance/journal") && (
             <div
               onClick={() => router.push("/finance/journal")}
-              className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
+              className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
               style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
             >
               <div className="flex items-center justify-between">
@@ -648,7 +739,7 @@ export default function DashboardPage() {
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold tracking-tight font-mono">
-                  {formatMoney(batches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0))}
+                  {formatMoney(activeBatchValuation(batches))}
                 </span>
                 <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>{t("dashWip")}</span>
               </div>
@@ -657,9 +748,11 @@ export default function DashboardPage() {
                 <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
               </p>
             </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {can("/batches") && (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ChartCard title={t("dashBatchesByOpArea")} subtitle={t("dashBatchesByOpAreaDesc")}>
               {operationalAreas.length === 0 ? (
                 <EmptyChartState label={t("dashNoOpAreasConfigured")} />
@@ -718,10 +811,12 @@ export default function DashboardPage() {
               )}
             </ChartCard>
           </div>
+          )}
 
           {/* Operational Area Cards */}
-          <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
-            <div className="flex items-center justify-between mb-4">
+          {can("/operational-areas") && (
+          <div className="rounded-[var(--radius-md)] border p-4" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+            <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold">{t("dashOpAreasCount", { n: companyVisibleAreas.length })}</h2>
                 <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
@@ -733,7 +828,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {companyVisibleAreas.length === 0 && (
                 <p className="text-xs col-span-full text-center py-6" style={{ color: "var(--text-muted)" }}>
                   {t("dashNoOpAreasMatchFilters")}
@@ -745,7 +840,7 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={area.area_id}
-                    className="flex flex-col justify-between rounded-[var(--radius-sm)] border p-4 transition-all hover:bg-[var(--surface)]"
+                    className="flex flex-col justify-between rounded-[var(--radius-sm)] border p-3 transition-all hover:bg-[var(--surface)]"
                     style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}
                   >
                     <div>
@@ -781,19 +876,20 @@ export default function DashboardPage() {
               })}
             </div>
           </div>
+          )}
         </div>
       )}
 
       {/* ========================================================================= */}
       {/* ── 3. OPERATIONAL SCOPE: PIGGERY DASHBOARD ── */}
       {/* ========================================================================= */}
-      {scope === "OPERATIONAL" && activeLob === "PIGGERY" && (() => {
+      {scope === "OPERATIONAL" && activeLob === "PIGGERY" && (can("/batches") || can("/livestock")) && (() => {
         const activeBatch = singleBatch || batches.find(b => b.status === "ACTIVE") || batches[0];
-        const aggAssignedHead = batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
+        const aggAssignedHead = biologicalCensus(batches, animals);
         const assignedHead = isAllBatchesView
-          ? (animals.length > 0 ? animals.length : aggAssignedHead)
-          : Number(activeBatch?.closing_quantity) || Number(activeBatch?.opening_quantity) || (animals.length > 0 ? animals.length : 0);
-        const aggWip = batches.reduce((sum, b) => sum + (Number(b.wip_value) || 0), 0);
+          ? aggAssignedHead
+          : activeBatch ? batchHead(activeBatch) : 0;
+        const aggWip = activeBatchValuation(batches);
 
         const stageBreakdown = Object.entries(
           batches.reduce((acc: Record<string, number>, b) => {
@@ -805,11 +901,13 @@ export default function DashboardPage() {
 
         return (
           <div className="space-y-6">
-            {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations */}
-            <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: "var(--border)" }}>
+            {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
+                so a role without the Animal Register sees the batch view only. */}
+            {can("/livestock") && (
+            <div className="flex items-center gap-2 border-b pb-2" style={{ borderColor: "var(--border)" }}>
               <button
                 onClick={() => setPiggeryViewMode("gm")}
-                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
                   piggeryViewMode === "gm"
                     ? "bg-[var(--accent)] text-white shadow-xs"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
@@ -821,7 +919,7 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setPiggeryViewMode("operations")}
-                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
                   piggeryViewMode === "operations"
                     ? "bg-[var(--accent)] text-white shadow-xs"
                     : "text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
@@ -831,13 +929,15 @@ export default function DashboardPage() {
                 <span>Batch Lifecycle Operations</span>
               </button>
             </div>
+            )}
 
-            {piggeryViewMode === "gm" ? (
+            {piggeryViewMode === "gm" && can("/livestock") ? (
               <PiggeryGmDashboard />
             ) : (
               <div className="space-y-6">
                 {/* 4 Piggery Operational Stat Strips */}
                 <StatRow>
+              {can("/livestock") && (
               <StatCard
                 icon={Activity}
                 label={t("dashBreedingSowsGilts")}
@@ -848,18 +948,20 @@ export default function DashboardPage() {
                   <span className="flex items-center justify-between">
                     {/* Real breed only — this used to fall back to a hardcoded
                         "Large White lineage", which showed on Landrace batches. */}
-                    <span>{activeBatch?.breed_name || "—"}</span>
+                    <span>{activeBatch?.breed_name || NA}</span>
                     <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                   </span>
                 }
               />
+              )}
+              {can("/batches") && (
               <StatCard
                 icon={Layers}
                 label={isAllBatchesView ? t("dashBatchesInView") : t("dashActiveGestationBatch")}
                 // In "all batches" mode this rendered the whole sentence
                 // "All batches (2)" at metric size — a phrase styled as a number,
                 // which broke badly in non-Latin scripts. Show the count.
-                value={isAllBatchesView ? batches.length : (activeBatch?.batch_no || "—")}
+                value={isAllBatchesView ? batches.length : (activeBatch?.batch_no || NA)}
                 onClick={() => router.push("/batches")}
                 sub={
                   <span className="flex items-center justify-between">
@@ -868,10 +970,12 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
+              {can("/batches/records") && (
               <StatCard
                 icon={Wheat}
                 label={t("dashActiveBatches")}
-                value={batches.length}
+                value={activeBatches(batches).length}
                 unit={t("dashBatchesWord")}
                 onClick={() => router.push("/batches/records")}
                 sub={
@@ -881,6 +985,8 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
+              {can("/livestock") && (
               <StatCard
                 icon={DollarSign}
                 label={t("dashBatchWipValuation")}
@@ -894,6 +1000,7 @@ export default function DashboardPage() {
                   </span>
                 }
               />
+              )}
             </StatRow>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -941,9 +1048,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
+                {(can("/batches/entry") || can("/livestock") || can("/livestock/analytics")) && (
                 <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <h3 className="text-sm font-semibold mb-3">{t("quickActionsHeading")}</h3>
                   <div className="space-y-2">
+                    {can("/batches/entry") && (
                     <button
                       onClick={() => router.push("/batches/entry")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -952,6 +1061,8 @@ export default function DashboardPage() {
                       <span>{t("dashLogDailyOperations")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock") && (
                     <button
                       onClick={() => router.push("/livestock")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -960,6 +1071,8 @@ export default function DashboardPage() {
                       <span>{t("dashAnimalEarTagRegister")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock/analytics") && (
                     <button
                       onClick={() => router.push("/livestock/analytics")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -968,8 +1081,10 @@ export default function DashboardPage() {
                       <span>Piggery GM Executive Dashboard</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>
@@ -981,7 +1096,7 @@ export default function DashboardPage() {
       {/* ========================================================================= */}
       {/* ── 4. OPERATIONAL SCOPE: DAIRY DASHBOARD ── */}
       {/* ========================================================================= */}
-      {scope === "OPERATIONAL" && activeLob === "DAIRY" && (() => {
+      {scope === "OPERATIONAL" && activeLob === "DAIRY" && (can("/batches") || can("/livestock")) && (() => {
         const dairyBatches = batches.filter(b => (b.batch_no || "").includes("COW") || (b.lob_name || "").includes("DAIRY"));
         const activeDairyBatch = singleBatch || dairyBatches[0] || batches[0];
         const dairyHead = animals.filter(a => a.animal_type?.includes("COW") || a.breed_name?.includes("Holstein") || a.gender === "F").length || 80;
@@ -998,6 +1113,7 @@ export default function DashboardPage() {
           <div className="space-y-6">
             {/* 4 Dairy Operational Stat Strips */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {can("/livestock") && (
               <div
                 onClick={() => router.push("/livestock")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1018,7 +1134,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/batches/entry") && (
               <div
                 onClick={() => router.push("/batches/entry")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1039,7 +1157,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/batches/records") && (
               <div
                 onClick={() => router.push("/batches/records")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1060,7 +1180,9 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
 
+              {can("/inventory/balance") && (
               <div
                 onClick={() => router.push("/inventory/balance")}
                 className="nf-press group rounded-[var(--radius-md)] border p-5 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
@@ -1083,6 +1205,7 @@ export default function DashboardPage() {
                   <ArrowUpRight className="h-3.5 w-3.5 text-[var(--accent)]" />
                 </p>
               </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1123,9 +1246,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
+                {(can("/batches/entry") || can("/livestock")) && (
                 <div className="rounded-[var(--radius-md)] border p-5" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
                   <h3 className="text-sm font-semibold mb-3">{t("dashDairyQuickActions")}</h3>
                   <div className="space-y-2">
+                    {can("/batches/entry") && (
                     <button
                       onClick={() => router.push("/batches/entry")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -1134,6 +1259,8 @@ export default function DashboardPage() {
                       <span>{t("dashLogDailyMilkingTmr")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
+                    {can("/livestock") && (
                     <button
                       onClick={() => router.push("/livestock")}
                       className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
@@ -1142,8 +1269,10 @@ export default function DashboardPage() {
                       <span>{t("dashDairyCattleRegister")}</span>
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           </div>

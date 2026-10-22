@@ -166,14 +166,11 @@ the message describes nothing that happened.
 
 - Animal code prefix: TDD row 7 and the Animal Register template say
   `PIG-YYYY-SEQ`; BBP §2.1 says `ANM-YYYY-NNNNN`.
-- Does "weaning" mean the sow's event or the piglets' phase? On the BBP's chain
-  (Sow → Piglet Lot → Weaner Batch) the weaner phase belongs to a batch.
-- Residual value: a percentage (our column) or a per-kg rate (the Bio Asset BBP
-  and the 20 Aug MOM)?
-- Reporting currency: §1.1's flowchart says ZWL, its field spec says USD.
-- ZWL or ZiG.
+- Answered 20 Oct (docs/decisions.md): weaning is the Lactation stage (the sow suckles the litter); residual
+  value is a per-kg rate; Base Currency is posted, Local Currency is mapped at the Currency master's rate.
+- Which local currency: ZWL or ZiG (the mechanism is settled, the currency is not).
 - 47 reason codes were promised; 3 exist. Mortality alone is specified as 21.
-- The Kill Sheet and DOA have **no tables**. BBP gives the kill sheet a process
+- The Kill Sheet and DOA have **no tables** (deferred by Rishi, 20 Oct). BBP gives the kill sheet a process
   (attached to the transfer order, carcass weights per line, invoice =
   Delivered Qty × Avg Carcass Weight × Price/KG) but no field specification.
 

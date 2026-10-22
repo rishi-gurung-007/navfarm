@@ -35,12 +35,15 @@ const DEFAULT_RESOURCES = [
   { module_code: "FINANCE", resource: "JOURNAL", name: "Journal Entries", nameKey: "jpJournalEntries" },
   { module_code: "FINANCE", resource: "REPORTS", name: "Financial Reports", nameKey: "rolFinancialReports" },
   { module_code: "FINANCE", resource: "EXPENSE", name: "Expense", nameKey: "expExpense" },
+  // REPORTS — one resource per report (reports-shell.tsx REPORT_SECTIONS)
+  { module_code: "REPORTS", resource: "FARROWING", name: "Farrowing Report", nameKey: "rolFarrowingReport" },
   { module_code: "FINANCE", resource: "STOCK_VARIANCE", name: "Stock Variance (Finance approval)", nameKey: "rolStockVariance" },
   // INVENTORY (Phase 3)
   { module_code: "INVENTORY", resource: "GOODS_RECEIPT", name: "GRN", nameKey: "grpTitle" },
   { module_code: "INVENTORY", resource: "STOCK_TRANSFER", name: "Transfer Order", nameKey: "apDocType_STOCK_TRANSFER" },
   { module_code: "INVENTORY", resource: "STOCK_ADJUSTMENT", name: "Stock Adjustment", nameKey: "invStockAdjustment" },
   { module_code: "INVENTORY", resource: "STOCK_COUNT", name: "Feed Stock Count", nameKey: "rolFeedStockCount" },
+  { module_code: "INVENTORY", resource: "MILL_OUTPUT", name: "Mill Production Output", nameKey: "mpoTab" },
   { module_code: "INVENTORY", resource: "LEDGER", name: "Inventory Ledger", nameKey: "invLedger" },
   { module_code: "INVENTORY", resource: "BIO_ASSET_LEDGER", name: "Bio-Asset Ledger", nameKey: "blBioAssetLedgerTitle" },
   { module_code: "PROCUREMENT", resource: "REQUISITION", name: "Procurement Requisitions", nameKey: "rolProcurementRequisitions" },

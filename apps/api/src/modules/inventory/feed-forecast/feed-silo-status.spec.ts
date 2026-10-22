@@ -205,6 +205,7 @@ describe('buildSelectedSiloDashboard', () => {
       feedInSiloItemCode: null,
       nextDietItemCode: null,
       nextDietItemName: null,
+      nextDietNote: null,
       nextDietFeedType: null,
       nextDietSiloId: null,
       nextDietSiloCode: null,

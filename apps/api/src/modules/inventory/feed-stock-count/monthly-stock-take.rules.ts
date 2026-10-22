@@ -17,6 +17,16 @@ export function stockTakeNo(type: StockTakeType, farmCode: string, year: number,
   return `ST-${middle}-${year}-${String(seq).padStart(5, '0')}`;
 }
 
+/**
+ * A weekly physical count's number, read the same way as the monthly take: PC-FarmCode-YYYY-NNNNN (Rishi, 20 Oct —
+ * NAVFarm design; the workbook numbers only the monthly take). It replaced FSC-<farm uuid>-<epoch>, which named no
+ * farm a person could read and was cut short on the approval request.
+ */
+export function physicalCountNo(farmCode: string, year: number, seq: number): string {
+  if (!farmCode) throw new BadRequestException('A physical count needs the farm code for its number.');
+  return `PC-${farmCode}-${year}-${String(seq).padStart(5, '0')}`;
+}
+
 export interface StockTakePeriod {
   period_id: string;
   period_code: string;

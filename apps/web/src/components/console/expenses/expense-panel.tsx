@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Loader2, Inbox, FileText, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -121,9 +122,9 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const shedsOfFarm = useMemo(() => sheds.filter((s) => s.parent_location_id === form.location_id), [sheds, form.location_id]);
   const accountOptions = useMemo(() => glAccounts.map((a) => ({ value: a.gl_account_id, account_code: a.account_code, account_name: a.account_name })), [glAccounts]);
-  const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || "—";
-  const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || "—";
-  const locName = (id: string) => [...farms, ...sheds].find((l) => l.location_id === id)?.location_name || "—";
+  const accountName = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_name || NA;
+  const accountCode = (id: string) => glAccounts.find((a) => a.gl_account_id === id)?.account_code || NA;
+  const locName = (id: string) => [...farms, ...sheds].find((l) => l.location_id === id)?.location_name || NA;
 
   const toggleSort = (key: ExpenseSortKey) =>
     setSort((cur) =>
@@ -197,7 +198,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
 
   const pickBalanceAccount = (id: string) =>
     // Description is auto-populated from the selected GL account, and stays editable.
-    setForm((f) => ({ ...f, expense_gl_account_id: id, description: f.description && f.description !== accountName(f.expense_gl_account_id) ? f.description : accountName(id) === "—" ? "" : accountName(id) }));
+    setForm((f) => ({ ...f, expense_gl_account_id: id, description: f.description && f.description !== accountName(f.expense_gl_account_id) ? f.description : accountName(id) === NA ? "" : accountName(id) }));
 
   const save = async () => {
     setSaving(true);
@@ -301,15 +302,15 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                     </button>
                   </TableCell>
                   <TableCell className="whitespace-nowrap" style={S.primary}>{r.posting_date}</TableCell>
-                  <TableCell style={S.primary}>{r.location_id ? locName(r.location_id) : "—"}</TableCell>
-                  <TableCell style={S.primary}>{r.sub_location_id ? locName(r.sub_location_id) : "—"}</TableCell>
-                  <TableCell style={S.sub}>{r.description || "—"}</TableCell>
+                  <TableCell style={S.primary}>{r.location_id ? locName(r.location_id) : NA}</TableCell>
+                  <TableCell style={S.primary}>{r.sub_location_id ? locName(r.sub_location_id) : NA}</TableCell>
+                  <TableCell style={S.sub}>{r.description || NA}</TableCell>
                   <TableCell style={S.primary}>
                     {r.expense_gl_account_id ? (
-                      accountCode(r.expense_gl_account_id) !== "—" ? (
+                      accountCode(r.expense_gl_account_id) !== NA ? (
                         <div className="flex flex-col">
                           <span className="font-semibold">{accountCode(r.expense_gl_account_id)}</span>
-                          {accountName(r.expense_gl_account_id) !== "—" && (
+                          {accountName(r.expense_gl_account_id) !== NA && (
                             <span className="text-xs" style={S.sub}>{accountName(r.expense_gl_account_id)}</span>
                           )}
                         </div>
@@ -317,7 +318,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                         accountName(r.expense_gl_account_id)
                       )
                     ) : (
-                      "—"
+                      NA
                     )}
                   </TableCell>
                   <TableCell
@@ -333,7 +334,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                   >
                     {formatAmount(r.amount)}
                   </TableCell>
-                  <TableCell style={S.sub}>{r.remarks || "—"}</TableCell>
+                  <TableCell style={S.sub}>{r.remarks || NA}</TableCell>
                   <TableCell className="text-right"><Badge variant={r.status === "POSTED" ? "success" : "neutral"}>{r.status}</Badge></TableCell>
                   {posts && (
                     <TableCell className="whitespace-nowrap" style={S.sub}>
@@ -349,7 +350,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                           <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
                         </button>
                       ) : (
-                        "—"
+                        NA
                       )}
                     </TableCell>
                   )}
@@ -543,7 +544,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                     {t("jpJournalNo")}
                   </p>
                   <p className="font-semibold text-sm mt-0.5" style={S.accent}>
-                    {viewingEntry.journal_no || "—"}
+                    {viewingEntry.journal_no || NA}
                   </p>
                 </div>
                 <div>
@@ -570,12 +571,12 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 px-1">
                 <div>
                   <span className="font-medium" style={S.muted}>{t("jpDescription")}: </span>
-                  <span className="font-medium" style={S.primary}>{viewingEntry.description || "—"}</span>
+                  <span className="font-medium" style={S.primary}>{viewingEntry.description || NA}</span>
                 </div>
                 <div>
                   <span className="font-medium" style={S.muted}>{t("expLocation")}: </span>
                   <span className="font-medium" style={S.primary}>
-                    {viewingEntry.location_id ? locName(viewingEntry.location_id) : "—"}
+                    {viewingEntry.location_id ? locName(viewingEntry.location_id) : NA}
                     {viewingEntry.sub_location_id ? ` / ${locName(viewingEntry.sub_location_id)}` : ""}
                   </span>
                 </div>
@@ -634,7 +635,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                                 {accountName(l.gl_account_id)}
                               </TableCell>
                               <TableCell className="px-3.5 py-2.5" style={S.sub}>
-                                {l.description || "—"}
+                                {l.description || NA}
                               </TableCell>
                               <TableCell
                                 className="px-3.5 py-2.5 text-right font-medium whitespace-nowrap"
@@ -642,7 +643,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                                   color: deb > 0 ? (isPayment ? "var(--danger)" : "var(--success)") : S.muted.color,
                                 }}
                               >
-                                {deb > 0 ? formatAmount(deb) : "—"}
+                                {deb > 0 ? formatAmount(deb) : NA}
                               </TableCell>
                               <TableCell
                                 className="px-3.5 py-2.5 text-right font-medium whitespace-nowrap"
@@ -650,7 +651,7 @@ export default function ExpensePanel({ docType, posts, mayCreate }: { docType: s
                                   color: cred > 0 ? S.primary.color : S.muted.color,
                                 }}
                               >
-                                {cred > 0 ? formatAmount(cred) : "—"}
+                                {cred > 0 ? formatAmount(cred) : NA}
                               </TableCell>
                             </TableRow>
                           );

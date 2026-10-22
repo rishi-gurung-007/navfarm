@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Search, Loader2, Inbox, Ban } from "lucide-react";
 import QRCode from "react-qr-code";
@@ -13,6 +14,34 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { Badge } from "@/components/ui/badge";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { formatQuantity } from "@/lib/utils";
+import type { TranslationKeys } from "@/utils/translations";
+
+interface ChainNode {
+  batch_no?: string;
+  start_date?: string | null;
+  costing_method?: string | null;
+  parents?: ChainNode[];
+}
+
+/** The batches a pack came from: its own batch, then each batch that fed it, indented under it. */
+function OriginChain({ node, t }: { node: ChainNode; t: (k: TranslationKeys, p?: Record<string, string | number>) => string }) {
+  const method = node.costing_method ? node.costing_method.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : null;
+  return (
+    <div>
+      <div>
+        <span className="font-mono font-semibold" style={{ color: "var(--text-primary)" }}>{node.batch_no ?? NA}</span>
+        {node.start_date && <span style={{ color: "var(--text-secondary)" }}> · {t("pkChainStarted", { date: String(node.start_date).slice(0, 10) })}</span>}
+        {method && <span style={{ color: "var(--text-muted)" }}> · {method}</span>}
+      </div>
+      {node.parents && node.parents.length > 0 && (
+        <div className="mt-1 ml-3 border-l pl-3" style={{ borderColor: "var(--border)" }}>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{t("pkChainFrom")}</div>
+          {node.parents.map((parent, i) => <OriginChain key={`${parent.batch_no}-${i}`} node={parent} t={t} />)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PAGE_SIZE = 25;
 
@@ -77,8 +106,8 @@ export default function PacksPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_code || "—";
-  const batchLabel = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || "—";
+  const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_code || NA;
+  const batchLabel = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || NA;
 
   const filtered = search
     ? rows.filter((r) => (r.pack_no || "").toLowerCase().includes(search.toLowerCase()) || (r.lot_no || "").toLowerCase().includes(search.toLowerCase()))
@@ -180,17 +209,19 @@ export default function PacksPanel() {
             <div className="grid w-full grid-cols-2 gap-3 text-xs">
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkItem")}</p><p style={S.primary}>{itemLabel(viewing.item_id)}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkBatch")}</p><p style={S.primary}>{batchLabel(viewing.batch_id)}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkLotNo")}</p><p style={S.primary}>{viewing.lot_no || "—"}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkGradeLabel")}</p><p style={S.primary}>{viewing.grade || "—"}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{formatQuantity(viewing.net_weight)} / {viewing.gross_weight != null ? formatQuantity(viewing.gross_weight) : "—"} {viewing.pack_uom}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkLotNo")}</p><p style={S.primary}>{viewing.lot_no || NA}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkGradeLabel")}</p><p style={S.primary}>{viewing.grade || NA}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkNetGrossWeight")}</p><p style={S.primary}>{formatQuantity(viewing.net_weight)} / {viewing.gross_weight != null ? formatQuantity(viewing.gross_weight) : NA} {viewing.pack_uom}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkProductionExpiry")}</p><p style={S.primary}>{viewing.production_date} {viewing.expiry_date ? `→ ${viewing.expiry_date}` : ""}</p></div>
-              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkQcLink")}</p><p style={S.primary}>{viewing.qc_id ? t("pkLinkedResult", { result: viewing.qr_data?.qc?.overall_result || "—" }) : t("pkNotLinked")}</p></div>
+              <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkQcLink")}</p><p style={S.primary}>{viewing.qc_id ? t("pkLinkedResult", { result: viewing.qr_data?.qc?.overall_result || NA }) : t("pkNotLinked")}</p></div>
               <div><p className="font-semibold uppercase tracking-wider" style={S.muted}>{t("pkStatus")}</p><p style={viewing.is_voided ? { color: "var(--danger)" } : { color: "var(--success)" }}>{viewing.is_voided ? t("pkVoided2") : t("pkActive")}</p></div>
             </div>
             {viewing.origin_batch_chain && (
               <div className="w-full">
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("pkOriginChain")}</p>
-                <pre className="overflow-x-auto rounded-[var(--radius-sm)] border p-3 text-[10px]" style={S.surface}>{JSON.stringify(viewing.origin_batch_chain, null, 2)}</pre>
+                <div className="rounded-[var(--radius-sm)] border p-3 text-[11px]" style={S.surface}>
+                  <OriginChain node={viewing.origin_batch_chain} t={t} />
+                </div>
               </div>
             )}
           </div>

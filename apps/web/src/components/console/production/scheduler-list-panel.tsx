@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, Plus, Search } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -139,23 +140,23 @@ export default function SchedulerListPanel() {
               <TableBody>
                 {pagedRows.map((r) => (
                   <TableRow key={r.scheduler_id} className="cursor-pointer" onClick={() => setViewingId(r.scheduler_id)}>
-                    <TableCell className="whitespace-nowrap font-mono font-semibold text-[var(--accent)]">{r.scheduler_no || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono font-semibold text-[var(--accent)]">{r.scheduler_no || NA}</TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      <span className="font-medium">{r.batch_no || "—"}</span>
+                      <span className="font-medium">{r.batch_no || NA}</span>
                       {r.breed_name && <span className="block text-[11px]" style={S.muted}>{r.breed_name}</span>}
                     </TableCell>
                     <TableCell style={S.primary}>
-                      <span className="font-medium">{r.stage_name || "—"}</span>
+                      <span className="font-medium">{r.stage_name || NA}</span>
                       {r.system_scheduler_name && (
                         <span className="block text-[11px]" style={S.muted}>{t("schFromSystem", { name: r.system_scheduler_name })}</span>
                       )}
                     </TableCell>
                     <TableCell><StatusBadge status={r.scheduler_status} /></TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_from || "—"}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_to || "—"}</TableCell>
-                    <TableCell className="text-right" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_from || NA}</TableCell>
+                    <TableCell className="whitespace-nowrap" style={S.sub}>{r.effective_to || NA}</TableCell>
+                    <TableCell className="text-right" style={S.primary}>{r.animal_count != null ? formatQuantity(r.animal_count, "HEAD") : NA}</TableCell>
                     <TableCell className="text-right" style={S.sub}>{r.line_count ?? 0}</TableCell>
-                    <TableCell style={S.sub}>{r.location_name || "—"}</TableCell>
+                    <TableCell style={S.sub}>{r.location_name || NA}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"

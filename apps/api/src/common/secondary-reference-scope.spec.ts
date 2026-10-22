@@ -49,11 +49,11 @@ describe('secondary production reference scope', () => {
         .mockReturnValueOnce(chain([], (condition) => { itemWhere = condition; })),
     };
     const cls = { get: (key: string) => key === 'tenantDb' ? db : undefined } as unknown as ClsService;
-    const service = new QrCodeService(cls, audit);
+    const service = new QrCodeService(cls, audit, {} as any);
 
     await expect(service.create({
       company_id: 'co-1', batch_id: 'batch-1', item_id: 'item-1',
-    } as any, 'tenant-1')).rejects.toThrow("Item with ID 'item-1' not found.");
+    } as any, 'tenant-1', undefined)).rejects.toThrow("Item with ID 'item-1' not found.");
 
     const rendered = dialect.sqlToQuery(itemWhere as any);
     expect(rendered.sql).toContain('`item_master`.`company_id` = ?');

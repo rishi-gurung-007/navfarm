@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/components/ui/dialog";
@@ -160,7 +161,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-2">
           {sessions.length === 0 ? (
-            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>—</p>
+            <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>{NA}</p>
           ) : (
             sessions.map((s, idx) => (
               <div

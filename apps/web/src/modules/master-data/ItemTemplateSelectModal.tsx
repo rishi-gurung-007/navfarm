@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState, useMemo } from "react";
 import { Search, Loader2, CheckCircle2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
@@ -208,18 +209,18 @@ export function ItemTemplateSelectModal({
                         </div>
                       </td>
                       <td className="px-3 py-2.5" style={{ color: "var(--text-secondary)" }}>
-                        {tmpl.template_description || "—"}
+                        {tmpl.template_description || NA}
                       </td>
                       <td className="px-3 py-2.5">
                         <span className="rounded bg-(--surface-raised) px-1.5 py-0.5 text-[11px] font-medium" style={{ color: "var(--text-primary)" }}>
-                          {tmpl.item_type || "—"}
+                          {tmpl.item_type || NA}
                         </span>
                       </td>
                       <td className="px-3 py-2.5" style={{ color: "var(--text-secondary)" }}>
-                        {tmpl.no_series_code || tmpl.no_series_description || "—"}
+                        {tmpl.no_series_code || tmpl.no_series_description || NA}
                       </td>
                       <td className="px-3 py-2.5" style={{ color: "var(--text-secondary)" }}>
-                        {tmpl.valuation_method || "—"}
+                        {tmpl.valuation_method || NA}
                       </td>
                     </tr>
                   );

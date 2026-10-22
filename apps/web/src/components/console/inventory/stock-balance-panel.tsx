@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Loader2, Inbox, AlertTriangle } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -202,8 +203,8 @@ export default function StockBalancePanel() {
                     >
                       <TableCell className="whitespace-nowrap font-mono text-xs font-bold text-[var(--accent)] hover:underline">{row.item_code}</TableCell>
                       <TableCell className="max-w-[280px] truncate text-xs" style={S.primary} title={row.item_description}>{row.item_description}</TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>{row.warehouse_code || "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs" style={S.sub}>{row.warehouse_name || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={S.sub}>{row.warehouse_code || NA}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs" style={S.sub}>{row.warehouse_name || NA}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono font-semibold" style={S.primary}>
                         {fmt(row.on_hand_qty)}
                       </TableCell>
@@ -212,7 +213,7 @@ export default function StockBalancePanel() {
                         {formatMoney(row.on_hand_value)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
-                        {row.reorder_level != null ? fmt(row.reorder_level) : "—"}
+                        {row.reorder_level != null ? fmt(row.reorder_level) : NA}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {belowReorder ? (

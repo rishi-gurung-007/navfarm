@@ -11,6 +11,15 @@ import { BatchDayReversalService } from './batch-day-reversal.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 
+// The block on entries for an empty batch is tested on its own (entry-blocked.spec.ts); these suites mock the
+// database read by read, so the extra read is taken out of their way.
+jest.mock('../batch-daily-data/entry-blocked', () => ({ entryBlockedReason: jest.fn().mockResolvedValue(null) }));
+// Who was in a batch on a date is read from the movement log and tested on its own (animal-membership.spec.ts); here it is
+// stubbed per test, and the animals' own rows come from the mocked reads as before.
+jest.mock('../batch-daily-data/animal-membership', () => ({ animalsInBatchOn: jest.fn(), loadBatchMembership: jest.fn() }));
+import { animalsInBatchOn, loadBatchMembership } from '../batch-daily-data/animal-membership';
+
+
 describe('BatchService', () => {
   let service: BatchService;
   let numberSeriesService: NumberSeriesService;
@@ -470,6 +479,12 @@ describe('BatchService', () => {
 
   describe('postStageDay / reopenStageDay', () => {
     const animalWiseBatch = { ...activeBatch, tracking_mode: 'ANIMAL_WISE' };
+    beforeEach(() => {
+      (animalsInBatchOn as jest.Mock).mockReset().mockResolvedValue([
+        { animal_id: 'a-1', stage_id: 'stage-flush' },
+        { animal_id: 'a-2', stage_id: 'stage-flush' },
+      ]);
+    });
 
     it('refuses to post a BATCH_WISE batch — stage-level posting only applies to ANIMAL_WISE', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValueOnce({
@@ -489,15 +504,12 @@ describe('BatchService', () => {
       );
     });
 
-    it('refuses to post a stage with no animals currently in it', async () => {
+    it('refuses to post a stage that had no animals in it on the date', async () => {
       jest
         .spyOn(service, 'findOne')
         .mockResolvedValueOnce(animalWiseBatch as any);
-      mockDbSelect.mockReturnValueOnce({
-        from: jest
-          .fn()
-          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
-      }); // no live animals
+      // The batch had animals that day, but none at this stage.
+      (animalsInBatchOn as jest.Mock).mockResolvedValue([{ animal_id: 'a-1', stage_id: 'stage-gestation' }]);
 
       await expect(
         service.postStageDay(
@@ -506,7 +518,8 @@ describe('BatchService', () => {
           '2026-09-11',
           'tenant-123',
         ),
-      ).rejects.toThrow('No animals are currently in this stage');
+      ).rejects.toThrow('No animals were in this stage on 2026-09-11');
+      expect(animalsInBatchOn).toHaveBeenCalledWith(expect.anything(), 'batch-1', '2026-09-11');
     });
 
     it('refuses to post while a mandatory activity is still missing for an animal', async () => {
@@ -2816,7 +2829,7 @@ describe('BatchService', () => {
       input_lines: [{ item_id: 'item-piglet' }],
     };
 
-    it('auto-closes the batch when the last animals are disposed', async () => {
+    it('leaves the batch ACTIVE at nil head when the last animals are disposed — a user closes it (Rishi, 19 Oct)', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(matureBioBatch as any);
 
       const mockLedgerService = {
@@ -2876,14 +2889,11 @@ describe('BatchService', () => {
         }),
       );
 
-      // Verify that batchHeader was updated to CLOSED
+      // The header goes to nil head and stays open: nothing sets CLOSED.
       const setMock = mockDbUpdate.mock.results[0].value.set as jest.Mock;
       const allSetCalls = setMock.mock.calls.map((call) => call[0]);
-      const batchHeaderCloseCall = allSetCalls.find(
-        (call) => call.status === 'CLOSED',
-      );
-      expect(batchHeaderCloseCall).toBeDefined();
-      expect(batchHeaderCloseCall.status).toBe('CLOSED');
+      expect(allSetCalls.find((call) => call.status === 'CLOSED')).toBeUndefined();
+      expect(allSetCalls).toEqual(expect.arrayContaining([expect.objectContaining({ closing_quantity: '0.0000' })]));
     });
   });
 
@@ -3064,6 +3074,50 @@ describe('BatchService', () => {
       expect(nextDate).toBe('2026-09-01');
     });
 
+    describe('an animal-wise batch is owed a day only for the animals it had that day (Rishi, 21 Oct)', () => {
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const reads = (...results: unknown[][]) =>
+        results.forEach((rows) => mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }));
+      const membershipByDay = (days: Record<string, Array<{ animal_id: string; stage_id: string }>>) =>
+        (loadBatchMembership as jest.Mock).mockResolvedValue({ on: (d: string) => days[d] ?? [] });
+      const stages = [
+        { stage_id: 'S1', stage_code: 'S1' },
+        { stage_id: 'S2', stage_code: 'S2' },
+      ];
+      const pending = () => service.getNextPendingDate({ batch_id: 'b-1', start_date: '2026-09-01', tracking_mode: 'ANIMAL_WISE' });
+
+      it('does not ask for a day the batch had no animal - a batch emptied since asks for nothing after that', async () => {
+        membershipByDay({ '2026-09-01': [{ animal_id: 'a-1', stage_id: 'S1' }] });
+        reads([{ entry_date: '2026-09-01', stage_id: 'S1', status: 'LOCKED' }], [{ stage_id: 'S1' }], stages);
+        await expect(pending()).resolves.toBe(tomorrow);
+      });
+
+      it('asks for a day the animals it had are not yet posted on, and for nothing before the batch had them', async () => {
+        membershipByDay({ '2026-09-02': [{ animal_id: 'a-1', stage_id: 'S1' }] });
+        reads([], [{ stage_id: 'S1' }], stages);
+        await expect(pending()).resolves.toBe('2026-09-02');
+      });
+
+      it('asks for each day the stage its animals were at THEN, not the stage they are at now', async () => {
+        membershipByDay({
+          '2026-09-01': [{ animal_id: 'a-1', stage_id: 'S1' }],
+          '2026-09-02': [{ animal_id: 'a-1', stage_id: 'S2' }],
+        });
+        const locks = [
+          { entry_date: '2026-09-01', stage_id: 'S1', status: 'LOCKED' },
+          { entry_date: '2026-09-02', stage_id: 'S1', status: 'LOCKED' }, // the wrong stage for that day
+        ];
+        reads(locks, [{ stage_id: 'S1' }, { stage_id: 'S2' }], stages);
+        await expect(pending()).resolves.toBe('2026-09-02');
+      });
+
+      it('does not owe a stage the batch has no scheduler for, which could never be entered', async () => {
+        membershipByDay({ '2026-09-01': [{ animal_id: 'a-1', stage_id: 'S2' }] });
+        reads([], [{ stage_id: 'S1' }], stages);
+        await expect(pending()).resolves.toBe(tomorrow);
+      });
+    });
+
     it('advances next pending date to next day when previous day is locked', async () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -3188,6 +3242,33 @@ describe('BatchService', () => {
       expect(info?.can_move_without_remarks).toBe(true);
       expect(info?.min_days_before_move).toBe(14);
       expect(info?.days_in_stage).toBeGreaterThanOrEqual(42);
+    });
+  });
+
+  describe('close — a bio-asset batch, by a user (Rishi, 19 Oct)', () => {
+    const rows = (value: unknown[]) => {
+      const c: any = {};
+      for (const m of ['from', 'where']) c[m] = jest.fn(() => c);
+      c.limit = jest.fn().mockResolvedValue(value);
+      c.then = (ok: (v: unknown) => unknown, fail: (e: unknown) => unknown) => Promise.resolve(value).then(ok, fail);
+      return c;
+    };
+    const bioBatch = { batch_id: 'b-1', batch_no: 'SOW-1', status: 'ACTIVE', costing_method: 'BIO_ASSET', tracking_mode: 'ANIMAL_WISE' };
+
+    it('refuses while the batch still holds head', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      mockDbSelect.mockReturnValueOnce(rows([{ current_quantity: '0.0000' }])).mockReturnValueOnce(rows([{ live: 2 }]));
+      await expect(service.close('b-1', {} as any, 'tenant-123', { userId: 'u-1' } as any)).rejects.toThrow('still holds 2 head');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('closes an empty one with no output lines to allocate', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      mockDbSelect.mockReturnValueOnce(rows([{ current_quantity: '0.0000' }])).mockReturnValueOnce(rows([{ live: 0 }]));
+      const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) });
+      mockDbUpdate.mockReturnValue({ set });
+      await service.close('b-1', { actual_end_date: '2026-10-19' } as any, 'tenant-123', { userId: 'u-1' } as any);
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ status: 'CLOSED', actual_end_date: '2026-10-19', closed_by: 'u-1' }));
     });
   });
 });

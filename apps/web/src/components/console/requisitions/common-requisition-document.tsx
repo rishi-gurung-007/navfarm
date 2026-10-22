@@ -23,6 +23,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { COMMON_PURPOSE_LABEL, DOC_TYPE_LABEL, labelOf } from "../inventory/requisition-labels";
 import { RecordLink, itemHref, locationHref } from "../inventory/feed-requisition-header";
 import { commonStatus, emptyLine, type CommonRequisitionLine, type CommonRequisitionOptions, type CommonRequisitionView } from "./common-requisition-model";
+import { RequisitionDocumentShell } from "./requisition-document-shell";
 
 /** WP1c: the header's two-value Status (Rishi's list), separate from Approval. */
 const STATUS_LABEL: Record<string, { key: string; variant: "neutral" | "info" }> = {
@@ -153,7 +154,7 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <RequisitionDocumentShell>
       <FieldGroup>
         {/* Rishi's common-requisition header contract, in its exact order.
             Approval, integration, fulfilment and audit information belong to
@@ -306,6 +307,6 @@ export function CommonRequisitionDocument({ view, editable, options, onChange, o
           </ScrollTable>
         </div>
       </FieldGroup>
-    </div>
+    </RequisitionDocumentShell>
   );
 }

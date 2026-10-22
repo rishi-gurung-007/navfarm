@@ -21,7 +21,7 @@ describe('BatchService.changeShed (D21, review A12)', () => {
     };
     const cls = transactionCls(db);
     const audit = { log: jest.fn(async () => ({})) };
-    const service = new BatchService(cls, audit as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    const service = new BatchService(cls, audit as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     return { service, updates, audit, cls };
   }
   const batch = { batch_id: 'b1', batch_no: 'BATCH-000012', status: 'ACTIVE', company_id: 'co-1', lob_id: 'lob-pig', farm_id: 'farm-vil', shed_id: null };

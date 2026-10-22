@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from "@/utils/na";
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -496,6 +497,8 @@ export default function OperationalBatchDataEntry() {
 
   // Daily data entry mandatory date progression
   const [nextPendingDate, setNextPendingDate] = useState<string>('');
+  // Why this batch takes no entry (no animals in it / a nil head count) — Rishi, 19 Oct. From GET data-entry.
+  const [entryBlocked, setEntryBlocked] = useState<string | null>(null);
 
   // Stage transition & Min Days Before Move validation from backend
   const [stageTransition, setStageTransition] = useState<{
@@ -539,9 +542,9 @@ export default function OperationalBatchDataEntry() {
     return b ? b.breed_name || b.breed_code : null;
   };
   const locationLabel = (locationId: string | null) => {
-    if (!locationId) return '—';
+    if (!locationId) return NA;
     const l = locations.find((x) => x.location_id === locationId);
-    return l ? l.location_name : '—';
+    return l ? l.location_name : NA;
   };
   const getAnimalAgeBreakdown = (a: Row): { weeks: string; days: string } => {
     if (a.dob) {
@@ -565,8 +568,8 @@ export default function OperationalBatchDataEntry() {
       }
     }
     return {
-      weeks: '—',
-      days: '—',
+      weeks: NA,
+      days: NA,
     };
   };
 
@@ -739,7 +742,7 @@ export default function OperationalBatchDataEntry() {
               b.breed_name ||
               breedNameById.get(b.breed_id) ||
               b.breed_code ||
-              '—',
+              NA,
             type: b.lob_name || b.nob_name || 'Piggery Production Batch',
             startDate: b.start_date || '',
             currentStage: st.name,
@@ -818,6 +821,7 @@ export default function OperationalBatchDataEntry() {
         const batchData = batchRes?.data ?? batchRes;
         const isAnimalWise = batchData?.tracking_mode === 'ANIMAL_WISE';
 
+        setEntryBlocked(schedData?.entry_blocked_reason || null);
         const npd = schedData?.next_pending_date || '';
         if (npd) {
           setNextPendingDate(npd);
@@ -1818,7 +1822,7 @@ export default function OperationalBatchDataEntry() {
   );
 
   // The name half of a "CODE — Name" label.
-  const nameOf = (label?: string | null) => (label ? label.split(' — ').slice(1).join(' — ') || label : '—');
+  const nameOf = (label?: string | null) => (label ? label.split(' — ').slice(1).join(' — ') || label : NA);
 
   const renderDataEntryRow = (
     line: Row,
@@ -1905,7 +1909,7 @@ export default function OperationalBatchDataEntry() {
         <TableCell className="px-3 py-2 whitespace-nowrap" style={S.sub}>
           {(() => {
             const chosen = isOutput ? itemChoices.find((o) => o.value === (line.already_entered_item_id || chosenItemId)) : undefined;
-            return (chosen ? chosen.label.split(' — ')[0] : line.item_code) || '—';
+            return (chosen ? chosen.label.split(' — ')[0] : line.item_code) || NA;
           })()}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
@@ -1925,16 +1929,16 @@ export default function OperationalBatchDataEntry() {
           ) : isOutput && line.already_entered_item_id ? (
             nameOf(itemChoices.find((o) => o.value === line.already_entered_item_id)?.label || line.item_label)
           ) : (
-            nameOf(line.item_label) || line.item_description || '—'
+            nameOf(line.item_label) || line.item_description || NA
           )}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
-          {line.uom || '—'}
+          {line.uom || NA}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
           {line.occurrence
             ? line.occurrence.charAt(0) + line.occurrence.slice(1).toLowerCase()
-            : '—'}
+            : NA}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.primary}>
           <div className="flex flex-col">
@@ -2345,19 +2349,19 @@ export default function OperationalBatchDataEntry() {
                 <div className="whitespace-nowrap">
                   <span style={S.muted}>{t('bdeBreed')} </span>
                   <span className="font-semibold" style={S.primary}>
-                    {currentBatch?.breed || '—'}
+                    {currentBatch?.breed || NA}
                   </span>
                 </div>
                 <div className="whitespace-nowrap">
                   <span style={S.muted}>{t('bdeType')} </span>
                   <span className="font-semibold" style={S.primary}>
-                    {currentBatch?.type || '—'}
+                    {currentBatch?.type || NA}
                   </span>
                 </div>
                 <div className="whitespace-nowrap">
                   <span style={S.muted}>{t('bdeStartDate')} </span>
                   <span className="font-semibold" style={S.primary}>
-                    {currentBatch?.startDate || '—'}
+                    {currentBatch?.startDate || NA}
                   </span>
                 </div>
                 <div className="whitespace-nowrap">
@@ -2373,7 +2377,7 @@ export default function OperationalBatchDataEntry() {
                   ) : (
                     <>
                       <span className="font-semibold" style={S.accent}>
-                        {currentBatch?.currentStage || '—'}
+                        {currentBatch?.currentStage || NA}
                       </span>
                       {currentBatch?.stageTotalDays ? (
                         <span className="text-[11px] ml-1" style={S.muted}>
@@ -2479,7 +2483,7 @@ export default function OperationalBatchDataEntry() {
                   {t('bdeBreed')}
                 </p>
                 <p className="font-semibold text-[var(--text-primary)]">
-                  {currentBatch?.breed || '—'}
+                  {currentBatch?.breed || NA}
                 </p>
               </div>
               <div>
@@ -2487,7 +2491,7 @@ export default function OperationalBatchDataEntry() {
                   {t('bdeType')}
                 </p>
                 <p className="font-semibold text-[var(--text-primary)]">
-                  {currentBatch?.type || '—'}
+                  {currentBatch?.type || NA}
                 </p>
               </div>
               <div>
@@ -2495,7 +2499,7 @@ export default function OperationalBatchDataEntry() {
                   {t('bdeStartDate')}
                 </p>
                 <p className="font-semibold text-[var(--text-primary)]">
-                  {currentBatch?.startDate || '—'}
+                  {currentBatch?.startDate || NA}
                 </p>
               </div>
               <div>
@@ -2508,7 +2512,7 @@ export default function OperationalBatchDataEntry() {
                   </p>
                 ) : (
                   <p className="font-semibold text-[var(--accent)]">
-                    {currentBatch?.currentStage || '—'}
+                    {currentBatch?.currentStage || NA}
                     {currentBatch?.stageTotalDays ? (
                       <span className="text-[11px] text-[var(--text-muted)] ml-1">
                         {t('bdeDayOf', {
@@ -2831,6 +2835,16 @@ export default function OperationalBatchDataEntry() {
               )}
             </div>
 
+            {entryBlocked && (
+              <div
+                role="status"
+                className="rounded-[var(--radius-sm)] border px-3 py-2 text-xs font-semibold"
+                style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-muted)', color: 'var(--warning)' }}
+              >
+                {entryBlocked}
+              </div>
+            )}
+
             {!isAnimalWise && (
               <div className="flex items-center gap-2">
                 {!locked && (
@@ -2839,6 +2853,7 @@ export default function OperationalBatchDataEntry() {
                     variant="outline"
                     onClick={handleSaveAllToDraft}
                     disabled={
+                      !!entryBlocked ||
                       savingAllDraft ||
                       posting ||
                       isFutureDate ||
@@ -2863,6 +2878,7 @@ export default function OperationalBatchDataEntry() {
                   size="sm"
                   onClick={handlePostEntry}
                   disabled={
+                    !!entryBlocked ||
                     posting ||
                     mortalityIncomplete ||
                     locked ||
@@ -2917,7 +2933,7 @@ export default function OperationalBatchDataEntry() {
                       size="sm"
                       variant="outline"
                       onClick={handleSaveAllToDraft}
-                      disabled={savingAllDraft || stageActionBusy || isFutureDate}
+                      disabled={!!entryBlocked || savingAllDraft || stageActionBusy || isFutureDate}
                       title={
                         isFutureDate
                           ? `Cannot save draft for future date (${selectedDate})`
@@ -3184,7 +3200,7 @@ export default function OperationalBatchDataEntry() {
                     </span>
                     <span className="text-[11px]" style={S.muted}>
                       {selectedStage.animal_count} animal(s) · Day{' '}
-                      {selectedStage.day_of_stage ?? '—'} of stage
+                      {selectedStage.day_of_stage ?? NA} of stage
                     </span>
                   </div>
 
@@ -3607,17 +3623,17 @@ export default function OperationalBatchDataEntry() {
                           className="px-3 py-1.5 font-mono"
                           style={S.sub}
                         >
-                          {a.rfid_tag || '—'}
+                          {a.rfid_tag || NA}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
                           {a.gender === 'F' || a.gender === 'Female'
                             ? 'Female'
                             : a.gender === 'M' || a.gender === 'Male'
                               ? 'Male'
-                              : (a.gender || '—')}
+                              : (a.gender || NA)}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
-                          {a.breed_name || '—'}
+                          {a.breed_name || NA}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
                           {age.weeks}
@@ -3814,7 +3830,7 @@ export default function OperationalBatchDataEntry() {
                 <span className="font-semibold text-[var(--text-primary)]">
                   {stageTransition
                     ? `${stageTransition.days_in_stage} days`
-                    : '—'}
+                    : NA}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">

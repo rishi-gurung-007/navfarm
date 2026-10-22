@@ -319,6 +319,8 @@ export interface SearchableEntitySelectProps {
   onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
+  /** Form fields fill their parent by default; compact toolbars can opt out. */
+  fullWidth?: boolean;
   triggerClassName?: string;
   triggerStyle?: React.CSSProperties;
 }
@@ -346,6 +348,7 @@ export function SearchableEntitySelect({
   onClear,
   onCreate,
   onViewAll,
+  fullWidth = true,
   triggerClassName,
   triggerStyle,
 }: SearchableEntitySelectProps) {
@@ -389,7 +392,7 @@ export function SearchableEntitySelect({
       onOpenChange={setOpen}
       align="start"
       haspopup="listbox"
-      className="w-full"
+      className={fullWidth ? "w-full" : "inline-flex max-w-full"}
       panelClassName="nf-combobox-panel"
       // Every one of these lives inside the Master create/edit Dialog, whose
       // body scrolls. An anchored panel is clipped by that scroll container —
@@ -409,7 +412,7 @@ export function SearchableEntitySelect({
             const v = e?.target?.value ?? e;
             if (v !== undefined) onChange(String(v));
           }}
-          className={`nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
+          className={`nf-input nf-select w-full min-w-0 truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
           style={{
             backgroundColor: "var(--input-bg)",
             color: selected ? "var(--input-text)" : "var(--text-muted)",

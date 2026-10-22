@@ -257,6 +257,11 @@ export class QueryStageDto extends MasterListQueryDto {
   @IsString()
   lobId?: string;
 
+  @ApiProperty({ description: 'Filter to stages configured for a breed UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  breedId?: string;
+
   @ApiProperty({ required: false, enum: STAGE_CATEGORIES })
   @IsOptional()
   @IsString()

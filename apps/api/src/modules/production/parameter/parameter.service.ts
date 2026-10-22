@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull } from 'drizzle-orm';
+import { eq, and, like, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { MasterScope, masterScopeConditions } from '../../../common/master-data-scope';
 import { CreateParameterDto, UpdateParameterDto, QueryParameterDto } from './dto/parameter.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
@@ -13,6 +14,12 @@ export class ParameterService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
   ) {}
+
+  /** The workspace's company for a new row; a tenant template only from the tenant workspace. */
+  private workspaceCompany(requested?: string | null): string | null {
+    const scope = this.cls.get<MasterScope>('masterScope');
+    return scope?.kind ? scope.companyId : requested || null;
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -43,7 +50,7 @@ export class ParameterService {
     await this.db.insert(schema.parameterMaster).values({
       parameter_id: parameterId,
       tenant_id: tenantId,
-      company_id: dto.company_id || null,
+      company_id: this.workspaceCompany(dto.company_id),
       nob_id: dto.nob_id || null,
       lob_id: dto.lob_id || null,
       parameter_code: dto.parameter_code.toUpperCase(),
@@ -77,7 +84,8 @@ export class ParameterService {
     const [parameter] = await this.db
       .select()
       .from(schema.parameterMaster)
-      .where(eq(schema.parameterMaster.parameter_id, id))
+      // A company reads and changes only its own rows (Rishi, 20 Oct): never a tenant template or another company's.
+      .where(and(eq(schema.parameterMaster.parameter_id, id), ...masterScopeConditions(this.cls, schema.parameterMaster)))
       .limit(1);
 
     if (!parameter) {
@@ -90,9 +98,7 @@ export class ParameterService {
   async findAll(query: QueryParameterDto, tenantId: string) {
     const conditions: any[] = [eq(schema.parameterMaster.tenant_id, tenantId)];
 
-    if (query.companyId) {
-      conditions.push(or(eq(schema.parameterMaster.company_id, query.companyId), isNull(schema.parameterMaster.company_id))!);
-    }
+    conditions.push(...masterScopeConditions(this.cls, schema.parameterMaster, query.companyId));
     if (query.nobId) conditions.push(eq(schema.parameterMaster.nob_id, query.nobId));
     if (query.lobId) conditions.push(eq(schema.parameterMaster.lob_id, query.lobId));
     if (query.parameterType) conditions.push(eq(schema.parameterMaster.parameter_type, query.parameterType));

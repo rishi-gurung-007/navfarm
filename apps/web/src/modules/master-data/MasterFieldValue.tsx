@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { api } from "@/services/api-client";
 import { API_ORIGIN } from "@/lib/api-client";
@@ -16,9 +17,9 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
   if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
     return field.emptyMultipleLabel ?? "All (no restriction)";
   }
-  if (value === null || value === undefined || value === "") return field?.emptyLabel ?? "—";
+  if (value === null || value === undefined || value === "") return field?.emptyLabel ?? NA;
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";
+  if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : NA;
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value.join(", ");
   if (field?.type === "number" && Number.isFinite(Number(value))) {
     const num = Number(value);
@@ -38,7 +39,7 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
     if (d) return `${d}/${m}/${y}`;
   }
   if (Array.isArray(value) && value.every((entry) => entry?.attribute_name && "attribute_value" in entry)) {
-    return value.map((entry) => `${entry.attribute_name}: ${entry.attribute_value ?? "—"}`).join("\n");
+    return value.map((entry) => `${entry.attribute_name}: ${entry.attribute_value ?? NA}`).join("\n");
   }
   return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
 }
@@ -223,11 +224,11 @@ function JsonRowsTable({ field, value }: { field: MasterDataField; value: unknow
     try { rows = JSON.parse(rows); } catch { rows = []; }
   }
   const list = (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object") as Record<string, unknown>[];
-  if (!list.length) return <>{field.emptyLabel ?? "—"}</>;
+  if (!list.length) return <>{field.emptyLabel ?? NA}</>;
   const columns = field.jsonRow ?? [];
   const cell = (col: MasterDataField, row: Record<string, unknown>) => {
     const v = row[col.key];
-    if (v === null || v === undefined || v === "") return "—";
+    if (v === null || v === undefined || v === "") return NA;
     if (col.type === "select" && col.options?.length) {
       return col.options.find((o) => String(o.value) === String(v))?.label ?? String(v);
     }

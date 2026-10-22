@@ -22,11 +22,24 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   breed: schema.breedMaster, 'breed-lifecycle-stage': schema.breedLifecycleStages,
   reason: schema.reasonMaster, 'alert-rule': schema.alertRule, 'reporting-period': schema.reportingPeriod, disease: schema.diseaseMaster, 'feed-formula': schema.feedFormulaMaster,
   'kpi-metric': schema.kpiMetricMaster,
+  // Production and QC parameters (20 Oct): a company's own, under the same record check as every master.
+  parameter: schema.parameterMaster, 'qc-parameter': schema.qcParameterMaster,
   activity: schema.activityMaster,
   supplier: schema.supplierMaster, customer: schema.customerMaster, resource: schema.resourceMaster,
   'gl-account': schema.glAccountMaster, 'gl-mapping': schema.glMappingMaster, 'cost-center': schema.costCenterMaster,
   'item-application': schema.inventoryApplication, 'inventory-application': schema.inventoryApplication,
 };
+
+/**
+ * The route the master-data scope check reads for a controller: its path, or — when it is mounted on several
+ * (@Controller(['item', 'items'])) — the one that names a master. A list used to skip the check entirely, so the
+ * Item list carried no company filter at all (20 Oct).
+ */
+export function masterControllerPath(path: string | string[] | undefined): string | undefined {
+  if (path === undefined) return undefined;
+  const paths = Array.isArray(path) ? path : [path];
+  return paths.find((candidate) => MASTER_TABLES[candidate]) ?? paths[0];
+}
 
 export interface MasterScope {
   kind: 'TENANT' | 'COMPANY' | 'OPERATIONAL';

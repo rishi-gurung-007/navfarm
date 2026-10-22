@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, inArray, or, sql, isNull, isNotNull, gt, lte, like, desc } from 'drizzle-orm';
+import { animalPlacementOn } from './animal-membership';
+import { entryBlockedReason } from './entry-blocked';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import { ModuleRef } from '@nestjs/core';
@@ -182,7 +184,7 @@ export class BatchDailyDataService {
     // ANIMAL_WISE batches have no single current stage — this scheduler_header
     // belongs to exactly one of the batch's several concurrently-active stages,
     // so an entry against it must be attributed to a specific animal, and that
-    // animal must actually be at THIS line's stage right now (not merely
+    // animal must actually have been at THIS line's stage on the entry date (not merely
     // somewhere in the batch) — otherwise a stage's headcount/mortality math
     // would silently include an animal whose own schedule doesn't cover it.
     const [batchRow] = await this.db
@@ -201,6 +203,8 @@ export class BatchDailyDataService {
       .from(schema.batchHeader)
       .where(eq(schema.batchHeader.batch_id, batchId))
       .limit(1);
+    const blocked = await entryBlockedReason(this.db, batchId, dto.entry_date);
+    if (blocked) throw new BadRequestException(blocked);
     if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !dto.animal_id) {
       throw new BadRequestException(
         `Batch '${batchId}' is Animal Wise — choose an animal for data entry.`,
@@ -216,14 +220,17 @@ export class BatchDailyDataService {
       entryAnimal = animal;
       if (!animal)
         throw new NotFoundException(`Animal '${dto.animal_id}' not found.`);
-      if (animal.current_batch_id !== batchId) {
+      // Who was where is read for the ENTRY date, not today: a weight dated before farrowing belongs to the gilt at
+      // her gestation stage, though she has since moved on to flush or into another batch (Rishi, 21 Oct).
+      const at = await animalPlacementOn(this.db, animal.animal_id, dto.entry_date);
+      if (at.batch_id !== batchId) {
         throw new BadRequestException(
-          `Animal '${animal.animal_code}' is not currently in batch '${batchId}'.`,
+          `Animal '${animal.animal_code}' was not in batch '${batchRow?.batch_no ?? batchId}' on ${dto.entry_date}, so no entry can be recorded for it that day.`,
         );
       }
-      if (animal.current_stage_id !== header.stage_id) {
+      if (at.stage_id !== header.stage_id) {
         throw new BadRequestException(
-          `Animal '${animal.animal_code}' is not currently at this line's stage — its own schedule doesn't include this activity.`,
+          `Animal '${animal.animal_code}' was not at this line's stage on ${dto.entry_date} — its own schedule doesn't include this activity then.`,
         );
       }
     }
@@ -1319,8 +1326,8 @@ export class BatchDailyDataService {
       parent_location_id: schema.locationMaster.parent_location_id,
       farm_id: schema.locationMaster.farm_id,
     };
-    // The farm's own store, which every fallback below ends at.
-    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId);
+    // The farm's store that holds this item, which every fallback below ends at.
+    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId, itemId);
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -1389,9 +1396,9 @@ export class BatchDailyDataService {
     );
   }
 
-  /** The farm's own active store, first by code — the one the feed forecast reports. */
-  private storeOfFarm(farmId: string | null): Promise<string | null> {
-    return farmStoreOf(this.db, farmId);
+  /** The farm's store holding the item drawn — else its first active store by code. */
+  private storeOfFarm(farmId: string | null, itemId?: string): Promise<string | null> {
+    return farmStoreOf(this.db, farmId, itemId);
   }
 
   /**
@@ -1431,7 +1438,7 @@ export class BatchDailyDataService {
       );
     const inSilo = round(Number(held?.total ?? 0));
     if (inSilo >= quantity - 0.0001) return null;
-    const storeId = await this.storeOfFarm(farmId);
+    const storeId = await this.storeOfFarm(farmId, itemId);
     if (!storeId || storeId === warehouseId) return null;
     const [store] = await this.db
       .select({ code: schema.locationMaster.location_code })

@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, Search } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -100,14 +101,14 @@ export default function CopyActivitiesDialog({ open, onClose, companyId, targetI
             <TableBody>
               {list.map((r) => (
                 <TableRow key={`${r.__type}-${r.__id}`}>
-                  <TableCell className="px-3 py-2 font-semibold text-[var(--text-primary)]">{r.__label || "—"}</TableCell>
+                  <TableCell className="px-3 py-2 font-semibold text-[var(--text-primary)]">{r.__label || NA}</TableCell>
                   <TableCell className="px-3 py-2 text-[var(--text-secondary)]">
-                    {r.stage_name || r.stage_code || "—"}
+                    {r.stage_name || r.stage_code || NA}
                     {stageName && r.stage_name === stageName && (
                       <span className="ml-1.5 rounded bg-[var(--accent)]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent)]">{t("scCopySameStage")}</span>
                     )}
                   </TableCell>
-                  <TableCell className="px-3 py-2 text-[var(--text-secondary)]">{r.breed_name || (type === "SYSTEM" ? t("sysSchAllBreeds") : "—")}</TableCell>
+                  <TableCell className="px-3 py-2 text-[var(--text-secondary)]">{r.breed_name || (type === "SYSTEM" ? t("sysSchAllBreeds") : NA)}</TableCell>
                   <TableCell className="px-3 py-2 font-mono text-[var(--text-primary)]">{r.line_count}</TableCell>
                   <TableCell className="px-3 py-2 text-right">
                     <Button size="sm" variant="outline" disabled={!!copyingId} onClick={() => copy(r)} className="h-7 gap-1 text-[11px]">

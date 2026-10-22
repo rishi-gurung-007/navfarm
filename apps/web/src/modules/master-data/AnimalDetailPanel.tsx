@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ageBetween, formatAge } from "./utils/age";
 import { X, Loader2, ChevronRight } from "lucide-react";
@@ -310,7 +311,7 @@ function BreedingRecordTable({
                     >
                       {values.map((v, i) => (
                         <td key={headers[i]} className={`${cell} ${i === 0 ? "font-mono" : ""}`} style={fmt(v) ? S.primary : S.muted}>
-                          {fmt(v) || "—"}
+                          {fmt(v) || NA}
                         </td>
                       ))}
                     </tr>
@@ -505,9 +506,8 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           ["Batch", labels.batches?.[createdValues.current_batch_id] || ""],
           ["Pen", labels.locations?.[createdValues.current_location_id] || ""],
           ["Dam", fmt(lineage.dam_code)], ["Sire", fmt(lineage.sire_code)],
-          // source_receipt_id, not source_grn_id: the column is named after
-          // this codebase's goods_receipt table rather than the spec's "GRN".
-          ["Source receipt", fmt(row.source_receipt_id)], ["Born from batch", fmt(row.source_batch_id)],
+          // The API resolves the internal source_receipt_id to the business-facing GRN number.
+          ["Source GRN", fmt(row.source_grn_no)], ["Born from batch", fmt(row.source_batch_id)],
           ["Acquisition cost", fmtAmount(row.acquisition_cost)],
         ],
       });
@@ -652,6 +652,12 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             />
             <ReadField label="Entry type" value={fmt(row.entry_type)} />
             <ReadField label="Entry date" value={fmt(row.entry_date)} />
+            <ReadField
+              label="Source GRN"
+              value={row.source_grn_no
+                ? <a className="text-(--accent) hover:underline" href={`/inventory/goods-receipt?recordId=${encodeURIComponent(row.source_grn_id)}`}>{fmt(row.source_grn_no)}</a>
+                : ""}
+            />
             <ReadField label="Sire" value={fmt(lineage.sire_code)} mono />
             <ReadField label="Dam" value={fmt(lineage.dam_code)} mono />
             <ReadField mono label="RFID" value={fmt(row.rfid_tag)} />
@@ -698,13 +704,13 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
             {!isMale && (
               <ReadField
                 label="Mortality percentage"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || "—")}
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || NA)}
               />
             )}
             {!isMale && (
               <ReadField
                 label="Total litter mass weaned"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || "—")}
+                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || NA)}
               />
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />

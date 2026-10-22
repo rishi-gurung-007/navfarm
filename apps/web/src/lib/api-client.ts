@@ -51,6 +51,12 @@ type ApiOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   tenantId?: string | null;
   retry?: boolean;
+  /**
+   * Ask as this company's workspace for this one call, whatever workspace is active. The tenant dashboard reads
+   * each company's register this way: company records are not listed in tenant scope. The server still checks
+   * the user may open that company.
+   */
+  asCompany?: string;
 };
 
 function stored(key: string): string | null {
@@ -218,9 +224,14 @@ export async function apiDownload(path: string, fallbackName = 'download', retry
 }
 
 export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, ...init } = options;
+  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, asCompany, ...init } = options;
   const isFormData = body instanceof FormData || (body && typeof (body as any).append === 'function');
   const headers = scopedHeaders(init.headers, tenantId, !isFormData);
+  if (asCompany) {
+    headers.set('x-workspace-scope', 'COMPANY');
+    headers.set('x-active-company-id', asCompany);
+    headers.delete('x-active-operational-area-id');
+  }
   const token = stored(AUTH_STORAGE.accessToken);
 
   const response = await fetch(`${API_BASE_URL}${path}`, {

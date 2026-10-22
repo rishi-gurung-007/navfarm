@@ -748,14 +748,14 @@ export class CloseBatchDto {
 
   @ApiProperty({
     description:
-      'Output lines — cost_split_pct must sum to 100 across all lines',
+      'Output lines — cost_split_pct must sum to 100 across all lines. Not taken for a bio-asset batch, which closes only once it holds no head.',
     type: [BatchOutputLineInput],
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => BatchOutputLineInput)
-  output_lines: BatchOutputLineInput[];
+  output_lines?: BatchOutputLineInput[];
 }
 
 export class QueryBatchDto {
@@ -777,6 +777,17 @@ export class QueryBatchDto {
   @IsOptional()
   @IsString()
   lobId?: string;
+
+  @ApiProperty({ description: 'Filter by breed UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  breedId?: string;
+
+  @ApiProperty({ description: 'Filter by tracking mode', required: false, enum: ['BATCH_WISE', 'ANIMAL_WISE'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(TRACKING_MODES)
+  trackingMode?: string;
 
   @ApiProperty({
     description:
@@ -917,6 +928,11 @@ export class DisposeBioAssetDto {
   @IsNumber()
   @IsOptional()
   sale_proceeds?: number;
+
+  @ApiProperty({ description: 'Customer UUID — who bought the animals on a SOLD exit', required: false })
+  @IsUUID()
+  @IsOptional()
+  customer_id?: string;
 }
 
 export class BulkDailyEntryRowDto {

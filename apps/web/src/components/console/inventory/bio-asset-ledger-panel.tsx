@@ -6,6 +6,7 @@
  * that entry (+1, "from GR-…"), and a death is the only -. The page reads like the Inventory Ledger Entries page: the
  * same filters, columns, badges, exports and entry view.
  */
+import { NA } from "@/utils/na";
 import { useEffect, useState } from "react";
 import { Loader2, Inbox, Eye, RotateCcw, Search, Download, FileSpreadsheet } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -349,7 +350,7 @@ export default function BioAssetLedgerPanel() {
                       <TableCell className="whitespace-nowrap font-mono text-xs font-semibold" style={S.primary}>{row.item_code}</TableCell>
                       <TableCell className="max-w-[260px] truncate text-xs" style={S.sub} title={row.item_description}>{row.item_description}</TableCell>
                       <TableCell className="whitespace-nowrap" style={S.sub}>
-                        <span className="truncate max-w-[170px] block font-mono text-xs" title={row.warehouse_name || ""}>{row.warehouse_code || "—"}</span>
+                        <span className="truncate max-w-[170px] block font-mono text-xs" title={row.warehouse_name || ""}>{row.warehouse_code || NA}</span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <Badge variant="neutral" className="text-[11px] font-semibold">{TRANSACTION_LABEL[row.transaction_type] ?? row.transaction_type}</Badge>
@@ -368,12 +369,12 @@ export default function BioAssetLedgerPanel() {
                             {qtyText(Number(row.remaining_quantity ?? 0))}
                             <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
                           </span>
-                        ) : <span style={S.muted}>—</span>}
+                        ) : <span style={S.muted}>{NA}</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>{formatMoney(Number(row.rate || 0))}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>{formatMoney(Number(row.amount || 0))}</TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs" style={row.animal_code ? S.primary : S.muted}>{row.animal_code || "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs" style={row.batch_no ? S.primary : S.muted}>{row.batch_no || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={row.animal_code ? S.primary : S.muted}>{row.animal_code || NA}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs" style={row.batch_no ? S.primary : S.muted}>{row.batch_no || NA}</TableCell>
                       <TableCell className="whitespace-nowrap text-center">
                         <button
                           type="button"

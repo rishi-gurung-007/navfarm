@@ -1,5 +1,6 @@
 "use client";
 
+import { NA } from "@/utils/na";
 import { Badge, type BadgeProps } from "../../ui/badge";
 import { useLanguage } from "../../../hooks/useLanguage";
 
@@ -15,7 +16,7 @@ const TYPE_VARIANT: Record<string, BadgeProps["variant"]> = {
 };
 
 export function UserTypeBadge({ type }: { type?: string | null }) {
-  if (!type) return <span className="text-xs text-(--text-muted)">—</span>;
+  if (!type) return <span className="text-xs text-(--text-muted)">{NA}</span>;
   return <Badge variant={TYPE_VARIANT[type] || "neutral"}>{type.replace(/_/g, " ")}</Badge>;
 }
 
