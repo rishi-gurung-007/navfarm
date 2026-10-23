@@ -294,18 +294,7 @@ export class UpdateAnimalDto {
 
   // current_bio_asset_value, total_amortised and book_value are not accepted here: they are derived from the
   // animal's bio-asset ledger (AnimalBookValueService), and a typed value would part them from it.
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  residual_value?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  amortisation_monthly?: number;
+  // Neither is residual_value (her own residual: PUT /bio-costing/animals/:id/residual, with a reason) or amortisation_monthly (her latest charge).
 
   @ApiProperty({ required: false })
   @IsDateString()

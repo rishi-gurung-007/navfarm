@@ -17,10 +17,21 @@ const POSTED_TRANSACTION_TYPES = [
   'BIO_TRANSFORMATION', 'BIO_AMORTIZATION', 'BIO_FAIR_VALUE', 'BIO_FAIR_VALUE_PREMATURE', 'BIO_HARVEST', 'BIO_DISPOSAL_SOLD',
 ];
 
+/**
+ * BIO_LITTER_BIRTH is posted too, but it is deliberately NOT seeded: the litter's cost at birth moves value out of the pre-mature account (1050, where the sow's WIP sits) into
+ * Piglets Inventory (1055), and later postings on a piglet lot (mortality, consumption) still use 1050; Finance opts in by adding the mapping, and farrowing posts no journal without it.
+ */
 describe('GL mapping transaction types', () => {
   it('has a starter mapping for every posted type', () => {
     const seeded = new Set(STARTER_GL_MAPPINGS.map((m) => m.transaction_type));
     expect(POSTED_TRANSACTION_TYPES.filter((t) => !seeded.has(t))).toEqual([]);
+  });
+
+  it('offers the opt-in litter birth type in the API enum and on the screen without seeding it', () => {
+    const seeded = new Set(STARTER_GL_MAPPINGS.map((m) => m.transaction_type));
+    expect(seeded.has('BIO_LITTER_BIRTH')).toBe(false);
+    expect(readFileSync(join(__dirname, 'dto/gl-mapping.dto.ts'), 'utf8')).toContain("'BIO_LITTER_BIRTH'");
+    expect(readFileSync(join(__dirname, '../../../../../web/src/modules/master-data/configs.ts'), 'utf8')).toContain('value: "BIO_LITTER_BIRTH"');
   });
 
   it('offers every posted type in the API enum', () => {

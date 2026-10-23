@@ -21,6 +21,15 @@ describe('summariseAnimalValue', () => {
     expect(v.exits).toBe(-397.5);
   });
 
+  it('the lactation cost she hands to her litter at weaning comes off her value', () => {
+    const v = summariseAnimalValue([
+      { entry_type: 'ACQUISITION', total: '850' },
+      { entry_type: 'CONSUMPTION', total: '60' },
+      { entry_type: 'COST_ALLOCATION', total: '-60' },
+    ]);
+    expect(v).toMatchObject({ capitalised: 60, exits: -60, bookValue: 850 });
+  });
+
   it('ignores a transfer, which moves her between batches without changing her worth, and a GRN purchase row', () => {
     const v = summariseAnimalValue([
       { entry_type: 'ACQUISITION', total: '350' },

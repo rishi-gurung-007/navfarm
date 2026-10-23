@@ -109,6 +109,31 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
   });
 
+  it('the costing preset is the lean layout with the costing volume, then the reconciliation', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--lean', '--volume=costing', '--no-daily-entries']));
+    // --volume=costing must come after --lean, which sets the lean volume first.
+    expect(chapters.args.indexOf('--volume=costing')).toBeGreaterThan(chapters.args.indexOf('--lean'));
+    expect(chapters.args).not.toContain('--no-batches');
+    expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
+  });
+
+  it('the costing-test preset posts no demo herd: the masters, then chapter 16 only (--costing-test), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-test' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-test', '--lean', '--volume=costing']));
+    expect(chapters.args.indexOf('--volume=costing')).toBeGreaterThan(chapters.args.indexOf('--lean'));
+    expect(list[list.length - 1]).toBe('verify-costing-test.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
   it('the small preset seeds no batches; other runs still do', () => {
     const small = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }).pop()!;
     expect(small.args).toContain('--no-batches');

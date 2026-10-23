@@ -357,6 +357,93 @@ export default function BioAssetRollForwardPanel() {
               </div>
             </div>
           </div>
+
+          {/* ── Bio-asset costing: the roll-forward by profile, and the runs tied to the GL ── */}
+          {Array.isArray(data.byProfile) && data.byProfile.length > 0 && (
+            <div className="overflow-hidden rounded-[var(--radius-lg)] border shadow-sm" style={S.surface} aria-label={t("barfByProfileTitle")}>
+              <div className="border-b px-5 py-4" style={S.raised}>
+                <h3 className="text-base font-semibold" style={S.primary}>{t("barfByProfileTitle")}</h3>
+                <p className="text-xs" style={S.muted}>{t("barfByProfileSubtitle")}</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-right text-xs uppercase tracking-wider" style={{ ...S.muted, borderColor: "var(--row-border)" }}>
+                      <th className="px-5 py-2 text-left">{t("barfProfileColumn")}</th>
+                      <th className="px-3 py-2">{t("barfOpeningColumn")}</th>
+                      <th className="px-3 py-2">{t("barfAcquisitionsColumn")}</th>
+                      <th className="px-3 py-2">{t("barfCapitalisedColumn")}</th>
+                      <th className="px-3 py-2">{t("barfAmortisationColumn")}</th>
+                      <th className="px-3 py-2">{t("barfFairValueColumn")}</th>
+                      <th className="px-3 py-2">{t("barfExitsColumn")}</th>
+                      <th className="px-5 py-2">{t("barfClosingColumn")}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--row-border)]">
+                    {data.byProfile.map((r: Row) => (
+                      <tr key={r.key} className="text-right">
+                        <td className="px-5 py-2.5 text-left font-semibold" style={S.primary}>
+                          {r.label === "PROFILE" ? r.profile_code : r.label === "NO_PROFILE" ? t("barfNoProfileRow") : t("barfBatchLevelRow")}
+                        </td>
+                        {["opening", "acquisitions", "capitalised", "amortisation", "fairValue", "exits"].map((k) => (
+                          <td key={k} className="px-3 py-2.5 font-mono" style={Number(r[k]) < 0 ? S.danger : S.primary}>{formatCurrency(r[k])}</td>
+                        ))}
+                        <td className="px-5 py-2.5 font-mono font-bold" style={S.primary}>{formatCurrency(r.closing)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {data.costingTieOut && (
+            <div className="overflow-hidden rounded-[var(--radius-lg)] border shadow-sm" style={S.surface} aria-label={t("barfTieOutTitle")}>
+              <div className="border-b px-5 py-4" style={S.raised}>
+                <h3 className="text-base font-semibold" style={S.primary}>{t("barfTieOutTitle")}</h3>
+                <p className="text-xs" style={S.muted}>{t("barfTieOutSubtitle")}</p>
+              </div>
+              {data.costingTieOut.available === false ? (
+                <p className="px-5 py-4 text-xs" style={S.muted}>{data.costingTieOut.reason}</p>
+              ) : data.costingTieOut.rows.length === 0 ? (
+                <p className="px-5 py-4 text-xs" style={S.muted}>{t("barfTieOutNone")}</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-right text-xs uppercase tracking-wider" style={{ ...S.muted, borderColor: "var(--row-border)" }}>
+                        <th className="px-5 py-2 text-left">{t("barfTieOutAccount")}</th>
+                        <th className="px-3 py-2 text-left">{t("barfTieOutBasis")}</th>
+                        <th className="px-3 py-2">{t("barfTieOutLedger")}</th>
+                        <th className="px-3 py-2">{t("barfTieOutGl")}</th>
+                        <th className="px-3 py-2">{t("barfTieOutDifference")}</th>
+                        <th className="px-5 py-2">{t("barfTieOutStatus")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--row-border)]">
+                      {data.costingTieOut.rows.map((r: Row) => (
+                        <tr key={`${r.role}-${r.account_code}`} className="text-right">
+                          <td className="px-5 py-2.5 text-left" style={S.primary}>
+                            <span className="font-semibold">{r.account_code}</span> <span style={S.sub}>{t(`barfRole_${r.role}` as any)}</span>
+                          </td>
+                          <td className="px-3 py-2.5 text-left" style={S.sub}>{r.basis === "PERIOD" ? t("barfBasisPeriod") : t("barfBasisToDate")}</td>
+                          <td className="px-3 py-2.5 font-mono" style={S.primary}>{formatCurrency(r.ledger)}</td>
+                          <td className="px-3 py-2.5 font-mono" style={S.primary}>{formatCurrency(r.gl)}</td>
+                          <td className="px-3 py-2.5 font-mono" style={r.reconciled ? S.primary : S.danger}>{formatCurrency(r.difference)}</td>
+                          <td className="px-5 py-2.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold" style={r.reconciled ? { color: "var(--success)" } : { color: "var(--warning)" }}>
+                              {r.reconciled ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                              {r.reconciled ? t("barfReconciled") : t("barfTieOutVariance")}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

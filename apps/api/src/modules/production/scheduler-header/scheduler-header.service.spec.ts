@@ -247,6 +247,20 @@ describe('SchedulerHeaderService', () => {
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
+    it('treats the tenant copy and the company copy of a stage as one stage: a scheduler on either is the batch\'s scheduler', async () => {
+      const limit = (rows: unknown[]) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }) });
+      mockDbSelect
+        .mockReturnValueOnce(limit([batch])) // scoped batch lookup
+        .mockReturnValueOnce(limit([])) // no header on the stage id named
+        .mockReturnValueOnce(limit([{ stage_id: 'stage-quar-tenant', stage_code: 'QUARANTINE' }])) // the stage named (tenant copy)
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ header: { scheduler_id: 'sched-company-copy', batch_id: 'batch-1' } }]) }) }) }) }); // a header on the company copy, same code
+      const findOne = jest.spyOn(service, 'findOne').mockResolvedValue({ scheduler_id: 'sched-company-copy' } as any);
+      const result = await service.createForStage('batch-1', 'stage-quar-tenant', 'tenant-123');
+      expect(findOne).toHaveBeenCalledWith('sched-company-copy');
+      expect(result.scheduler_id).toBe('sched-company-copy');
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
     it('creates a header and a CONSUMPTION line from the breed\'s feed lifecycle standard', async () => {
       const insertedValues: Record<string, any[]> = {};
       mockDbInsert.mockImplementation(() => ({
@@ -617,6 +631,37 @@ describe('SchedulerHeaderService', () => {
       await expect(service.updateFeedLines('sched-1', [] as any, 'tenant-123')).rejects.toThrow(FEED_LINES_RETIRED_MESSAGE);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+  describe('updateHeader: moving a scheduler to the day its animals entered the stage', () => {
+    const header = { scheduler_id: 's1', batch_id: 'b1', stage_id: 'st1', company_id: 'comp-1', effective_from: '2026-04-09', effective_to: '2026-04-11', lines: [{ line_id: 'l1' }] };
+    const countRow = (n: number) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ n }]) }) });
+    const updateChain = () => { const set = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }); mockDbUpdate.mockReturnValue({ set }); return set; };
+    beforeEach(() => { jest.spyOn(service, 'findOne').mockResolvedValue(header as any); });
+
+    it('moves the dates while nothing has been entered or locked', async () => {
+      const set = updateChain();
+      mockDbSelect.mockReturnValueOnce(countRow(0)).mockReturnValueOnce(countRow(0));
+      await service.updateHeader('s1', { effective_from: '2026-03-17', effective_to: '2026-03-19' } as any, 'tenant-123');
+      expect(set).toHaveBeenCalledWith(expect.objectContaining({ effective_from: '2026-03-17', effective_to: '2026-03-19' }));
+    });
+
+    it('refuses once data has been entered against it', async () => {
+      updateChain();
+      mockDbSelect.mockReturnValueOnce(countRow(3));
+      await expect(service.updateHeader('s1', { effective_from: '2026-03-17' } as any, 'tenant-123')).rejects.toThrow(/dates cannot be changed/);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses an end date before the start date', async () => {
+      await expect(service.updateHeader('s1', { effective_from: '2026-03-17', effective_to: '2026-03-10' } as any, 'tenant-123')).rejects.toThrow(/end date cannot be before/);
+    });
+
+    it('does not look for entries when only notes change', async () => {
+      const set = updateChain();
+      await service.updateHeader('s1', { notes: 'x' } as any, 'tenant-123');
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(set).toHaveBeenCalled();
     });
   });
 });

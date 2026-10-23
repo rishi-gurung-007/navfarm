@@ -1,6 +1,6 @@
 import {
-  changedLockedFields, costingStartDate, originOf, residualFor, resolveProfile, scopeKey, validateActivation, validateTerms,
-  type ResolvableProfile,
+  changedLockedFields, costingStartDate, originOf, pickResidualSetting, residualFor, resolveProfile, resolveResidual, scopeKey, settingResidual, validateActivation, validateResidualSetting, validateTerms,
+  type ResidualSetting, type ResolvableProfile,
 } from './bio-costing.rules';
 
 const ON = { bio_asset_support: true, amort_option: true, fair_value_option: true };
@@ -20,9 +20,9 @@ describe('validateTerms', () => {
     expect(validateTerms(local, ON)).toEqual([]);
     expect(validateTerms({ ...local, residual_rule: 'FIXED', residual_fixed_amount: 5 }, ON).join()).toMatch(/no residual/);
   });
-  it('refuses the BBP\'s forbidden pairings: imported with fair value, local with amortisation', () => {
+  it('refuses an imported asset costed by fair value, but lets a local one be amortised (Arun, 21 Oct 2026; awaiting the client)', () => {
     expect(validateTerms({ origin: 'IMPORTED', gender: 'F', costing_method: 'FAIR_VALUE', start_age_weeks: 33 }, ON).join()).toMatch(/imported asset cannot/);
-    expect(validateTerms({ ...importedFemale, origin: 'LOCAL' }, ON).join()).toMatch(/local breeding asset cannot/);
+    expect(validateTerms({ ...importedFemale, origin: 'LOCAL' }, ON)).toEqual([]);
   });
   it('needs the method switched on for biological assets: this is what gives the costing_method_config flags a reader', () => {
     expect(validateTerms(importedFemale, { ...ON, amort_option: false }).join()).toMatch(/Amortisation is not enabled/);
@@ -126,12 +126,47 @@ describe('scope, origin and the lock', () => {
   it('maps the entry types the documents name and nothing else', () => {
     expect(originOf('PURCHASED_IMPORTED')).toBe('IMPORTED');
     expect(originOf('PURCHASED_LOCAL')).toBe('LOCAL');
-    expect(originOf('BORN_ON_FARM')).toBeNull();
+    expect(originOf('BORN_ON_FARM')).toBe('LOCAL'); // a selected gilt is a Local asset (BBP S.NO.5)
     expect(originOf('TRANSFERRED_IN')).toBeNull();
   });
   it('reports only the locked fields that really change, treating 36 and "36" as the same', () => {
     const stored = { useful_life_months: 36, name: 'x', start_age_weeks: 33, residual_price_per_kg: '2.050000' };
     expect(changedLockedFields(stored, { useful_life_months: '36', name: 'y', residual_price_per_kg: 2.05 })).toEqual([]);
     expect(changedLockedFields(stored, { useful_life_months: 18, start_age_weeks: 26 })).toEqual(['start_age_weeks', 'useful_life_months']);
+  });
+});
+
+describe('the company residual setting', () => {
+  const female = { gender: 'F', residual_rule: 'WEIGHT_X_PRICE', residual_weight_kg: '150', residual_price_per_kg: '2.05', effective_from: '2026-01-01' };
+  const male = { gender: 'M', residual_rule: 'NONE', effective_from: '2026-01-01' };
+  const profile = { costing_method: 'AMORTIZATION', start_age_weeks: 33, useful_life_months: 36, residual_rule: 'WEIGHT_X_PRICE', residual_weight_kg: 100, residual_price_per_kg: 2, residual_applies_gender: 'F' };
+
+  it('works a setting out as nothing, a fixed amount, or weight times price', () => {
+    expect(settingResidual(female)).toBe(307.5);
+    expect(settingResidual(male)).toBe(0);
+    expect(settingResidual({ gender: 'F', residual_rule: 'FIXED', residual_fixed_amount: 90, effective_from: '2026-01-01' })).toBe(90);
+  });
+  it('refuses a setting that cannot be worked out', () => {
+    expect(validateResidualSetting(female)).toEqual([]);
+    expect(validateResidualSetting({ ...female, residual_weight_kg: 0 }).join()).toMatch(/weight and a price/);
+    expect(validateResidualSetting({ ...female, gender: 'X' }).join()).toMatch(/Gender/);
+    expect(validateResidualSetting({ ...female, effective_from: '1 Jan' }).join()).toMatch(/takes effect/);
+    expect(validateResidualSetting({ ...male, residual_weight_kg: 5 }).join()).toMatch(/NONE/);
+    expect(validateResidualSetting({ ...female, residual_rule: 'GUESS' }).join()).toMatch(/Residual rule/);
+  });
+  it('takes the latest setting in force on the day for the sex, and none before the first', () => {
+    const later = { ...female, residual_price_per_kg: '2.20', effective_from: '2026-07-01' };
+    expect(pickResidualSetting([female, later, male] as ResidualSetting[], 'F', '2026-06-30')?.residual_price_per_kg).toBe('2.05');
+    expect(pickResidualSetting([female, later, male] as ResidualSetting[], 'F', '2026-07-01')?.residual_price_per_kg).toBe('2.20');
+    expect(pickResidualSetting([female, later, male], 'F', '2025-12-31')).toBeNull();
+    expect(pickResidualSetting([female, later], 'M', '2026-08-01')).toBeNull();
+  });
+  it('uses the animal\'s own residual first, then the company setting, then the profile\'s (an old tenant)', () => {
+    const settings = [female, male];
+    expect(resolveResidual({ animalOverride: '250', settings, profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 250, source: 'ANIMAL' });
+    expect(resolveResidual({ animalOverride: 0, settings, profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 0, source: 'ANIMAL' }); // an own residual of 0 is an override
+    expect(resolveResidual({ animalOverride: null, settings, profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 307.5, source: 'COMPANY' });
+    expect(resolveResidual({ animalOverride: null, settings, profile, gender: 'M', onDate: '2026-09-30' })).toEqual({ value: 0, source: 'COMPANY' });
+    expect(resolveResidual({ animalOverride: null, settings: [], profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 200, source: 'PROFILE' });
   });
 });

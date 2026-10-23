@@ -251,7 +251,7 @@ first test case.
 
 ```
 costing_start     = dob + start_age_weeks × 7                            [sheet]  — but never before entry_date  [ours, D4]
-life_end          = dob + useful_life_months                             [sheet's worked example counts from birth; D4]
+life_end          = dob + round(useful_life_months x 365 / 12) days     [sheet: 36 months = +1095 days, from birth; D4]
 residual          = rule(profile, animal): NONE → 0 | FIXED → amount | WEIGHT_X_PRICE → weight_kg × price_per_kg
                     0 if residual_applies_gender is set and ≠ animal.gender        (female 150 × 2.05 = 307.50 ; male 0)
 days              = days of the run period inside [costing_start, life_end), counted by the profile's day basis
@@ -417,7 +417,9 @@ rate → 400; save an `AMORTIZATION` profile when `amort_option` is false → 40
 imported male and a local female via the API → expected profile each; post one run line (Phase 4) then edit life months →
 refused, edit FV price → accepted.
 
-### Phase 4 — Run engine, GL, manual page, reversal
+### Phase 4 — Run engine, GL, manual page, reversal — **DONE 20 Oct as far as the client allows, uncommitted** (parts 1–3) (`docs/VERIFICATION-2026-10-20-bio-costing-phase-4.md`)
+
+> **Done:** migration 0210, the pure engine, Calculate / Post / Reverse, V1–V6, V9, V13 (a period cannot be run behind a later posted one), the journal and ledger rows, `/bio-costing/runs`. **Part 3 done:** the Finance screen (*Finance > Bio-Asset Costing Runs*) and the batch amortise / fair-value endpoints refuse a herd whose animals are costed by profiles (a guard, not a wrapper: the batch path holds value per herd, the engine per animal). **What remains is blocked on the client or Finance, not on engineering:** the sale / cull / slaughter entries, registration posting (D8) and the loss and gross legs of a death, the real accumulated-amortisation / impairment accounts, D11, D5, and batch-tracked profiles (see the verification note §7). **Part 2 done:** a death clears the animal's accumulated amortisation (Dr accumulated amortisation / Cr acquisition cost; note §6). **Still to do in Phase 4:** the Finance page; the batch endpoints as wrappers; the sale / cull / slaughter entries (three routes in the client's documents, and a sale posts no journal today); amortisation to the exit date for a mid-period leaver; registration posting (D8) and Finance's accounts. **Choices:** life is counted from birth in 365-day years (36 months = 1095 days) as the sheet does, not calendar months; the 30-day basis drifts slightly and the last period takes the remainder; run ledger rows carry no `batch_id`.
 
 Migration 0210; Calculate / Post / Reverse; V1–V6, V9; accumulated-amortisation posting; Finance page; X3 costs-to-sell and
 X6; batch endpoints become wrappers over a one-batch run.
@@ -434,14 +436,18 @@ X6; batch endpoints become wrappers over a one-batch run.
 7. Reverse the run → ledger and journal mirrored, `active_key` null, the period can be re-run.
 8. Open the page in the browser: Calculate, read the skips, Post.
 
-### Phase 5 — Scheduler
+### Phase 5 — Scheduler — **DONE 20 Oct, uncommitted** (`docs/VERIFICATION-2026-10-20-bio-costing-phase-5.md`)
+
+> **Done:** the daily timer (off unless `BIO_COSTING_SCHEDULER_ENABLED=true`; time from `BIO_COSTING_SCHEDULER_CRON`), the due-period logic, calculate-and-wait by default and post-on-`auto_post`, failed runs recorded with their reason (migration 0211) and not retried after three tries by the timer, bounded catch-up, `GET /runs/due` and `POST /runs/run-due`, and the "Due for costing" notice on the Finance screen. **Departures:** the notice is the Finance screen, not an Alerts-inbox row (those alerts are farm-bound); no separate scheduler log table. **Ours:** first period = the one holding the profile's effective date; a calculated-but-unposted run blocks its profile.
 
 **Proof:** with the flag on and a profile whose period has ended, run the tick (call `tick()` as the feed scheduler's
 tests do **and** observe the process once with the cron firing); a `CALCULATED` run appears with an in-app notice;
 run the tick twice → one run, same `run_key`; leave the app off for two periods → catch-up creates both, oldest first;
 flag off → nothing; with `auto_post` on → `POSTED` and the journal exists.
 
-### Phase 6 — Existing tenants, reports, records
+### Phase 6 — Existing tenants, reports, records — **DONE 21 Oct, uncommitted** (`docs/VERIFICATION-2026-10-20-bio-costing-phase-6.md`)
+
+> **Done:** `db-backfill-bio-costing` (read-only / `--verify` / `--apply`, idempotent; assigns profiles and start dates, refreshes stale caches, reports batch-level cost, never costs the past), the roll-forward by profile, and the tie-out of engine ledger rows to `BIO_COSTING_RUN` journal lines on *Bio-Asset Reconciliation*; `decisions.md` and `AGENTS.md` §9 written. **Not done, by choice:** allocating old batch-level feed to animals (client's call). **Found on the way:** the first backfill assigned nothing because mysql2 returned dates, not strings.
 
 Backfill script (`--verify` rolls back): assign `costing_profile_id` to existing animals, report ledger vs cache
 differences **without altering history**, never run charges for past periods unless the client asks. Roll-forward by

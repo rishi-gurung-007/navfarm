@@ -29,7 +29,7 @@ const ITEM_SOW = 'Mature Parity Breeding Sow';
 const ITEM_BOAR = 'Mature Herd Sire Boar';
 const ITEM_GILT = 'Replacement Breeding Gilt';
 
-type AnimalKind = 'SOW' | 'BOAR' | 'GILT';
+export type AnimalKind = 'SOW' | 'BOAR' | 'GILT';
 
 /**
  * The stages each kind of animal is spread over, in order, keeping only those
@@ -52,6 +52,22 @@ const ANIMAL_FACTS: Record<AnimalKind, { gender: 'F' | 'M'; itemCode: string; ba
   BOAR: { gender: 'M', itemCode: ITEM_BOAR, baseAgeWeeks: 88, ageSpread: 8 },
 };
 
+/**
+ * A second lot of breeding stock bought beside the local herd (bio-asset costing): same farm, same sheds and stages, but its own
+ * purchase receipt, ear tags and Animal Wise batch, an entry type of its own and its own prices and ages. The imported lot is what
+ * the costing profiles' amortisation rules apply to; the local herd takes the fair-value ones.
+ */
+export interface StockVariant {
+  /** Names the lot in the receipt reference, lot numbers, ear tags and batch reference. */
+  key: string;
+  entryType: 'PURCHASED_IMPORTED' | 'PURCHASED_LOCAL';
+  counts: Record<AnimalKind, number>;
+  /** Purchase price per head. An import costs more than the catalog's standard cost, and the receipt line carries it. */
+  rate: Record<AnimalKind, number>;
+  /** Age at purchase, in weeks. */
+  ageWeeks: Record<AnimalKind, number>;
+}
+
 export interface RegisterBreedingStockDeps {
   db: MySql2Database<typeof schema>;
   animals: AnimalService;
@@ -59,12 +75,14 @@ export interface RegisterBreedingStockDeps {
   item: ItemLookup;
   /** Left out, the animals are registered and left in no batch (the small seed: the user creates the batch). */
   ensureAnimalWiseBatch?: AnimalWiseBatchEnsurer;
+  /** Registers this lot instead of the farm's local herd. */
+  variant?: StockVariant;
 }
 
 /** Returns the DEMO remarks token of the Animal Wise batch created/adopted (in a
  * one-element list), or null if this farm's role/breed carries no registerable herd. */
 export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, deps: RegisterBreedingStockDeps): Promise<string[] | null> {
-  const { db, animals, receipts, item, ensureAnimalWiseBatch } = deps;
+  const { db, animals, receipts, item, ensureAnimalWiseBatch, variant } = deps;
   const tag = tagOf(farm);
   const breed: DemoBreed | null = batchBreedOf(farm);
   if (!breed) {
@@ -81,9 +99,9 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
   // breeding chapter needs a litter born, nursed and weaned between her purchase and today.
   const purchaseDate = new Date(Date.parse(`${startDate}T00:00:00Z`) - HERD_BOUGHT_DAYS_BEFORE_WINDOW * 86_400_000).toISOString().slice(0, 10);
   const herd: Array<{ kind: AnimalKind; count: number }> = [
-    { kind: 'SOW' as const, count: farm.volume.sows },
-    { kind: 'GILT' as const, count: farm.volume.gilts },
-    { kind: 'BOAR' as const, count: farm.volume.boars },
+    { kind: 'SOW' as const, count: variant ? variant.counts.SOW : farm.volume.sows },
+    { kind: 'GILT' as const, count: variant ? variant.counts.GILT : farm.volume.gilts },
+    { kind: 'BOAR' as const, count: variant ? variant.counts.BOAR : farm.volume.boars },
   ].filter((h) => h.count > 0);
   if (herd.length === 0) {
     ctx.log(`${tag} volume profile carries no sows/gilts/boars — no registered animals`);
@@ -96,26 +114,30 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
   // stage (Z-Line-Sow has none): a sow breed cannot place a boar at Boar AI.
   const breedOf = (kind: AnimalKind): DemoBreed =>
     kind === 'BOAR' && !breed.lifecycleStages.has('BOAR_AI') && farm.boarBreed?.lifecycleStages.has('BOAR_AI') ? farm.boarBreed : breed;
-  const stagesFor = (kind: AnimalKind): string[] =>
-    (kind === 'GILT' ? GILT_STAGES : kind === 'SOW' ? SOW_STAGES : BOAR_STAGES).filter((code) => breedOf(kind).lifecycleStages.has(code));
+  // A sow line with no Boar AI row (Z-Line-Sow, as the real masters seed it) still carries Quarantine, where a boar stands until
+  // he is put to work: without that fallback no boar was registered and 05-breeding, which mates and collects from DEMO-BOAR-01, failed.
+  const stagesFor = (kind: AnimalKind): string[] => {
+    const own = (kind === 'GILT' ? GILT_STAGES : kind === 'SOW' ? SOW_STAGES : BOAR_STAGES).filter((code) => breedOf(kind).lifecycleStages.has(code));
+    return own.length === 0 && kind === 'BOAR' && breedOf(kind).lifecycleStages.has('QUARANTINE') ? ['QUARANTINE'] : own;
+  };
   const usableHerd = herd.filter((h) => {
     if (stagesFor(h.kind).length) return true;
     ctx.log(`${tag} breed ${breedOf(h.kind).code} carries no lifecycle row for any ${h.kind.toLowerCase()} stage — no ${h.kind.toLowerCase()}s registered`);
     return false;
   });
   if (usableHerd.length === 0) return null;
-  const ref = batchRef(farm.code, 'REG');
+  const ref = batchRef(farm.code, variant ? `REG-${variant.key}` : 'REG');
 
   // The breeding stock's purchase document, one line per item kind.
   // AnimalService reads each animal's acquisition cost off this receipt's
   // line rate, so every kind in the herd needs a line — including on a farm
   // whose receipt was posted by an earlier, narrower run, which is what the
   // top-up covers.
-  const receiptRef = `DEMO-${farm.code}-LIVING_ASSET`;
+  const receiptRef = `DEMO-${farm.code}-LIVING_ASSET${variant ? `-${variant.key}` : ''}`;
   const receiptLines: { item_id: string; quantity: number; uom: string; rate?: number; lot_no: string }[] = [];
   for (const { kind, count } of usableHerd) {
     const row = await item(ANIMAL_FACTS[kind].itemCode);
-    receiptLines.push({ item_id: row.item_id, quantity: count, uom: 'HEAD', rate: rateOf(row.standard_cost), lot_no: `DEMO-${farm.code}-${kind}-LOT` });
+    receiptLines.push({ item_id: row.item_id, quantity: count, uom: 'HEAD', rate: variant ? variant.rate[kind] : rateOf(row.standard_cost), lot_no: `DEMO-${farm.code}-${kind}${variant ? `-${variant.key}` : ''}-LOT` });
   }
 
   /** Create the named receipt with these lines if absent, then post it if DRAFT. */
@@ -150,7 +172,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
   const mainReceiptId = await ensureReceipt(
     receiptRef,
     receiptLines,
-    `DEMO breeding stock purchase (${usableHerd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')}) into ${farm.code}`,
+    `DEMO breeding stock purchase${variant ? ` (${variant.entryType === 'PURCHASED_IMPORTED' ? 'imported' : 'local'} lot)` : ''} (${usableHerd.map((h) => `${h.count} ${h.kind.toLowerCase()}`).join(', ')}) into ${farm.code}`,
   );
 
   // Which items that receipt actually carries — an adopted receipt from an
@@ -185,7 +207,7 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
     const stages = stagesFor(kind);
     const itemRow = await item(facts.itemCode);
     for (let i = 1; i <= count; i++) {
-      const tagNo = earTag(farm.code, kind, i);
+      const tagNo = variant ? `DEMO-${variant.key}-${farm.code}-${kind}-${String(i).padStart(2, '0')}` : earTag(farm.code, kind, i);
       tags.push(tagNo);
       const [already] = await db
         .select({ animal_id: schema.animalRegister.animal_id })
@@ -207,11 +229,11 @@ export async function registerBreedingStock(ctx: DemoContext, farm: DemoFarm, de
           animal_type: kind,
           breed_id: breedOf(kind).breedId,
           gender: facts.gender,
-          entry_type: 'PURCHASED_LOCAL',
+          entry_type: variant?.entryType ?? 'PURCHASED_LOCAL',
           entry_date: purchaseDate,
           // dob, not age_at_entry_weeks: the ANIMAL series takes its YEAR from dob
           // (PIG-YYYY-SEQ, TDD row 7), and the service derives the age from it.
-          dob: new Date(Date.parse(`${purchaseDate}T00:00:00Z`) - (facts.baseAgeWeeks + (i % facts.ageSpread)) * 7 * 86_400_000).toISOString().slice(0, 10),
+          dob: new Date(Date.parse(`${purchaseDate}T00:00:00Z`) - ((variant ? variant.ageWeeks[kind] : facts.baseAgeWeeks) + (i % facts.ageSpread)) * 7 * 86_400_000).toISOString().slice(0, 10),
           source_receipt_id: receiptIdByItem.get(itemRow.item_id)!,
           item_id: itemRow.item_id,
           rfid_tag: tagNo,

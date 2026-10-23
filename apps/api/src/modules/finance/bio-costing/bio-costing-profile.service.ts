@@ -295,6 +295,30 @@ export class BioCostingProfileService {
     return { animal_id: animalId, assigned: !opts.dryRun, would_assign: !!opts.dryRun, reason: 'OK' as const, profile_id: profile.profile_id, profile_code: profile.profile_code, costing_start_date: start };
   }
 
+  /**
+   * An animal's birth date sets when her costing starts (birth + the profile's start age, never before she arrived). Moving the birth date moves that
+   * start, and with it the line between feed capitalised and feed expensed and the end of her life, so it is allowed only while nothing has been
+   * booked on the old basis: no costing run line, no capitalised or amortised ledger row, no feed or overhead entry against her. Returns the new start.
+   */
+  async startForNewBirthDate(animalId: string, newDob: string, tenantId: string): Promise<string | null> {
+    const [a] = await this.db.select().from(schema.animalRegister)
+      .where(and(eq(schema.animalRegister.animal_id, animalId), eq(schema.animalRegister.tenant_id, tenantId))).limit(1);
+    if (!a || !a.costing_profile_id) return null;
+    const [profile] = await this.db.select().from(schema.bioCostingProfile).where(eq(schema.bioCostingProfile.profile_id, a.costing_profile_id)).limit(1);
+    if (!profile) return null;
+    const [run] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.bioCostingRunLine).where(eq(schema.bioCostingRunLine.animal_id, animalId));
+    const [ledger] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.bioAssetLedger).where(and(
+      eq(schema.bioAssetLedger.animal_id, animalId), inArray(schema.bioAssetLedger.entry_type, ['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT'])));
+    const [tx] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.batchTransaction).where(and(
+      eq(schema.batchTransaction.animal_id, animalId), inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD'])));
+    if (Number(run?.n ?? 0) + Number(ledger?.n ?? 0) + Number(tx?.n ?? 0) > 0) {
+      throw new BadRequestException(
+        `${a.animal_code}'s birth date sets when her costing starts, so it cannot be changed once feed, medicine, overhead or a costing run has been booked to her. Reverse those first, or leave the birth date as recorded.`,
+      );
+    }
+    return costingStartDate({ dob: newDob, entry_date: String(a.entry_date).slice(0, 10), age_at_entry_weeks: a.age_at_entry_weeks }, profile.start_age_weeks);
+  }
+
   async assignAnimals(dto: AssignBioCostingDto, tenantId: string, companyId: string) {
     const rows = await this.db.select({ animal_id: schema.animalRegister.animal_id }).from(schema.animalRegister).where(and(
       eq(schema.animalRegister.tenant_id, tenantId), eq(schema.animalRegister.company_id, companyId), eq(schema.animalRegister.is_active, true),

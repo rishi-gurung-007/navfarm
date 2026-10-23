@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, IsArray, ArrayMaxSize, Min, Max, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, IsArray, ArrayMaxSize, Min, Max, IsUUID, IsNotEmpty, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum MatingType {
@@ -235,6 +235,23 @@ export class CreateLitterFosterDto {
   notes?: string;
 }
 
+/** A gilt picked at weaning: the operator types her RFID and teat count (15 or more); her birth date defaults to the farrowing date. */
+export class WeaningGiltDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  rfid_tag: string;
+
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  no_of_teats: number;
+
+  @IsOptional()
+  @IsDateString()
+  dob?: string;
+}
+
 export class UpdateWeaningDto {
   @IsDateString()
   weaning_date: string;
@@ -268,6 +285,29 @@ export class UpdateWeaningDto {
   @IsOptional()
   @IsUUID()
   loss_reason_id?: string;
+
+  /** Gilts selected from this litter at the weaning, taken from the weaned piglets before the rest are moved on. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => WeaningGiltDto)
+  gilts?: WeaningGiltDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  gilt_colour_code?: string;
+
+  /** The fixed-asset (Bio Asset) item the gilts are registered under; the piglet item when left out. */
+  @IsOptional()
+  @IsUUID()
+  gilt_item_id?: string;
+
+  /** An Animal Wise batch the gilts join. */
+  @IsOptional()
+  @IsUUID()
+  gilt_animal_batch_id?: string;
 
   @IsOptional()
   @IsString()

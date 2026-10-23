@@ -7,6 +7,10 @@ import { BatchService } from '../../production/batch/batch.service';
 import { BatchTransferService } from '../../production/batch/batch-transfer.service';
 import { SemenLotService } from './semen-lot.service';
 import { AnimalService } from '../animal/animal.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { LitterCostService } from '../litter-cost/litter-cost.service';
+import { GiltSelectionService } from '../gilt-selection/gilt-selection.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BreedingService } from './breeding.service';
 import * as schema from '../../../core/database/schema';
@@ -52,6 +56,8 @@ describe('BreedingService', () => {
   const batchTransfers = { create: jest.fn() };
   const semenLots = { postCollection: jest.fn(), issueDoses: jest.fn() };
   const animals = { transitionStage: jest.fn() };
+  const animalBookValue = { refreshCache: jest.fn() };
+  const giltSelection = { selectAtWeaning: jest.fn() };
 
   /** Awaitable at any point, so .where(), .limit() and .orderBy() all resolve. */
   const chain = (result: unknown[]) => {
@@ -61,6 +67,7 @@ describe('BreedingService', () => {
       limit: () => self,
       for: () => self,
       orderBy: () => self,
+      groupBy: () => self,
       innerJoin: () => self,
       leftJoin: () => self,
       then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
@@ -108,6 +115,10 @@ describe('BreedingService', () => {
         { provide: BatchTransferService, useValue: batchTransfers },
         { provide: SemenLotService, useValue: semenLots },
         { provide: AnimalService, useValue: animals },
+        { provide: AnimalBookValueService, useValue: animalBookValue },
+        { provide: GiltSelectionService, useValue: giltSelection },
+        LitterCostService,
+        { provide: GlPostingService, useValue: { postBatchCostEntry: jest.fn() } },
       ],
     }).compile();
 
@@ -432,6 +443,47 @@ describe('BreedingService', () => {
       expect(result.message).toContain('12 piglets held as lot LOT-00009 in batch BATCH-000010');
     });
 
+    describe('the week 4 alert (BBP: Gilt Week 4 Selection Due)', () => {
+      const recent = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+      const old = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+      const row = (over: object) => ({ farrow_id: 'f1', farrowing_date: old, piglets_weaned: 0, piglets_born_live: 10, foster_received: 0, fostered_out: 0, piglet_batch_id: 'b-pig', piglet_lot_no: 'LOT-1', sow_code: 'SOW-1', ...over });
+
+      it('flags a litter still on its sow at 28 days or more, with the head in its lot, and raises one alert for it', async () => {
+        rows.set(schema.farrowingRecord, [row({}), row({ farrow_id: 'f2', farrowing_date: recent }), row({ farrow_id: 'f3', piglets_weaned: 9 })]);
+        rows.set(schema.batchHeader, [{ batch_id: 'b-pig', batch_no: 'BATCH-8', tenant_id: 'tenant-1', company_id: 'co-1', lob_id: 'lob-1', head: '10' }]);
+        const list: any[] = await service.getFarrowingRecords('tenant-1');
+        const by = Object.fromEntries(list.map((f) => [f.farrow_id, f]));
+        expect([by.f1.week4_due, by.f2.week4_due, by.f3.week4_due]).toEqual([true, false, false]);
+        expect(by.f1.piglets_in_lot).toBe(10);
+        expect(by.f3.piglets_in_lot).toBeNull();
+        const alerts = mockDbInsert.mock.results.flatMap((r) => (r.value.values as jest.Mock).mock.calls.map(([v]) => v)).filter((v) => v?.alert_type === 'GILT_WEEK4');
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]).toMatchObject({ severity: 'CRITICAL', batch_id: 'b-pig', title: 'Gilt Week 4 Selection Due — SOW-1, lot LOT-1' });
+      });
+    });
+
+    it('says how many of a litter\'s weaned piglets were kept as gilts', async () => {
+      rows.set(schema.farrowingRecord, [{ farrow_id: 'f1', farrowing_date: '2026-09-11', piglets_weaned: 11, piglets_born_live: 11, foster_received: 0, fostered_out: 0, piglet_batch_id: null }, { farrow_id: 'f2', farrowing_date: '2026-08-07', piglets_weaned: 12, piglets_born_live: 13, foster_received: 0, fostered_out: 0, piglet_batch_id: null }]);
+      rows.set(schema.giltSelectionGilt, [{ farrow_id: 'f1', n: '1' }]);
+      const list: any[] = await service.getFarrowingRecords('tenant-1');
+      expect(Object.fromEntries(list.map((f) => [f.farrow_id, f.gilts_selected]))).toEqual({ f1: 1, f2: 0 });
+    });
+
+    it('opens the litter at the sow\'s cost over the piglets born alive, records it as the litter\'s cost per piglet, and says so', async () => {
+      rows.set(schema.animalRegister, [sow]);
+      pigletLots.createLot.mockResolvedValue({ batch_id: 'b-pig', batch_no: 'BATCH-000010', lot_no: 'LOT-00009' });
+      const birth = jest.spyOn((service as any).litterCost, 'allocateAtBirth').mockResolvedValue({ note: ' Litter cost at birth 16.50 moved.', perPiglet: '1.650000', moved: 16.5, journal: 'JE-000140' });
+      const result: any = await service.recordFarrowing(
+        { sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 10, piglet_item_id: 'item-piglet' } as any,
+        'tenant-1',
+      );
+      expect(birth).toHaveBeenCalledWith(expect.objectContaining({ piglet_batch_id: 'b-pig', farrowing_date: '2026-10-09' }), expect.anything(), 10, 'tenant-1', undefined);
+      const sets = mockDbUpdate.mock.results.flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v));
+      expect(sets.find((v) => v && v.cost_per_piglet === '1.650000')).toBeDefined();
+      expect(result.cost_per_piglet).toBe('1.650000');
+      expect(result.message).toContain('Litter cost at birth 16.50 moved. Journal JE-000140 posted (Dr Piglets Inventory / Cr Biological Asset WIP)');
+    });
+
     it('refuses a farrowing with live piglets and no piglet item, so no litter goes without a ledger entry', async () => {
       rows.set(schema.animalRegister, [sow]);
       await expect(
@@ -502,28 +554,94 @@ describe('BreedingService', () => {
       });
     });
 
-    it('moves the sow\'s lactation cost into the piglet lot at weaning, spread over the head weaned', async () => {
-      litter({ batch_id: 'b-sows', farrowing_date: '2026-10-09' });
-      rows.set(schema.batchBioAssetState, [{ current_quantity: '12', nca_book_value: '100', stage: 'PREMATURE' }]);
-      rows.set(schema.batchHeader, [{ batch_id: 'b-sows', batch_no: 'BATCH-000001', company_id: 'co-1', nob_id: 'n1', lob_id: 'l1' }]);
-      rows.set(schema.bioAssetLedger, [{ item_id: 'item-piglet' }]);
-      jest.spyOn(service as any, 'postedAnimalCosts').mockResolvedValue({ feed: 60, drug: 10, overhead: 5, amortisation: 99 });
+    describe('the sow\'s lactation cost passes to the litter (Phase 3)', () => {
+      const setup = (held: { own: number; shared: number }, nca = '100') => {
+        animalBookValue.refreshCache.mockClear();
+        litter({ batch_id: 'b-sows', farrowing_date: '2026-10-09' });
+        rows.set(schema.batchBioAssetState, [{ current_quantity: '12', nca_book_value: nca, stage: 'PREMATURE' }]);
+        rows.set(schema.batchHeader, [{ batch_id: 'b-sows', batch_no: 'BATCH-000001', company_id: 'co-1', nob_id: 'n1', lob_id: 'l1' }]);
+        rows.set(schema.bioAssetLedger, [{ item_id: 'item-piglet' }]);
+        jest.spyOn((service as any).litterCost, 'capitalisedLactationCost').mockResolvedValue(held);
+      };
+      const allocation = () =>
+        mockDbInsert.mock.results.flatMap((r) => (r.value.values as jest.Mock).mock.calls.map(([v]) => v)).find((v) => Array.isArray(v) && v[0]?.entry_type === 'COST_ALLOCATION');
 
-      const result: any = await wean({});
+      it('writes the sow\'s own part against HER ledger, her batch\'s share against the batch, and the whole to the lot', async () => {
+        setup({ own: 60, shared: 15 });
+        const result: any = await wean({});
 
-      const inserted = mockDbInsert.mock.results.flatMap((r) => (r.value.values as jest.Mock).mock.calls.map(([v]) => v)).find((v) => Array.isArray(v) && v[0]?.entry_type === 'COST_ALLOCATION');
-      expect(inserted.map((e: any) => Number(e.cost_amount))).toEqual([-75, 75]);
-      const farrowSet = mockDbUpdate.mock.results.flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v)).find((v) => v && 'cost_per_piglet' in v);
-      expect(Number(farrowSet.cost_per_piglet)).toBeCloseTo(7.5); // 75 over 10 weaned; amortisation is not part of it
-      expect(result.message).toContain('Lactation cost 75.00 moved');
+        const rowsWritten = allocation();
+        expect(rowsWritten.map((e: any) => [e.animal_id, Number(e.cost_amount)])).toEqual([['sow-1', -60], [null, -15], [null, 75]]);
+        expect(rowsWritten.reduce((n: number, e: any) => n + Number(e.cost_amount), 0)).toBe(0); // nothing created or lost
+        expect(animalBookValue.refreshCache).toHaveBeenCalledWith(['sow-1']);
+        const farrowSet = mockDbUpdate.mock.results.flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v)).find((v) => v && 'cost_per_piglet' in v);
+        expect(Number(farrowSet.cost_per_piglet)).toBeCloseTo(7.5); // 75 over 10 weaned
+        expect(result.message).toContain('Lactation cost 75.00 moved');
+      });
+
+      it('has nothing to take from her when it was all expensed, so a sow past her costing start hands nothing over', async () => {
+        setup({ own: 0, shared: 0 });
+        const result: any = await wean({});
+        expect(allocation()).toBeUndefined();
+        expect(animalBookValue.refreshCache).not.toHaveBeenCalled();
+        expect(result.message).not.toContain('Lactation cost');
+      });
+
+      it('gives in proportion when her batch carries less than the two parts', async () => {
+        setup({ own: 60, shared: 40 }, '50');
+        await wean({});
+        expect(allocation().map((e: any) => [e.animal_id, Number(e.cost_amount)])).toEqual([['sow-1', -30], [null, -20], [null, 50]]);
+      });
+
+      it('moves nothing when the sow batch carries nothing', async () => {
+        setup({ own: 60, shared: 0 }, '0');
+        const result: any = await wean({});
+        expect(allocation()).toBeUndefined();
+        expect(result.message).not.toContain('Lactation cost');
+      });
     });
 
-    it('moves nothing when the sow batch carries less than nothing, or no piglets were weaned', async () => {
-      litter({ batch_id: 'b-sows', farrowing_date: '2026-10-09' });
-      rows.set(schema.batchBioAssetState, [{ current_quantity: '12', nca_book_value: '0', stage: 'PREMATURE' }]);
-      jest.spyOn(service as any, 'postedAnimalCosts').mockResolvedValue({ feed: 60, drug: 0, overhead: 0, amortisation: 0 });
-      const result: any = await wean({});
-      expect(result.message).not.toContain('Lactation cost');
+    it('counts gilts already selected before the weaning in the litter\'s weaned total, and spreads the cost over them too', async () => {
+      litter({ farrowing_date: '2026-10-09' });
+      rows.set(schema.giltSelectionGilt, [{ n: '3' }]);
+      const allocate = jest.spyOn((service as any).litterCost, 'allocate').mockResolvedValue({ note: '', perPiglet: null, moved: 0 });
+      const result: any = await wean({ piglets_weaned: 9 });
+      expect(allocate).toHaveBeenCalledWith(expect.anything(), expect.anything(), { asOf: '2026-11-06', divisor: 12 }, 'tenant-1', undefined);
+      expect(result.piglets_weaned).toBe(12);
+      expect(result.message).toContain('12 piglets weaned (3 already selected as gilts)');
+      const farrowSet = mockDbUpdate.mock.results.flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v)).find((v) => v && 'cost_per_piglet' in v);
+      expect(farrowSet.piglets_weaned).toBe(12);
+    });
+
+    describe('gilts selected in the weaning form (one event)', () => {
+      const gilts = [{ rfid_tag: 'G1', no_of_teats: 16 }, { rfid_tag: 'G2', no_of_teats: 15 }];
+      beforeEach(() => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({ selection_no: 'GS-2026-00001', created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }] });
+      });
+
+      it('takes the gilts from the weaned piglets first, and moves only the rest to the destination batch', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        const result: any = await wean({ move_to_batch_id: 'b-weaner', gilts });
+
+        expect(giltSelection.selectAtWeaning).toHaveBeenCalledWith({ farrow_id: 'f-1', piglet_batch_id: 'b-pig' }, gilts, expect.objectContaining({ date: '2026-11-06' }), 'tenant-1', undefined);
+        expect(batchTransfers.create).toHaveBeenCalledWith(expect.objectContaining({ quantity: 8, reason: 'WEANING' }), 'tenant-1', 'b-pig', undefined);
+        expect(result.message).toContain('2 gilts selected (GS-2026-00001): PIG-1, PIG-2');
+        expect(result.message).toContain('8 moved to the destination batch');
+      });
+
+      it('moves nothing when every weaned piglet was selected as a gilt', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        await wean({ piglets_weaned: 2, move_to_batch_id: 'b-weaner', gilts });
+        expect(batchTransfers.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses a gilt under 15 teats, and more gilts than piglets weaned, before anything is written', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        await expect(wean({ gilts: [{ rfid_tag: 'G1', no_of_teats: 14 }] })).rejects.toThrow(/14 teats.*at least 15/);
+        await expect(wean({ piglets_weaned: 1, gilts })).rejects.toThrow(/2 gilts cannot be selected from 1 weaned/);
+        expect(giltSelection.selectAtWeaning).not.toHaveBeenCalled();
+        expect(batchService.recordMortality).not.toHaveBeenCalled();
+      });
     });
 
     it('closes the piglet lot once weaning leaves nothing in it, and leaves it open while head remain', async () => {

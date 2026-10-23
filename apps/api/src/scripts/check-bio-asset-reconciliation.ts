@@ -7,14 +7,15 @@
  *   3. Batch vs animals — an animal-wise bio-asset batch's carrying value (batch_bio_asset_state.nca_book_value) is the
  *      capitalised cost the batch and the GL hold. It should equal its ledger rows other than ACQUISITION, with the
  *      acquisition of animals that have left added back (their exit row carries it). A count-only batch should equal
- *      the sum of all its rows. (The animals' acquisition cost is not in the batch figure or in the GL: decision D8.)
+ *      the sum of all its rows, the value it moved to or from other batches (transfers) included. (The animals' acquisition cost is not in the batch figure or in the GL: decision D8.) For an animal that has left, her
+ *      acquisition, amortisation and fair-value rows are added back, because her exit row is her whole book value net of them.
  *
  *   pnpm nx run api:db-check-bio-asset-reconciliation                  # nf_devco
  *   pnpm nx run api:db-check-bio-asset-reconciliation -- --database=nf_x
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 
-const TYPES = ['ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION'];
+const TYPES = ['ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION'];
 const money = (n: unknown) => Math.round(Number(n ?? 0) * 100) / 100;
 const TOL = 0.005;
 
@@ -42,12 +43,13 @@ async function run() {
     const [batches] = await db.query<RowDataPacket[]>(
       `SELECT b.batch_no, b.status, b.animal_tracking, s.nca_book_value nca,
               (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN (${inList})) all_rows,
+              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN ('TRANSFER_IN','TRANSFER_OUT')) transfers,
               (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN (${inList}) AND l.entry_type<>'ACQUISITION') non_acq,
-              (SELECT COALESCE(SUM(q.cost_amount),0) FROM bio_asset_ledger q WHERE q.entry_type='ACQUISITION' AND q.animal_id IN
+              (SELECT COALESCE(SUM(q.cost_amount),0) FROM bio_asset_ledger q WHERE q.entry_type IN ('ACQUISITION','AMORTIZATION','FAIR_VALUE_ADJMT') AND q.animal_id IN
                  (SELECT x.animal_id FROM bio_asset_ledger x WHERE x.batch_id=b.batch_id AND x.animal_id IS NOT NULL AND x.entry_type IN ('MORTALITY','WRITEOFF','TRANSFORMATION'))) exited_acq
          FROM batch_header b JOIN batch_bio_asset_state s ON s.batch_id=b.batch_id WHERE b.costing_method='BIO_ASSET' ORDER BY b.batch_no`);
     const batchRows = batches.map((b) => {
-      const expected = b.animal_tracking === 'REGISTERED' ? Number(b.non_acq) + Number(b.exited_acq) : Number(b.all_rows);
+      const expected = b.animal_tracking === 'REGISTERED' ? Number(b.non_acq) + Number(b.exited_acq) : Number(b.all_rows) + Number(b.transfers);
       return { batch: b.batch_no, status: b.status, tracking: b.animal_tracking, batch_carrying_value: money(b.nca), ledger_expected: money(expected), difference: money(Number(b.nca) - expected) };
     });
 

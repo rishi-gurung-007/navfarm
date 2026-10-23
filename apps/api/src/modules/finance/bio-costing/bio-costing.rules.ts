@@ -71,9 +71,10 @@ export function validateTerms(t: ProfileTerms, flags: MethodFlags | null): strin
     if (rule !== 'NONE') e.push('Fair value has no residual; set the residual rule to NONE.');
   }
 
-  // BBP controls: "Imported assets cannot use the local fair value method. Local breeding assets cannot use imported amortization rules."
+  // BBP control: "Imported assets cannot use the local fair value method." The BBP's second half, "Local breeding assets cannot use imported
+  // amortization rules", is NOT enforced (21 Oct 2026, Arun's instruction): a local asset may be amortised as well as fair-valued. Awaiting
+  // the client's and Finance's sign-off, because the BBP and the Fixed Asset sheet give local assets the fair value method.
   if (t.origin === 'IMPORTED' && t.costing_method === 'FAIR_VALUE') e.push('An imported asset cannot be costed by fair value (BBP).');
-  if (t.origin === 'LOCAL' && t.costing_method === 'AMORTIZATION') e.push('A local breeding asset cannot be costed by amortisation (BBP).');
 
   // The costing_method_config row for BIO_ASSET is what says the tenant supports the method at all.
   if (flags) {
@@ -116,10 +117,13 @@ export function scopeKey(companyId: string, t: Pick<ProfileTerms, 'item_id' | 'b
   return [companyId, t.item_id ?? '-', t.breed_id ?? '-', t.gender ?? '-', t.origin ?? '-'].join('|');
 }
 
-/** PURCHASED_IMPORTED is imported; PURCHASED_LOCAL is local. Born on farm / transferred in are not named by any document (D2): null. */
+/**
+ * PURCHASED_IMPORTED is imported; PURCHASED_LOCAL is local. BORN_ON_FARM is local too (21 Oct, Phase 5): the BBP makes a selected gilt "a Local asset"
+ * (Local GGP / GP / Parent by her mating line). Transferred in is not named by any document (D2): null.
+ */
 export function originOf(entryType: string | null | undefined): 'IMPORTED' | 'LOCAL' | null {
   if (entryType === 'PURCHASED_IMPORTED') return 'IMPORTED';
-  if (entryType === 'PURCHASED_LOCAL') return 'LOCAL';
+  if (entryType === 'PURCHASED_LOCAL' || entryType === 'BORN_ON_FARM') return 'LOCAL';
   return null;
 }
 
@@ -186,6 +190,56 @@ export function residualFor(t: ProfileTerms, gender: string | null | undefined):
   if (t.residual_applies_gender && t.residual_applies_gender !== gender) return 0;
   if (rule === 'FIXED') return Math.round((num(t.residual_fixed_amount) ?? 0) * 1e4) / 1e4;
   return Math.round((num(t.residual_weight_kg) ?? 0) * (num(t.residual_price_per_kg) ?? 0) * 1e4) / 1e4;
+}
+
+// ---- the company's residual value setting -------------------------------------------------------------------------------
+
+/**
+ * The residual an animal is written down to is set once for the company (per sex, from a date) rather than on every profile, and an animal
+ * may carry her own. Order of use: the animal's own residual, else the company setting in force on the day, else (an old tenant that has
+ * no setting yet) the profile's own residual, which is how every residual was held before 21 Oct 2026.
+ */
+export interface ResidualSetting {
+  gender: string;
+  residual_rule: string;
+  residual_fixed_amount?: string | number | null;
+  residual_weight_kg?: string | number | null;
+  residual_price_per_kg?: string | number | null;
+  effective_from: string;
+}
+export type ResidualSource = 'ANIMAL' | 'COMPANY' | 'PROFILE';
+
+export function validateResidualSetting(s: ResidualSetting): string[] {
+  const e: string[] = [];
+  if (!['F', 'M'].includes(s.gender)) e.push('Gender must be F or M.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s.effective_from ?? '')) e.push('Give the date the setting takes effect from (YYYY-MM-DD).');
+  if (!oneOf(RESIDUAL_RULES, s.residual_rule)) e.push(`Residual rule must be one of ${RESIDUAL_RULES.join(', ')}.`);
+  if (s.residual_rule === 'FIXED' && !(num(s.residual_fixed_amount) !== null && num(s.residual_fixed_amount)! >= 0)) e.push('A fixed residual needs an amount of 0 or more.');
+  if (s.residual_rule === 'WEIGHT_X_PRICE' && !(num(s.residual_weight_kg)! > 0 && num(s.residual_price_per_kg)! > 0)) e.push('A weight-times-price residual needs a weight and a price per kg, both above 0.');
+  if (s.residual_rule === 'NONE' && (num(s.residual_fixed_amount) || num(s.residual_weight_kg) || num(s.residual_price_per_kg))) e.push('Amounts were given but the residual rule is NONE.');
+  return e;
+}
+
+/** What one setting works out to: 0, the fixed amount, or weight x price. */
+export function settingResidual(s: ResidualSetting): number {
+  if (s.residual_rule === 'FIXED') return Math.round((num(s.residual_fixed_amount) ?? 0) * 1e4) / 1e4;
+  if (s.residual_rule === 'WEIGHT_X_PRICE') return Math.round((num(s.residual_weight_kg) ?? 0) * (num(s.residual_price_per_kg) ?? 0) * 1e4) / 1e4;
+  return 0;
+}
+
+/** The setting for this sex in force on the date: the latest one that took effect on or before it. */
+export function pickResidualSetting<T extends ResidualSetting>(settings: T[], gender: string | null | undefined, onDate: string): T | null {
+  const fit = settings.filter((x) => x.gender === gender && x.effective_from <= onDate);
+  fit.sort((a, b) => (a.effective_from < b.effective_from ? 1 : -1));
+  return fit[0] ?? null;
+}
+
+export function resolveResidual(i: { animalOverride?: string | number | null; settings: ResidualSetting[]; profile: ProfileTerms; gender: string | null | undefined; onDate: string }): { value: number; source: ResidualSource } {
+  const own = num(i.animalOverride);
+  if (own !== null) return { value: Math.max(0, Math.round(own * 1e4) / 1e4), source: 'ANIMAL' };
+  const setting = pickResidualSetting(i.settings, i.gender, i.onDate);
+  if (setting) return { value: settingResidual(setting), source: 'COMPANY' };
+  return { value: residualFor(i.profile, i.gender), source: 'PROFILE' };
 }
 
 /** The locked fields a change would alter, comparing the stored profile to the requested values. */

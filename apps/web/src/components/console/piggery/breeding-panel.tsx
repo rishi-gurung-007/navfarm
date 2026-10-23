@@ -12,6 +12,8 @@ import {
   Clock,
   Activity,
   X,
+  Sprout,
+  BellRing,
 } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,10 @@ import { Toast } from "@/components/ui/toast";
 import { useLanguage } from "@/hooks/useLanguage";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
 import AnimalDetailsModal from "./animal-details-modal";
+import GiltCards from "./gilt-cards";
+import GiltSelectionHistory from "./gilt-selection-history";
+import GiltSelectionDialog from "./gilt-selection-dialog";
+import { bufferErrors, resizeBuffer, type GiltBufferRow } from "./gilt-selection-rules";
 import { formatQuantity } from "@/lib/utils";
 import { BatchPicker, EntryModal, Field, ImpactCard, Step, inputStyle } from "./breeding-form-parts";
 import {
@@ -84,10 +90,20 @@ const CONCEPTION_RESULTS = ["CONFIRMED", "REPEAT", "FAILED", "PENDING"] as const
 export function BreedingPanel() {
   const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
-  const [subTab, setSubTab] = useState<"mating" | "farrowing" | "semen">("mating");
+  const [subTab, setSubTab] = useState<"mating" | "farrowing" | "semen" | "gilts">("mating");
+  const [giltSelections, setGiltSelections] = useState<Row[]>([]);
+  // BBP: gilts are selected once per litter, before it is weaned. A cancelled selection does not count.
+  const giltSelectionOf = (farrowId: string) => giltSelections.find((s) => s.status !== "CANCELLED" && (s.lines ?? []).some((l: Row) => l.farrow_id === farrowId));
+  const giltSelectedFrom = (farrowId: string) => !!giltSelectionOf(farrowId);
+  const giltPostedFrom = (farrowId: string) => giltSelectionOf(farrowId)?.status === "POSTED";
+  // The history lists what was posted. An unfinished (draft) selection is not history: it is continued from its litter's Select gilts button.
+  const postedGiltSelections = giltSelections.filter((s) => s.status === "POSTED");
+  const openGiltDialog = (f: Row) => { const sel = giltSelectionOf(f.farrow_id); setGiltDialog(sel?.status === "DRAFT" ? { draftId: sel.selection_id } : { farrow: f }); };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Gilts are selected here, per litter: before the weaning, at week 4 or after it; or a draft is continued from the Gilt Selections tab.
+  const [giltDialog, setGiltDialog] = useState<{ farrow?: Row; draftId?: string } | null>(null);
 
   // Data
   const [matings, setMatings] = useState<Row[]>([]);
@@ -176,6 +192,29 @@ export function BreedingPanel() {
     notes: "",
   });
   const [lossReasons, setLossReasons] = useState<Record<string, unknown>[]>([]);
+  // Gilts picked in the same form as the weaning (BBP: gilt selection is at week 4, which is weaning).
+  const [giltCount, setGiltCount] = useState("");
+  const [giltRows, setGiltRows] = useState<GiltBufferRow[]>([]);
+  const [giltInfo, setGiltInfo] = useState<Record<string, any> | null>(null);
+  const [giltColour, setGiltColour] = useState("");
+  const giltErrors = bufferErrors(giltRows);
+  const weanedN = Math.floor(Number(weanForm.piglets_weaned) || 0);
+  const giltsTooMany = giltRows.length > weanedN;
+
+  // The litter's parents and the lot's value per head, for the gilt cards in the weaning form.
+  useEffect(() => {
+    setGiltCount("");
+    setGiltRows([]);
+    setGiltInfo(null);
+    setGiltColour("");
+    if (!showWeanModal || !selectedFarrow?.piglet_batch_id) return;
+    api.get(`/piggery/gilt-selection/piglets?batch_id=${selectedFarrow.piglet_batch_id}`)
+      .then((r: any) => {
+        const d = r?.data ?? r;
+        setGiltInfo({ value_per_head: d.value_per_head, litter: (d.litters || []).find((l: any) => l.farrow_id === selectedFarrow.farrow_id) ?? null });
+      })
+      .catch(() => setGiltInfo(null));
+  }, [showWeanModal, selectedFarrow?.farrow_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!showWeanModal) return;
@@ -225,6 +264,7 @@ export function BreedingPanel() {
       setMatings(unwrap<Row[]>(mRes) || []);
       setFarrowings(unwrap<Row[]>(fRes) || []);
       setSemenBatches(unwrap<Row[]>(sRes) || []);
+      api.get("/piggery/gilt-selection").then((r) => setGiltSelections(unwrap<Row[]>(r) || [])).catch(() => setGiltSelections([]));
       setAnimals(unwrap<Row[]>(aRes) || []);
       setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
       api.get("/item?itemType=LIVING_ASSET&isActive=true&isBlocked=false&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset && !i.is_blocked && i.is_active !== false))).catch(() => setPigletItems([]));
@@ -398,6 +438,7 @@ export function BreedingPanel() {
   const handleWeaning = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFarrow) return;
+    if (giltRows.length && (Object.keys(giltErrors).length || giltsTooMany)) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -413,9 +454,16 @@ export function BreedingPanel() {
           move_to_stage_code: weanForm.move_to_stage_code || undefined,
           loss_reason_id: weanForm.loss_reason_id || undefined,
           notes: weanForm.notes || undefined,
+          ...(giltRows.length
+            ? {
+                gilts: giltRows.map((g) => ({ rfid_tag: g.rfid_tag.trim(), no_of_teats: Number(g.no_of_teats), ...(g.dob ? { dob: g.dob } : {}) })),
+                ...(giltColour.trim() ? { gilt_colour_code: giltColour.trim() } : {}),
+              }
+            : {}),
         }
       );
       setSuccess(res?.data?.message || res?.message || t("brpSuccessWeaningRecorded"));
+      // BBP: the gilt selection screen opens at week 4 of the piglets, which is weaning. Offer it for this litter, if some were weaned.
       setShowWeanModal(false);
       await loadData();
     } catch (err: any) {
@@ -640,6 +688,18 @@ export function BreedingPanel() {
           <FlaskConical className="w-4 h-4" />
           {t("brpTabSemen", { count: semenBatches.length })}
         </button>
+
+        <button
+          onClick={() => setSubTab("gilts")}
+          className="pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors cursor-pointer"
+          style={{
+            borderColor: subTab === "gilts" ? "var(--accent)" : "transparent",
+            color: subTab === "gilts" ? "var(--accent)" : "var(--text-secondary)",
+          }}
+        >
+          <Sprout className="w-4 h-4" />
+          {t("brpTabGilts", { count: postedGiltSelections.length })}
+        </button>
       </div>
 
       {/* ── Tab Content ── */}
@@ -786,6 +846,22 @@ export function BreedingPanel() {
 
           {/* TAB 2: FARROWING & LITTERS */}
           {subTab === "farrowing" && (
+            <div className="space-y-4">
+              {farrowings.filter((f) => f.week4_due && !giltPostedFrom(f.farrow_id)).map((f) => (
+                <div key={f.farrow_id} className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border p-4" style={{ ...S.surface, borderColor: "var(--warning)" }} role="alert">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: "var(--warning-muted)", color: "var(--warning)" }}><BellRing className="h-4 w-4" /></span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold" style={S.primary}>{t("brpWeek4Title", { sow: f.sow_code, lot: f.piglet_lot_no ?? "" })}</p>
+                      <p className="text-xs" style={S.sub}>{t("brpWeek4Body", { date: String(f.farrowing_date).slice(0, 10), count: f.piglets_in_lot ?? 0 })}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={() => openGiltDialog(f)}><Sprout className="mr-1.5 h-3.5 w-3.5" /> {t("brpSelectGilts")}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setSelectedFarrow(f); setWeanForm((w) => ({ ...w, piglets_weaned: String(f.piglets_in_lot ?? "") })); setShowWeanModal(true); }}>{t("brpWeanAll")}</Button>
+                  </div>
+                </div>
+              ))}
             <div className="rounded-[var(--radius-lg)] border overflow-hidden" style={S.surface}>
               <table className="w-full text-left text-sm border-collapse">
                 <thead className="text-xs uppercase font-semibold border-b" style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)", color: "var(--text-secondary)" }}>
@@ -840,12 +916,22 @@ export function BreedingPanel() {
                           {f.piglets_weaned > 0 ? (
                             <div>
                               <span className="font-bold" style={S.accent}>{t("brpWeanedCount", { count: f.piglets_weaned })}</span>
+                              {Number(f.gilts_selected) > 0 && (
+                                <span className="text-xs block" style={S.sub}>{t("brpWeanedGilts", { count: f.gilts_selected })}</span>
+                              )}
                               {f.weaning_survival_rate_pct && (
                                 <span className="text-xs block" style={S.muted}>{t("brpSurvivalPct", { pct: f.weaning_survival_rate_pct })}</span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-xs font-medium" style={S.warning}>{t("brpLactatingDue", { date: f.weaning_date })}</span>
+                            <div>
+                              <span className="text-xs font-medium" style={S.warning}>{t("brpLactatingDue", { date: f.weaning_date })}</span>
+                              {f.week4_due && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ borderColor: "var(--warning)", color: "var(--warning)" }}>
+                                  <BellRing className="h-3 w-3" /> {t("brpWeek4Chip")}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-right">
@@ -853,6 +939,11 @@ export function BreedingPanel() {
                             <span className="text-xs font-medium" style={S.muted}>Weaned</span>
                           ) : (
                             <>
+                              {f.piglet_batch_id && !giltPostedFrom(f.farrow_id) && (
+                                <Button variant={f.week4_due ? "default" : "outline"} size="sm" onClick={() => openGiltDialog(f)}>
+                                  <Sprout className="mr-1.5 h-3.5 w-3.5" /> {t("brpSelectGilts")}
+                                </Button>
+                              )}
                               {f.piglet_batch_id && (
                                 <Button
                                   variant="ghost"
@@ -884,6 +975,15 @@ export function BreedingPanel() {
                   )}
                 </tbody>
               </table>
+            </div>
+            </div>
+          )}
+
+          {/* TAB 4: GILT SELECTIONS (the history; gilts are selected from a litter's row, or the week-4 alert above it) */}
+          {subTab === "gilts" && (
+            <div className="space-y-3">
+              <p className="text-xs" style={S.sub}>{t("brpGiltsTabHint")}</p>
+              <GiltSelectionHistory rows={postedGiltSelections} onOpenAnimal={setDetailsAnimalId} onContinue={(id) => setGiltDialog({ draftId: id })} onError={setError} />
             </div>
           )}
 
@@ -1475,7 +1575,7 @@ export function BreedingPanel() {
       {/* ========================================================================= */}
       {showWeanModal && selectedFarrow && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="rounded-[var(--radius-lg)] border max-w-md w-full p-6 space-y-4 shadow-2xl" style={S.surface}>
+          <div className={`rounded-[var(--radius-lg)] border w-full p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto ${selectedFarrow.piglet_batch_id ? "max-w-3xl" : "max-w-md"}`} style={S.surface}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold flex items-center gap-2" style={S.primary}>
                 <CheckCircle2 className="w-5 h-5" style={S.accent} /> {t("brpModalWeaningTitle")}
@@ -1530,6 +1630,11 @@ export function BreedingPanel() {
                 </Field>
               </div>
 
+              {Number(giltInfo?.litter?.already_selected) > 0 && (
+                <p className="rounded-[var(--radius-md)] border px-3 py-2 text-xs" style={{ ...S.surface, ...S.sub }}>
+                  {t("brpWeanEarlierGilts", { count: giltInfo?.litter?.already_selected })}
+                </p>
+              )}
               {selectedFarrow.piglet_batch_id && (
                 <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={S.surface}>
                   <p className="text-xs font-semibold" style={S.primary}>
@@ -1586,9 +1691,64 @@ export function BreedingPanel() {
                 </div>
               )}
 
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? t("brpBtnSaving") : t("brpBtnSaveWeaning")}
+              {selectedFarrow.piglet_batch_id && !giltSelectedFrom(selectedFarrow.farrow_id) && (
+                <div className="space-y-3 rounded-[var(--radius-lg)] border p-4" style={{ ...S.surface, borderColor: giltRows.length ? "var(--accent)" : "var(--border)" }}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-2 text-sm font-semibold" style={S.primary}>
+                        <Sprout className="h-4 w-4" style={S.accent} /> {t("brpWeanStepGilts")}
+                        <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide" style={{ ...S.muted, borderColor: "var(--border)" }}>{t("brpWeanGiltsOptional")}</span>
+                      </p>
+                      <p className="mt-1 text-[11px]" style={S.sub}>{t("brpWeanGiltsHint")}</p>
+                    </div>
+                    <div className="w-36">
+                      <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-gilt-count">{t("brpWeanGiltsCount")}</label>
+                      <input
+                        id="wean-gilt-count"
+                        type="number"
+                        min="0"
+                        max={weanedN || undefined}
+                        className="nf-input w-full text-sm font-bold"
+                        style={S.input}
+                        value={giltCount}
+                        placeholder="0"
+                        onChange={(e) => {
+                          setGiltCount(e.target.value);
+                          setGiltRows((rows) => resizeBuffer(rows, Number(e.target.value), selectedFarrow.farrow_id, String(selectedFarrow.farrowing_date ?? "").slice(0, 10)));
+                        }}
+                      />
+                      <p className="mt-1 text-[10px]" style={S.muted}>{weanedN > 0 ? t("brpWeanGiltsMax", { count: weanedN }) : t("brpWeanGiltsNone")}</p>
+                    </div>
+                  </div>
+                  {giltsTooMany && <p className="text-xs" style={S.danger}>{t("brpGiltsOverWeaned")}</p>}
+                  {giltRows.length > 0 && (
+                    <>
+                      <div className="max-w-xs">
+                        <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-gilt-colour">{t("gsColour")}</label>
+                        <input id="wean-gilt-colour" className="nf-input w-full text-sm" style={S.input} value={giltColour} maxLength={30} onChange={(e) => setGiltColour(e.target.value)} />
+                      </div>
+                      <GiltCards
+                        rows={giltRows}
+                        parents={{
+                          dam_animal_id: selectedFarrow.sow_id, dam_code: selectedFarrow.sow_code, dam_parity: selectedFarrow.parity_number ?? giltInfo?.litter?.parity_number,
+                          dam_tsi: giltInfo?.litter?.sow_tsi ?? null, sire_animal_id: giltInfo?.litter?.boar_animal_id ?? null, sire_code: giltInfo?.litter?.boar_code ?? null,
+                          lot_no: selectedFarrow.piglet_lot_no, farrowing_date: selectedFarrow.farrowing_date, avg_birth_weight_kg: selectedFarrow.avg_birth_weight_kg ?? null,
+                          avg_weaning_weight_kg: weanForm.avg_weaning_weight_kg || null,
+                        }}
+                        atWeaning
+                        errors={giltErrors}
+                        onChange={(key, patch) => setGiltRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))}
+                        onOpenAnimal={setDetailsAnimalId}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <p className="text-[11px]" style={S.muted}>{selectedFarrow.piglet_batch_id && !giltSelectedFrom(selectedFarrow.farrow_id) ? t("brpGiltsAfter") : ""}</p>
+                <Button type="submit" size="sm" disabled={submitting || (giltRows.length > 0 && (Object.keys(giltErrors).length > 0 || giltsTooMany))}>
+                  {submitting ? t("brpBtnSaving") : giltRows.length ? t("brpBtnSaveWeaningGilts", { count: giltRows.length }) : t("brpBtnSaveWeaning")}
                 </Button>
               </div>
             </form>
@@ -1756,6 +1916,14 @@ export function BreedingPanel() {
       )}
 
       {/* ── ANIMAL DETAILS POPUP ── */}
+      <GiltSelectionDialog
+        open={giltDialog !== null}
+        farrow={giltDialog?.farrow ?? null}
+        draftId={giltDialog?.draftId ?? null}
+        onClose={() => setGiltDialog(null)}
+        onChanged={() => loadData()}
+      />
+
       <AnimalDetailsModal animalId={detailsAnimalId} onClose={() => setDetailsAnimalId(null)} />
     </div>
   );

@@ -27,11 +27,23 @@ export interface DraftProfile {
 
 export const CLIENT_DRAFT_PROFILES: DraftProfile[] = [
   { profile_code: 'IMP-F', name: 'Imported female (GGP / GP / Parent)', origin: 'IMPORTED', gender: 'F', costing_method: 'AMORTIZATION', start_age_weeks: 33, useful_life_months: 36,
-    residual_rule: 'WEIGHT_X_PRICE', residual_weight_kg: 150, residual_price_per_kg: 2.05, residual_applies_gender: 'F', rate: null },
+    residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: null },
   { profile_code: 'IMP-M', name: 'Imported male (GGP / GP / Parent)', origin: 'IMPORTED', gender: 'M', costing_method: 'AMORTIZATION', start_age_weeks: 26, useful_life_months: 18,
     residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: null },
-  { profile_code: 'LOC-F', name: 'Local female (GGP / GP / Parent)', origin: 'LOCAL', gender: 'F', costing_method: 'FAIR_VALUE', start_age_weeks: 33, useful_life_months: 36,
-    residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: { expected_weight_kg: 150, price_per_kg: 2.05, cdm_based: false } },
-  { profile_code: 'LOC-M', name: 'Local male (GGP / GP / Parent)', origin: 'LOCAL', gender: 'M', costing_method: 'FAIR_VALUE', start_age_weeks: 26, useful_life_months: 18,
-    residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: { expected_weight_kg: 150, price_per_kg: 2.05, cdm_based: false } },
+  // Local animals are amortised like the imported ones (21 Oct 2026, Arun's instruction), with the same start age, life and residual as
+  // their imported counterparts. The client's sheet and the BBP give local assets the fair value method, so this is awaiting the client's
+  // and Finance's sign-off. Going back is one change here (FAIR_VALUE, residual NONE, the rate below).
+  { profile_code: 'LOC-F', name: 'Local female (GGP / GP / Parent)', origin: 'LOCAL', gender: 'F', costing_method: 'AMORTIZATION', start_age_weeks: 33, useful_life_months: 36,
+    residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: null },
+  { profile_code: 'LOC-M', name: 'Local male (GGP / GP / Parent)', origin: 'LOCAL', gender: 'M', costing_method: 'AMORTIZATION', start_age_weeks: 26, useful_life_months: 18,
+    residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null, rate: null },
+];
+
+/**
+ * The residual value is set once for the company (Finance > Bio-Asset Costing Setup), not on each profile, so the four profiles above carry none.
+ * The client's sheet: a female is written down to an assumed 150 kg x 2.05 = 307.50, a male to nothing. The rule and its figures are the client's.
+ */
+export const CLIENT_RESIDUALS = [
+  { gender: 'F' as const, residual_rule: 'WEIGHT_X_PRICE' as const, residual_weight_kg: 150, residual_price_per_kg: 2.05, note: 'Fixed Asset sheet: assumed 150 kg x 2.05' },
+  { gender: 'M' as const, residual_rule: 'NONE' as const, residual_weight_kg: null, residual_price_per_kg: null, note: 'Fixed Asset sheet: no residual for a male' },
 ];

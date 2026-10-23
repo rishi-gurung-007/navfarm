@@ -289,7 +289,6 @@ export class InventoryLedgerService {
     }
   }
 
-  /** Writes a POSITIVE (inbound) ledger entry — Goods Receipt lines, and positive Stock Adjustment lines. */
   async writePositiveEntry(params: WritePositiveEntryParams) {
     // r32: a closed Reporting Period blocks every posting dated in it (one shared guard).
     await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
@@ -645,18 +644,7 @@ export class InventoryLedgerService {
     return drawCost;
   }
 
-  /**
-   * Writes a NEGATIVE (outbound) ledger entry — batch consumption lines, the
-   * shipment leg of a Stock Transfer, and negative Stock Adjustment lines.
-   * Cost is never user-supplied here; it's always derived from applyFifo
-   * against existing inventory layers.
-   *
-   * The outbound row's insert, the FIFO layer consumption, and the final
-   * rate/amount update all run inside one transaction — if applyFifo throws
-   * (e.g. insufficient stock) partway through, everything it already wrote
-   * rolls back instead of leaving an orphaned ledger row or a partially
-   * consumed layer behind.
-   */
+
   async writeNegativeEntry(params: WriteNegativeEntryParams) {
     if (params.quantity <= 0) {
       throw new BadRequestException(`Outbound quantity must be positive (got ${params.quantity}).`);

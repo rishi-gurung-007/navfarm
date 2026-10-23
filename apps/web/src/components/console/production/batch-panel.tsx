@@ -3277,9 +3277,12 @@ export default function BatchPanel() {
                             </p>
                           </div>
                         </div>
+                        {viewing.status === 'ACTIVE' && viewing.tracking_mode === 'ANIMAL_WISE' && (
+                          <p className="mt-3 text-xs" style={S.muted}>{t('blAnimalWiseCostingNote')}</p>
+                        )}
                         {viewing.status === 'ACTIVE' && (
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {viewing.bio_asset_state.stage === 'PREMATURE' && (
+                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
                               <Button
                                 size="sm"
                                 onClick={() => openBioAction('mature')}
@@ -3288,7 +3291,7 @@ export default function BatchPanel() {
                                 {t('blMatureHerd')}
                               </Button>
                             )}
-                            {viewing.bio_asset_state.stage === 'MATURE' && (
+                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
                               <>
                                 <Button
                                   size="sm"

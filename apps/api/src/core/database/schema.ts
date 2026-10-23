@@ -4016,6 +4016,8 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   lob_id: varchar('lob_id', { length: 36 }).references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
   // 0205: who bought the animals on a SOLD exit — the sale's receivable belongs to this customer.
   customer_id: varchar('customer_id', { length: 36 }).references(() => customerMaster.customer_id, { onDelete: 'restrict' }),
+  // 0210: the bio-asset costing run that wrote this row (an amortisation or fair-value charge), null for every other entry.
+  run_id: varchar('run_id', { length: 36 }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 });
@@ -4083,6 +4085,75 @@ export const bioCostingProfile = mysqlTable('bio_costing_profile', {
   idxStatus: index('idx_bio_costing_profile_status').on(table.company_id, table.status),
 }));
 
+// A bio-asset costing run (0210, bio-asset costing Phase 4): one profile, one period. CALCULATED lines are a preview that posts
+// nothing and may be recalculated; POSTED writes one ledger row per charged animal and a journal; REVERSED mirrors them.
+// active_key (profile|period) is set while CALCULATED or POSTED, so the database refuses a second run for the same period.
+export const bioCostingRun = mysqlTable('bio_costing_run', {
+  run_id: varchar('run_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  run_no: varchar('run_no', { length: 40 }).notNull(),
+  profile_id: varchar('profile_id', { length: 36 }).notNull().references(() => bioCostingProfile.profile_id, { onDelete: 'restrict' }),
+  method: varchar('method', { length: 20 }).notNull(), // AMORTIZATION, FAIR_VALUE
+  frequency: varchar('frequency', { length: 10 }).notNull(),
+  period_key: varchar('period_key', { length: 12 }).notNull(), // 2026-10, 2026-W42, 2026-Q4, 2026
+  period_start: date('period_start', { mode: 'string' }).notNull(),
+  period_end: date('period_end', { mode: 'string' }).notNull(),
+  days_enforced: int('days_enforced'), // the run's own day count ("No. of Days Enforced"), else the profile's day basis rules
+  description: varchar('description', { length: 300 }),
+  trigger: varchar('trigger', { length: 10 }).default('MANUAL').notNull(), // MANUAL, SCHEDULED
+  status: varchar('status', { length: 12 }).default('CALCULATED').notNull(), // CALCULATED, POSTED, REVERSED, FAILED
+  animal_count: int('animal_count').default(0).notNull(),
+  charged_count: int('charged_count').default(0).notNull(),
+  skipped_count: int('skipped_count').default(0).notNull(),
+  total_charge: decimal('total_charge', { precision: 18, scale: 4 }).default('0.0000').notNull(), // amortisation: sum of charges; fair value: net adjustment
+  journal_id: varchar('journal_id', { length: 36 }),
+  active_key: varchar('active_key', { length: 120 }), // 0213: profile|period|batch can be 86 characters
+  requested_by: varchar('requested_by', { length: 36 }),
+  posted_by: varchar('posted_by', { length: 36 }),
+  posted_at: timestamp('posted_at', { mode: 'string' }),
+  reversed_by: varchar('reversed_by', { length: 36 }),
+  reversed_at: timestamp('reversed_at', { mode: 'string' }),
+  reverse_reason: varchar('reverse_reason', { length: 300 }),
+  // 0211: why a scheduled run could not be made (status FAILED).
+  error_message: varchar('error_message', { length: 500 }),
+  // 0212: the batch this run was made for; NULL = every animal of the profile.
+  batch_id: varchar('batch_id', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqRunNo: uniqueIndex('uq_bio_costing_run_no').on(table.tenant_id, table.company_id, table.run_no),
+  uqActive: uniqueIndex('uq_bio_costing_run_active').on(table.active_key),
+  idxProfilePeriod: index('idx_bio_costing_run_profile').on(table.profile_id, table.period_end),
+  idxBatchPeriod: index('idx_bio_costing_run_batch').on(table.batch_id, table.period_end),
+}));
+
+export const bioCostingRunLine = mysqlTable('bio_costing_run_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  run_id: varchar('run_id', { length: 36 }).notNull().references(() => bioCostingRun.run_id, { onDelete: 'cascade' }),
+  animal_id: varchar('animal_id', { length: 36 }).notNull().references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+  batch_id: varchar('batch_id', { length: 36 }),
+  status: varchar('status', { length: 10 }).notNull(), // CHARGED, SKIPPED
+  skip_reason: varchar('skip_reason', { length: 40 }),
+  days: decimal('days', { precision: 10, scale: 4 }),
+  remaining_days: int('remaining_days'),
+  book_value_before: decimal('book_value_before', { precision: 18, scale: 4 }).notNull(),
+  residual: decimal('residual', { precision: 18, scale: 4 }).default('0.0000').notNull(),
+  charge: decimal('charge', { precision: 18, scale: 4 }).default('0.0000').notNull(), // negative for a fair-value loss
+  book_value_after: decimal('book_value_after', { precision: 18, scale: 4 }).notNull(),
+  costing_start_date: date('costing_start_date', { mode: 'string' }),
+  life_end_date: date('life_end_date', { mode: 'string' }),
+  ledger_entry_id: varchar('ledger_entry_id', { length: 36 }),
+  journal_id: varchar('journal_id', { length: 36 }),
+  integration_status: varchar('integration_status', { length: 16 }).default('NOT_APPLICABLE').notNull(), // BC_PENDING once Business Central is connected
+  // animal|method|period while POSTED, so no animal is charged twice for a period even by two different runs.
+  active_key: varchar('active_key', { length: 120 }),
+}, (table) => ({
+  uqActive: uniqueIndex('uq_bio_costing_run_line_active').on(table.active_key),
+  idxRun: index('idx_bio_costing_run_line_run').on(table.run_id),
+  idxAnimal: index('idx_bio_costing_run_line_animal').on(table.animal_id),
+}));
+
 // Fair-value inputs, dated and never locked: a price per kg moves, the amortisation terms must not. The run takes, for an
 // animal's farm and age, the latest row with effective_from on or before the period end.
 export const bioCostingProfileRate = mysqlTable('bio_costing_profile_rate', {
@@ -4099,6 +4170,91 @@ export const bioCostingProfileRate = mysqlTable('bio_costing_profile_rate', {
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
   idxProfile: index('idx_bio_costing_profile_rate_profile').on(table.profile_id, table.effective_from),
+}));
+
+/** The company's residual value, per sex and from a date (0214). Rows are never edited: a change is a new row with a later effective_from. */
+export const bioCostingResidualSetting = mysqlTable('bio_costing_residual_setting', {
+  setting_id: varchar('setting_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  gender: char('gender', { length: 1 }).notNull(),
+  residual_rule: varchar('residual_rule', { length: 20 }).default('NONE').notNull(), // NONE, FIXED, WEIGHT_X_PRICE
+  residual_fixed_amount: decimal('residual_fixed_amount', { precision: 18, scale: 4 }),
+  residual_weight_kg: decimal('residual_weight_kg', { precision: 10, scale: 3 }),
+  residual_price_per_kg: decimal('residual_price_per_kg', { precision: 18, scale: 6 }),
+  effective_from: date('effective_from', { mode: 'string' }).notNull(),
+  note: varchar('note', { length: 300 }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+}, (table) => ({
+  uqSetting: uniqueIndex('uq_bio_costing_residual_setting').on(table.company_id, table.gender, table.effective_from),
+  idxTenant: index('idx_bio_costing_residual_setting_tenant').on(table.tenant_id, table.company_id),
+}));
+
+/** Gilt selection (0215, TDD row 6 event 2): the header, a line per litter the gilts come from, and a row per gilt created when it is posted. */
+export const giltSelection = mysqlTable('gilt_selection', {
+  selection_id: varchar('selection_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  selection_no: varchar('selection_no', { length: 30 }).notNull(),
+  batch_id: varchar('batch_id', { length: 36 }).notNull(),
+  batch_no: varchar('batch_no', { length: 50 }).notNull(),
+  farm_id: varchar('farm_id', { length: 36 }),
+  location_id: varchar('location_id', { length: 36 }),
+  sub_location_id: varchar('sub_location_id', { length: 36 }),
+  selection_date: date('selection_date', { mode: 'string' }).notNull(),
+  production_week: int('production_week'),
+  gilt_item_id: varchar('gilt_item_id', { length: 36 }),
+  animal_batch_id: varchar('animal_batch_id', { length: 36 }),
+  status: varchar('status', { length: 12 }).default('DRAFT').notNull(), // DRAFT, POSTED, CANCELLED
+  head_released: decimal('head_released', { precision: 10, scale: 4 }),
+  value_released: decimal('value_released', { precision: 18, scale: 4 }),
+  remarks: varchar('remarks', { length: 300 }),
+  posted_at: timestamp('posted_at', { mode: 'string' }),
+  posted_by: varchar('posted_by', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  uqNo: uniqueIndex('uq_gilt_selection_no').on(table.company_id, table.selection_no),
+  idxTenant: index('idx_gilt_selection_tenant').on(table.tenant_id, table.company_id, table.status),
+  idxBatch: index('idx_gilt_selection_batch').on(table.batch_id),
+}));
+
+export const giltSelectionLine = mysqlTable('gilt_selection_line', {
+  line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  selection_id: varchar('selection_id', { length: 36 }).notNull().references(() => giltSelection.selection_id, { onDelete: 'cascade' }),
+  line_no: int('line_no').notNull(),
+  farrow_id: varchar('farrow_id', { length: 36 }).notNull(),
+  piglet_item_id: varchar('piglet_item_id', { length: 36 }),
+  source_batch_id: varchar('source_batch_id', { length: 36 }),
+  lot_no: varchar('lot_no', { length: 50 }),
+  sow_animal_id: varchar('sow_animal_id', { length: 36 }).notNull(),
+  parity_number: int('parity_number'),
+  boar_animal_id: varchar('boar_animal_id', { length: 36 }),
+  colour_code: varchar('colour_code', { length: 30 }),
+  piglets_produced: int('piglets_produced'),
+  sow_tsi: decimal('sow_tsi', { precision: 10, scale: 2 }),
+  gilts_selected: int('gilts_selected').notNull(),
+}, (table) => ({
+  uqLine: uniqueIndex('uq_gilt_selection_line').on(table.selection_id, table.line_no),
+  idxFarrow: index('idx_gilt_selection_line_farrow').on(table.farrow_id),
+}));
+
+export const giltSelectionGilt = mysqlTable('gilt_selection_gilt', {
+  gilt_id: varchar('gilt_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  selection_id: varchar('selection_id', { length: 36 }).notNull().references(() => giltSelection.selection_id, { onDelete: 'cascade' }),
+  line_id: varchar('line_id', { length: 36 }).notNull(),
+  rfid_tag: varchar('rfid_tag', { length: 50 }).notNull(),
+  dob: date('dob', { mode: 'string' }),
+  batch_week: int('batch_week'),
+  no_of_teats: int('no_of_teats').notNull(),
+  animal_id: varchar('animal_id', { length: 36 }),
+  animal_code: varchar('animal_code', { length: 50 }),
+  acquisition_cost: decimal('acquisition_cost', { precision: 18, scale: 4 }),
+}, (table) => ({
+  idxSelection: index('idx_gilt_selection_gilt_selection').on(table.selection_id),
+  idxAnimal: index('idx_gilt_selection_gilt_animal').on(table.animal_id),
 }));
 
 export const goodsReceipt = mysqlTable('goods_receipt', {

@@ -20,6 +20,7 @@
  *   pnpm nx run api:db-rebuild-demo -- --apply --volume=light   # rebuild with the small dataset
  *   pnpm nx run api:db-rebuild-demo -- --apply --preset=small   # two farms, light volume
  *   pnpm nx run api:db-reset-seed                               # the same, as the one-command reset (also `pnpm seed`)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing # the costing seed: 62-day history, imported + local herd, costing profiles (pnpm seed:costing)
  */
 import { execFileSync } from 'node:child_process';
 import * as mysql from 'mysql2/promise';
@@ -152,6 +153,7 @@ const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and
  * reconciliation at the end.
  */
 const FULL_FARM_STEP: Step = { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
+const COSTING_TEST_VERIFY_STEP: Step = { label: 'Check the costing test: every case read back from MySQL against its own arithmetic', script: 'verify-costing-test.ts', args: [] };
 const VERIFY_STEP: Step = { label: 'Reconcile batches, inventory, transfers and outputs against each other', script: 'verify-demo-flow.ts', args: [] };
 
 export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string }): Step[] {
@@ -181,6 +183,10 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
     ...(opts.volume ? [`--volume=${opts.volume}`] : []),
     ...(opts.preset === 'small' ? ['--no-batches'] : []),
     ...(opts.preset === 'lean' ? ['--lean'] : []),
+    // The costing preset is the lean layout with the costing volume: batches started 62 days ago and an imported lot, with no daily entry posted (--no-daily-entries): the person testing enters the days. --volume comes last so it wins over --lean's.
+    ...(opts.preset === 'costing' ? ['--lean', '--volume=costing', '--no-daily-entries'] : []),
+    // The costing-test preset posts no demo herd at all: the masters, the costing profiles and then ONE chapter (16-costing-test) that buys and lives 4 sows and 4 boars in 2 batches.
+    ...(opts.preset === 'costing-test' ? ['--costing-test', '--lean', '--volume=costing'] : []),
   ];
   const chapters: Step = extra.length ? { ...CHAPTERS_STEP, args: [...CHAPTERS_STEP.args, ...extra] } : CHAPTERS_STEP;
   // --chapters-only means exactly that: skip the reset and every master step,
@@ -188,12 +194,13 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
   if (opts.chaptersOnly) return [chapters];
   const steps: Step[] = [];
   if (!opts.skipReset) steps.push(RESET_STEP);
-  const farmStep = opts.preset === 'small' || opts.preset === 'lean' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
+  const farmStep = opts.preset === 'small' || opts.preset === 'lean' || opts.preset === 'costing' || opts.preset === 'costing-test' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
   const masters = farmStep
     ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? farmStep : step))
     : MASTER_STEPS;
   steps.push(...masters, chapters);
-  if (opts.preset === 'full' || opts.preset === 'lean') steps.push(VERIFY_STEP);
+  if (opts.preset === 'full' || opts.preset === 'lean' || opts.preset === 'costing') steps.push(VERIFY_STEP);
+  if (opts.preset === 'costing-test') steps.push(COSTING_TEST_VERIFY_STEP);
   return steps;
 }
 
@@ -280,7 +287,7 @@ async function main() {
   const { apply, chaptersOnly, skipReset } = args;
   // The preset implies its volume unless one was given, and scopes every child step to its farms.
   const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
-  if (args.preset === 'small' || args.preset === 'lean') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  if (args.preset === 'small' || args.preset === 'lean' || args.preset === 'costing' || args.preset === 'costing-test') process.env.DEMO_FARMS = SMALL_PRESET.farms;
   if (args.preset === 'porta') process.env.SEED_SOURCE_FARM = PORTA_PRESET.farm;
   const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 

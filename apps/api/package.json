@@ -279,6 +279,30 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-bio-costing-profiles.ts"
         }
       },
+      "db-backfill-bio-costing": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/backfill-bio-costing.ts"
+        }
+      },
+      "db-seed-bio-costing-test-data": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-bio-costing-test-data.ts"
+        }
+      },
+      "db-seed-litter-birth-gl": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-litter-birth-gl.ts"
+        }
+      },
       "db-check-bio-asset-reconciliation": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -603,6 +627,46 @@
           "cwd": "apps/api"
         }
       },
+      "db-costing-walkthrough": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=MUL100,POR100 ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/demo-chapters.ts --apply --chapter=14-costing-walkthrough --lean --volume=costing",
+          "cwd": "apps/api"
+        }
+      },
+      "db-costing-test": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=MUL100,POR100 ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/demo-chapters.ts --apply --chapter=16-costing-test --lean --volume=costing",
+          "cwd": "apps/api"
+        }
+      },
+      "db-verify-costing-test": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-costing-test.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "db-reset-seed-costing-test": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=costing-test",
+          "cwd": "apps/api"
+        }
+      },
+      "db-full-flow": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=MUL100,POR100 ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/demo-chapters.ts --apply --chapter=15-full-flow --lean --volume=costing",
+          "cwd": "apps/api"
+        }
+      },
       "db-demo-chapters": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -672,6 +736,14 @@
         "cache": false,
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=full",
+          "cwd": "apps/api"
+        }
+      },
+      "db-reset-seed-costing": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=costing",
           "cwd": "apps/api"
         }
       },

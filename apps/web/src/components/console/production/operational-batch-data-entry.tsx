@@ -205,6 +205,9 @@ export default function OperationalBatchDataEntry() {
   // whenever the batch changes, so re-selecting a batch re-defaults to "the
   // first open day" instead of wherever the picker was left.
   const userPickedDateRef = React.useRef(false);
+  // Days the screen has itself moved past because everything with animals on them was already locked. The "go to the next pending date" rule must not
+  // pull the posting date back onto one of them, or the two rules hand the date back and forth for ever (the screen refetches and blinks).
+  const autoAdvancedDatesRef = React.useRef<Set<string>>(new Set());
 
 
   // Real lifecycle for the selected batch, built from stage_master + this
@@ -821,7 +824,7 @@ export default function OperationalBatchDataEntry() {
         const npd = schedData?.next_pending_date || '';
         if (npd) {
           setNextPendingDate(npd);
-          if (!userPickedDateRef.current && selectedDate !== npd) {
+          if (!userPickedDateRef.current && selectedDate !== npd && !autoAdvancedDatesRef.current.has(`${selectedBatchId}|${npd}`)) {
             setSelectedDate(npd);
           }
         }
@@ -959,6 +962,7 @@ export default function OperationalBatchDataEntry() {
               .toISOString()
               .slice(0, 10);
 
+            autoAdvancedDatesRef.current.add(`${selectedBatchId}|${selectedDate}`);
             setSelectedDate(dayAfter);
             setDataEntryValues(values);
             setDataEntryLoading(false);
@@ -1002,6 +1006,7 @@ export default function OperationalBatchDataEntry() {
               .slice(0, 10);
 
             if (!userPickedDateRef.current) {
+              autoAdvancedDatesRef.current.add(`${selectedBatchId}|${selectedDate}`);
               setSelectedDate(dayAfter);
               setDataEntryValues(values);
               setDataEntryLoading(false);

@@ -8,9 +8,12 @@ import { JournalModule } from '../../finance/journal/journal.module';
 import { NumberSeriesModule } from '../../system/number-series/number-series.module';
 import { QrCodeModule } from '../../production/qr-code/qr-code.module';
 import { AnimalModule } from '../animal/animal.module';
+import { LitterCostModule } from '../litter-cost/litter-cost.module';
+import { GiltSelectionModule } from '../gilt-selection/gilt-selection.module';
+import { AnimalBookValueModule } from '../../inventory/bio-asset-ledger/animal-book-value.module';
 
 @Module({
-  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule],
+  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule],
   controllers: [BreedingController],
   providers: [BreedingService, SemenLotService],
   exports: [BreedingService],

@@ -4,6 +4,8 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { BioCostingProfileService } from './bio-costing-profile.service';
+import { BioCostingResidualService } from './bio-costing-residual.service';
+import { CreateResidualSettingDto, SetAnimalResidualDto } from './bio-costing-residual.dto';
 import {
   AssignBioCostingDto, CreateBioCostingProfileDto, CreateBioCostingRateDto, NewBioCostingProfileVersionDto,
   QueryBioCostingProfileDto, ResolveBioCostingProfileDto, UpdateBioCostingProfileDto,
@@ -18,7 +20,7 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('bio-costing')
 export class BioCostingProfileController {
-  constructor(private readonly profiles: BioCostingProfileService) {}
+  constructor(private readonly profiles: BioCostingProfileService, private readonly residuals: BioCostingResidualService) {}
 
   private tenant = (req: any): string => req.user?.tenantId || req['tenantId'];
   private company = (req: any, explicit?: string): string => explicit || req.headers['x-active-company-id'] || req.user?.companyId;
@@ -81,6 +83,34 @@ export class BioCostingProfileController {
   @ApiOperation({ summary: 'Add a dated fair-value rate (expected weight and price per kg); rates are never locked' })
   async addRate(@Param('id') id: string, @Body() dto: CreateBioCostingRateDto, @Req() req: any) {
     return { success: true, message: 'Rate added.', data: await this.profiles.addRate(id, dto, this.tenant(req), req.user?.userId) };
+  }
+
+  @Get('residual-settings')
+  @RequirePermission('MASTER_DATA', 'GL_MAPPING', 'view')
+  @ApiOperation({ summary: 'The company\'s residual value settings (per sex, from a date), each with the figure it works out to' })
+  async residualSettings(@Req() req: any) {
+    return { success: true, data: await this.residuals.list(this.tenant(req), this.company(req)) };
+  }
+
+  @Post('residual-settings')
+  @RequirePermission('MASTER_DATA', 'GL_MAPPING', 'edit')
+  @ApiOperation({ summary: 'Set the company\'s residual value for a sex from a date; a change is a new row with a later date' })
+  async addResidualSetting(@Body() dto: CreateResidualSettingDto, @Req() req: any) {
+    return { success: true, message: 'Residual value setting saved.', data: await this.residuals.add(dto, this.tenant(req), this.company(req), req.user?.userId) };
+  }
+
+  @Get('animals/:animalId/residual')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: 'The residual an animal is written down to today and where it comes from (her own, or the company setting)' })
+  async animalResidual(@Param('animalId') animalId: string, @Req() req: any) {
+    return { success: true, data: await this.residuals.forAnimal(animalId, this.tenant(req)) };
+  }
+
+  @Put('animals/:animalId/residual')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Give an animal her own residual (or clear it), with a reason; applies from the next unposted month' })
+  async setAnimalResidual(@Param('animalId') animalId: string, @Body() dto: SetAnimalResidualDto, @Req() req: any) {
+    return { success: true, message: 'Animal residual saved.', data: await this.residuals.setForAnimal(animalId, dto, this.tenant(req), req.user?.userId) };
   }
 
   @Post('assign-animals')

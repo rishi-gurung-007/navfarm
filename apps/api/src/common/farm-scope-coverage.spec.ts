@@ -13,6 +13,7 @@ import { AnimalController } from '../modules/piggery/animal/animal.controller';
 import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-medication-log.controller';
 import { AnimalMovementLogController } from '../modules/piggery/animal-movement-log/animal-movement-log.controller';
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
+import { GiltSelectionController } from '../modules/piggery/gilt-selection/gilt-selection.controller';
 import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
@@ -61,7 +62,7 @@ import { FarmController } from '../modules/master-data/farm/farm.controller';
  */
 const SCOPED = {
   BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController, SystemSchedulerController,
-  ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController, PiggeryAnalyticsController,
+  ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController, GiltSelectionController, PiggeryAnalyticsController,
   GoodsReceiptController, StockAdjustmentController, StockTransferController,
   InventoryLedgerController, FeedForecastController, FeedAlertController,
   AlertController, MilkController, QcController, QrCodeController,
@@ -125,6 +126,7 @@ const EXEMPT: Record<string, string> = {
   // animal/batch data alongside company-level ledgers — it is SCOPED above.
   'finance/cost-center/cost-center.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/gl-account/gl-account.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/bio-costing/bio-costing-run.controller.ts': 'Company-level finance posting (bio-asset costing runs), like journals; not a farm\'s.',
   'finance/bio-costing/bio-costing-profile.controller.ts': 'Company-level finance setup (central bio-asset costing profiles), like the GL mappings it sits beside; not a farm\'s.',
   'finance/gl-mapping/gl-mapping.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',

@@ -17,6 +17,7 @@ import { NumberSeriesService } from '../../system/number-series/number-series.se
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
+import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
 import { assertStageFitsAnimal } from '../../production/stage/stage-gender';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
@@ -183,6 +184,7 @@ export class AnimalService {
     private readonly batchService: BatchService,
     private readonly animalBookValue: AnimalBookValueService,
     private readonly bioCosting: BioCostingProfileService,
+    private readonly bioCostingResidual: BioCostingResidualService,
   ) {}
 
   private readonly logger = new Logger(AnimalService.name);
@@ -887,13 +889,26 @@ export class AnimalService {
     // book_value / total_amortised / current_bio_asset_value on the row are a cache that has gone stale before;
     // the card shows what her bio-asset ledger says (an animal the ledger has never seen keeps the column).
     const value = await this.animalBookValue.valueOf(id);
-    if (!value.hasRows) return animal;
-    return {
+    const card = !value.hasRows ? animal : {
       ...animal,
       book_value: value.bookValue.toFixed(4),
       total_amortised: value.amortised.toFixed(4),
       current_bio_asset_value: value.bookValue.toFixed(4),
     };
+    // What the costing says about her: the residual in force and whether it is hers or the company's, and her latest month's charge. The
+    // register's own residual_value and amortisation_monthly columns are an old place for these and are no longer typed on the card.
+    try {
+      const costing = await this.bioCostingResidual.forAnimal(id, animal.tenant_id);
+      return {
+        ...card,
+        residual_effective: costing.residual, residual_source: costing.source,
+        amortisation_monthly: costing.latest_amortisation != null ? costing.latest_amortisation.toFixed(4) : card.amortisation_monthly,
+        latest_amortisation_date: costing.latest_amortisation_date,
+      };
+    } catch (error) {
+      this.logger.warn(`Residual for animal ${id} could not be read: ${(error as Error).message}`);
+      return card;
+    }
   }
 
   async findAll(query: QueryAnimalDto, tenantId: string) {
@@ -981,6 +996,11 @@ export class AnimalService {
 
     if (dto.breed_id !== undefined) updates.breed_id = dto.breed_id;
     if (dto.dob !== undefined) updates.dob = dto.dob;
+    // Her birth date moves her costing start (or, once anything is booked on it, is refused).
+    if (dto.dob !== undefined && animal.costing_profile_id && String(dto.dob).slice(0, 10) !== String(animal.dob ?? '').slice(0, 10)) {
+      const start = await this.bioCosting.startForNewBirthDate(id, String(dto.dob).slice(0, 10), tenantId);
+      if (start) updates.costing_start_date = start;
+    }
     // entry_date is not editable, so the animal's own is always the second
     // term. Recomputed rather than copied through: an edited dob that left a
     // stale age behind would contradict itself on the very screen that shows
@@ -1009,8 +1029,6 @@ export class AnimalService {
     if (dto.parity_count !== undefined) updates.parity_count = dto.parity_count;
     if (dto.total_piglets_born_live !== undefined) updates.total_piglets_born_live = dto.total_piglets_born_live;
     if (dto.total_piglets_weaned !== undefined) updates.total_piglets_weaned = dto.total_piglets_weaned;
-    if (dto.residual_value !== undefined) updates.residual_value = dto.residual_value?.toString() ?? null;
-    if (dto.amortisation_monthly !== undefined) updates.amortisation_monthly = dto.amortisation_monthly?.toString() ?? null;
     if (dto.productive_life_start !== undefined) updates.productive_life_start = dto.productive_life_start;
     if (dto.expected_cull_date !== undefined) updates.expected_cull_date = dto.expected_cull_date;
     if (dto.status !== undefined) updates.status = dto.status;

@@ -346,3 +346,43 @@ Evidence: `docs/VERIFICATION-2026-10-04-feed-part-e.md`.
    with `../../node_modules/.bin/jest --maxWorkers=2`. Then **grep the bundle for
    a string from your newest commit** before believing anything the API tells
    you — a stale `dist/main.js` reports a fixed defect as still broken.
+
+## 9. Bio-asset costing — state and rules for future agents
+
+Plan: `docs/superpowers/plans/2026-10-20-central-bio-asset-costing.md`. Proof, phase by phase:
+`docs/VERIFICATION-2026-10-20-bio-costing-phase-{0..6}.md`. Read the 21 Oct 2026 entries at the end of `docs/decisions.md` first.
+
+- **The ledger is the record, the register columns are a cache.** An animal's book value is derived from her
+  `bio_asset_ledger` rows (`AnimalBookValueService`). `book_value`, `total_amortised` and `current_bio_asset_value` are
+  not editable and are refreshed in the request that writes a ledger row. Do not read them for a decision without
+  refreshing.
+- **Costing is by profile.** `bio_costing_profile` (method, start age, life, residual, GL accounts, scope) resolves
+  most-specific-wins. Terms lock once an animal is costed; change them with `new-version`. The client's four breeding
+  rules are seeded only as DRAFT (`db-seed-bio-costing-profiles`); they cannot go live until Finance gives an
+  accumulated-amortisation and an impairment account.
+- **A run is claimed once per period** (`bio_costing_run.active_key`). Calculate → Post → Reverse; Post recalculates on
+  current books. The scheduler is off unless `BIO_COSTING_SCHEDULER_ENABLED=true`. Never switch it on for a tenant before
+  its profile's effective date is the date costing should start: catch-up walks from that date.
+- **The batch path and the engine do not overlap.** A herd whose animals are costed by profile is refused by the batch
+  amortise / fair-value endpoints (`assertNotCostedPerAnimal`).
+- **Existing tenants:** `pnpm nx run api:db-backfill-bio-costing` (read-only), `-- --verify` (rolls back), `-- --apply`.
+  It assigns profiles and refreshes caches only. It never runs a period and never edits history.
+  `db-check-bio-asset-reconciliation` is the read-only consistency report.
+- **Reports:** *Finance > Bio-Asset Reconciliation* shows the roll-forward by profile and a tie-out of the engine's
+  ledger rows to its `BIO_COSTING_RUN` journal lines. A difference there is a defect, not rounding.
+- **Capitalise or expense is decided per animal (21 Oct).** For a batch of registered animals, a feed or overhead line is capitalised while the date is before the
+  animal's `costing_start_date` (or she has none) and expensed on or after it (`BatchService.animalsPastCostingStart`). There is no herd-wide Mature step for such a
+  batch: the button is gone and `matureBioAsset` refuses it. A mature sow's lactation feed is therefore expensed and **nothing passes to her litter** by the ledger
+  move at weaning (`allocateLactationCost`, which writes against the sow's own ledger and reads only what is capitalised); that needs Finance (decisions.md, Phase 3 / 4).
+- **Gilt selection** (`modules/piggery/gilt-selection`; the screen is a dialog on *Livestock > Breeding > Farrowing & Litters*, `gilt-selection-dialog.tsx`, with the history on the Gilt Selections tab; the old `/livestock/gilt-selection` address redirects there): one transaction takes head out of a headcount batch
+  (`BatchService.releaseHeadToAnimals`), registers each gilt BORN_ON_FARM (Local, profile LOC-F) at the batch's average value per head, and refuses under 15 teats.
+  Ledger-only, no journal (D8). `BORN_ON_FARM` is now Local for costing (`originOf`).
+- **The walkthrough** (`pnpm nx run api:db-costing-walkthrough`, guide `docs/TEST-GUIDE-costing-walkthrough.md`) now ends with a gilt selection and the gilts' first feed. Run it on a
+  clean `pnpm seed:costing` database; the costing seed dates the residual setting and profiles from 1 Jan 2026 so the walkthrough's March is costed.
+- **Exits and runs:** a costing line is skipped (`LEFT_AFTER_PERIOD`) for an animal whose exit is dated after the period, and a posted run cannot be reversed once an animal in it has left
+  after the period. Run months in order; the exit holds the last period.
+- **Not built, and the client's to answer:** sale / cull / slaughter / transfer entries (three treatments in the BBP, and a
+  sale posts no journal today), registration posting to the GL and the loss legs on a death (D8), the formula wording
+  (D11), costs to sell (D5), origin of `TRANSFERRED_IN` animals (D2), batch-tracked profiles.
+- **Proving it:** post a run through the API, read `bio_asset_ledger` and `journal_line`, compare with the trial
+  balance. A green suite did not catch the double death write, the 28 000 default or the missing mapping.

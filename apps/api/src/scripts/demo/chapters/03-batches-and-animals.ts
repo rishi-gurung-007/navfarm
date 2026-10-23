@@ -41,7 +41,21 @@ import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { batchBreedOf, batchRef, tagOf } from '../farms';
 import { createItemLookup, createBatchEnsurer, createAnimalWiseBatchEnsurer, rateOf } from '../batch-helpers';
-import { registerBreedingStock } from '../register-breeding-stock';
+import { registerBreedingStock, type StockVariant } from '../register-breeding-stock';
+
+/**
+ * The imported lot of the costing seed (`--volume=costing`): bought on the same day as the local herd, but by import, at
+ * import prices, young enough that their costing start (33 weeks for a female, 26 for a male) falls inside the 62-day window.
+ * Its own receipt, ear tags (DEMO-IMP-...) and Animal Wise batch (DEMO-<farm>-REG-IMP). Prices and ages are demo facts.
+ */
+export const IMPORTED_LOT: StockVariant = {
+  key: 'IMP',
+  entryType: 'PURCHASED_IMPORTED',
+  counts: { SOW: 4, GILT: 2, BOAR: 1 },
+  // Imports cost more than the (rescaled) catalog's local animals — see COSTING_PRICE_DIVISOR in 13-bio-costing.ts.
+  rate: { SOW: 850, GILT: 650, BOAR: 1200 },
+  ageWeeks: { SOW: 26, GILT: 28, BOAR: 20 },
+};
 
 /**
  * Livestock items resolve by the shared catalog's item NAME (the one property
@@ -122,6 +136,11 @@ export const batchesAndAnimalsChapter: DemoChapter<BatchRefs> = {
       // batch (shared with db-seed-animals).
       // With --no-batches the animals are registered and left unassigned, for the user to group into a batch.
       refs.registered = (await registerBreedingStock(ctx, farm, { db, animals, receipts, item, ensureAnimalWiseBatch: ctx.withBatches ? ensureAnimalWiseBatch : undefined }))?.join(' + ') ?? undefined;
+      // The costing seed also buys an imported lot beside the local herd, in a batch of its own.
+      if (ctx.volume === 'costing' && ctx.withBatches) {
+        const imported = await registerBreedingStock(ctx, farm, { db, animals, receipts, item, ensureAnimalWiseBatch, variant: IMPORTED_LOT });
+        refs.registered = [refs.registered, ...(imported ?? [])].filter(Boolean).join(' + ');
+      }
       if (!ctx.withBatches) continue;
 
       // ── Batch Wise (headcount) batches, one per allowed stage the breed carries.

@@ -16,11 +16,12 @@ import * as schema from '../../../core/database/schema';
  */
 export const BOOK_VALUE_ENTRY_TYPES = [
   'ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT',
-  'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION',
+  'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION',
 ] as const;
 
 const CAPITALISED = new Set(['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT']);
-const EXITS = new Set(['MORTALITY', 'WRITEOFF', 'TRANSFORMATION']);
+// COST_ALLOCATION is the sow's lactation cost handed to her litter at weaning: it leaves her, and the litter's lot (a batch-level row) takes it.
+const EXITS = new Set(['MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION']);
 
 export interface AnimalValue {
   acquisition: number;

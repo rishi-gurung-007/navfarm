@@ -41,7 +41,7 @@ import * as schema from '../../../core/database/schema';
 import type { GoodsReceiptLineInput } from '../../../modules/inventory/goods-receipt/dto/goods-receipt.dto';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { siloFillKg } from '../../../core/database/demo-feed-defaults';
-import { silosOf, tagOf, type DemoFarm, type DemoShed, type ShedRole } from '../farms';
+import { dailyEntryDaysFor, silosOf, tagOf, type DemoFarm, type DemoShed, type ShedRole } from '../farms';
 
 /**
  * `item_master.standard_cost` is a MySQL decimal, so Drizzle hands it back as
@@ -239,7 +239,9 @@ export const inventoryChapter: DemoChapter = {
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('02-inventory: tenantDb is not set — run through the harness.');
 
-    const postingDate = dateDaysAgo(2);
+    // Two days back, except on the costing seed: its daily entries start with the batches, 62 days ago, and a receipt dated
+    // after a draw cannot supply it, so the opening stock is dated just before the window opens.
+    const postingDate = dateDaysAgo(ctx.volume === 'costing' ? dailyEntryDaysFor(ctx.volume) + 2 : 2);
 
     for (const farm of ctx.demoFarms) {
       const tag = tagOf(farm);

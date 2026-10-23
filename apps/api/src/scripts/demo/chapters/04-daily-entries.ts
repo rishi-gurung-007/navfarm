@@ -53,7 +53,7 @@ import { BatchService } from '../../../modules/production/batch/batch.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
-import { tagOf } from '../farms';
+import { dailyEntryDaysFor, tagOf } from '../farms';
 import { isDue, midwayTopUpKg, topUpKg } from '../daily-entry-plan';
 
 /**
@@ -125,18 +125,24 @@ export const dailyEntriesChapter: DemoChapter = {
       .where(and(
         sql`${schema.batchHeader.remarks} LIKE 'DEMO-%'`,
         eq(schema.batchHeader.status, 'ACTIVE'),
+        ...(ctx.dailyEntryScope ? [inArray(schema.batchHeader.remarks, ctx.dailyEntryScope.batchRemarks)] : []),
       ));
 
     if (batches.length === 0) {
       throw new Error('04-daily-entries: no demo batches found — run 03-batches-and-animals first.');
     }
 
+    // The imported lot's batch (costing seed) is a clean one: no deliberately missing lines, so every day posts.
     const registeredBatches = new Set(batches.filter((b) => b.remarks?.includes('-REG')).map((b) => b.batch_id));
+    const cleanBatches = new Set(batches.filter((b) => b.remarks?.endsWith('-REG-IMP')).map((b) => b.batch_id));
+    // The costing seed leaves no day incomplete either: the two "Missing" days (days 4 and 9) are a demonstration of the History rail,
+    // and entering one after the herd has matured sends its feed to expense, not to the animals' book value.
 
     // The 14-day window ends yesterday (Harare is UTC+2 — 1h offset from the
     // server; yesterday is yesterday either way, but compute it honestly).
     const yesterdayHarare = dateNdaysAgo(1);
-    const firstDay = dateNdaysAgo(14);
+    const windowDays = dailyEntryDaysFor(ctx.volume);
+    const firstDay = ctx.dailyEntryScope?.dates[0] ?? dateNdaysAgo(windowDays);
 
     // ── Lines per batch (the schedulers chapters 03 generated — one scheduler
     // per stage the batch's flow walked, so a batch carries several, each with
@@ -236,6 +242,9 @@ export const dailyEntriesChapter: DemoChapter = {
           eq(schema.inventoryLedger.warehouse_id, warehouseId),
           eq(schema.inventoryLedger.item_id, itemId),
           eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+          // A scoped window (the costing walkthrough) starts in the past: only stock received by then can be drawn on, so later receipts
+          // do not count as on hand, and the window gets a top-up dated at its start.
+          ...(ctx.dailyEntryScope ? [sql`${schema.inventoryLedger.posting_date} <= ${firstDay}`] : []),
         ));
       return Number(row?.total ?? 0);
     }
@@ -251,8 +260,8 @@ export const dailyEntriesChapter: DemoChapter = {
     const postedKeys = new Set(posted.map((p) => `${p.line_id}|${p.entry_date}|${p.animal_id ?? ''}`));
 
     // The calendar days of the window, ending yesterday.
-    const days: string[] = [];
-    for (let i = 14; i >= 1; i--) days.push(dateNdaysAgo(i));
+    const days: string[] = ctx.dailyEntryScope ? [...ctx.dailyEntryScope.dates] : [];
+    if (!ctx.dailyEntryScope) for (let i = windowDays; i >= 1; i--) days.push(dateNdaysAgo(i));
     // Day number within a scheduler: its own effective_from is day 1 (the
     // day-completeness convention). Each scheduler counts from the day its
     // stage began, so the same calendar day is a different day number under
@@ -262,7 +271,7 @@ export const dailyEntriesChapter: DemoChapter = {
 
     let postedCount = 0;
     let skippedCount = 0;
-    const weeklyAnchor = dateNdaysAgo(14);
+    const weeklyAnchor = firstDay;
 
     // ── 1. The work: every due, unposted line-day, in the order it will post.
     // Enumerated once, up front, so the top-up below sums exactly the draws
@@ -290,7 +299,7 @@ export const dailyEntriesChapter: DemoChapter = {
               continue;
             }
             // Skip one mandatory line on two distinct days on registered batches for missing backlog demonstration
-            if (registeredBatches.has(batch.batch_id) && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
+            if (registeredBatches.has(batch.batch_id) && !cleanBatches.has(batch.batch_id) && ctx.volume !== 'costing' && line.is_mandatory && SKIP_DAYS_ON_REGISTERED.includes(day)) {
               skippedCount += 1;
               continue;
             }

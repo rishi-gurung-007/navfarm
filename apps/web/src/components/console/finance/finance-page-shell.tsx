@@ -20,6 +20,8 @@ export const FINANCE_SECTIONS = [
   { key: "balance-sheet", href: "/finance/balance-sheet", labelKey: "finBalanceSheet" },
   { key: "trial-balance", href: "/finance/trial-balance", labelKey: "finTrialBalance" },
   { key: "bio-asset-reconciliation", href: "/finance/bio-asset-reconciliation", labelKey: "finBioAssetReconciliation" },
+  { key: "bio-costing-runs", href: "/finance/bio-costing-runs", labelKey: "finBioCostingRuns" },
+  { key: "bio-costing-setup", href: "/finance/bio-costing-setup", labelKey: "finBioCostingSetup" },
   { key: "batch-cost-variance", href: "/finance/batch-cost-variance", labelKey: "finBatchCostVariance" },
 ] as const;
 
@@ -77,6 +79,8 @@ export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTa
     activeKey === "profit-loss" ? t("finProfitLossTitle") :
     activeKey === "balance-sheet" ? t("finBalanceSheetTitle") :
     activeKey === "trial-balance" ? t("finTrialBalanceTitle") :
+    activeKey === "bio-costing-runs" ? t("finBioCostingRunsTitle") :
+    activeKey === "bio-costing-setup" ? t("finBioCostingSetupTitle") :
     activeKey === "batch-cost-variance" ? t("finBatchCostVarianceTitle") :
     t("finBioAssetReconciliationTitle");
 

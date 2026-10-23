@@ -20,6 +20,7 @@ import {
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
+import { getStoredUser, hasPermission } from '@/hooks/useAuth';
 
 type Row = Record<string, any>;
 
@@ -99,6 +100,23 @@ export default function AnimalDetailsModal({
   onOpenOutOfProduction,
 }: AnimalDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
+
+  // Her own residual (an override of the company's setting), edited in place on the Costing tab.
+  const canEditResidual = hasPermission(getStoredUser(), 'PIGGERY', 'ANIMAL', 'can_edit');
+  const [residualEdit, setResidualEdit] = useState<{ open: boolean; value: string; reason: string; saving: boolean; error: string }>({ open: false, value: '', reason: '', saving: false, error: '' });
+  const saveResidual = async (clear: boolean) => {
+    if (!animalId) return;
+    if (!residualEdit.reason.trim()) { setResidualEdit((r) => ({ ...r, error: 'Give a reason: it is kept in the audit log.' })); return; }
+    if (!clear && !(Number(residualEdit.value) >= 0 && residualEdit.value !== '')) { setResidualEdit((r) => ({ ...r, error: 'Enter the residual as 0 or more.' })); return; }
+    setResidualEdit((r) => ({ ...r, saving: true, error: '' }));
+    try {
+      await api.put(`/bio-costing/animals/${animalId}/residual`, { residual_value: clear ? null : Number(residualEdit.value), reason: residualEdit.reason.trim() });
+      setAnimal(unwrap<Row>(await api.get(`/animal/${animalId}`)));
+      setResidualEdit({ open: false, value: '', reason: '', saving: false, error: '' });
+    } catch (e: any) {
+      setResidualEdit((r) => ({ ...r, saving: false, error: e?.message || 'Could not save the residual.' }));
+    }
+  };
 
   // Animal Register record
   const [animal, setAnimal] = useState<Row | null>(null);
@@ -1365,7 +1383,7 @@ export default function AnimalDetailsModal({
                     <span className="text-base font-bold font-mono text-[var(--text-primary)] mt-0.5 block">
                       {formatMoney(animal?.amortisation_monthly)}
                     </span>
-                    <span className="text-[10px] text-[var(--text-secondary)]">IAS 41 depreciation</span>
+                    <span className="text-[10px] text-[var(--text-secondary)]">{animal?.latest_amortisation_date ? `Latest charge, ${formatDate(animal.latest_amortisation_date)}` : 'Latest charge: none posted yet'}</span>
                   </div>
                 </div>
 
@@ -1387,7 +1405,29 @@ export default function AnimalDetailsModal({
                     </div>
                     <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Residual Value</span>
-                      <span className="font-mono text-[var(--text-primary)]">{formatMoney(animal?.residual_value)}</span>
+                      <span className="font-mono text-[var(--text-primary)]">{formatMoney(animal?.residual_effective ?? animal?.residual_value)}</span>
+                      {animal?.residual_source && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          {animal.residual_source === 'ANIMAL' ? 'Her own residual' : animal.residual_source === 'COMPANY' ? 'Company setting' : 'Profile (no company setting yet)'}
+                        </span>
+                      )}
+                      {canEditResidual && !residualEdit.open && (
+                        <button type="button" className="mt-1 text-[10px] font-semibold text-[var(--accent)] underline" onClick={() => setResidualEdit((r) => ({ ...r, open: true, value: animal?.residual_source === 'ANIMAL' ? String(Number(animal?.residual_value)) : '' }))}>
+                          Override for this animal
+                        </button>
+                      )}
+                      {residualEdit.open && (
+                        <div className="mt-2 space-y-1.5">
+                          <input aria-label="Her residual" type="number" min={0} step="0.01" className="nf-input h-8 w-full text-xs" placeholder="Residual" value={residualEdit.value} onChange={(e) => setResidualEdit((r) => ({ ...r, value: e.target.value, error: '' }))} />
+                          <input aria-label="Reason" className="nf-input h-8 w-full text-xs" placeholder="Reason (audit log)" maxLength={300} value={residualEdit.reason} onChange={(e) => setResidualEdit((r) => ({ ...r, reason: e.target.value, error: '' }))} />
+                          {residualEdit.error && <span role="alert" className="block text-[10px] text-[var(--danger)]">{residualEdit.error}</span>}
+                          <div className="flex flex-wrap gap-1.5">
+                            <Button size="sm" onClick={() => saveResidual(false)} disabled={residualEdit.saving}>Save</Button>
+                            {animal?.residual_source === 'ANIMAL' && <Button size="sm" variant="outline" onClick={() => saveResidual(true)} disabled={residualEdit.saving}>Use company setting</Button>}
+                            <Button size="sm" variant="outline" onClick={() => setResidualEdit({ open: false, value: '', reason: '', saving: false, error: '' })} disabled={residualEdit.saving}>Cancel</Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Expected Cull Date</span>
@@ -1452,7 +1492,7 @@ export default function AnimalDetailsModal({
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
                           {ledgerEntries.map((le, idx) => (
-                            <tr key={le.ledger_id || idx} className="hover:bg-[var(--surface-raised)]/60">
+                            <tr key={le.entry_id || le.ledger_id || idx} className="hover:bg-[var(--surface-raised)]/60">
                               <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
                                 {formatDate(le.posting_date)}
                               </td>
@@ -1460,16 +1500,17 @@ export default function AnimalDetailsModal({
                                 {le.entry_type}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {formatMoney(le.unit_cost)}
+                                {/* The ledger row's own columns are cost_amount_each_unit / cost_amount / document_no; the older names stay as fallbacks. */}
+                                {formatMoney(le.cost_amount_each_unit ?? le.unit_cost)}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
                                 {formatQuantity(le.quantity ?? 1)}
                               </td>
                               <td className="px-3 py-2 font-mono font-bold text-right text-[var(--text-primary)]">
-                                {formatMoney(le.computed_cost || le.amount)}
+                                {formatMoney(le.cost_amount ?? (le.computed_cost || le.amount))}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
-                                {le.posting_reference || le.reference || '—'}
+                                {le.document_no || le.posting_reference || le.reference || '—'}
                               </td>
                             </tr>
                           ))}

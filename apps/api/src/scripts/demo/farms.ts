@@ -204,8 +204,8 @@ export function farmCanRegisterAnimals(farm: DemoFarm): boolean {
  * Volume
  */
 
-export type VolumeProfileName = 'full' | 'standard' | 'light' | 'lean';
-export const VOLUME_PROFILES: VolumeProfileName[] = ['full', 'standard', 'light', 'lean'];
+export type VolumeProfileName = 'full' | 'standard' | 'light' | 'lean' | 'costing';
+export const VOLUME_PROFILES: VolumeProfileName[] = ['full', 'standard', 'light', 'lean', 'costing'];
 
 /** Rishi's numbers for a full farm: ~40 sows, 3 boars, 15 gilts, 3–4 batches, ~30 days. */
 const FULL: FarmVolume = { sows: 40, boars: 3, gilts: 15, countOnlyBatches: 3, herdScale: 1, days: 30, breedingSows: 5 };
@@ -217,6 +217,17 @@ const MINIMAL: FarmVolume = { sows: 6, boars: 1, gilts: 3, countOnlyBatches: 1, 
  * because the breeding chapter needs a litter born, nursed and weaned between the herd's purchase and today.
  */
 const LEAN: FarmVolume = { sows: 6, boars: 1, gilts: 2, countOnlyBatches: 1, herdScale: 0.25, days: 14, breedingSows: 3 };
+/**
+ * The costing profile (`pnpm seed:costing`): a herd big enough to cost and a history long enough for costing runs to mean
+ * something. The batches start 62 days ago (two months), the breeding herd was bought 24 days before that, and the daily
+ * entries run over the same 62 days. Same shape as LIGHT; only the history is longer.
+ */
+const COSTING: FarmVolume = { sows: 8, boars: 2, gilts: 4, countOnlyBatches: 2, herdScale: 0.5, days: 62, breedingSows: 3 };
+
+/** How many days of daily entries chapter 04 posts: 14 for every profile except costing, which posts the whole 62-day history. */
+export function dailyEntryDaysFor(profile: VolumeProfileName): number {
+  return profile === 'costing' ? COSTING.days : 14;
+}
 
 /**
  * Rishi asked for the full volume on every farm but said "enough or less if it
@@ -229,7 +240,7 @@ const LEAN: FarmVolume = { sows: 6, boars: 1, gilts: 2, countOnlyBatches: 1, her
 const FULL_TIER_CODES: DemoFarmCode[] = ['POR100', 'RIC100', 'VIL100'];
 
 export function volumeFor(code: DemoFarmCode, role: FarmRole, profile: VolumeProfileName): FarmVolume {
-  const base = profile === 'lean' ? LEAN : profile === 'light' ? MINIMAL : profile === 'full' ? FULL : FULL_TIER_CODES.includes(code) ? FULL : LIGHT;
+  const base = profile === 'costing' ? COSTING : profile === 'lean' ? LEAN : profile === 'light' ? MINIMAL : profile === 'full' ? FULL : FULL_TIER_CODES.includes(code) ? FULL : LIGHT;
 
   // The two specialist farms carry no sow herd at all: the AI station is boars
   // only, and the grow-out site holds bought-in weaners and growers as count

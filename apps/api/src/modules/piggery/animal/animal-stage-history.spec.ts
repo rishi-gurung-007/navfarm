@@ -4,6 +4,7 @@ import { AnimalService } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
+import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
@@ -64,6 +65,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
         { provide: AnimalMovementLogService, useValue: movementLog },
         { provide: AnimalBookValueService, useValue: { valueOf: jest.fn().mockResolvedValue({ acquisition: 0, capitalised: 0, amortised: 0, fairValue: 0, exits: 0, bookValue: 0, hasRows: false }), valuesFor: jest.fn().mockResolvedValue(new Map()), refreshCache: jest.fn().mockResolvedValue(undefined) } },
         { provide: BioCostingProfileService, useValue: { assignAnimal: jest.fn().mockResolvedValue({ assigned: false, reason: 'NO_MATCHING_PROFILE' }) } },
+        { provide: BioCostingResidualService, useValue: { forAnimal: jest.fn().mockResolvedValue({ residual: 0, source: 'COMPANY', latest_amortisation: null, latest_amortisation_date: null }) } },
         { provide: BatchService, useValue: { addTransaction: jest.fn(), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();

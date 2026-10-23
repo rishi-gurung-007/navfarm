@@ -24,6 +24,7 @@ export const STARTER_GL_ACCOUNTS: StarterGlAccount[] = [
   { account_code: '1030', account_name: 'Finished Goods Inventory', account_type: 'ASSET' },
   { account_code: '1040', account_name: 'Inventory in Transit', account_type: 'ASSET' },
   { account_code: '1050', account_name: 'Biological Assets — Pre-mature (NCA)', account_type: 'ASSET' },
+  { account_code: '1055', account_name: 'Piglets Inventory — Current Biological Assets', account_type: 'ASSET' },
   { account_code: '1060', account_name: 'Biological Assets — Mature (NCA)', account_type: 'ASSET' },
   { account_code: '1200', account_name: 'Trade Receivables', account_type: 'ASSET' },
   // Liabilities

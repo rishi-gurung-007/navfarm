@@ -233,6 +233,9 @@ export class NumberSeriesService {
       description: defaults.seriesName,
       document_type: defaults.documentType,
       prefix,
+      // Kept equal to the prefix, as the seeded and form-saved series are (updateSeries keeps them in step):
+      // a series made here with the code empty failed verify-demo-flow's "every series carries a prefix" check.
+      no_series_code: prefix,
       separator,
       seq_length: defaults.seqLength,
       current_seq: currentSeq,

@@ -117,6 +117,30 @@ describe('BioCostingProfileService', () => {
     expect(r.animals.find((x: any) => x.reason === 'AMBIGUOUS_PROFILES')).toMatchObject({ animal_id: 'a1' });
   });
 
+  describe('startForNewBirthDate — the birth date moves the costing start, but only while nothing is booked on the old one', () => {
+    const animal = { animal_id: 'a1', animal_code: 'PIG-1', costing_profile_id: 'p1', entry_date: '2026-01-12', age_at_entry_weeks: 10 };
+
+    it('gives the new start (birth + 33 weeks, never before arrival) when nothing has been booked', async () => {
+      queue.push([animal], [importedFemale], [{ n: 0 }], [{ n: 0 }], [{ n: 0 }]);
+      await expect(service.startForNewBirthDate('a1', '2025-10-06', 't')).resolves.toBe('2026-05-25');
+    });
+
+    it('never starts before the day she arrived', async () => {
+      queue.push([animal], [importedFemale], [{ n: 0 }], [{ n: 0 }], [{ n: 0 }]);
+      await expect(service.startForNewBirthDate('a1', '2024-01-01', 't')).resolves.toBe('2026-01-12');
+    });
+
+    it.each([['a costing run line', [{ n: 2 }, { n: 0 }, { n: 0 }]], ['a capitalised or amortised ledger row', [{ n: 0 }, { n: 3 }, { n: 0 }]], ['a feed or overhead entry', [{ n: 0 }, { n: 0 }, { n: 5 }]]])('refuses once %s is booked to her', async (_what, counts) => {
+      queue.push([animal], [importedFemale], [counts[0]], [counts[1]], [counts[2]]);
+      await expect(service.startForNewBirthDate('a1', '2025-06-01', 't')).rejects.toThrow(/cannot be changed once feed, medicine, overhead or a costing run/);
+    });
+
+    it('does nothing for an animal with no costing profile', async () => {
+      queue.push([{ ...animal, costing_profile_id: null }]);
+      await expect(service.startForNewBirthDate('a1', '2025-06-01', 't')).resolves.toBeNull();
+    });
+  });
+
   it('knows the schema it writes to', () => {
     expect(Object.keys(schema.bioCostingProfile)).toEqual(expect.arrayContaining(['profile_id', 'active_scope_key', 'costing_method']));
   });
