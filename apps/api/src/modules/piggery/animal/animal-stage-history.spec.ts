@@ -19,7 +19,22 @@ import { transactionCls } from '../../../test-utils/transaction-cls';
  */
 describe('AnimalService.transitionStage writes stage history (checklist 6)', () => {
   const found = (row: any) => ({
-    from: () => ({ where: () => ({ limit: async () => [row] }) }),
+    from: () => ({
+      where: () => ({ limit: async () => [row] }),
+      // findOne joins the animal's source GRN and reads { animal, source_grn_* } (22 Oct).
+      leftJoin: () => ({
+        where: () => ({
+          limit: async () => [
+            {
+              animal: row,
+              source_grn_id: null,
+              source_grn_no: null,
+              source_grn_date: null,
+            },
+          ],
+        }),
+      }),
+    }),
   });
   const mockDbSelect = jest.fn();
   const mockDbUpdate = jest.fn();

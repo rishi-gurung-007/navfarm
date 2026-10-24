@@ -8,6 +8,7 @@ import {
 } from '@testing-library/react';
 import { RequisitionsHub } from '../src/components/console/requisitions/requisitions-hub';
 import { api } from '../src/services/api-client';
+import { chooseValue, optionValues } from './support/searchable-select';
 jest.mock('../src/components/ui/toast', () => ({
   showToast: {
     success: jest.fn(),
@@ -226,13 +227,13 @@ describe('RequisitionsHub — one list and creation surface for every requisitio
   it('the Type filter remains Item, Fixed Asset and Service', async () => {
     render(<RequisitionsHub />);
     await screen.findByRole('table');
-    const options = within(screen.getByLabelText('rhType'))
-      .getAllByRole('option')
-      .map((o) => (o as HTMLOptionElement).value);
-    expect(options).toEqual(['', 'ITEM', 'FA', 'SERVICE']);
-    fireEvent.change(screen.getByLabelText('rhType'), {
-      target: { value: 'ITEM' },
-    });
+    expect(optionValues(screen.getByLabelText('rhType'))).toEqual([
+      '',
+      'ITEM',
+      'FA',
+      'SERVICE',
+    ]);
+    chooseValue(screen.getByLabelText('rhType'), 'ITEM');
     await waitFor(() =>
       expect(
         listUrls().some(
@@ -268,9 +269,7 @@ describe('RequisitionsHub — one list and creation surface for every requisitio
   it('choosing Type ITEM re-requests the list filtered to ITEM', async () => {
     render(<RequisitionsHub />);
     await screen.findByRole('table');
-    fireEvent.change(screen.getByLabelText('rhType'), {
-      target: { value: 'ITEM' },
-    });
+    chooseValue(screen.getByLabelText('rhType'), 'ITEM');
     await waitFor(() =>
       expect(listUrls().some((u) => u.includes('doc_type=ITEM'))).toBe(true),
     );

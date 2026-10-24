@@ -47,6 +47,23 @@ describe('AnimalService', () => {
         limit: jest.fn().mockResolvedValue(row ? [row] : []),
         for: jest.fn().mockResolvedValue(row ? [row] : []),
       }),
+      // findOne joins the animal's source GRN and reads { animal, source_grn_* } (22 Oct).
+      leftJoin: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          limit: jest.fn().mockResolvedValue(
+            row
+              ? [
+                  {
+                    animal: row,
+                    source_grn_id: null,
+                    source_grn_no: null,
+                    source_grn_date: null,
+                  },
+                ]
+              : [],
+          ),
+        }),
+      }),
     }),
   });
   // A read of any shape that resolves to `rows` (14 Oct): an animal registered from a GRN reads the GRN (locked), its
