@@ -1,6 +1,6 @@
 'use client';
 
-import { NA } from "@/utils/na";
+import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
   Copy,
@@ -64,7 +64,11 @@ export default function ItemLedgerHistoryCard({
 }: ItemLedgerHistoryCardProps) {
   const rowStyle = (row: Row) =>
     highlightWarehouseId && row.warehouse_id === highlightWarehouseId
-      ? { borderColor: 'var(--border)', backgroundColor: 'var(--accent-muted)', boxShadow: 'inset 3px 0 0 var(--accent)' }
+      ? {
+          borderColor: 'var(--border)',
+          backgroundColor: 'var(--accent-muted)',
+          boxShadow: 'inset 3px 0 0 var(--accent)',
+        }
       : { borderColor: 'var(--border)' };
   const { formatMoney } = useCompanyCurrency();
   const [loading, setLoading] = useState(true);
@@ -149,12 +153,33 @@ export default function ItemLedgerHistoryCard({
         style={S.surface}
       >
         <div>
-          <span className="text-[11px] font-semibold uppercase tracking-wider" style={S.muted}>Item Code</span>
-          <p className="mt-0.5 font-mono text-sm font-bold truncate" style={S.primary}>{item.item_code}</p>
+          <span
+            className="text-[11px] font-semibold uppercase tracking-wider"
+            style={S.muted}
+          >
+            Item Code
+          </span>
+          <p
+            className="mt-0.5 font-mono text-sm font-bold truncate"
+            style={S.primary}
+          >
+            {item.item_code}
+          </p>
         </div>
         <div>
-          <span className="text-[11px] font-semibold uppercase tracking-wider" style={S.muted}>Item Name</span>
-          <p className="mt-0.5 text-sm truncate" style={S.primary} title={item.item_name}>{item.item_name}</p>
+          <span
+            className="text-[11px] font-semibold uppercase tracking-wider"
+            style={S.muted}
+          >
+            Item Name
+          </span>
+          <p
+            className="mt-0.5 text-sm truncate"
+            style={S.primary}
+            title={item.item_name}
+          >
+            {item.item_name}
+          </p>
         </div>
 
         <div>
@@ -316,10 +341,7 @@ export default function ItemLedgerHistoryCard({
                       const isFullyConsumed = rem <= 0.0001;
 
                       return (
-                        <TableRow
-                          key={layer.ledger_id}
-                          style={rowStyle(layer)}
-                        >
+                        <TableRow key={layer.ledger_id} style={rowStyle(layer)}>
                           <TableCell
                             className="py-2.5 px-3 font-mono font-semibold"
                             style={S.primary}
@@ -349,9 +371,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.sub}
                           >
-                            {layer.warehouse_code ||
-                              layer.warehouse_name ||
-                              NA}
+                            {layer.warehouse_code || layer.warehouse_name || NA}
                           </TableCell>
                           <TableCell
                             className="py-2.5 px-3 text-xs text-center"
@@ -532,10 +552,7 @@ export default function ItemLedgerHistoryCard({
                       const apps: Row[] = out.applications || [];
 
                       return (
-                        <TableRow
-                          key={out.ledger_id}
-                          style={rowStyle(out)}
-                        >
+                        <TableRow key={out.ledger_id} style={rowStyle(out)}>
                           <TableCell
                             className="py-2.5 px-3 font-mono font-semibold"
                             style={S.primary}
@@ -615,7 +632,8 @@ export default function ItemLedgerHistoryCard({
                                       type="button"
                                       onClick={() =>
                                         copyToClipboard(
-                                          app.application_no ?? app.application_id,
+                                          app.application_no ??
+                                            app.application_id,
                                           app.application_id,
                                         )
                                       }

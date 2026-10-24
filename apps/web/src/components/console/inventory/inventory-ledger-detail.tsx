@@ -1,6 +1,6 @@
 'use client';
 
-import { NA } from "@/utils/na";
+import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -39,7 +39,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { CostingCalculation } from './costing-calculation';
-import { formatExact, formatQuantity } from "@/lib/utils";
+import { formatExact, formatQuantity } from '@/lib/utils';
 
 type Row = Record<string, any>;
 
@@ -1194,10 +1194,10 @@ export default function InventoryLedgerDetail({
                             {app.application_no
                               ? app.application_no
                               : app.application_id
-                              ? app.application_id.length > 20
-                                ? `${app.application_id.slice(0, 12)}…`
-                                : app.application_id
-                              : NA}
+                                ? app.application_id.length > 20
+                                  ? `${app.application_id.slice(0, 12)}…`
+                                  : app.application_id
+                                : NA}
                           </span>
                           {app.application_id && (
                             <button

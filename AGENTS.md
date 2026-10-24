@@ -47,7 +47,7 @@ this file and Rishi disagree, **Rishi wins** — say so and update this file.
 ## 2. Source of truth
 
 **Rishi is the source of truth.** Not the BBP, not the TDD tracker, not the
-templates. Every document in this repo is *reference* — evidence of what the
+templates. Every document in this repo is _reference_ — evidence of what the
 client has said so far — and every one of them is incomplete, unsigned, or
 contradicts another. What the application should do is what Rishi says it
 should do.
@@ -333,12 +333,12 @@ Evidence: `docs/VERIFICATION-2026-10-04-feed-part-e.md`.
    architecture changes, so another agent does not reconstruct history from
    stale workbook examples.
 7. **In a git worktree, nx builds and serves the wrong tree.** `nx run
-   api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
+api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
    main checkout on 3 Oct, even with `--skip-nx-cache`, `NX_DAEMON=false` and the
    worktree's own nx binary. Build the API with
    `cd apps/api && NODE_ENV=production NX_WORKSPACE_ROOT_PATH=<worktree>
-   NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
-   ../../node_modules/.bin/webpack-cli build`, serve the web with
+NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
+../../node_modules/.bin/webpack-cli build`, serve the web with
    `cd apps/web && ../../node_modules/.bin/next dev --port 3002`, and run jest
    with `../../node_modules/.bin/jest --maxWorkers=2`. Then **grep the bundle for
    a string from your newest commit** before believing anything the API tells

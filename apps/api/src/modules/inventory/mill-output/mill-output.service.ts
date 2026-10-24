@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { alias } from 'drizzle-orm/mysql-core';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
@@ -32,7 +37,8 @@ export class MillOutputService {
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
-    if (!tenantDb) throw new Error('Tenant database connection context not established.');
+    if (!tenantDb)
+      throw new Error('Tenant database connection context not established.');
     return tenantDb;
   }
 
@@ -46,17 +52,25 @@ export class MillOutputService {
       throw new ForbiddenException('The company must match the workspace.');
     }
     const companyId = scope.companyId || requested;
-    if (!companyId) throw new BadRequestException('Select a company workspace first.');
+    if (!companyId)
+      throw new BadRequestException('Select a company workspace first.');
     return companyId;
   }
 
   /** The BIN diet assignments of a production date — what the mill may produce into that day. */
   async listAssignments(tenantId: string, query: QueryMillOutputDto) {
     const companyId = this.companyOf(query.companyId);
-    if (!query.productionDate) throw new BadRequestException('Choose the production date.');
+    if (!query.productionDate)
+      throw new BadRequestException('Choose the production date.');
     const A = schema.binDietAssignment;
-    const bin = alias(schema.locationMaster, 'bin') as unknown as typeof schema.locationMaster;
-    const mill = alias(schema.locationMaster, 'mill') as unknown as typeof schema.locationMaster;
+    const bin = alias(
+      schema.locationMaster,
+      'bin',
+    ) as unknown as typeof schema.locationMaster;
+    const mill = alias(
+      schema.locationMaster,
+      'mill',
+    ) as unknown as typeof schema.locationMaster;
     const I = schema.itemMaster;
     return this.db
       .select({
@@ -84,24 +98,33 @@ export class MillOutputService {
       .innerJoin(bin, eq(bin.location_id, A.bin_location_id))
       .leftJoin(mill, eq(mill.location_id, bin.parent_location_id))
       .innerJoin(I, eq(I.item_id, A.feed_item_id))
-      .where(and(
-        eq(A.tenant_id, tenantId),
-        eq(A.company_id, companyId),
-        eq(A.production_date, query.productionDate),
-        eq(A.is_active, true),
-        eq(A.status, 'ACTIVE'),
-        isNull(A.deleted_at),
-      ))
+      .where(
+        and(
+          eq(A.tenant_id, tenantId),
+          eq(A.company_id, companyId),
+          eq(A.production_date, query.productionDate),
+          eq(A.is_active, true),
+          eq(A.status, 'ACTIVE'),
+          isNull(A.deleted_at),
+        ),
+      )
       .orderBy(A.diet_priority, bin.location_code);
   }
 
   async list(tenantId: string, query: QueryMillOutputDto) {
     const companyId = this.companyOf(query.companyId);
     const O = schema.millProductionOutput;
-    const bin = alias(schema.locationMaster, 'bin') as unknown as typeof schema.locationMaster;
-    const mill = alias(schema.locationMaster, 'mill') as unknown as typeof schema.locationMaster;
+    const bin = alias(
+      schema.locationMaster,
+      'bin',
+    ) as unknown as typeof schema.locationMaster;
+    const mill = alias(
+      schema.locationMaster,
+      'mill',
+    ) as unknown as typeof schema.locationMaster;
     const conditions = [eq(O.tenant_id, tenantId), eq(O.company_id, companyId)];
-    if (query.productionDate) conditions.push(eq(O.production_date, query.productionDate));
+    if (query.productionDate)
+      conditions.push(eq(O.production_date, query.productionDate));
     return this.db
       .select({
         output_id: O.output_id,
@@ -128,58 +151,115 @@ export class MillOutputService {
       .innerJoin(bin, eq(bin.location_id, O.bin_location_id))
       .innerJoin(mill, eq(mill.location_id, O.mill_location_id))
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, O.item_id))
-      .leftJoin(schema.journalHeader, eq(schema.journalHeader.journal_id, O.journal_id))
+      .leftJoin(
+        schema.journalHeader,
+        eq(schema.journalHeader.journal_id, O.journal_id),
+      )
       .leftJoin(schema.userMaster, eq(schema.userMaster.user_id, O.created_by))
       .where(and(...conditions))
       .orderBy(desc(O.created_at), desc(O.output_no))
       .limit(200);
   }
 
-  async create(dto: CreateMillOutputDto, tenantId: string, user?: { userId?: string }) {
+  async create(
+    dto: CreateMillOutputDto,
+    tenantId: string,
+    user?: { userId?: string },
+  ) {
     const companyId = this.companyOf(dto.company_id);
 
     const [assignment] = await this.db
       .select()
       .from(schema.binDietAssignment)
-      .where(and(eq(schema.binDietAssignment.assignment_id, dto.assignment_id), eq(schema.binDietAssignment.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.binDietAssignment.assignment_id, dto.assignment_id),
+          eq(schema.binDietAssignment.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
-    if (!assignment || assignment.company_id !== companyId) throw new NotFoundException('BIN diet assignment not found.');
-    if (!assignment.is_active || assignment.status !== 'ACTIVE' || assignment.deleted_at) {
+    if (!assignment || assignment.company_id !== companyId)
+      throw new NotFoundException('BIN diet assignment not found.');
+    if (
+      !assignment.is_active ||
+      assignment.status !== 'ACTIVE' ||
+      assignment.deleted_at
+    ) {
       throw new BadRequestException('That BIN diet assignment is not active.');
     }
-    if (String(assignment.production_date).slice(0, 10) !== dto.production_date) {
-      throw new BadRequestException(`That BIN is assigned for ${String(assignment.production_date).slice(0, 10)}, not ${dto.production_date}.`);
+    if (
+      String(assignment.production_date).slice(0, 10) !== dto.production_date
+    ) {
+      throw new BadRequestException(
+        `That BIN is assigned for ${String(assignment.production_date).slice(0, 10)}, not ${dto.production_date}.`,
+      );
     }
 
-    const [bin] = await this.db.select().from(schema.locationMaster)
-      .where(eq(schema.locationMaster.location_id, assignment.bin_location_id)).limit(1);
-    const active = (l?: typeof schema.locationMaster.$inferSelect) => Boolean(l && l.is_active && !l.deleted_at);
-    if (!bin || bin.location_type !== 'BIN' || !active(bin) || bin.company_id !== companyId) {
-      throw new BadRequestException('The assignment\'s BIN is not an active BIN of this company.');
+    const [bin] = await this.db
+      .select()
+      .from(schema.locationMaster)
+      .where(eq(schema.locationMaster.location_id, assignment.bin_location_id))
+      .limit(1);
+    const active = (l?: typeof schema.locationMaster.$inferSelect) =>
+      Boolean(l && l.is_active && !l.deleted_at);
+    if (
+      !bin ||
+      bin.location_type !== 'BIN' ||
+      !active(bin) ||
+      bin.company_id !== companyId
+    ) {
+      throw new BadRequestException(
+        "The assignment's BIN is not an active BIN of this company.",
+      );
     }
     const [mill] = bin.parent_location_id
-      ? await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, bin.parent_location_id)).limit(1)
+      ? await this.db
+          .select()
+          .from(schema.locationMaster)
+          .where(eq(schema.locationMaster.location_id, bin.parent_location_id))
+          .limit(1)
       : [];
     if (!mill || mill.location_type !== 'MILL' || !active(mill)) {
-      throw new BadRequestException(`BIN ${bin.location_code} has no active MILL above it.`);
+      throw new BadRequestException(
+        `BIN ${bin.location_code} has no active MILL above it.`,
+      );
     }
 
-    const [item] = await this.db.select().from(schema.itemMaster)
-      .where(eq(schema.itemMaster.item_id, assignment.feed_item_id)).limit(1);
-    if (!item || item.is_active === false || item.is_blocked) throw new BadRequestException('The assigned feed item is not active.');
-    if (item.is_serial_tracked) throw new BadRequestException(`${item.item_code} — ${item.item_name} is serial-tracked; mill output is recorded in KG.`);
+    const [item] = await this.db
+      .select()
+      .from(schema.itemMaster)
+      .where(eq(schema.itemMaster.item_id, assignment.feed_item_id))
+      .limit(1);
+    if (!item || item.is_active === false || item.is_blocked)
+      throw new BadRequestException('The assigned feed item is not active.');
+    if (item.is_serial_tracked)
+      throw new BadRequestException(
+        `${item.item_code} — ${item.item_name} is serial-tracked; mill output is recorded in KG.`,
+      );
     if ((item.uom_primary || '').toUpperCase() !== 'KG') {
-      throw new BadRequestException(`${item.item_code} — ${item.item_name} is kept in ${item.uom_primary}, not KG.`);
+      throw new BadRequestException(
+        `${item.item_code} — ${item.item_name} is kept in ${item.uom_primary}, not KG.`,
+      );
     }
     const rate = Number(item.standard_cost ?? 0);
     if (!(rate > 0)) {
-      throw new BadRequestException(`${item.item_code} — ${item.item_name} has no standard cost. Set it on the item before posting mill output.`);
+      throw new BadRequestException(
+        `${item.item_code} — ${item.item_name} has no standard cost. Set it on the item before posting mill output.`,
+      );
     }
 
     let lotNo = dto.lot_no?.trim() || null;
     if (item.is_lot_tracked && !lotNo) {
-      if (!item.tracking_series_id) throw new BadRequestException(`${item.item_code} is lot-tracked — enter a lot number.`);
-      lotNo = (await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId)).next_number;
+      if (!item.tracking_series_id)
+        throw new BadRequestException(
+          `${item.item_code} is lot-tracked — enter a lot number.`,
+        );
+      lotNo = (
+        await this.numberSeriesService.generateNextNumberById(
+          item.tracking_series_id,
+          tenantId,
+        )
+      ).next_number;
     }
 
     const quantity = Number(dto.quantity_kg);
@@ -188,9 +268,16 @@ export class MillOutputService {
     const outputId = randomUUID();
     const created = await withTenantTransaction(this.cls, async () => {
       const [row] = await this.db
-        .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.millProductionOutput.output_no}, 5) AS UNSIGNED)), 0)` })
+        .select({
+          maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.millProductionOutput.output_no}, 5) AS UNSIGNED)), 0)`,
+        })
         .from(schema.millProductionOutput)
-        .where(and(eq(schema.millProductionOutput.tenant_id, tenantId), eq(schema.millProductionOutput.company_id, companyId)))
+        .where(
+          and(
+            eq(schema.millProductionOutput.tenant_id, tenantId),
+            eq(schema.millProductionOutput.company_id, companyId),
+          ),
+        )
         .for('update');
       const outputNo = `MPO-${String(Number(row?.maxSeq || 0) + 1).padStart(6, '0')}`;
 
@@ -231,10 +318,17 @@ export class MillOutputService {
         userId: user?.userId,
       });
       // Throws when the company has no MILL_OUTPUT GL mapping — the whole posting is then rolled back.
-      const journal: any = await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, user?.userId);
+      const journal: any = await this.glPostingService.postInventoryLedgerEntry(
+        ledgerEntry,
+        user?.userId,
+      );
 
-      await this.db.update(schema.millProductionOutput)
-        .set({ ledger_id: ledgerEntry.ledger_id, journal_id: journal?.journal_id ?? null })
+      await this.db
+        .update(schema.millProductionOutput)
+        .set({
+          ledger_id: ledgerEntry.ledger_id,
+          journal_id: journal?.journal_id ?? null,
+        })
         .where(eq(schema.millProductionOutput.output_id, outputId));
 
       await this.auditService.log({
@@ -245,14 +339,22 @@ export class MillOutputService {
         entityName: 'mill_production_output',
         entityId: outputId,
         newValues: {
-          output_no: outputNo, production_date: dto.production_date, bin_code: bin.location_code, item_code: item.item_code,
-          quantity_kg: quantity, rate, amount, lot_no: lotNo,
+          output_no: outputNo,
+          production_date: dto.production_date,
+          bin_code: bin.location_code,
+          item_code: item.item_code,
+          quantity_kg: quantity,
+          rate,
+          amount,
+          lot_no: lotNo,
         },
       });
       return outputNo;
     });
 
-    const [out] = (await this.list(tenantId, { companyId })).filter((o) => o.output_no === created);
+    const [out] = (await this.list(tenantId, { companyId })).filter(
+      (o) => o.output_no === created,
+    );
     return out;
   }
 }

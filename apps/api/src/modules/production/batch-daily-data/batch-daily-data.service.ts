@@ -1,5 +1,8 @@
 import { isFeedTypeCode } from '../../../common/feed-form';
-import { siloShedLinkEffectiveOn, todayIso } from '../../../common/silo-shed-links';
+import {
+  siloShedLinkEffectiveOn,
+  todayIso,
+} from '../../../common/silo-shed-links';
 import {
   Injectable,
   NotFoundException,
@@ -10,7 +13,19 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, inArray, or, sql, isNull, isNotNull, gt, lte, like, desc } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  inArray,
+  or,
+  sql,
+  isNull,
+  isNotNull,
+  gt,
+  lte,
+  like,
+  desc,
+} from 'drizzle-orm';
 import { animalPlacementOn } from './animal-membership';
 import { entryBlockedReason } from './entry-blocked';
 import { randomUUID } from 'crypto';
@@ -29,7 +44,12 @@ import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service'
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { farmStoreOf } from '../../../common/farm-store';
 import { classifyPostedRow } from '../batch/batch-day-reversal';
-import { animalOutputEvent, outputEventForItem, parsePoolIds, type AnimalOutputEvent } from './animal-output-event';
+import {
+  animalOutputEvent,
+  outputEventForItem,
+  parsePoolIds,
+  type AnimalOutputEvent,
+} from './animal-output-event';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
 import { bagReconciliationWarning } from './bag-reconciliation';
 import { allocateAcrossLots, orderLots, parseLotList } from './lot-allocation';
@@ -157,19 +177,34 @@ export class BatchDailyDataService {
       );
     }
     // r32: POST Day is refused for a date inside a CLOSED Reporting Period.
-    await assertPostingPeriodOpen(this.db, { tenantId, companyId: header.company_id, postingDate: dto.entry_date });
+    await assertPostingPeriodOpen(this.db, {
+      tenantId,
+      companyId: header.company_id,
+      postingDate: dto.entry_date,
+    });
     // Decision 8: an output is any item the farm takes out of the batch, chosen when it is entered; the line's own item
     // is only the default. Every other kind of line posts the item it was set up with.
     if (dto.item_id && line.line_type !== 'OUTPUT') {
-      throw new BadRequestException(`'${line.activity_name}' is not an output line — only an output takes an item chosen at entry.`);
+      throw new BadRequestException(
+        `'${line.activity_name}' is not an output line — only an output takes an item chosen at entry.`,
+      );
     }
     // An output's lot is made when it posts, so only a line that draws stock is asked for one.
-    if (line.line_type !== 'OUTPUT' && line.lot_required && !dto.lot_no && !dto.serial_no) {
+    if (
+      line.line_type !== 'OUTPUT' &&
+      line.lot_required &&
+      !dto.lot_no &&
+      !dto.serial_no
+    ) {
       // Only an item tracked by lot or serial has one to name: lines generated before this rule was
       // applied can carry lot_required on an untracked item, which is priced by its costing method alone.
       const [tracked] = line.item_id
         ? await this.db
-            .select({ lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked, item_type: schema.itemMaster.item_type })
+            .select({
+              lot: schema.itemMaster.is_lot_tracked,
+              serial: schema.itemMaster.is_serial_tracked,
+              item_type: schema.itemMaster.item_type,
+            })
             .from(schema.itemMaster)
             .where(eq(schema.itemMaster.item_id, line.item_id))
             .limit(1)
@@ -222,7 +257,11 @@ export class BatchDailyDataService {
         throw new NotFoundException(`Animal '${dto.animal_id}' not found.`);
       // Who was where is read for the ENTRY date, not today: a weight dated before farrowing belongs to the gilt at
       // her gestation stage, though she has since moved on to flush or into another batch (Rishi, 21 Oct).
-      const at = await animalPlacementOn(this.db, animal.animal_id, dto.entry_date);
+      const at = await animalPlacementOn(
+        this.db,
+        animal.animal_id,
+        dto.entry_date,
+      );
       if (at.batch_id !== batchId) {
         throw new BadRequestException(
           `Animal '${animal.animal_code}' was not in batch '${batchRow?.batch_no ?? batchId}' on ${dto.entry_date}, so no entry can be recorded for it that day.`,
@@ -299,8 +338,10 @@ export class BatchDailyDataService {
         (existingRow.lot_no || null) === (dto.lot_no || null) &&
         (existingRow.serial_no || null) === (dto.serial_no || null) &&
         (existingRow.item_id || null) === (dto.item_id || null) &&
-        (existingRow.destination_batch_id || null) === (dto.destination_batch_id || null) &&
-        [...parsePoolIds(existingRow.pool_animal_ids)].sort().join(',') === [...(dto.pool_animal_ids ?? [])].sort().join(',');
+        (existingRow.destination_batch_id || null) ===
+          (dto.destination_batch_id || null) &&
+        [...parsePoolIds(existingRow.pool_animal_ids)].sort().join(',') ===
+          [...(dto.pool_animal_ids ?? [])].sort().join(',');
       if (unchanged) {
         return this.findForDate(batchId, dto.entry_date, tenantId);
       }
@@ -308,11 +349,17 @@ export class BatchDailyDataService {
       // changed has an effect still standing. For the kinds a reopen leaves posted — a transfer, a recorded death,
       // a bio-asset batch's output and cost — posting it again would count it twice; say so rather than do it.
       // A farrowing or weaning posted from data entry has no batch transaction behind it — it is the litter's own record.
-      if (batchRow?.tracking_mode === 'ANIMAL_WISE' && line.line_type === 'OUTPUT' && existingRow.posting_reference) {
+      if (
+        batchRow?.tracking_mode === 'ANIMAL_WISE' &&
+        line.line_type === 'OUTPUT' &&
+        existingRow.posting_reference
+      ) {
         const [litter] = await this.db
           .select({ farrow_id: schema.farrowingRecord.farrow_id })
           .from(schema.farrowingRecord)
-          .where(eq(schema.farrowingRecord.farrow_id, existingRow.posting_reference))
+          .where(
+            eq(schema.farrowingRecord.farrow_id, existingRow.posting_reference),
+          )
           .limit(1);
         if (litter) {
           throw new ConflictException(
@@ -322,7 +369,9 @@ export class BatchDailyDataService {
         const [collection] = await this.db
           .select({ id: schema.semenBatch.semen_batch_id })
           .from(schema.semenBatch)
-          .where(eq(schema.semenBatch.semen_batch_id, existingRow.posting_reference))
+          .where(
+            eq(schema.semenBatch.semen_batch_id, existingRow.posting_reference),
+          )
           .limit(1);
         if (collection) {
           throw new ConflictException(
@@ -331,7 +380,11 @@ export class BatchDailyDataService {
         }
       }
       const verdict = classifyPostedRow(
-        { line_type: line.line_type, kpi_metric: line.kpi_metric, entered_value: existingRow.entered_value },
+        {
+          line_type: line.line_type,
+          kpi_metric: line.kpi_metric,
+          entered_value: existingRow.entered_value,
+        },
         batchRow?.costing_method,
       );
       if (batchRow?.tracking_mode === 'ANIMAL_WISE' && !verdict.reversible) {
@@ -343,7 +396,15 @@ export class BatchDailyDataService {
 
     // Whole-batch MORTALITY_COUNT on a batch with registered animals: the entry must name which animals died.
     // Checked before anything is written, draft or post, so a bad choice changes nothing.
-    const mortality = await this.planMortality({ batchId, dto, line, header, existingRow, tenantId, entryAnimal });
+    const mortality = await this.planMortality({
+      batchId,
+      dto,
+      line,
+      header,
+      existingRow,
+      tenantId,
+      entryAnimal,
+    });
 
     // Draft save — records the value for later without touching inventory,
     // GL, animal_count, or a transfer. Nothing here dispatches until this
@@ -368,7 +429,9 @@ export class BatchDailyDataService {
           serial_no: dto.serial_no || null,
           item_id: dto.item_id || null,
           destination_batch_id: dto.destination_batch_id || null,
-          pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          pool_animal_ids: dto.pool_animal_ids?.length
+            ? JSON.stringify(dto.pool_animal_ids)
+            : null,
           reason_id: dto.reason_id || null,
           posted: false,
           posting_reference: null,
@@ -386,8 +449,10 @@ export class BatchDailyDataService {
             serial_no: dto.serial_no || null,
             item_id: dto.item_id || null,
             destination_batch_id: dto.destination_batch_id || null,
-            pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
-          reason_id: dto.reason_id || null,
+            pool_animal_ids: dto.pool_animal_ids?.length
+              ? JSON.stringify(dto.pool_animal_ids)
+              : null,
+            reason_id: dto.reason_id || null,
             remarks: dto.remarks || null,
             updated_by: userPayload?.userId || null,
             updated_at: toMysqlTimestamp(),
@@ -395,7 +460,16 @@ export class BatchDailyDataService {
         });
       // The choice rides with the draft; POST Day re-submits the draft without it and reads it back from here.
       if (mortality?.supplied) {
-        await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: false, userId: userPayload?.userId });
+        await this.storeMortalityAnimals({
+          tenantId,
+          companyId: header.company_id,
+          batchId,
+          line,
+          dto,
+          entries: mortality.entries,
+          posted: false,
+          userId: userPayload?.userId,
+        });
       }
       return this.findForDate(batchId, dto.entry_date, tenantId);
     }
@@ -415,24 +489,30 @@ export class BatchDailyDataService {
         // item named like "Piglet" or typed LIVING_ASSET, so a semen collection or a manure line could
         // be posted into stock as piglets. Lines are validated to carry an item when they are made;
         // one that still has none is fixed, not guessed.
-        const resolvedItemId = (line.line_type === 'OUTPUT' && dto.item_id) || line.item_id;
+        const resolvedItemId =
+          (line.line_type === 'OUTPUT' && dto.item_id) || line.item_id;
         if (!resolvedItemId)
           throw line.line_type === 'OUTPUT'
-            ? new BadRequestException(`Choose the item '${line.activity_name}' takes out of the batch.`)
+            ? new BadRequestException(
+                `Choose the item '${line.activity_name}' takes out of the batch.`,
+              )
             : new ConflictException(
                 `'${line.activity_name}' has no item configured — fix the line before posting entries against it.`,
               );
         if (dto.entered_value == null)
-          throw new BadRequestException(
-            'Enter a value for this line.',
-          );
+          throw new BadRequestException('Enter a value for this line.');
         const [item] = await this.db
           .select()
           .from(schema.itemMaster)
           .where(eq(schema.itemMaster.item_id, resolvedItemId))
           .limit(1);
-        if (dto.item_id && (!item || item.tenant_id !== tenantId || item.is_active === false)) {
-          throw new NotFoundException('The chosen output item was not found, or is no longer active.');
+        if (
+          dto.item_id &&
+          (!item || item.tenant_id !== tenantId || item.is_active === false)
+        ) {
+          throw new NotFoundException(
+            'The chosen output item was not found, or is no longer active.',
+          );
         }
         // Feed and medicine come out of somewhere physical: the silo standing
         // at this batch's shed, or the farm store behind it. Only CONSUMPTION
@@ -482,18 +562,40 @@ export class BatchDailyDataService {
         // recorded by the same posting the Breeding screen uses, so the litter, its piglet lot and the sow's parity
         // are written once whichever screen it was entered on. Data entry carries the live-born count; stillborn,
         // mummified and fostering are recorded on the Breeding screen.
-        const litter = await this.animalOutputEvent(line, header, dto, batchRow, item);
+        const litter = await this.animalOutputEvent(
+          line,
+          header,
+          dto,
+          batchRow,
+          item,
+        );
         if (litter) {
-          const breeding = this.moduleRef.get(BreedingService, { strict: false });
+          const breeding = this.moduleRef.get(BreedingService, {
+            strict: false,
+          });
           // The boar's motility read the same day (a SEMEN_MOTILITY line) goes on the lot (G8). The day's outputs post
           // after its readings, so a reading entered with the collection is already here.
           const motility =
-            litter.kind === 'SEMEN' ? await this.sameDayReading(batchId, dto.animal_id!, dto.entry_date, 'SEMEN_MOTILITY') : null;
+            litter.kind === 'SEMEN'
+              ? await this.sameDayReading(
+                  batchId,
+                  dto.animal_id!,
+                  dto.entry_date,
+                  'SEMEN_MOTILITY',
+                )
+              : null;
           if (dto.pool_animal_ids?.length && litter.kind !== 'SEMEN') {
-            throw new BadRequestException('Only a boar\'s semen collection can be pooled with other boars.');
+            throw new BadRequestException(
+              "Only a boar's semen collection can be pooled with other boars.",
+            );
           }
           if (litter.kind === 'SEMEN' && dto.pool_animal_ids?.length) {
-            await this.assertPoolBoarsFree(line.line_id, dto.entry_date, dto.animal_id!, dto.pool_animal_ids);
+            await this.assertPoolBoarsFree(
+              line.line_id,
+              dto.entry_date,
+              dto.animal_id!,
+              dto.pool_animal_ids,
+            );
           }
           const result: any =
             litter.kind === 'SEMEN'
@@ -504,7 +606,9 @@ export class BatchDailyDataService {
                     doses_collected: dto.entered_value,
                     // Any item the farm chose for semen: the line's.
                     output_item_id: resolvedItemId,
-                    ...(dto.pool_animal_ids?.length ? { pool_boar_animal_ids: dto.pool_animal_ids } : {}),
+                    ...(dto.pool_animal_ids?.length
+                      ? { pool_boar_animal_ids: dto.pool_animal_ids }
+                      : {}),
                     ...(motility != null ? { motility_pct: motility } : {}),
                     notes: dto.remarks,
                   } as any,
@@ -512,31 +616,34 @@ export class BatchDailyDataService {
                   userPayload,
                 )
               : litter.kind === 'FARROWING'
-              ? await breeding.recordFarrowing(
-                  {
-                    sow_animal_id: dto.animal_id!,
-                    farrowing_date: dto.entry_date,
-                    piglets_born_live: dto.entered_value,
-                    piglet_item_id: resolvedItemId,
-                    notes: dto.remarks,
-                  } as any,
-                  tenantId,
-                  userPayload,
-                )
-              : await breeding.recordWeaning(
-                  litter.farrow_id,
-                  {
-                    weaning_date: dto.entry_date,
-                    piglets_weaned: dto.entered_value,
-                    // Where the weaned piglets go, when the entry names a batch; else they stay in their lot.
-                    move_to_batch_id: dto.destination_batch_id,
-                  } as any,
-                  tenantId,
-                  userPayload,
-                );
+                ? await breeding.recordFarrowing(
+                    {
+                      sow_animal_id: dto.animal_id!,
+                      farrowing_date: dto.entry_date,
+                      piglets_born_live: dto.entered_value,
+                      piglet_item_id: resolvedItemId,
+                      notes: dto.remarks,
+                    } as any,
+                    tenantId,
+                    userPayload,
+                  )
+                : await breeding.recordWeaning(
+                    litter.farrow_id,
+                    {
+                      weaning_date: dto.entry_date,
+                      piglets_weaned: dto.entered_value,
+                      // Where the weaned piglets go, when the entry names a batch; else they stay in their lot.
+                      move_to_batch_id: dto.destination_batch_id,
+                    } as any,
+                    tenantId,
+                    userPayload,
+                  );
           posted = true;
           postingReference = result.farrow_id ?? result.semen_batch_id;
-          dailyRemarks = [dto.remarks, result.message].filter(Boolean).join(' — ').slice(0, 500);
+          dailyRemarks = [dto.remarks, result.message]
+            .filter(Boolean)
+            .join(' — ')
+            .slice(0, 500);
           break;
         }
 
@@ -567,14 +674,13 @@ export class BatchDailyDataService {
             t.transaction_type === line.line_type,
         );
         posted = true;
-        postingReference = matchingTx[matchingTx.length - 1]?.transaction_id || null;
+        postingReference =
+          matchingTx[matchingTx.length - 1]?.transaction_id || null;
         break;
       }
       case 'DESCRIPTIVE': {
         if (dto.entered_value == null && !dto.entered_text) {
-          throw new BadRequestException(
-            'Enter a value or text for this line.',
-          );
+          throw new BadRequestException('Enter a value or text for this line.');
         }
         if (dto.entered_value != null) {
           const minVal =
@@ -645,7 +751,10 @@ export class BatchDailyDataService {
                   eq(schema.batchDailyData.entry_date, dto.entry_date),
                 );
             const [existing] = await this.db
-              .select({ entered_value: schema.batchDailyData.entered_value, posted: schema.batchDailyData.posted })
+              .select({
+                entered_value: schema.batchDailyData.entered_value,
+                posted: schema.batchDailyData.posted,
+              })
               .from(schema.batchDailyData)
               // A draft is only what the user typed so far: only a posted row is a death already recorded. Counting
               // the draft made the post see no change (1 - 1) and record no death at all.
@@ -677,8 +786,20 @@ export class BatchDailyDataService {
               // count-only batch's deaths name no animal; this line keeps that stage's headcount itself (below).
               const deaths = mortality?.entries.length
                 ? mortality.entries
-                : [{ animal_id: dto.animal_id ?? null, dead_weight_kg: null as number | null, reason_id: null, reason_text: null, notes: null }];
-              const quantityEach = mortality?.entries.length ? 1 : (dto.animal_id ? 1 : deathsToRecord);
+                : [
+                    {
+                      animal_id: dto.animal_id ?? null,
+                      dead_weight_kg: null as number | null,
+                      reason_id: null,
+                      reason_text: null,
+                      notes: null,
+                    },
+                  ];
+              const quantityEach = mortality?.entries.length
+                ? 1
+                : dto.animal_id
+                  ? 1
+                  : deathsToRecord;
               for (const e of deaths) {
                 await this.batchService.addTransaction(
                   batchId,
@@ -689,11 +810,20 @@ export class BatchDailyDataService {
                     uom: 'HEAD',
                     animal_id: e.animal_id ?? undefined,
                     ...(e.reason_id || e.reason_text
-                      ? { mortality_detail: { ...(e.reason_id ? { reason_id: e.reason_id } : {}), ...(e.reason_text ? { cause_of_death: e.reason_text } : {}) } }
+                      ? {
+                          mortality_detail: {
+                            ...(e.reason_id ? { reason_id: e.reason_id } : {}),
+                            ...(e.reason_text
+                              ? { cause_of_death: e.reason_text }
+                              : {}),
+                          },
+                        }
                       : {}),
-                    remarks: e.dead_weight_kg != null
-                      ? `${line.activity_name} — scheduled entry. Dead weight ${e.dead_weight_kg} kg`
-                      : dto.remarks || `${line.activity_name} — scheduled entry`,
+                    remarks:
+                      e.dead_weight_kg != null
+                        ? `${line.activity_name} — scheduled entry. Dead weight ${e.dead_weight_kg} kg`
+                        : dto.remarks ||
+                          `${line.activity_name} — scheduled entry`,
                     // A named animal is counted by the register (the batch recounts its stages);
                     // a head count keeps this line's own header.
                     skip_scheduler_count: !dto.animal_id,
@@ -705,14 +835,27 @@ export class BatchDailyDataService {
                 if (e.animal_id && e.reason_text) {
                   await this.db
                     .update(schema.animalRegister)
-                    .set({ notes: [e.notes, `Cause of death: ${e.reason_text}`].filter(Boolean).join('\n') })
+                    .set({
+                      notes: [e.notes, `Cause of death: ${e.reason_text}`]
+                        .filter(Boolean)
+                        .join('\n'),
+                    })
                     .where(eq(schema.animalRegister.animal_id, e.animal_id));
                 }
               }
             }
             // Stored whether or not animals were named: a count-only batch still keeps each death's weight and reason.
             if (mortality?.entries.length) {
-              await this.storeMortalityAnimals({ tenantId, companyId: header.company_id, batchId, line, dto, entries: mortality.entries, posted: true, userId: userPayload?.userId });
+              await this.storeMortalityAnimals({
+                tenantId,
+                companyId: header.company_id,
+                batchId,
+                line,
+                dto,
+                entries: mortality.entries,
+                posted: true,
+                userId: userPayload?.userId,
+              });
             }
           }
           // Animal-wise mortality is the register's to count (above); writing a number derived
@@ -731,7 +874,8 @@ export class BatchDailyDataService {
         }
 
         // Transaction Ledger Structure (Row 11): Record DESCRIPTIVE entry into inventory_ledger only if non-zero value
-        const valNum = dto.entered_value != null ? Number(dto.entered_value) : 0;
+        const valNum =
+          dto.entered_value != null ? Number(dto.entered_value) : 0;
         if (Math.abs(valNum) > 0.0001) {
           await this.db.insert(schema.inventoryLedger).values({
             ledger_id: randomUUID(),
@@ -766,9 +910,7 @@ export class BatchDailyDataService {
       case 'OVERHEAD':
       case 'RESOURCE': {
         if (dto.entered_value == null)
-          throw new BadRequestException(
-            'Enter a value for this line.',
-          );
+          throw new BadRequestException('Enter a value for this line.');
         let quantity = dto.entered_value;
         let rate = dto.rate ?? null;
         let resourceId = line.resource_id;
@@ -778,7 +920,10 @@ export class BatchDailyDataService {
             // Fallback 1: check if activity_master has default_resource_id
             try {
               const [act] = await this.db
-                .select({ default_resource_id: schema.activityMaster.default_resource_id })
+                .select({
+                  default_resource_id:
+                    schema.activityMaster.default_resource_id,
+                })
                 .from(schema.activityMaster)
                 .where(
                   and(
@@ -798,14 +943,20 @@ export class BatchDailyDataService {
             if (!resourceId) {
               try {
                 const [matchedRes] = await this.db
-                  .select({ resource_id: schema.resourceMaster.resource_id, cost_rate: schema.resourceMaster.cost_rate })
+                  .select({
+                    resource_id: schema.resourceMaster.resource_id,
+                    cost_rate: schema.resourceMaster.cost_rate,
+                  })
                   .from(schema.resourceMaster)
                   .where(
                     and(
                       eq(schema.resourceMaster.tenant_id, tenantId),
                       eq(schema.resourceMaster.is_active, true),
                       or(
-                        eq(schema.resourceMaster.resource_name, line.activity_name),
+                        eq(
+                          schema.resourceMaster.resource_name,
+                          line.activity_name,
+                        ),
                         eq(schema.resourceMaster.resource_type, 'LABOR'),
                       ),
                     ),
@@ -880,11 +1031,15 @@ export class BatchDailyDataService {
             tenant_id: tenantId,
             company_id: header.company_id,
             item_id: line.item_id || null,
-            item_code: line.line_type === 'RESOURCE' ? (line.activity_name || 'RESOURCE') : 'OVERHEAD',
+            item_code:
+              line.line_type === 'RESOURCE'
+                ? line.activity_name || 'RESOURCE'
+                : 'OVERHEAD',
             item_description: dto.remarks || line.activity_name,
             document_type: 'BATCH',
             document_no: batchRow?.batch_no || batchId,
-            document_line_id: matchingTx[matchingTx.length - 1]?.transaction_id || line.line_id,
+            document_line_id:
+              matchingTx[matchingTx.length - 1]?.transaction_id || line.line_id,
             posting_date: dto.entry_date,
             external_reference_no: dto.remarks || null,
             entry_type: 'OVERHEAD',
@@ -932,7 +1087,9 @@ export class BatchDailyDataService {
             userPayload,
           );
         } else {
-          const head = dto.entered_value ?? (line.standard_qty != null ? Number(line.standard_qty) : null);
+          const head =
+            dto.entered_value ??
+            (line.standard_qty != null ? Number(line.standard_qty) : null);
           if (head == null || !(head > 0)) {
             throw new BadRequestException(
               "Enter how many head to move (or set the line's standard quantity).",
@@ -995,13 +1152,24 @@ export class BatchDailyDataService {
    * A boar pooled into a lot gives his semen to that lot: he cannot also have a collection of his own entered on the same
    * line for the same day, or his doses would be counted twice.
    */
-  private async assertPoolBoarsFree(lineId: string, entryDate: string, primaryId: string, poolIds: string[]) {
+  private async assertPoolBoarsFree(
+    lineId: string,
+    entryDate: string,
+    primaryId: string,
+    poolIds: string[],
+  ) {
     const others = [...new Set(poolIds)].filter((id) => id !== primaryId);
     if (!others.length) return;
     const own = await this.db
-      .select({ animal_id: schema.batchDailyData.animal_id, code: schema.animalRegister.animal_code })
+      .select({
+        animal_id: schema.batchDailyData.animal_id,
+        code: schema.animalRegister.animal_code,
+      })
       .from(schema.batchDailyData)
-      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.batchDailyData.animal_id))
+      .innerJoin(
+        schema.animalRegister,
+        eq(schema.animalRegister.animal_id, schema.batchDailyData.animal_id),
+      )
       .where(
         and(
           eq(schema.batchDailyData.line_id, lineId),
@@ -1028,16 +1196,32 @@ export class BatchDailyDataService {
     batchRow: { tracking_mode?: string | null } | undefined,
     item: typeof schema.itemMaster.$inferSelect | undefined,
   ): Promise<AnimalOutputEvent | null> {
-    if (line.line_type !== 'OUTPUT' || batchRow?.tracking_mode !== 'ANIMAL_WISE' || !dto.animal_id) return null;
-    return outputEventForItem(await animalOutputEvent(this.db, dto.animal_id, header.stage_id ?? null), item);
+    if (
+      line.line_type !== 'OUTPUT' ||
+      batchRow?.tracking_mode !== 'ANIMAL_WISE' ||
+      !dto.animal_id
+    )
+      return null;
+    return outputEventForItem(
+      await animalOutputEvent(this.db, dto.animal_id, header.stage_id ?? null),
+      item,
+    );
   }
 
   /** An animal's reading of one KPI on a day, from its data entry (posted or still a draft). */
-  private async sameDayReading(batchId: string, animalId: string, date: string, metric: string): Promise<number | null> {
+  private async sameDayReading(
+    batchId: string,
+    animalId: string,
+    date: string,
+    metric: string,
+  ): Promise<number | null> {
     const [row] = await this.db
       .select({ value: schema.batchDailyData.entered_value })
       .from(schema.batchDailyData)
-      .innerJoin(schema.schedulerLine, eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id))
+      .innerJoin(
+        schema.schedulerLine,
+        eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id),
+      )
       .where(
         and(
           eq(schema.batchDailyData.batch_id, batchId),
@@ -1065,7 +1249,20 @@ export class BatchDailyDataService {
     alertNote: string | null;
     remarks: string | null | undefined;
   }) {
-    const { entryId, tenantId, userPayload, dto, line, header, batchId, posted, postingReference, alertTriggered, alertNote, remarks } = args;
+    const {
+      entryId,
+      tenantId,
+      userPayload,
+      dto,
+      line,
+      header,
+      batchId,
+      posted,
+      postingReference,
+      alertTriggered,
+      alertNote,
+      remarks,
+    } = args;
     await this.db
       .insert(schema.batchDailyData)
       .values({
@@ -1082,8 +1279,10 @@ export class BatchDailyDataService {
         serial_no: dto.serial_no || null,
         item_id: dto.item_id || null,
         destination_batch_id: dto.destination_batch_id || null,
-        pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
-          reason_id: dto.reason_id || null,
+        pool_animal_ids: dto.pool_animal_ids?.length
+          ? JSON.stringify(dto.pool_animal_ids)
+          : null,
+        reason_id: dto.reason_id || null,
         posted,
         posting_reference: postingReference,
         alert_triggered: alertTriggered,
@@ -1101,7 +1300,9 @@ export class BatchDailyDataService {
           serial_no: dto.serial_no || null,
           item_id: dto.item_id || null,
           destination_batch_id: dto.destination_batch_id || null,
-          pool_animal_ids: dto.pool_animal_ids?.length ? JSON.stringify(dto.pool_animal_ids) : null,
+          pool_animal_ids: dto.pool_animal_ids?.length
+            ? JSON.stringify(dto.pool_animal_ids)
+            : null,
           reason_id: dto.reason_id || null,
           posted,
           posting_reference: postingReference,
@@ -1121,7 +1322,11 @@ export class BatchDailyDataService {
       action: 'CREATE',
       entityName: 'batch_daily_data',
       entityId: entryId,
-      newValues: { line_id: line.line_id, batch_id: batchId, entry_date: dto.entry_date },
+      newValues: {
+        line_id: line.line_id,
+        batch_id: batchId,
+        entry_date: dto.entry_date,
+      },
     });
   }
 
@@ -1135,7 +1340,13 @@ export class BatchDailyDataService {
     for (const p of collected) {
       const key = p.dto.serial_no
         ? `serial|${p.entryId}`
-        : [p.line.line_id, p.resolvedItemId, p.sourceWarehouseId ?? '', p.dto.entry_date, p.dto.lot_no ?? ''].join('|');
+        : [
+            p.line.line_id,
+            p.resolvedItemId,
+            p.sourceWarehouseId ?? '',
+            p.dto.entry_date,
+            p.dto.lot_no ?? '',
+          ].join('|');
       groups.set(key, [...(groups.get(key) ?? []), p]);
     }
     for (const group of groups.values()) await this.postConsumptionGroup(group);
@@ -1147,29 +1358,70 @@ export class BatchDailyDataService {
    * rest, and each location issued from gets one ledger entry. Every animal keeps its own share of the
    * quantity and the cost (see BatchService.postConsumptionGroup), and its own daily row.
    */
-  private async postConsumptionGroup(group: PendingConsumption[]): Promise<void> {
+  private async postConsumptionGroup(
+    group: PendingConsumption[],
+  ): Promise<void> {
     const first = group[0];
-    const { dto, line, header, item, resolvedItemId, tenantId, userPayload, batchId } = first;
-    const shares = group.map((p) => ({ animal_id: p.dto.animal_id, quantity: Number(p.dto.entered_value) }));
+    const {
+      dto,
+      line,
+      header,
+      item,
+      resolvedItemId,
+      tenantId,
+      userPayload,
+      batchId,
+    } = first;
+    const shares = group.map((p) => ({
+      animal_id: p.dto.animal_id,
+      quantity: Number(p.dto.entered_value),
+    }));
     const total = round(shares.reduce((n, s) => n + s.quantity, 0));
 
     // Which lots, in what order — several ticked lots are filled from the nearest expiry on.
-    const lotResult = await this.planLots({ ...dto, entered_value: total }, line, item?.item_type, resolvedItemId, first.sourceWarehouseId, header.company_id, tenantId, Boolean(item?.is_lot_tracked));
+    const lotResult = await this.planLots(
+      { ...dto, entered_value: total },
+      line,
+      item?.item_type,
+      resolvedItemId,
+      first.sourceWarehouseId,
+      header.company_id,
+      tenantId,
+      Boolean(item?.is_lot_tracked),
+    );
     const allocations = lotResult.shares;
-    const lots = allocations.length > 1 ? allocations.map((a) => ({ lotNo: a.lot_no as string, quantity: a.quantity as number })) : undefined;
-    const singleLot = allocations.length === 1 ? allocations[0].lot_no : undefined;
+    const lots =
+      allocations.length > 1
+        ? allocations.map((a) => ({
+            lotNo: a.lot_no as string,
+            quantity: a.quantity as number,
+          }))
+        : undefined;
+    const singleLot =
+      allocations.length === 1 ? allocations[0].lot_no : undefined;
 
     // A silo that holds the item but not enough of it gives what it has and the farm store the rest.
     const split =
       !lots && !singleLot && !dto.serial_no && first.sourceWarehouseId
-        ? await this.splitSiloShortfall(first.sourceWarehouseId, resolvedItemId, total, first.farmId, header.company_id, tenantId, dto.entry_date)
+        ? await this.splitSiloShortfall(
+            first.sourceWarehouseId,
+            resolvedItemId,
+            total,
+            first.farmId,
+            header.company_id,
+            tenantId,
+            dto.entry_date,
+          )
         : null;
-    const parts: Array<{ warehouseId: string | undefined; quantity: number }> = split
-      ? split.shares
-      : [{ warehouseId: first.sourceWarehouseId, quantity: total }];
+    const parts: Array<{ warehouseId: string | undefined; quantity: number }> =
+      split
+        ? split.shares
+        : [{ warehouseId: first.sourceWarehouseId, quantity: total }];
     const sharesByPart = allocateSharesToParts(shares, parts);
 
-    const posted: Array<{ transactions: Array<{ transaction_id: string; animal_id?: string }> }> = [];
+    const posted: Array<{
+      transactions: Array<{ transaction_id: string; animal_id?: string }>;
+    }> = [];
     const issue = async () => {
       for (let i = 0; i < parts.length; i++) {
         posted.push(
@@ -1181,7 +1433,7 @@ export class BatchDailyDataService {
               transaction_date: dto.entry_date,
               source_warehouse_id: parts[i].warehouseId,
               lots,
-              lot_no: lots ? undefined : singleLot ?? dto.lot_no,
+              lot_no: lots ? undefined : (singleLot ?? dto.lot_no),
               serial_no: dto.serial_no,
               remarks: dto.remarks || `${line.activity_name} — scheduled entry`,
               shares: sharesByPart[i],
@@ -1198,14 +1450,20 @@ export class BatchDailyDataService {
 
     // What each animal's daily row records about how the stock was drawn.
     const notes = [...lotResult.notes];
-    if (lots) notes.push(`Lots: ${lots.map((l) => `${l.lotNo} ×${l.quantity}`).join(', ')}`);
+    if (lots)
+      notes.push(
+        `Lots: ${lots.map((l) => `${l.lotNo} ×${l.quantity}`).join(', ')}`,
+      );
     if (split) notes.push(split.note);
 
     // Checkpoint 28: bags counted vs the quantity posted. A mismatch is flagged on the entries and logged, never refused.
     const bagWarning = await this.reconcileEmptyBags(group, total);
 
     const reference = (animalId: string | undefined) =>
-      posted.flatMap((p) => p.transactions).find((t) => (t.animal_id ?? undefined) === animalId)?.transaction_id ?? null;
+      posted
+        .flatMap((p) => p.transactions)
+        .find((t) => (t.animal_id ?? undefined) === animalId)?.transaction_id ??
+      null;
     for (const p of group) {
       await this.recordEntry({
         entryId: p.entryId,
@@ -1219,10 +1477,16 @@ export class BatchDailyDataService {
         postingReference: reference(p.dto.animal_id),
         alertTriggered: bagWarning !== null,
         alertNote: bagWarning,
-        remarks: notes.length ? `${p.dto.remarks ? `${p.dto.remarks} — ` : ''}${notes.join('; ')}`.slice(0, 500) : p.dto.remarks,
+        remarks: notes.length
+          ? `${p.dto.remarks ? `${p.dto.remarks} — ` : ''}${notes.join('; ')}`.slice(
+              0,
+              500,
+            )
+          : p.dto.remarks,
       });
     }
-    if (group.some((p) => !p.deferFeedAlerts)) await this.reevaluateFeedLevels(first.farmId, tenantId);
+    if (group.some((p) => !p.deferFeedAlerts))
+      await this.reevaluateFeedLevels(first.farmId, tenantId);
   }
 
   /**
@@ -1230,27 +1494,46 @@ export class BatchDailyDataService {
    * with the quantity just posted. Returns the warning (and logs it as a
    * BAG_RECONCILIATION alert) or null. No count entered means nothing to check.
    */
-  private async reconcileEmptyBags(group: PendingConsumption[], consumedKg: number): Promise<string | null> {
+  private async reconcileEmptyBags(
+    group: PendingConsumption[],
+    consumedKg: number,
+  ): Promise<string | null> {
     const counted = group.filter((p) => p.dto.empty_bags != null);
     if (counted.length === 0) return null;
     // Flag only, never block: a failure reading the settings or logging the alert must not fail the posting.
     try {
-      const emptyBags = counted.reduce((n, p) => n + Number(p.dto.empty_bags), 0);
+      const emptyBags = counted.reduce(
+        (n, p) => n + Number(p.dto.empty_bags),
+        0,
+      );
       const first = group[0];
       const { header, tenantId, batchId, line } = first;
       const rows = await this.db
-        .select({ farm_id: schema.feedPlanningSetting.farm_id, bag_size_kg: schema.feedPlanningSetting.bag_size_kg, bag_tolerance_pct: schema.feedPlanningSetting.bag_tolerance_pct })
+        .select({
+          farm_id: schema.feedPlanningSetting.farm_id,
+          bag_size_kg: schema.feedPlanningSetting.bag_size_kg,
+          bag_tolerance_pct: schema.feedPlanningSetting.bag_tolerance_pct,
+        })
         .from(schema.feedPlanningSetting)
-        .where(and(
-          eq(schema.feedPlanningSetting.tenant_id, tenantId),
-          eq(schema.feedPlanningSetting.company_id, header.company_id),
-          eq(schema.feedPlanningSetting.is_active, true),
-        ));
+        .where(
+          and(
+            eq(schema.feedPlanningSetting.tenant_id, tenantId),
+            eq(schema.feedPlanningSetting.company_id, header.company_id),
+            eq(schema.feedPlanningSetting.is_active, true),
+          ),
+        );
       const company = rows.find((r) => r.farm_id === null);
-      const farm = first.farmId ? rows.find((r) => r.farm_id === first.farmId) : undefined;
+      const farm = first.farmId
+        ? rows.find((r) => r.farm_id === first.farmId)
+        : undefined;
       const bagSizeKg = Number(farm?.bag_size_kg ?? company?.bag_size_kg ?? 50);
       const tolerance = company?.bag_tolerance_pct;
-      const warning = bagReconciliationWarning({ emptyBags, bagSizeKg, consumedKg, tolerancePct: tolerance == null ? null : Number(tolerance) });
+      const warning = bagReconciliationWarning({
+        emptyBags,
+        bagSizeKg,
+        consumedKg,
+        tolerancePct: tolerance == null ? null : Number(tolerance),
+      });
       if (!warning) return null;
       await this.db.insert(schema.notificationAlertLog).values({
         alert_id: randomUUID(),
@@ -1279,7 +1562,10 @@ export class BatchDailyDataService {
    * BatchService's day posts, which defer the per-line check above and call
    * this once after the whole day is in. Never throws.
    */
-  async reevaluateFeedLevels(farmId: string | null | undefined, tenantId: string): Promise<void> {
+  async reevaluateFeedLevels(
+    farmId: string | null | undefined,
+    tenantId: string,
+  ): Promise<void> {
     await this.feedAlerts?.evaluateLevelsSafely([farmId], tenantId);
   }
 
@@ -1327,7 +1613,8 @@ export class BatchDailyDataService {
       farm_id: schema.locationMaster.farm_id,
     };
     // The farm's store that holds this item, which every fallback below ends at.
-    const storeOfFarm = (farmId: string | null) => this.storeOfFarm(farmId, itemId);
+    const storeOfFarm = (farmId: string | null) =>
+      this.storeOfFarm(farmId, itemId);
 
     // A scheduler that records no shed or pen is not a reason to refuse the
     // entry: plenty of batches are scheduled at farm level, and the feed still
@@ -1354,7 +1641,9 @@ export class BatchDailyDataService {
       const [parent] = await this.db
         .select(columns)
         .from(schema.locationMaster)
-        .where(eq(schema.locationMaster.location_id, location.parent_location_id))
+        .where(
+          eq(schema.locationMaster.location_id, location.parent_location_id),
+        )
         .limit(1);
       if (parent) shed = parent;
     }
@@ -1368,7 +1657,10 @@ export class BatchDailyDataService {
     const siloLinks = await this.db
       .select({ silo_id: schema.siloShedLink.silo_id })
       .from(schema.siloShedLink)
-      .innerJoin(schema.locationMaster, eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id))
+      .innerJoin(
+        schema.locationMaster,
+        eq(schema.locationMaster.location_id, schema.siloShedLink.silo_id),
+      )
       .where(
         and(
           eq(schema.siloShedLink.tenant_id, tenantId),
@@ -1380,15 +1672,23 @@ export class BatchDailyDataService {
       );
     if (siloLinks.length > 0) {
       const siloIds = siloLinks.map((link) => link.silo_id);
-      const residents = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);
-      const holdingSiloId = siloIds.find((siloId) => residents.get(siloId)?.item_id === itemId);
+      const residents = await this.siloFeedService.currentItems(
+        siloIds,
+        companyId,
+        tenantId,
+      );
+      const holdingSiloId = siloIds.find(
+        (siloId) => residents.get(siloId)?.item_id === itemId,
+      );
       if (holdingSiloId) return holdingSiloId;
     }
 
     // farm_id is stamped on every descendant of a FARM (see the location
     // seeder); a shed sitting directly under the farm with no farm_id falls
     // back to its parent, which is that farm.
-    const store = await storeOfFarm(shed.farm_id || shed.parent_location_id || batchFarmId);
+    const store = await storeOfFarm(
+      shed.farm_id || shed.parent_location_id || batchFarmId,
+    );
     if (store) return store;
 
     throw new BadRequestException(
@@ -1397,7 +1697,10 @@ export class BatchDailyDataService {
   }
 
   /** The farm's store holding the item drawn — else its first active store by code. */
-  private storeOfFarm(farmId: string | null, itemId?: string): Promise<string | null> {
+  private storeOfFarm(
+    farmId: string | null,
+    itemId?: string,
+  ): Promise<string | null> {
     return farmStoreOf(this.db, farmId, itemId);
   }
 
@@ -1415,15 +1718,23 @@ export class BatchDailyDataService {
     companyId: string,
     tenantId: string,
     postingDate?: string,
-  ): Promise<{ shares: Array<{ quantity: number; warehouseId: string }>; note: string } | null> {
+  ): Promise<{
+    shares: Array<{ quantity: number; warehouseId: string }>;
+    note: string;
+  } | null> {
     const [source] = await this.db
-      .select({ type: schema.locationMaster.location_type, code: schema.locationMaster.location_code })
+      .select({
+        type: schema.locationMaster.location_type,
+        code: schema.locationMaster.location_code,
+      })
       .from(schema.locationMaster)
       .where(eq(schema.locationMaster.location_id, warehouseId))
       .limit(1);
     if (source?.type !== 'SILO') return null;
     const [held] = await this.db
-      .select({ total: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+      .select({
+        total: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)`,
+      })
       .from(schema.inventoryLedger)
       .where(
         and(
@@ -1433,7 +1744,9 @@ export class BatchDailyDataService {
           eq(schema.inventoryLedger.item_id, itemId),
           inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
           // Stock received under a later posting date is not in the silo yet on the entry's date.
-          ...(postingDate ? [lte(schema.inventoryLedger.posting_date, postingDate)] : []),
+          ...(postingDate
+            ? [lte(schema.inventoryLedger.posting_date, postingDate)]
+            : []),
         ),
       );
     const inSilo = round(Number(held?.total ?? 0));
@@ -1472,18 +1785,39 @@ export class BatchDailyDataService {
     companyId: string,
     tenantId: string,
     lotTracked = false,
-  ): Promise<{ shares: Array<{ lot_no?: string; quantity: number | undefined }>; notes: string[] }> {
+  ): Promise<{
+    shares: Array<{ lot_no?: string; quantity: number | undefined }>;
+    notes: string[];
+  }> {
     const lots = parseLotList(dto.lot_no);
-    if (line.line_type !== 'CONSUMPTION' || dto.serial_no || (lots.length === 0 && !lotTracked)) {
-      return { shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }], notes: [] };
+    if (
+      line.line_type !== 'CONSUMPTION' ||
+      dto.serial_no ||
+      (lots.length === 0 && !lotTracked)
+    ) {
+      return {
+        shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }],
+        notes: [],
+      };
     }
     // What each lot holds at this location, read off the lots themselves (not any receipt's remaining quantity).
-    const rows = await lotBalances(this.db, { tenantId, companyId, itemId, warehouseId });
+    const rows = await lotBalances(this.db, {
+      tenantId,
+      companyId,
+      itemId,
+      warehouseId,
+    });
     const today = new Date().toISOString().slice(0, 10);
     const stock = rows
-      .map((r) => ({ lot_no: r.lot_no, remaining: r.quantity, expiry_date: r.expiry_date, receipt_date: r.receipt_date }))
+      .map((r) => ({
+        lot_no: r.lot_no,
+        remaining: r.quantity,
+        expiry_date: r.expiry_date,
+        receipt_date: r.receipt_date,
+      }))
       .filter((r) => r.remaining > 0.0001);
-    const isExpired = (l: { expiry_date: string | null }) => !!l.expiry_date && String(l.expiry_date).slice(0, 10) < today;
+    const isExpired = (l: { expiry_date: string | null }) =>
+      !!l.expiry_date && String(l.expiry_date).slice(0, 10) < today;
     const notes: string[] = [];
 
     // A lot-tracked item posted with no lot named (a bulk entry, a seed, an API client): the stock leaves
@@ -1492,38 +1826,69 @@ export class BatchDailyDataService {
     if (lots.length === 0) {
       const usable = stock.filter((l) => !isExpired(l));
       const quantity = Number(dto.entered_value);
-      const { allocations, shortBy } = allocateAcrossLots(usable, quantity, today);
+      const { allocations, shortBy } = allocateAcrossLots(
+        usable,
+        quantity,
+        today,
+      );
       if (shortBy > 0.0001) {
         const held = usable.reduce((n, l) => n + l.remaining, 0);
         throw new BadRequestException(
           `'${line.activity_name}': ${round(held)} in date${warehouseId ? ' at this location' : ''}, ${round(shortBy)} short of ${quantity} — name the lots to use (an expired lot must be chosen deliberately) or lower the quantity.`,
         );
       }
-      notes.push(`Lots chosen by nearest expiry: ${allocations.map((a) => `${a.lot_no} ${a.quantity}`).join(', ')}`);
+      notes.push(
+        `Lots chosen by nearest expiry: ${allocations.map((a) => `${a.lot_no} ${a.quantity}`).join(', ')}`,
+      );
       return { shares: allocations, notes };
     }
 
-    const chosen = orderLots(stock.filter((s) => lots.includes(s.lot_no)), today);
+    const chosen = orderLots(
+      stock.filter((s) => lots.includes(s.lot_no)),
+      today,
+    );
 
     const expired = chosen.filter(isExpired);
     if (expired.length) {
-      const named = expired.map((l) => `${l.lot_no} (expired ${String(l.expiry_date).slice(0, 10)})`).join(', ');
+      const named = expired
+        .map(
+          (l) => `${l.lot_no} (expired ${String(l.expiry_date).slice(0, 10)})`,
+        )
+        .join(', ');
       if (itemType === 'MEDICINE' || itemType === 'VACCINE') {
-        throw new BadRequestException(`'${line.activity_name}': ${named} — expired medicine and vaccine cannot be used. Choose a lot that is in date.`);
+        throw new BadRequestException(
+          `'${line.activity_name}': ${named} — expired medicine and vaccine cannot be used. Choose a lot that is in date.`,
+        );
       }
-      notes.push(`Expired lot used: ${expired.map((l) => l.lot_no).join(', ')}`);
+      notes.push(
+        `Expired lot used: ${expired.map((l) => l.lot_no).join(', ')}`,
+      );
     }
     const suggested = orderLots(stock, today).find((l) => !isExpired(l));
     if (suggested && chosen.length && chosen[0].lot_no !== suggested.lot_no) {
-      notes.push(`Lot override: used ${chosen[0].lot_no}, suggested ${suggested.lot_no}`);
+      notes.push(
+        `Lot override: used ${chosen[0].lot_no}, suggested ${suggested.lot_no}`,
+      );
     }
 
-    if (lots.length === 1) return { shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }], notes };
+    if (lots.length === 1)
+      return {
+        shares: [{ lot_no: dto.lot_no, quantity: dto.entered_value }],
+        notes,
+      };
 
     const quantity = Number(dto.entered_value);
-    const { allocations, shortBy } = allocateAcrossLots(chosen, quantity, today);
+    const { allocations, shortBy } = allocateAcrossLots(
+      chosen,
+      quantity,
+      today,
+    );
     if (shortBy > 0.0001) {
-      const held = lots.map((l) => `${l} (${chosen.find((s) => s.lot_no === l)?.remaining ?? 0})`).join(', ');
+      const held = lots
+        .map(
+          (l) => `${l} (${chosen.find((s) => s.lot_no === l)?.remaining ?? 0})`,
+        )
+        .join(', ');
       throw new BadRequestException(
         `'${line.activity_name}': the lots ticked hold ${held}${warehouseId ? ' at this location' : ''}, ${round(shortBy)} short of ${quantity} — tick another lot or lower the quantity.`,
       );
@@ -1537,7 +1902,11 @@ export class BatchDailyDataService {
    * what is at that location. Returns no warehouse, with the reason, when nowhere resolves: the page
    * then shows the pickers unscoped and posting gives the real refusal.
    */
-  async consumptionSourceForLine(batchId: string, lineId: string, tenantId: string) {
+  async consumptionSourceForLine(
+    batchId: string,
+    lineId: string,
+    tenantId: string,
+  ) {
     await this.batchService.findOne(batchId);
     const [row] = await this.db
       .select({
@@ -1550,32 +1919,76 @@ export class BatchDailyDataService {
         farm_id: schema.batchHeader.farm_id,
       })
       .from(schema.schedulerLine)
-      .innerJoin(schema.schedulerHeader, eq(schema.schedulerHeader.scheduler_id, schema.schedulerLine.scheduler_id))
-      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.schedulerHeader.batch_id))
+      .innerJoin(
+        schema.schedulerHeader,
+        eq(
+          schema.schedulerHeader.scheduler_id,
+          schema.schedulerLine.scheduler_id,
+        ),
+      )
+      .innerJoin(
+        schema.batchHeader,
+        eq(schema.batchHeader.batch_id, schema.schedulerHeader.batch_id),
+      )
       .where(eq(schema.schedulerLine.line_id, lineId))
       .limit(1);
-    if (!row || row.batch_id !== batchId) throw new NotFoundException(`Scheduler line '${lineId}' not found on this batch.`);
+    if (!row || row.batch_id !== batchId)
+      throw new NotFoundException(
+        `Scheduler line '${lineId}' not found on this batch.`,
+      );
     if (row.line_type !== 'CONSUMPTION' || !row.item_id) {
-      return { warehouse_id: null, warehouse_code: null, warehouse_name: null, location_type: null, message: 'This line draws no stock.' };
+      return {
+        warehouse_id: null,
+        warehouse_code: null,
+        warehouse_name: null,
+        location_type: null,
+        message: 'This line draws no stock.',
+      };
     }
     try {
-      const warehouseId = await this.resolveConsumptionWarehouse(row.location_id, row.item_id, row.activity_name, row.farm_id, row.company_id, tenantId);
+      const warehouseId = await this.resolveConsumptionWarehouse(
+        row.location_id,
+        row.item_id,
+        row.activity_name,
+        row.farm_id,
+        row.company_id,
+        tenantId,
+      );
       const [where] = await this.db
-        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name, type: schema.locationMaster.location_type })
+        .select({
+          code: schema.locationMaster.location_code,
+          name: schema.locationMaster.location_name,
+          type: schema.locationMaster.location_type,
+        })
         .from(schema.locationMaster)
         .where(eq(schema.locationMaster.location_id, warehouseId))
         .limit(1);
-      return { warehouse_id: warehouseId, warehouse_code: where?.code ?? null, warehouse_name: where?.name ?? null, location_type: where?.type ?? null, message: null };
+      return {
+        warehouse_id: warehouseId,
+        warehouse_code: where?.code ?? null,
+        warehouse_name: where?.name ?? null,
+        location_type: where?.type ?? null,
+        message: null,
+      };
     } catch (err) {
       if (err instanceof BadRequestException) {
-        return { warehouse_id: null, warehouse_code: null, warehouse_name: null, location_type: null, message: err.message };
+        return {
+          warehouse_id: null,
+          warehouse_code: null,
+          warehouse_name: null,
+          location_type: null,
+          message: err.message,
+        };
       }
       throw err;
     }
   }
 
   /** Registered animals still alive in the batch at the stage the line belongs to - the ones that can have died. */
-  private async aliveAnimals(batchId: string, stageId: string | null | undefined) {
+  private async aliveAnimals(
+    batchId: string,
+    stageId: string | null | undefined,
+  ) {
     return this.db
       .select({
         animal_id: schema.animalRegister.animal_id,
@@ -1587,7 +2000,9 @@ export class BatchDailyDataService {
       .where(
         and(
           eq(schema.animalRegister.current_batch_id, batchId),
-          ...(stageId ? [eq(schema.animalRegister.current_stage_id, stageId)] : []),
+          ...(stageId
+            ? [eq(schema.animalRegister.current_stage_id, stageId)]
+            : []),
           eq(schema.animalRegister.is_active, true),
           sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
         ),
@@ -1614,10 +2029,16 @@ export class BatchDailyDataService {
     header: typeof schema.schedulerHeader.$inferSelect;
     existingRow: typeof schema.batchDailyData.$inferSelect | undefined;
     tenantId: string;
-    entryAnimal?: { animal_code: string; notes: string | null; status?: string | null };
+    entryAnimal?: {
+      animal_code: string;
+      notes: string | null;
+      status?: string | null;
+    };
   }): Promise<{ supplied: boolean; entries: MortalityEntry[] } | null> {
-    const { batchId, dto, line, header, existingRow, tenantId, entryAnimal } = args;
-    const applies = line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT';
+    const { batchId, dto, line, header, existingRow, tenantId, entryAnimal } =
+      args;
+    const applies =
+      line.line_type === 'DESCRIPTIVE' && line.kpi_metric === 'MORTALITY_COUNT';
     if (!applies) {
       if (dto.mortality_animals !== undefined) {
         throw new BadRequestException(
@@ -1627,15 +2048,28 @@ export class BatchDailyDataService {
       return null;
     }
     if (dto.entered_value == null) {
-      if (dto.mortality_animals?.length) throw new BadRequestException('Enter the mortality count before naming the animals.');
+      if (dto.mortality_animals?.length)
+        throw new BadRequestException(
+          'Enter the mortality count before naming the animals.',
+        );
       return { supplied: false, entries: [] };
     }
 
-    const previous = existingRow?.posted && existingRow.entered_value != null ? Number(existingRow.entered_value) : 0;
+    const previous =
+      existingRow?.posted && existingRow.entered_value != null
+        ? Number(existingRow.entered_value)
+        : 0;
     const newDeaths = Math.max(0, Math.round(dto.entered_value - previous));
     // Animal-wise (Rishi, 13 Oct): the entry already names its animal; its death still needs a weight and a reason.
     if (dto.animal_id) {
-      return this.planAnimalWiseMortality({ dto, line, newDeaths, tenantId, companyId: header.company_id, animal: entryAnimal });
+      return this.planAnimalWiseMortality({
+        dto,
+        line,
+        newDeaths,
+        tenantId,
+        companyId: header.company_id,
+        animal: entryAnimal,
+      });
     }
 
     const alive = await this.aliveAnimals(batchId, header.stage_id);
@@ -1650,7 +2084,12 @@ export class BatchDailyDataService {
     const required = newDeaths;
 
     let chosen = dto.mortality_animals as
-      | Array<{ animal_id?: string | null; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
+      | Array<{
+          animal_id?: string | null;
+          dead_weight_kg: number;
+          reason_id?: string | null;
+          reason_text?: string | null;
+        }>
       | undefined;
     const supplied = chosen !== undefined;
     if (!chosen && !dto.draft && required > 0) {
@@ -1684,7 +2123,11 @@ export class BatchDailyDataService {
     }
     const aliveById = new Map(alive.map((a) => [a.animal_id, a]));
     const seen = new Set<string>();
-    const reasonById = await this.mortalityReasons(chosen, tenantId, header.company_id);
+    const reasonById = await this.mortalityReasons(
+      chosen,
+      tenantId,
+      header.company_id,
+    );
 
     const entries: MortalityEntry[] = [];
     for (const [i, c] of chosen.entries()) {
@@ -1698,17 +2141,29 @@ export class BatchDailyDataService {
           );
         }
         if (seen.has(animal.animal_id)) {
-          throw new BadRequestException(`Animal '${animal.animal_code}' is chosen more than once.`);
+          throw new BadRequestException(
+            `Animal '${animal.animal_code}' is chosen more than once.`,
+          );
         }
         seen.add(animal.animal_id);
         who = `animal '${animal.animal_code}'`;
       } else {
         if (c.animal_id) {
-          throw new BadRequestException('This batch has no registered animals alive at this stage, so no animal can be named.');
+          throw new BadRequestException(
+            'This batch has no registered animals alive at this stage, so no animal can be named.',
+          );
         }
         who = `dead animal ${i + 1}`;
       }
-      entries.push(this.mortalityEntry(c, who, reasonById, animal?.animal_id ?? null, animal?.notes ?? null));
+      entries.push(
+        this.mortalityEntry(
+          c,
+          who,
+          reasonById,
+          animal?.animal_id ?? null,
+          animal?.notes ?? null,
+        ),
+      );
     }
     return { supplied: supplied || entries.length > 0, entries };
   }
@@ -1723,30 +2178,54 @@ export class BatchDailyDataService {
     newDeaths: number;
     tenantId: string;
     companyId: string;
-    animal?: { animal_code: string; notes: string | null; status?: string | null };
+    animal?: {
+      animal_code: string;
+      notes: string | null;
+      status?: string | null;
+    };
   }): Promise<{ supplied: boolean; entries: MortalityEntry[] }> {
     const { dto, line, newDeaths, tenantId, companyId, animal } = args;
     const animalId = dto.animal_id!;
     // An animal dies once (Rishi, 13 Oct): a second mortality entry for one already dead is refused.
     if (newDeaths > 0 && animal?.status === 'DEAD') {
-      throw new BadRequestException(`Animal '${animal.animal_code}' is already recorded as dead.`);
+      throw new BadRequestException(
+        `Animal '${animal.animal_code}' is already recorded as dead.`,
+      );
     }
     if (newDeaths > 1) {
-      throw new BadRequestException(`An animal-wise mortality entry records one animal - enter 1, not ${newDeaths}.`);
+      throw new BadRequestException(
+        `An animal-wise mortality entry records one animal - enter 1, not ${newDeaths}.`,
+      );
     }
     let chosen = dto.mortality_animals as
-      | Array<{ animal_id?: string | null; dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null }>
+      | Array<{
+          animal_id?: string | null;
+          dead_weight_kg: number;
+          reason_id?: string | null;
+          reason_text?: string | null;
+        }>
       | undefined;
     const supplied = chosen !== undefined;
     if (!chosen && !dto.draft && newDeaths > 0) {
-      const stored = await this.storedDraft(line.line_id, dto.entry_date, animalId);
+      const stored = await this.storedDraft(
+        line.line_id,
+        dto.entry_date,
+        animalId,
+      );
       if (stored.length) {
-        chosen = stored.map((r) => ({ animal_id: r.animal_id, dead_weight_kg: Number(r.dead_weight_kg), reason_id: r.reason_id, reason_text: r.reason_text }));
+        chosen = stored.map((r) => ({
+          animal_id: r.animal_id,
+          dead_weight_kg: Number(r.dead_weight_kg),
+          reason_id: r.reason_id,
+          reason_text: r.reason_text,
+        }));
       }
     }
     if (!chosen) {
       if (!dto.draft && newDeaths > 0) {
-        throw new BadRequestException('Enter the dead weight and the reason for the animal that died.');
+        throw new BadRequestException(
+          'Enter the dead weight and the reason for the animal that died.',
+        );
       }
       return { supplied: false, entries: [] };
     }
@@ -1758,10 +2237,20 @@ export class BatchDailyDataService {
       );
     }
     if (chosen.some((c) => c.animal_id && c.animal_id !== animalId)) {
-      throw new BadRequestException('An animal-wise entry records the death of its own animal only.');
+      throw new BadRequestException(
+        'An animal-wise entry records the death of its own animal only.',
+      );
     }
     const reasonById = await this.mortalityReasons(chosen, tenantId, companyId);
-    const entries = chosen.map((c) => this.mortalityEntry(c, `animal '${animal?.animal_code ?? animalId}'`, reasonById, animalId, animal?.notes ?? null));
+    const entries = chosen.map((c) =>
+      this.mortalityEntry(
+        c,
+        `animal '${animal?.animal_code ?? animalId}'`,
+        reasonById,
+        animalId,
+        animal?.notes ?? null,
+      ),
+    );
     return { supplied: supplied || entries.length > 0, entries };
   }
 
@@ -1775,13 +2264,23 @@ export class BatchDailyDataService {
           eq(schema.batchMortalityAnimal.line_id, lineId),
           eq(schema.batchMortalityAnimal.entry_date, date),
           eq(schema.batchMortalityAnimal.posted, false),
-          ...(animalId ? [eq(schema.batchMortalityAnimal.animal_id, animalId)] : []),
+          ...(animalId
+            ? [eq(schema.batchMortalityAnimal.animal_id, animalId)]
+            : []),
         ),
       );
   }
 
-  private async mortalityReasons(chosen: Array<{ reason_id?: string | null }>, tenantId: string, companyId: string) {
-    const reasonIds = [...new Set(chosen.map((c) => c.reason_id).filter((id): id is string => !!id))];
+  private async mortalityReasons(
+    chosen: Array<{ reason_id?: string | null }>,
+    tenantId: string,
+    companyId: string,
+  ) {
+    const reasonIds = [
+      ...new Set(
+        chosen.map((c) => c.reason_id).filter((id): id is string => !!id),
+      ),
+    ];
     const reasons = reasonIds.length
       ? await this.db
           .select()
@@ -1791,7 +2290,11 @@ export class BatchDailyDataService {
               inArray(schema.reasonMaster.reason_id, reasonIds),
               eq(schema.reasonMaster.tenant_id, tenantId),
               eq(schema.reasonMaster.is_active, true),
-              ...masterScopeConditions(this.cls, schema.reasonMaster, companyId),
+              ...masterScopeConditions(
+                this.cls,
+                schema.reasonMaster,
+                companyId,
+              ),
             ),
           )
       : [];
@@ -1800,7 +2303,11 @@ export class BatchDailyDataService {
 
   /** One death checked for its weight and reason (a mortality reason by id, or typed text - exactly one). */
   private mortalityEntry(
-    c: { dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null },
+    c: {
+      dead_weight_kg: number;
+      reason_id?: string | null;
+      reason_text?: string | null;
+    },
     who: string,
     reasonById: Map<string, typeof schema.reasonMaster.$inferSelect>,
     animalId: string | null,
@@ -1808,7 +2315,9 @@ export class BatchDailyDataService {
   ): MortalityEntry {
     const weight = Number(c.dead_weight_kg);
     if (!Number.isFinite(weight) || weight <= 0) {
-      throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${who}.`);
+      throw new BadRequestException(
+        `Enter the dead weight (kg, more than 0) for ${who}.`,
+      );
     }
     const text = c.reason_text?.trim() || null;
     if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
@@ -1820,7 +2329,9 @@ export class BatchDailyDataService {
     if (c.reason_id) {
       const reason = reasonById.get(c.reason_id);
       if (!reason) {
-        throw new BadRequestException(`Reason '${c.reason_id}' is not available in this workspace.`);
+        throw new BadRequestException(
+          `Reason '${c.reason_id}' is not available in this workspace.`,
+        );
       }
       if (reason.category !== 'MORTALITY') {
         throw new BadRequestException(
@@ -1852,7 +2363,8 @@ export class BatchDailyDataService {
     posted: boolean;
     userId?: string;
   }) {
-    const { tenantId, companyId, batchId, line, dto, entries, posted, userId } = args;
+    const { tenantId, companyId, batchId, line, dto, entries, posted, userId } =
+      args;
     // Animal-wise entries share the line and date across animals: replace only this animal's draft.
     await this.db
       .delete(schema.batchMortalityAnimal)
@@ -1861,7 +2373,9 @@ export class BatchDailyDataService {
           eq(schema.batchMortalityAnimal.line_id, line.line_id),
           eq(schema.batchMortalityAnimal.entry_date, dto.entry_date),
           eq(schema.batchMortalityAnimal.posted, false),
-          ...(dto.animal_id ? [eq(schema.batchMortalityAnimal.animal_id, dto.animal_id)] : []),
+          ...(dto.animal_id
+            ? [eq(schema.batchMortalityAnimal.animal_id, dto.animal_id)]
+            : []),
         ),
       );
     if (!entries.length) return;
@@ -1889,31 +2403,46 @@ export class BatchDailyDataService {
    */
   async mortalityCandidates(batchId: string, lineId: string, date?: string) {
     await this.batchService.findOne(batchId);
-    const [line] = await this.db.select().from(schema.schedulerLine).where(eq(schema.schedulerLine.line_id, lineId)).limit(1);
-    if (!line) throw new NotFoundException(`Scheduler line '${lineId}' not found.`);
+    const [line] = await this.db
+      .select()
+      .from(schema.schedulerLine)
+      .where(eq(schema.schedulerLine.line_id, lineId))
+      .limit(1);
+    if (!line)
+      throw new NotFoundException(`Scheduler line '${lineId}' not found.`);
     const [header] = await this.db
       .select()
       .from(schema.schedulerHeader)
       .where(eq(schema.schedulerHeader.scheduler_id, line.scheduler_id))
       .limit(1);
     if (!header || header.batch_id !== batchId) {
-      throw new BadRequestException(`Line '${lineId}' does not belong to batch '${batchId}'.`);
+      throw new BadRequestException(
+        `Line '${lineId}' does not belong to batch '${batchId}'.`,
+      );
     }
-    const alive = line.kpi_metric === 'MORTALITY_COUNT' ? await this.aliveAnimals(batchId, header.stage_id) : [];
+    const alive =
+      line.kpi_metric === 'MORTALITY_COUNT'
+        ? await this.aliveAnimals(batchId, header.stage_id)
+        : [];
     // The stage's animals already dead: Data Entry shows them greyed, never as a choice (Rishi, 13 Oct).
-    const dead = line.kpi_metric === 'MORTALITY_COUNT' && header.stage_id
-      ? await this.db
-          .select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code, disposal_date: schema.animalRegister.disposal_date })
-          .from(schema.animalRegister)
-          .where(
-            and(
-              eq(schema.animalRegister.current_batch_id, batchId),
-              eq(schema.animalRegister.current_stage_id, header.stage_id),
-              eq(schema.animalRegister.status, 'DEAD'),
-            ),
-          )
-          .orderBy(schema.animalRegister.animal_code)
-      : [];
+    const dead =
+      line.kpi_metric === 'MORTALITY_COUNT' && header.stage_id
+        ? await this.db
+            .select({
+              animal_id: schema.animalRegister.animal_id,
+              animal_code: schema.animalRegister.animal_code,
+              disposal_date: schema.animalRegister.disposal_date,
+            })
+            .from(schema.animalRegister)
+            .where(
+              and(
+                eq(schema.animalRegister.current_batch_id, batchId),
+                eq(schema.animalRegister.current_stage_id, header.stage_id),
+                eq(schema.animalRegister.status, 'DEAD'),
+              ),
+            )
+            .orderBy(schema.animalRegister.animal_code)
+        : [];
     // What the date already has posted for the line: a correction names only the deaths it adds beyond that.
     const [posted] = date
       ? await this.db
@@ -1950,10 +2479,19 @@ export class BatchDailyDataService {
         reason_id: d.reason_id,
         reason_text: d.reason_text,
       })),
-      already_posted: posted?.entered_value != null ? Number(posted.entered_value) : 0,
+      already_posted:
+        posted?.entered_value != null ? Number(posted.entered_value) : 0,
       stage_id: header.stage_id ?? null,
-      animals: alive.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, rfid_tag: a.rfid_tag })),
-      dead_animals: dead.map((a) => ({ animal_id: a.animal_id, animal_code: a.animal_code, died_on: a.disposal_date ? String(a.disposal_date).slice(0, 10) : null })),
+      animals: alive.map((a) => ({
+        animal_id: a.animal_id,
+        animal_code: a.animal_code,
+        rfid_tag: a.rfid_tag,
+      })),
+      dead_animals: dead.map((a) => ({
+        animal_id: a.animal_id,
+        animal_code: a.animal_code,
+        died_on: a.disposal_date ? String(a.disposal_date).slice(0, 10) : null,
+      })),
     };
   }
 
@@ -1980,7 +2518,13 @@ export class BatchDailyDataService {
 export function lotMustBeNamed(
   lineType: string,
   itemId: string | null | undefined,
-  tracked: { lot?: boolean | null; serial?: boolean | null; item_type?: string | null } | undefined,
+  tracked:
+    | {
+        lot?: boolean | null;
+        serial?: boolean | null;
+        item_type?: string | null;
+      }
+    | undefined,
 ): boolean {
   if (!itemId) return true;
   if (tracked?.serial) return true;

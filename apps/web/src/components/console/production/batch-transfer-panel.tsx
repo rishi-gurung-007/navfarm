@@ -1,31 +1,44 @@
-"use client";
+'use client';
 
-import { NA } from "@/utils/na";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Loader2, MoveRight, PackageCheck, Scale, Users } from "lucide-react";
-import { api } from "@/services/api-client";
-import { getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
-import { useLanguage } from "@/hooks/useLanguage";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ReasonSelect } from "@/components/ui/reason-select";
-import { Toast } from "@/components/ui/toast";
-import { StatRow, StatCard } from "@/components/ui/stat-row";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
-import { AnimalMultiSelect, type AnimalOption } from "./animal-multi-select";
+import { NA } from '@/utils/na';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ArrowRight,
+  Loader2,
+  MoveRight,
+  PackageCheck,
+  Scale,
+  Users,
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import {
+  getActiveCompanyId,
+  getActiveOperationalAreaId,
+} from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ReasonSelect } from '@/components/ui/reason-select';
+import { Toast } from '@/components/ui/toast';
+import { StatRow, StatCard } from '@/components/ui/stat-row';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
+import { AnimalMultiSelect, type AnimalOption } from './animal-multi-select';
 
 type Row = Record<string, any>;
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 const money = (v: unknown) =>
-  Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  Number(v || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
 
 /**
  * Animals moving from one batch to another — the movement that happens when a
@@ -44,41 +57,41 @@ export default function BatchTransferPanel() {
   const [rows, setRows] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   // Draft state for the "new transfer" dialog.
   const [open, setOpen] = useState(false);
-  const [fromBatchId, setFromBatchId] = useState("");
-  const [toBatchId, setToBatchId] = useState("");
+  const [fromBatchId, setFromBatchId] = useState('');
+  const [toBatchId, setToBatchId] = useState('');
   const [transferDate, setTransferDate] = useState(today);
   const [wholeBatch, setWholeBatch] = useState(true);
-  const [reason, setReason] = useState("");
-  const [remarks, setRemarks] = useState("");
+  const [reason, setReason] = useState('');
+  const [remarks, setRemarks] = useState('');
   const [pool, setPool] = useState<Row[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
   // A batch-wise batch counts head and has no registered animals to pick; it moves a number.
-  const [headToMove, setHeadToMove] = useState("");
+  const [headToMove, setHeadToMove] = useState('');
   // Reversing a posted transfer moves the same animals (or head) straight back as a transfer of its own.
   const [reversing, setReversing] = useState(false);
-  const [reverseError, setReverseError] = useState("");
-  const [formError, setFormError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [reverseError, setReverseError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [notice, setNotice] = useState('');
   const [viewing, setViewing] = useState<Row | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError('');
     try {
       const params = new URLSearchParams();
-      if (companyId) params.set("company_id", companyId);
-      if (areaId) params.set("operational_area_id", areaId);
+      if (companyId) params.set('company_id', companyId);
+      if (areaId) params.set('operational_area_id', areaId);
       const res = await api.get(`/batch-transfer?${params.toString()}`);
       setRows(unwrap<Row[]>(res) || []);
     } catch (err: any) {
-      setError(err?.message || t("btFailedToLoad"));
+      setError(err?.message || t('btFailedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -115,22 +128,36 @@ export default function BatchTransferPanel() {
   }, [fromBatchId]);
 
   const areaBatches = useMemo(
-    () => (areaId ? batches.filter((b) => b.operational_area_id === areaId) : batches),
-    [batches, areaId]
+    () =>
+      areaId
+        ? batches.filter((b) => b.operational_area_id === areaId)
+        : batches,
+    [batches, areaId],
   );
-  const sourceBatches = useMemo(() => areaBatches.filter((b) => b.status === "ACTIVE"), [areaBatches]);
+  const sourceBatches = useMemo(
+    () => areaBatches.filter((b) => b.status === 'ACTIVE'),
+    [areaBatches],
+  );
   const destinationBatches = useMemo(
-    () => areaBatches.filter((b) => b.batch_id !== fromBatchId && ["ACTIVE", "DRAFT"].includes(b.status)),
-    [areaBatches, fromBatchId]
+    () =>
+      areaBatches.filter(
+        (b) =>
+          b.batch_id !== fromBatchId && ['ACTIVE', 'DRAFT'].includes(b.status),
+      ),
+    [areaBatches, fromBatchId],
   );
 
   const animalOptions: AnimalOption[] = useMemo(
-    () => pool.map((a) => ({ animal_id: a.animal_id, label: a.rfid_tag || a.animal_code })),
-    [pool]
+    () =>
+      pool.map((a) => ({
+        animal_id: a.animal_id,
+        label: a.rfid_tag || a.animal_code,
+      })),
+    [pool],
   );
 
   const totals = useMemo(() => {
-    const posted = rows.filter((r) => r.status === "POSTED");
+    const posted = rows.filter((r) => r.status === 'POSTED');
     return {
       count: rows.length,
       head: posted.reduce((s, r) => s + Number(r.head_count || 0), 0),
@@ -140,16 +167,16 @@ export default function BatchTransferPanel() {
   }, [rows]);
 
   const resetForm = () => {
-    setFromBatchId("");
-    setToBatchId("");
+    setFromBatchId('');
+    setToBatchId('');
     setTransferDate(today());
     setWholeBatch(true);
-    setReason("");
-    setRemarks("");
+    setReason('');
+    setRemarks('');
     setSelected(new Set());
-    setHeadToMove("");
-    setSearch("");
-    setFormError("");
+    setHeadToMove('');
+    setSearch('');
+    setFormError('');
   };
 
   const toggleAnimal = (id: string) => {
@@ -162,12 +189,14 @@ export default function BatchTransferPanel() {
   };
 
   const submit = async () => {
-    setFormError("");
-    if (!fromBatchId) return setFormError(t("btErrorNoSource"));
-    if (!toBatchId) return setFormError(t("btErrorNoDestination"));
+    setFormError('');
+    if (!fromBatchId) return setFormError(t('btErrorNoSource'));
+    if (!toBatchId) return setFormError(t('btErrorNoDestination'));
     if (headcountMode) {
-      if (!(Number(headToMove) > 0)) return setFormError("Enter how many head to move.");
-    } else if (!wholeBatch && selected.size === 0) return setFormError(t("btErrorNoAnimals"));
+      if (!(Number(headToMove) > 0))
+        return setFormError('Enter how many head to move.');
+    } else if (!wholeBatch && selected.size === 0)
+      return setFormError(t('btErrorNoAnimals'));
 
     setSaving(true);
     try {
@@ -175,20 +204,31 @@ export default function BatchTransferPanel() {
         company_id: companyId,
         to_batch_id: toBatchId,
         transfer_date: transferDate,
-        transfer_type: headcountMode ? "PARTIAL" : wholeBatch ? "FULL_BATCH" : "PARTIAL",
-        ...(headcountMode ? { quantity: Number(headToMove) } : wholeBatch ? {} : { animal_ids: [...selected] }),
+        transfer_type: headcountMode
+          ? 'PARTIAL'
+          : wholeBatch
+            ? 'FULL_BATCH'
+            : 'PARTIAL',
+        ...(headcountMode
+          ? { quantity: Number(headToMove) }
+          : wholeBatch
+            ? {}
+            : { animal_ids: [...selected] }),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
         ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
       });
       const saved = unwrap<Row>(res);
       setNotice(
-        t("btSuccess", { no: saved?.transfer_no || "", n: String(Math.round(Number(saved?.head_count || 0))) })
+        t('btSuccess', {
+          no: saved?.transfer_no || '',
+          n: String(Math.round(Number(saved?.head_count || 0))),
+        }),
       );
       setOpen(false);
       resetForm();
       await load();
     } catch (err: any) {
-      setFormError(err?.message || t("btFailedToSave"));
+      setFormError(err?.message || t('btFailedToSave'));
     } finally {
       setSaving(false);
     }
@@ -197,60 +237,108 @@ export default function BatchTransferPanel() {
   const reverseViewing = async () => {
     if (!viewing || reversing) return;
     setReversing(true);
-    setReverseError("");
+    setReverseError('');
     try {
-      const res = await api.post(`/batch-transfer/${viewing.transfer_id}/reverse`, {});
+      const res = await api.post(
+        `/batch-transfer/${viewing.transfer_id}/reverse`,
+        {},
+      );
       const saved = unwrap<Row>(res);
-      setNotice(`${viewing.transfer_no} reversed by ${saved?.transfer_no || "a new transfer"}.`);
+      setNotice(
+        `${viewing.transfer_no} reversed by ${saved?.transfer_no || 'a new transfer'}.`,
+      );
       setViewing(null);
       await load();
     } catch (err: any) {
-      setReverseError(err?.message || "The transfer could not be reversed.");
+      setReverseError(err?.message || 'The transfer could not be reversed.');
     } finally {
       setReversing(false);
     }
   };
 
-  const batchNo = (id: string) => batches.find((b) => b.batch_id === id)?.batch_no || NA;
+  const batchNo = (id: string) =>
+    batches.find((b) => b.batch_id === id)?.batch_no || NA;
   const poolCount = pool.length;
   const fromBatch = batches.find((b) => b.batch_id === fromBatchId);
-  const headcountMode = Boolean(fromBatchId) && fromBatch?.tracking_mode === "BATCH_WISE" && !poolLoading && pool.length === 0;
+  const headcountMode =
+    Boolean(fromBatchId) &&
+    fromBatch?.tracking_mode === 'BATCH_WISE' &&
+    !poolLoading &&
+    pool.length === 0;
 
   return (
     <div className="space-y-6">
-      <Toast variant="success" message={notice} onClose={() => setNotice("")} />
+      <Toast variant="success" message={notice} onClose={() => setNotice('')} />
 
       <StatRow columns={4}>
-        <StatCard label={t("btStatTransfers")} value={totals.count} icon={MoveRight} />
-        <StatCard label={t("btStatHeadMoved")} value={Math.round(totals.head)} icon={Users} />
-        <StatCard label={t("btStatValueMoved")} value={money(totals.value)} icon={Scale} />
-        <StatCard label={t("btStatLatest")} value={totals.latest} icon={PackageCheck} />
+        <StatCard
+          label={t('btStatTransfers')}
+          value={totals.count}
+          icon={MoveRight}
+        />
+        <StatCard
+          label={t('btStatHeadMoved')}
+          value={Math.round(totals.head)}
+          icon={Users}
+        />
+        <StatCard
+          label={t('btStatValueMoved')}
+          value={money(totals.value)}
+          icon={Scale}
+        />
+        <StatCard
+          label={t('btStatLatest')}
+          value={totals.latest}
+          icon={PackageCheck}
+        />
       </StatRow>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-[var(--text-secondary)]">{t("btIntro")}</p>
-        <Button onClick={() => { setNotice(""); resetForm(); setOpen(true); }}>{t("btNewTransfer")}</Button>
+        <p className="max-w-2xl text-sm text-[var(--text-secondary)]">
+          {t('btIntro')}
+        </p>
+        <Button
+          onClick={() => {
+            setNotice('');
+            resetForm();
+            setOpen(true);
+          }}
+        >
+          {t('btNewTransfer')}
+        </Button>
       </div>
 
       {loading ? (
-        <LoadingState label={t("btLoading")} />
+        <LoadingState label={t('btLoading')} />
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : rows.length === 0 ? (
-        <EmptyState icon={MoveRight} title={t("btNoTransfers")} description={t("btNoTransfersHint")} />
+        <EmptyState
+          icon={MoveRight}
+          title={t('btNoTransfers')}
+          description={t('btNoTransfersHint')}
+        />
       ) : (
         <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)]">
           <table className="w-full min-w-[860px] text-sm">
             <thead>
               <tr className="border-b border-[var(--border)] text-left text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                <th className="px-4 py-3 font-semibold">{t("btColTransferNo")}</th>
-                <th className="px-4 py-3 font-semibold">{t("btColDate")}</th>
-                <th className="px-4 py-3 font-semibold">{t("btColMovement")}</th>
-                <th className="px-4 py-3 font-semibold">{t("btColType")}</th>
-                <th className="px-4 py-3 text-right font-semibold">{t("btColHead")}</th>
-                <th className="px-4 py-3 text-right font-semibold">{t("btColValue")}</th>
-                <th className="px-4 py-3 font-semibold">{t("btColStatus")}</th>
-                <th className="px-4 py-3 font-semibold">{t("btColReason")}</th>
+                <th className="px-4 py-3 font-semibold">
+                  {t('btColTransferNo')}
+                </th>
+                <th className="px-4 py-3 font-semibold">{t('btColDate')}</th>
+                <th className="px-4 py-3 font-semibold">
+                  {t('btColMovement')}
+                </th>
+                <th className="px-4 py-3 font-semibold">{t('btColType')}</th>
+                <th className="px-4 py-3 text-right font-semibold">
+                  {t('btColHead')}
+                </th>
+                <th className="px-4 py-3 text-right font-semibold">
+                  {t('btColValue')}
+                </th>
+                <th className="px-4 py-3 font-semibold">{t('btColStatus')}</th>
+                <th className="px-4 py-3 font-semibold">{t('btColReason')}</th>
               </tr>
             </thead>
             <tbody>
@@ -260,17 +348,32 @@ export default function BatchTransferPanel() {
                   onClick={() => setViewing(r)}
                   className="cursor-pointer border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--surface-hover)]"
                 >
-                  <td className="whitespace-nowrap px-4 py-3 font-mono font-semibold text-[var(--accent)]">{r.transfer_no}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">{r.transfer_date}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-mono font-semibold text-[var(--accent)]">
+                    {r.transfer_no}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">
+                    {r.transfer_date}
+                  </td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                      <span className="font-medium text-[var(--text-primary)]">{r.from_batch_no || batchNo(r.from_batch_id)}</span>
-                      <ArrowRight size={14} className="text-[var(--text-muted)]" />
-                      <span className="font-medium text-[var(--text-primary)]">{r.to_batch_no || batchNo(r.to_batch_id)}</span>
+                      <span className="font-medium text-[var(--text-primary)]">
+                        {r.from_batch_no || batchNo(r.from_batch_id)}
+                      </span>
+                      <ArrowRight
+                        size={14}
+                        className="text-[var(--text-muted)]"
+                      />
+                      <span className="font-medium text-[var(--text-primary)]">
+                        {r.to_batch_no || batchNo(r.to_batch_id)}
+                      </span>
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">
-                    {r.transfer_basis === "HEADCOUNT" ? t("btHeadCount") : r.transfer_type === "FULL_BATCH" ? t("btWholeBatch") : t("btSelectedAnimals")}
+                    {r.transfer_basis === 'HEADCOUNT'
+                      ? t('btHeadCount')
+                      : r.transfer_type === 'FULL_BATCH'
+                        ? t('btWholeBatch')
+                        : t('btSelectedAnimals')}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
                     {Math.round(Number(r.head_count || 0))}
@@ -278,8 +381,12 @@ export default function BatchTransferPanel() {
                   <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
                     {money(r.transfer_value)}
                   </td>
-                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                  <td className="px-4 py-3 text-[var(--text-secondary)]">{r.reason || NA}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-4 py-3 text-[var(--text-secondary)]">
+                    {r.reason || NA}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -290,52 +397,63 @@ export default function BatchTransferPanel() {
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
-        title={t("btNewTransfer")}
-        description={t("btDialogDescription")}
+        title={t('btNewTransfer')}
+        description={t('btDialogDescription')}
         maxWidth="lg"
         footer={
           <div className="flex justify-end gap-2">
             <Button onClick={submit} disabled={saving}>
-              {saving ? <><Loader2 size={14} className="mr-2 animate-spin" />{t("btSubmitting")}</> : t("btSubmit")}
+              {saving ? (
+                <>
+                  <Loader2 size={14} className="mr-2 animate-spin" />
+                  {t('btSubmitting')}
+                </>
+              ) : (
+                t('btSubmit')
+              )}
             </Button>
           </div>
         }
       >
         <div className="space-y-4">
-          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
+          <Toast
+            variant="danger"
+            message={formError}
+            onClose={() => setFormError('')}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="nf-text-label">{t("btFromBatch")}</span>
+              <span className="nf-text-label">{t('btFromBatch')}</span>
               <SearchableSelect
-                ariaLabel={t("btFromBatch")}
+                ariaLabel={t('btFromBatch')}
                 value={fromBatchId}
                 onChange={(val) => setFromBatchId(val)}
                 options={sourceBatches.map((b) => ({
                   value: b.batch_id,
                   label: b.batch_no,
                 }))}
-                placeholder={t("btSelectSource")}
+                placeholder={t('btSelectSource')}
                 searchPlaceholder="Search source batch…"
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("btToBatch")}</span>
+              <span className="nf-text-label">{t('btToBatch')}</span>
               <SearchableSelect
-                ariaLabel={t("btToBatch")}
+                ariaLabel={t('btToBatch')}
                 value={toBatchId}
                 onChange={(val) => setToBatchId(val)}
                 options={destinationBatches.map((b) => ({
                   value: b.batch_id,
                   label: b.batch_no,
                 }))}
-                placeholder={t("btSelectDestination")}
+                placeholder={t('btSelectDestination')}
                 searchPlaceholder="Search destination batch…"
                 disabled={!fromBatchId}
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("btTransferDate")}</span>
+              <span className="nf-text-label">{t('btTransferDate')}</span>
               <input
                 type="date"
                 value={transferDate}
@@ -344,13 +462,15 @@ export default function BatchTransferPanel() {
               />
             </label>
             <div className="block">
-              <span className="nf-text-label block mb-1">{t("btReason")}</span>
+              <span className="nf-text-label block mb-1">{t('btReason')}</span>
               <ReasonSelect
-                ariaLabel={t("btReason")}
+                ariaLabel={t('btReason')}
                 value={reason}
                 onChange={(val) => setReason(val)}
-                onClear={() => setReason("")}
-                placeholder={t("btReasonPlaceholder") || "Select reason from master…"}
+                onClear={() => setReason('')}
+                placeholder={
+                  t('btReasonPlaceholder') || 'Select reason from master…'
+                }
                 searchPlaceholder="Search reason code, description, category…"
               />
             </div>
@@ -368,49 +488,73 @@ export default function BatchTransferPanel() {
                 className="nf-input w-full text-sm"
               />
               <span className="mt-1 block text-xs text-[var(--text-muted)]">
-                {fromBatch?.batch_no} counts head rather than registered animals, so a number moves, with the average carrying value of that many head.
+                {fromBatch?.batch_no} counts head rather than registered
+                animals, so a number moves, with the average carrying value of
+                that many head.
               </span>
             </label>
           )}
 
           {!headcountMode && (
-          <fieldset className="space-y-2">
-            <legend className="nf-text-label">{t("btScope")}</legend>
-            <div className="flex flex-wrap gap-4">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--text-primary)]">
-                <input type="radio" checked={wholeBatch} onChange={() => setWholeBatch(true)} className="accent-(--accent)" />
-                {t("btWholeBatch")}
-                {fromBatchId && <span className="text-[var(--text-muted)]">({poolCount})</span>}
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--text-primary)]">
-                <input type="radio" checked={!wholeBatch} onChange={() => setWholeBatch(false)} className="accent-(--accent)" />
-                {t("btSelectedAnimals")}
-              </label>
-            </div>
-            <p className="text-xs text-[var(--text-muted)]">
-              {wholeBatch ? t("btWholeBatchHint") : t("btSelectedAnimalsHint")}
-            </p>
-          </fieldset>
+            <fieldset className="space-y-2">
+              <legend className="nf-text-label">{t('btScope')}</legend>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--text-primary)]">
+                  <input
+                    type="radio"
+                    checked={wholeBatch}
+                    onChange={() => setWholeBatch(true)}
+                    className="accent-(--accent)"
+                  />
+                  {t('btWholeBatch')}
+                  {fromBatchId && (
+                    <span className="text-[var(--text-muted)]">
+                      ({poolCount})
+                    </span>
+                  )}
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--text-primary)]">
+                  <input
+                    type="radio"
+                    checked={!wholeBatch}
+                    onChange={() => setWholeBatch(false)}
+                    className="accent-(--accent)"
+                  />
+                  {t('btSelectedAnimals')}
+                </label>
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">
+                {wholeBatch
+                  ? t('btWholeBatchHint')
+                  : t('btSelectedAnimalsHint')}
+              </p>
+            </fieldset>
           )}
 
           {!headcountMode && !wholeBatch && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="nf-text-label">{t("btTransferableAnimals")}</span>
+                <span className="nf-text-label">
+                  {t('btTransferableAnimals')}
+                </span>
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setSelected(new Set(animalOptions.map((a) => a.animal_id)))}
+                    onClick={() =>
+                      setSelected(
+                        new Set(animalOptions.map((a) => a.animal_id)),
+                      )
+                    }
                     className="text-xs font-medium text-[var(--accent)] hover:underline"
                   >
-                    {t("btSelectAll")}
+                    {t('btSelectAll')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelected(new Set())}
                     className="text-xs font-medium text-[var(--text-secondary)] hover:underline"
                   >
-                    {t("btClearSelection")}
+                    {t('btClearSelection')}
                   </button>
                 </div>
               </div>
@@ -421,13 +565,16 @@ export default function BatchTransferPanel() {
                 onToggle={toggleAnimal}
                 search={search}
                 onSearchChange={setSearch}
-                selectionNote={t("btAnimalsSelected", { n: String(selected.size), total: String(poolCount) })}
+                selectionNote={t('btAnimalsSelected', {
+                  n: String(selected.size),
+                  total: String(poolCount),
+                })}
               />
             </div>
           )}
 
           <label className="block">
-            <span className="nf-text-label">{t("btRemarks")}</span>
+            <span className="nf-text-label">{t('btRemarks')}</span>
             <textarea
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
@@ -440,35 +587,59 @@ export default function BatchTransferPanel() {
 
       <Dialog
         open={Boolean(viewing)}
-        onClose={() => { setViewing(null); setReverseError(""); }}
-        title={viewing?.transfer_no || ""}
+        onClose={() => {
+          setViewing(null);
+          setReverseError('');
+        }}
+        title={viewing?.transfer_no || ''}
         description={
           viewing
-            ? t("btDetailDescription", {
+            ? t('btDetailDescription', {
                 from: viewing.from_batch_no || batchNo(viewing.from_batch_id),
                 to: viewing.to_batch_no || batchNo(viewing.to_batch_id),
                 date: viewing.transfer_date,
               })
-            : ""
+            : ''
         }
         maxWidth="md"
         footer={
-          viewing?.status === "POSTED" && !String(viewing.reason || "").startsWith("REVERSAL OF ") ? (
-            <Button size="sm" variant="outline" disabled={reversing} onClick={reverseViewing}>
+          viewing?.status === 'POSTED' &&
+          !String(viewing.reason || '').startsWith('REVERSAL OF ') ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={reversing}
+              onClick={reverseViewing}
+            >
               Reverse transfer
             </Button>
           ) : undefined
         }
       >
-        <Toast variant="danger" message={reverseError} onClose={() => setReverseError("")} />
-        {viewing && <TransferLines transferId={viewing.transfer_id} headcount={viewing.transfer_basis === "HEADCOUNT"} />}
+        <Toast
+          variant="danger"
+          message={reverseError}
+          onClose={() => setReverseError('')}
+        />
+        {viewing && (
+          <TransferLines
+            transferId={viewing.transfer_id}
+            headcount={viewing.transfer_basis === 'HEADCOUNT'}
+          />
+        )}
       </Dialog>
     </div>
   );
 }
 
 /** The animals on one transfer, fetched on open rather than carried in the list payload. */
-function TransferLines({ transferId, headcount }: { transferId: string; headcount?: boolean }) {
+function TransferLines({
+  transferId,
+  headcount,
+}: {
+  transferId: string;
+  headcount?: boolean;
+}) {
   const { t } = useLanguage();
   const [lines, setLines] = useState<Row[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -482,26 +653,46 @@ function TransferLines({ transferId, headcount }: { transferId: string; headcoun
       .catch(() => setFailed(true));
   }, [transferId]);
 
-  if (failed) return <ErrorState message={t("btFailedToLoad")} />;
-  if (!lines) return <LoadingState label={t("btLoading")} />;
-  if (lines.length === 0) return <EmptyState title={headcount ? "Moved by head count — no individual animals" : t("btNoLines")} />;
+  if (failed) return <ErrorState message={t('btFailedToLoad')} />;
+  if (!lines) return <LoadingState label={t('btLoading')} />;
+  if (lines.length === 0)
+    return (
+      <EmptyState
+        title={
+          headcount
+            ? 'Moved by head count — no individual animals'
+            : t('btNoLines')
+        }
+      />
+    );
 
   return (
     <div className="max-h-80 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-[var(--border)] text-left text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-            <th className="px-3 py-2 font-semibold">{t("btColAnimal")}</th>
-            <th className="px-3 py-2 font-semibold">{t("btColAnimalType")}</th>
-            <th className="px-3 py-2 text-right font-semibold">{t("btColBookValue")}</th>
+            <th className="px-3 py-2 font-semibold">{t('btColAnimal')}</th>
+            <th className="px-3 py-2 font-semibold">{t('btColAnimalType')}</th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {t('btColBookValue')}
+            </th>
           </tr>
         </thead>
         <tbody>
           {lines.map((l) => (
-            <tr key={l.line_id} className="border-b border-[var(--border)] last:border-b-0">
-              <td className="px-3 py-2 font-mono font-semibold text-[var(--accent)]">{l.rfid_tag || l.animal_code}</td>
-              <td className="px-3 py-2 text-[var(--text-secondary)]">{l.animal_type || NA}</td>
-              <td className="px-3 py-2 text-right tabular-nums text-[var(--text-primary)]">{money(l.book_value)}</td>
+            <tr
+              key={l.line_id}
+              className="border-b border-[var(--border)] last:border-b-0"
+            >
+              <td className="px-3 py-2 font-mono font-semibold text-[var(--accent)]">
+                {l.rfid_tag || l.animal_code}
+              </td>
+              <td className="px-3 py-2 text-[var(--text-secondary)]">
+                {l.animal_type || NA}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-[var(--text-primary)]">
+                {money(l.book_value)}
+              </td>
             </tr>
           ))}
         </tbody>

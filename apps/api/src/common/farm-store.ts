@@ -9,18 +9,24 @@ type Db = MySql2Database<typeof schema>;
  * Null when none of them holds any. A farm keeps feed, medicines and semen in different stores, and the first
  * store by code (the AI store, on a farm whose stores are PSTORE-AI, -FEED, -GEN, -MED) holds none of its feed.
  */
-export async function storeHoldingMost(db: Db, storeIds: string[], itemIds: string[]): Promise<string | null> {
+export async function storeHoldingMost(
+  db: Db,
+  storeIds: string[],
+  itemIds: string[],
+): Promise<string | null> {
   if (!storeIds.length || !itemIds.length) return null;
   const L = schema.inventoryLedger;
   const qty = sql<string>`SUM(${L.quantity})`;
   const [best] = await db
     .select({ warehouse_id: L.warehouse_id, qty })
     .from(L)
-    .where(and(
-      inArray(L.warehouse_id, storeIds),
-      inArray(L.item_id, itemIds),
-      inArray(L.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
-    ))
+    .where(
+      and(
+        inArray(L.warehouse_id, storeIds),
+        inArray(L.item_id, itemIds),
+        inArray(L.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
+      ),
+    )
     .groupBy(L.warehouse_id)
     .having(sql`${qty} > 0`)
     .orderBy(desc(qty))
@@ -33,7 +39,11 @@ export async function storeHoldingMost(db: Db, storeIds: string[], itemIds: stri
  * that holds the most of it; otherwise (or when none holds any) the first active STORE under the farm by
  * code. Null when the farm has none (or no farm is given).
  */
-export async function farmStoreOf(db: Db, farmId: string | null | undefined, itemId?: string | null): Promise<string | null> {
+export async function farmStoreOf(
+  db: Db,
+  farmId: string | null | undefined,
+  itemId?: string | null,
+): Promise<string | null> {
   if (!farmId) return null;
   const stores = await db
     .select({ location_id: schema.locationMaster.location_id })
@@ -54,7 +64,11 @@ export async function farmStoreOf(db: Db, farmId: string | null | undefined, ite
   if (!stores.length) return null;
   // One store is the store: nothing to choose between, so no stock to read.
   if (itemId && stores.length > 1) {
-    const holding = await storeHoldingMost(db, stores.map((s) => s.location_id), [itemId]);
+    const holding = await storeHoldingMost(
+      db,
+      stores.map((s) => s.location_id),
+      [itemId],
+    );
     if (holding) return holding;
   }
   return stores[0].location_id;

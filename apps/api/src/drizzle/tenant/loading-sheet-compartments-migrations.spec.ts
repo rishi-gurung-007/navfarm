@@ -7,13 +7,25 @@ const statements = (tag: string) =>
     .split('--> statement-breakpoint')
     .map((s) => s.replace(/^--.*$/gm, '').trim())
     .filter(Boolean);
-const journal = () => JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+const journal = () =>
+  JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8'))
+    .entries as Array<{
+    idx: number;
+    version: string;
+    when: number;
+    tag: string;
+    breakpoints: boolean;
+  }>;
 
 describe('Tenant migration 0209 — loading-sheet compartment lines (additive)', () => {
   it('is journalled after the current tenant migration lineage', () => {
     const entries = journal();
     expect(entries.find((entry) => entry.idx === 206)).toEqual({
-      idx: 206, version: '5', when: 1792000000077, tag: '0209_loading_sheet_compartments', breakpoints: true,
+      idx: 206,
+      version: '5',
+      when: 1792000000077,
+      tag: '0209_loading_sheet_compartments',
+      breakpoints: true,
     });
   });
 
@@ -37,6 +49,8 @@ describe('Tenant migration 0209 — loading-sheet compartment lines (additive)',
       'CREATE INDEX `idx_feed_loading_sheet_compartment_sheet` ON `feed_loading_sheet_compartment` (`loading_sheet_id`);',
       'INSERT INTO `feed_loading_sheet_compartment` (`compartment_id`, `loading_sheet_id`, `line_no`, `compartment_no`, `kg_loaded`, `loaded_by`, `loaded_at`)\nSELECT UUID(), `loading_sheet_id`, 10000, `compartment_no`, `kg_loaded`, `loaded_by`, `loaded_at`\nFROM `feed_loading_sheet`\nWHERE `compartment_no` IS NOT NULL AND `kg_loaded` IS NOT NULL;',
     ]);
-    expect(statements('0209_loading_sheet_compartments').join('\n')).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
+    expect(
+      statements('0209_loading_sheet_compartments').join('\n'),
+    ).not.toMatch(/\b(DROP|DELETE FROM|TRUNCATE)\b/i);
   });
 });

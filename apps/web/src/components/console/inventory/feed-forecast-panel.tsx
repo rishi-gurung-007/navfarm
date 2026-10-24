@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 /**
  * Inventory -> Feed Forecast (Plans A, R; laid out in Plan S). The farm
@@ -10,31 +10,46 @@
  * answer (A11) but only sent once the user changes them — the farm's own
  * today is the API's to decide (D16).
  */
-import { useEffect, useRef, useState } from "react";
-import { api } from "@/services/api-client";
-import { InlineAlert } from "@/components/ui/alert";
-import { showToast } from "@/components/ui/toast";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { EmptyState, LoadingState } from "@/components/ui/states";
-import { getActiveWorkspaceScope, getStoredUser, hasPermission } from "@/hooks/useAuth";
-import { useLanguage } from "@/hooks/useLanguage";
-import { formatDateShort, todayIso, unwrap } from "./feed-format";
-import { FeedForecastGrid, ReportRow, SourceBalancePoint } from "./feed-forecast-grid";
-import { FeedForecastNotes, type ForecastFlag } from "./feed-forecast-notes";
-import { businessYearStartOf, clampToPlanning, forecastQueryString, FORECAST_VIEWS, FORECAST_VIEW_LABEL, ForecastView } from "./feed-forecast-query";
-import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { FeedForecastRunHistory } from "./feed-forecast-run-history";
-import { FeedRequisitionDetail } from "./feed-requisition-detail";
-import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
-import type { RequisitionView } from "./feed-requisition-document";
-import { setForecastWindow } from "./feed-forecast-window";
+import { useEffect, useRef, useState } from 'react';
+import { api } from '@/services/api-client';
+import { InlineAlert } from '@/components/ui/alert';
+import { showToast } from '@/components/ui/toast';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import { EmptyState, LoadingState } from '@/components/ui/states';
+import {
+  getActiveWorkspaceScope,
+  getStoredUser,
+  hasPermission,
+} from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
+import { formatDateShort, todayIso, unwrap } from './feed-format';
+import {
+  FeedForecastGrid,
+  ReportRow,
+  SourceBalancePoint,
+} from './feed-forecast-grid';
+import { FeedForecastNotes, type ForecastFlag } from './feed-forecast-notes';
+import {
+  businessYearStartOf,
+  clampToPlanning,
+  forecastQueryString,
+  FORECAST_VIEWS,
+  FORECAST_VIEW_LABEL,
+  ForecastView,
+} from './feed-forecast-query';
+import { FeedFarmSelect, feedFarmLabel } from './feed-farm-select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { FeedForecastRunHistory } from './feed-forecast-run-history';
+import { FeedRequisitionDetail } from './feed-requisition-detail';
+import { FeedRequisitionFromRunDialog } from './feed-requisition-from-run-dialog';
+import type { RequisitionView } from './feed-requisition-document';
+import { setForecastWindow } from './feed-forecast-window';
 import {
   FeedForecastProvider,
   useFeedForecastContext,
   useOptionalFeedForecastContext,
-} from "./feed-forecast-context";
+} from './feed-forecast-context';
 
 interface PeriodOption {
   periodId: string;
@@ -61,7 +76,7 @@ interface ForecastData {
   flags: ForecastFlag[];
 }
 
-type CalculationState = "EMPTY" | "CALCULATED" | "SAVED";
+type CalculationState = 'EMPTY' | 'CALCULATED' | 'SAVED';
 
 interface CurrentForecastRun {
   run_id?: string;
@@ -84,8 +99,12 @@ type SavedForecastDisplay = Partial<ForecastData> & {
   };
 };
 
-const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
-const labelCls = "nf-text-label block text-(--text-secondary)";
+const inputStyle = {
+  backgroundColor: 'var(--input-bg)',
+  color: 'var(--input-text)',
+  borderColor: 'var(--input-border)',
+};
+const labelCls = 'nf-text-label block text-(--text-secondary)';
 
 function FeedForecastPanelContent() {
   const { t } = useLanguage();
@@ -116,7 +135,8 @@ function FeedForecastPanelContent() {
   const [savedRunReload, setSavedRunReload] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [data, setData] = useState<ForecastData | null>(null);
-  const [calculationState, setCalculationState] = useState<CalculationState>("EMPTY");
+  const [calculationState, setCalculationState] =
+    useState<CalculationState>('EMPTY');
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -125,10 +145,11 @@ function FeedForecastPanelContent() {
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
   const [createAfterSave, setCreateAfterSave] = useState(false);
-  const [createdRequisition, setCreatedRequisition] = useState<RequisitionView | null>(null);
+  const [createdRequisition, setCreatedRequisition] =
+    useState<RequisitionView | null>(null);
 
   useEffect(() => {
-    if (view !== "PERIOD" || !farmId) {
+    if (view !== 'PERIOD' || !farmId) {
       setPeriods(null);
       setPeriodsFailed(false);
       return;
@@ -136,7 +157,9 @@ function FeedForecastPanelContent() {
     let cancelled = false;
     setPeriodsFailed(false);
     api
-      .get(`/feed-forecast/periods?${new URLSearchParams({ farmId }).toString()}`)
+      .get(
+        `/feed-forecast/periods?${new URLSearchParams({ farmId }).toString()}`,
+      )
       .then((res) => {
         if (cancelled) return;
         const list = unwrap<PeriodOption[]>(res);
@@ -157,7 +180,7 @@ function FeedForecastPanelContent() {
     if (!farmId) {
       setData(null);
       setCurrentRun(null);
-      setCalculationState("EMPTY");
+      setCalculationState('EMPTY');
       return;
     }
     let cancelled = false;
@@ -168,15 +191,21 @@ function FeedForecastPanelContent() {
     setLoading(true);
     setSavedRunFailed(false);
     api
-      .get(`/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`)
+      .get(
+        `/feed-forecast/runs/current?${new URLSearchParams({ farmId }).toString()}`,
+      )
       .then(async (response) => {
         if (superseded()) return;
-        const run = (response && typeof response === "object" && "data" in response ? response.data : response) as CurrentForecastRun | null;
+        const run = (
+          response && typeof response === 'object' && 'data' in response
+            ? response.data
+            : response
+        ) as CurrentForecastRun | null;
         const display = run?.output_snapshot?.display;
         const filters = display?.filters;
         if (!run || !display || !filters) {
           setCurrentRun(null);
-          setCalculationState("EMPTY");
+          setCalculationState('EMPTY');
           setData(null);
           return;
         }
@@ -188,7 +217,9 @@ function FeedForecastPanelContent() {
           view: filters.view,
           period: display.period ?? null,
           rows: Array.isArray(display.rows) ? display.rows : [],
-          sourceBalances: Array.isArray(display.sourceBalances) ? display.sourceBalances : [],
+          sourceBalances: Array.isArray(display.sourceBalances)
+            ? display.sourceBalances
+            : [],
           flags: Array.isArray(display.flags) ? display.flags : [],
         } as ForecastData;
         const runId = run.run_id ?? run.runId;
@@ -196,9 +227,14 @@ function FeedForecastPanelContent() {
         let canCreateRequisition = false;
         if (runId) {
           try {
-            const preview = unwrap<{ existingRequisitionId?: string | null; lines?: unknown[] }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
+            const preview = unwrap<{
+              existingRequisitionId?: string | null;
+              lines?: unknown[];
+            }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
             existingRequisitionId = preview.existingRequisitionId ?? null;
-            canCreateRequisition = !!existingRequisitionId || (Array.isArray(preview.lines) && preview.lines.length > 0);
+            canCreateRequisition =
+              !!existingRequisitionId ||
+              (Array.isArray(preview.lines) && preview.lines.length > 0);
           } catch {
             // A saved calculation with no material shortage remains viewable,
             // but it must not offer a requisition that the API will refuse.
@@ -206,23 +242,23 @@ function FeedForecastPanelContent() {
         }
         if (superseded()) return;
         setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition });
-        setCalculationState("SAVED");
+        setCalculationState('SAVED');
         setData(resolved);
         hydrateWindow({
           planningDate: resolved.planningDate,
           view: resolved.view,
           from: resolved.from,
           to: resolved.to,
-          periodId: resolved.period?.periodId ?? "",
+          periodId: resolved.period?.periodId ?? '',
         });
       })
       .catch((err: any) => {
         if (superseded()) return;
-        showToast.error(err?.message || tRef.current("ffFailedToLoad"));
+        showToast.error(err?.message || tRef.current('ffFailedToLoad'));
         setSavedRunFailed(true);
         setData(null);
         setCurrentRun(null);
-        setCalculationState("EMPTY");
+        setCalculationState('EMPTY');
       })
       .finally(() => {
         if (!superseded()) setLoading(false);
@@ -234,25 +270,30 @@ function FeedForecastPanelContent() {
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
-    if (farmId && data && data.farm.id === farmId) setForecastWindow({ farmId, from: data.from, to: data.to });
+    if (farmId && data && data.farm.id === farmId)
+      setForecastWindow({ farmId, from: data.from, to: data.to });
   }, [farmId, data]);
 
   function changeView(next: ForecastView) {
     setView(next);
-    setDateFrom("");
-    setDateTo("");
-    setPeriodId("");
+    setDateFrom('');
+    setDateTo('');
+    setPeriodId('');
   }
 
   // Open question Q9: an admin drafts the July–June year, then edits it in the master.
   async function generatePeriods() {
-    const year = businessYearStartOf(planningDate || data?.planningDate || todayIso());
+    const year = businessYearStartOf(
+      planningDate || data?.planningDate || todayIso(),
+    );
     setGenerating(true);
     try {
-      await api.post("/reporting-period/generate", { business_year_start: year });
+      await api.post('/reporting-period/generate', {
+        business_year_start: year,
+      });
       setReload((n) => n + 1);
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("ffGenerateFailed"));
+      showToast.error(err?.message || tRef.current('ffGenerateFailed'));
     } finally {
       setGenerating(false);
     }
@@ -262,37 +303,51 @@ function FeedForecastPanelContent() {
     if (!farmId || !data) return;
     setSavingRun(true);
     try {
-      const response = await api.post("/feed-forecast/runs", {
+      const response = await api.post('/feed-forecast/runs', {
         farmId,
         planningDate: planningDate || data.planningDate,
         view,
         from: dateFrom || data.from,
         to: dateTo || data.to,
-        ...(view === "PERIOD" && (periodId || data.period?.periodId) ? { periodId: periodId || data.period!.periodId } : {}),
+        ...(view === 'PERIOD' && (periodId || data.period?.periodId)
+          ? { periodId: periodId || data.period!.periodId }
+          : {}),
       });
       const saved = unwrap<{ runCode: string; version: number }>(response);
       let canCreateRequisition = false;
       let existingRequisitionId: string | null = null;
-      const savedRunId = (saved as CurrentForecastRun).run_id ?? (saved as CurrentForecastRun).runId;
+      const savedRunId =
+        (saved as CurrentForecastRun).run_id ??
+        (saved as CurrentForecastRun).runId;
       if (savedRunId) {
         try {
-          const preview = unwrap<{ existingRequisitionId?: string | null; lines?: unknown[] }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
+          const preview = unwrap<{
+            existingRequisitionId?: string | null;
+            lines?: unknown[];
+          }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
           existingRequisitionId = preview.existingRequisitionId ?? null;
-          canCreateRequisition = !!existingRequisitionId || (Array.isArray(preview.lines) && preview.lines.length > 0);
+          canCreateRequisition =
+            !!existingRequisitionId ||
+            (Array.isArray(preview.lines) && preview.lines.length > 0);
         } catch {
           canCreateRequisition = false;
         }
       }
       setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
-      setCalculationState("SAVED");
+      setCalculationState('SAVED');
       if (createAfterSave && canCreateRequisition && !existingRequisitionId) {
         setFromRunOpen(true);
       }
       setCreateAfterSave(false);
-      showToast.success(tRef.current("ffRunSaved", { code: saved.runCode, version: saved.version }));
+      showToast.success(
+        tRef.current('ffRunSaved', {
+          code: saved.runCode,
+          version: saved.version,
+        }),
+      );
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("ffSaveRunFailed"));
+      showToast.error(err?.message || tRef.current('ffSaveRunFailed'));
     } finally {
       setSavingRun(false);
     }
@@ -302,19 +357,21 @@ function FeedForecastPanelContent() {
     if (!farmId || currentRun) return;
     setLoading(true);
     try {
-      const response = await api.get(`/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`);
+      const response = await api.get(
+        `/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`,
+      );
       const resolved = unwrap<ForecastData>(response);
       setData(resolved);
-      setCalculationState("CALCULATED");
+      setCalculationState('CALCULATED');
       hydrateWindow({
         planningDate: resolved.planningDate,
         view: resolved.view,
         from: resolved.from,
         to: resolved.to,
-        periodId: resolved.period?.periodId ?? "",
+        periodId: resolved.period?.periodId ?? '',
       });
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("ffFailedToLoad"));
+      showToast.error(err?.message || tRef.current('ffFailedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -327,24 +384,27 @@ function FeedForecastPanelContent() {
       await api.delete(`/feed-forecast/runs/${runId}`);
       setCurrentRun(null);
       setData(null);
-      setCalculationState("EMPTY");
-      showToast.success(tRef.current("ffCalculationDeleted"));
+      setCalculationState('EMPTY');
+      showToast.success(tRef.current('ffCalculationDeleted'));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("ffDeleteCalculationFailed"));
+      showToast.error(
+        err?.message || tRef.current('ffDeleteCalculationFailed'),
+      );
     }
   }
 
   // A6: `?runId=` opens a saved run through the same endpoint "View calculation" uses.
   // Opening a run bumps `viewToken`, so a current-run load still in flight cannot overwrite it.
   const pendingRunId = useRef<string | null>(null);
-  if (pendingRunId.current === null && typeof window !== "undefined") {
-    pendingRunId.current = new URLSearchParams(window.location.search).get("runId") ?? "";
+  if (pendingRunId.current === null && typeof window !== 'undefined') {
+    pendingRunId.current =
+      new URLSearchParams(window.location.search).get('runId') ?? '';
   }
   useEffect(() => {
     const runId = pendingRunId.current;
     if (!runId || !farmId) return;
-    pendingRunId.current = "";
+    pendingRunId.current = '';
     void viewHistoricalRun(runId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [farmId]);
@@ -357,28 +417,48 @@ function FeedForecastPanelContent() {
       const run = unwrap<any>(await api.get(`/feed-forecast/runs/${runId}`));
       if (token !== viewToken.current) return;
       const display = run?.output_snapshot?.display;
-      if (!display?.rows || !display?.filters) throw new Error("This saved run has no restorable calculation snapshot.");
-      setData({ ...display, planningDate: display.filters.planningDate, view: display.filters.view, from: display.filters.from, to: display.filters.to, period: display.period ?? null, farm: display.farm } as ForecastData);
+      if (!display?.rows || !display?.filters)
+        throw new Error(
+          'This saved run has no restorable calculation snapshot.',
+        );
+      setData({
+        ...display,
+        planningDate: display.filters.planningDate,
+        view: display.filters.view,
+        from: display.filters.from,
+        to: display.filters.to,
+        period: display.period ?? null,
+        farm: display.farm,
+      } as ForecastData);
       hydrateWindow(display.filters);
-      setCurrentRun({ run_id: run.run_id, run_code: run.run_code, version: run.version, existingRequisitionId: null, canCreateRequisition: false });
+      setCurrentRun({
+        run_id: run.run_id,
+        run_code: run.run_code,
+        version: run.version,
+        existingRequisitionId: null,
+        canCreateRequisition: false,
+      });
       setHistoricalRun(true);
-      setCalculationState("SAVED");
+      setCalculationState('SAVED');
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("ffRestoreFailed"));
+      showToast.error(err?.message || tRef.current('ffRestoreFailed'));
     }
   }
 
   const rows = Array.isArray(data?.rows) ? data!.rows : [];
-  const sourceBalances = Array.isArray(data?.sourceBalances) ? data!.sourceBalances : [];
+  const sourceBalances = Array.isArray(data?.sourceBalances)
+    ? data!.sourceBalances
+    : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
-  const rangeStartsAtPlanning = !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
+  const rangeStartsAtPlanning =
+    !!data && data.forecastFrom !== null && data.forecastFrom > data.from;
   // The API resolves the farm-local day. Showing the browser's local date while
   // that request is pending would put a false planning context on screen.
-  const shownPlanning = planningDate || data?.planningDate || "";
-  const shownFrom = dateFrom || data?.from || "";
-  const shownTo = dateTo || data?.to || "";
+  const shownPlanning = planningDate || data?.planningDate || '';
+  const shownFrom = dateFrom || data?.from || '';
+  const shownTo = dateTo || data?.to || '';
   const businessYear = businessYearStartOf(shownPlanning);
   // Nothing is forecast before the planning date, so a later planning date
   // pulls any earlier From / To forward with it.
@@ -387,11 +467,19 @@ function FeedForecastPanelContent() {
     if (dateFrom && value && dateFrom < value) setDateFrom(value);
     if (dateTo && value && dateTo < value) setDateTo(value);
   }
-  const isTenantWorkspace = getActiveWorkspaceScope() === "TENANT";
-  const canSaveRun = hasPermission(getStoredUser(), "INVENTORY", "LEDGER", "can_create");
+  const isTenantWorkspace = getActiveWorkspaceScope() === 'TENANT';
+  const canSaveRun = hasPermission(
+    getStoredUser(),
+    'INVENTORY',
+    'LEDGER',
+    'can_create',
+  );
   const fixedLabel = farm.isFixed
     ? farm.fixedFarm?.location_code
-      ? feedFarmLabel({ code: farm.fixedFarm.location_code, name: farm.fixedFarm.location_name ?? "" })
+      ? feedFarmLabel({
+          code: farm.fixedFarm.location_code,
+          name: farm.fixedFarm.location_name ?? '',
+        })
       : data?.farm
         ? feedFarmLabel(data.farm)
         : null
@@ -404,19 +492,48 @@ function FeedForecastPanelContent() {
           "Date To" alone on a second line and took a third of the table's
           height. The date pair shares a container so it never splits. */}
       <div className="flex shrink-0 flex-wrap items-end gap-3 xl:flex-nowrap">
-        <div className="w-56 shrink-0"><FeedFarmSelect id="ff-farm" label={t("ffFarm")} farms={farm.farms} farmId={farmId} onChange={setFarmId} fixedLabel={fixedLabel} /></div>
+        <div className="w-56 shrink-0">
+          <FeedFarmSelect
+            id="ff-farm"
+            label={t('ffFarm')}
+            farms={farm.farms}
+            farmId={farmId}
+            onChange={setFarmId}
+            fixedLabel={fixedLabel}
+          />
+        </div>
         <div>
-          <label className={labelCls} htmlFor="ff-planning">{t("ffPlanningDate")}</label>
-          <input id="ff-planning" type="date" value={shownPlanning} onChange={(e) => changePlanningDate(e.target.value)} className="nf-input-sm mt-1.5" style={inputStyle}
-            title={data ? (data.timeZone ? t("ffTimeZone", { zone: data.timeZone }) : t("ffServerDay")) : undefined} />
+          <label className={labelCls} htmlFor="ff-planning">
+            {t('ffPlanningDate')}
+          </label>
+          <input
+            id="ff-planning"
+            type="date"
+            value={shownPlanning}
+            onChange={(e) => changePlanningDate(e.target.value)}
+            className="nf-input-sm mt-1.5"
+            style={inputStyle}
+            title={
+              data
+                ? data.timeZone
+                  ? t('ffTimeZone', { zone: data.timeZone })
+                  : t('ffServerDay')
+                : undefined
+            }
+          />
         </div>
         <div className="w-36 shrink-0">
-          <label className={labelCls} htmlFor="ff-view">{t("ffView")}</label>
+          <label className={labelCls} htmlFor="ff-view">
+            {t('ffView')}
+          </label>
           <div className="relative mt-1.5">
             <SearchableSelect
               value={view}
               onChange={(val) => changeView(val as ForecastView)}
-              options={FORECAST_VIEWS.map((v) => ({ value: v, label: t(FORECAST_VIEW_LABEL[v]) }))}
+              options={FORECAST_VIEWS.map((v) => ({
+                value: v,
+                label: t(FORECAST_VIEW_LABEL[v]),
+              }))}
               columnHeaders={false}
               searchPlaceholder="Search view…"
               triggerClassName="nf-input-sm w-full h-9"
@@ -428,135 +545,284 @@ function FeedForecastPanelContent() {
               tabIndex={-1}
               className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
             >
-              {FORECAST_VIEWS.map((v) => <option key={v} value={v}>{t(FORECAST_VIEW_LABEL[v])}</option>)}
+              {FORECAST_VIEWS.map((v) => (
+                <option key={v} value={v}>
+                  {t(FORECAST_VIEW_LABEL[v])}
+                </option>
+              ))}
             </select>
           </div>
         </div>
         <div className="flex shrink-0 items-end gap-3">
-        {view === "PERIOD" ? (
-          <div className="w-56 shrink-0">
-            <label className={labelCls} htmlFor="ff-period">{t("ffReportingPeriod")}</label>
-            <div className="relative mt-1.5">
-              <SearchableSelect
-                value={periodId}
-                onChange={setPeriodId}
-                options={periodList.map((p) => ({
-                  value: p.periodId,
-                  code: p.periodCode,
-                  name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
-                  label: t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) }),
-                }))}
-                columnHeaders={["Period", "Dates"]}
-                columns={[
-                  { key: "code", label: "Period" },
-                  { key: "name", label: "Dates" },
-                ]}
-                placeholder={t("ffPeriodCovering")}
-                searchPlaceholder="Search period…"
-                triggerClassName="nf-input-sm w-full h-9"
-              />
-              <select
-                id="ff-period"
-                value={periodId}
-                onChange={(e) => setPeriodId(e.target.value)}
-                tabIndex={-1}
-                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-              >
-                <option value="">{t("ffPeriodCovering")}</option>
-                {periodList.map((p) => (
-                  <option key={p.periodId} value={p.periodId}>{t("ffPeriodOption", { code: p.periodCode, from: formatDateShort(p.startDate), to: formatDateShort(p.endDate) })}</option>
-                ))}
-              </select>
+          {view === 'PERIOD' ? (
+            <div className="w-56 shrink-0">
+              <label className={labelCls} htmlFor="ff-period">
+                {t('ffReportingPeriod')}
+              </label>
+              <div className="relative mt-1.5">
+                <SearchableSelect
+                  value={periodId}
+                  onChange={setPeriodId}
+                  options={periodList.map((p) => ({
+                    value: p.periodId,
+                    code: p.periodCode,
+                    name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
+                    label: t('ffPeriodOption', {
+                      code: p.periodCode,
+                      from: formatDateShort(p.startDate),
+                      to: formatDateShort(p.endDate),
+                    }),
+                  }))}
+                  columnHeaders={['Period', 'Dates']}
+                  columns={[
+                    { key: 'code', label: 'Period' },
+                    { key: 'name', label: 'Dates' },
+                  ]}
+                  placeholder={t('ffPeriodCovering')}
+                  searchPlaceholder="Search period…"
+                  triggerClassName="nf-input-sm w-full h-9"
+                />
+                <select
+                  id="ff-period"
+                  value={periodId}
+                  onChange={(e) => setPeriodId(e.target.value)}
+                  tabIndex={-1}
+                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                >
+                  <option value="">{t('ffPeriodCovering')}</option>
+                  {periodList.map((p) => (
+                    <option key={p.periodId} value={p.periodId}>
+                      {t('ffPeriodOption', {
+                        code: p.periodCode,
+                        from: formatDateShort(p.startDate),
+                        to: formatDateShort(p.endDate),
+                      })}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
-        ) : (
-          <div>
-            <label className={labelCls} htmlFor="ff-from">{t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")}</label>
-            <input id="ff-from" type="date" value={shownFrom} min={shownPlanning || undefined} onChange={(e) => setDateFrom(clampToPlanning(e.target.value, shownPlanning))} className="nf-input-sm mt-1.5" style={inputStyle} />
-          </div>
-        )}
-        {view === "CUSTOM" && (
-          <div>
-            <label className={labelCls} htmlFor="ff-to">{t("ffDateTo")}</label>
-            <input id="ff-to" type="date" value={shownTo} min={shownPlanning || undefined} onChange={(e) => setDateTo(clampToPlanning(e.target.value, shownPlanning))} className="nf-input-sm mt-1.5" style={inputStyle} />
-          </div>
-        )}
+          ) : (
+            <div>
+              <label className={labelCls} htmlFor="ff-from">
+                {t(
+                  view === 'DAILY'
+                    ? 'ffDate'
+                    : view === 'WEEKLY'
+                      ? 'ffWeekStart'
+                      : 'ffDateFrom',
+                )}
+              </label>
+              <input
+                id="ff-from"
+                type="date"
+                value={shownFrom}
+                min={shownPlanning || undefined}
+                onChange={(e) =>
+                  setDateFrom(clampToPlanning(e.target.value, shownPlanning))
+                }
+                className="nf-input-sm mt-1.5"
+                style={inputStyle}
+              />
+            </div>
+          )}
+          {view === 'CUSTOM' && (
+            <div>
+              <label className={labelCls} htmlFor="ff-to">
+                {t('ffDateTo')}
+              </label>
+              <input
+                id="ff-to"
+                type="date"
+                value={shownTo}
+                min={shownPlanning || undefined}
+                onChange={(e) =>
+                  setDateTo(clampToPlanning(e.target.value, shownPlanning))
+                }
+                className="nf-input-sm mt-1.5"
+                style={inputStyle}
+              />
+            </div>
+          )}
         </div>
-        {farm.loaded && !farm.failed && !noFarms && (farmId || farm.isFixed) && (
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {calculationState === "EMPTY" && !savedRunFailed && (
-              <Button size="sm" onClick={calculate} disabled={!farmId || loading || (view === "PERIOD" && !periodId)}>
-                {loading ? t("ffCalculating") : t("ffCalculate")}
-              </Button>
-            )}
-            {canSaveRun && calculationState === "CALCULATED" && (
-              <>
-                <Button size="sm" onClick={saveRun} disabled={!data || loading || savingRun}>
-                  {savingRun ? t("ffSavingRun") : t("ffSaveRun")}
+        {farm.loaded &&
+          !farm.failed &&
+          !noFarms &&
+          (farmId || farm.isFixed) && (
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {calculationState === 'EMPTY' && !savedRunFailed && (
+                <Button
+                  size="sm"
+                  onClick={calculate}
+                  disabled={
+                    !farmId || loading || (view === 'PERIOD' && !periodId)
+                  }
+                >
+                  {loading ? t('ffCalculating') : t('ffCalculate')}
                 </Button>
-                {data?.rows?.some((row) => Number(row.recommendedQtyKg ?? 0) > 0) && (
-                  <Button size="sm" variant="outline" onClick={() => { setCreateAfterSave(true); void saveRun(); }} disabled={!data || loading || savingRun}>
-                    {t("rqCreateFromSaved")}
+              )}
+              {canSaveRun && calculationState === 'CALCULATED' && (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={saveRun}
+                    disabled={!data || loading || savingRun}
+                  >
+                    {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
                   </Button>
-                )}
-              </>
-            )}
-            {calculationState === "SAVED" && !historicalRun && (
-              <>
-                {currentRun?.existingRequisitionId && (
-                  <Button size="sm" onClick={() => setFromRunOpen(true)}>
-                    {t("rqViewRequisition")}
-                  </Button>
-                )}
-                {canSaveRun && !currentRun?.existingRequisitionId && currentRun?.canCreateRequisition && (
-                  <Button size="sm" onClick={() => setFromRunOpen(true)}>{t("rqCreateFromSaved")}</Button>
-                )}
-                {canSaveRun && <Button size="sm" variant="outline" onClick={deleteCalculation}>{t("ffDeleteCalculation")}</Button>}
-              </>
-            )}
-            {historicalRun && <Button size="sm" variant="outline" onClick={() => { setHistoricalRun(false); setCurrentRun(null); setData(null); setCalculationState("EMPTY"); }}>{"Return to current calculation"}</Button>}
-          </div>
-        )}
+                  {data?.rows?.some(
+                    (row) => Number(row.recommendedQtyKg ?? 0) > 0,
+                  ) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setCreateAfterSave(true);
+                        void saveRun();
+                      }}
+                      disabled={!data || loading || savingRun}
+                    >
+                      {t('rqCreateFromSaved')}
+                    </Button>
+                  )}
+                </>
+              )}
+              {calculationState === 'SAVED' && !historicalRun && (
+                <>
+                  {currentRun?.existingRequisitionId && (
+                    <Button size="sm" onClick={() => setFromRunOpen(true)}>
+                      {t('rqViewRequisition')}
+                    </Button>
+                  )}
+                  {canSaveRun &&
+                    !currentRun?.existingRequisitionId &&
+                    currentRun?.canCreateRequisition && (
+                      <Button size="sm" onClick={() => setFromRunOpen(true)}>
+                        {t('rqCreateFromSaved')}
+                      </Button>
+                    )}
+                  {canSaveRun && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={deleteCalculation}
+                    >
+                      {t('ffDeleteCalculation')}
+                    </Button>
+                  )}
+                </>
+              )}
+              {historicalRun && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setHistoricalRun(false);
+                    setCurrentRun(null);
+                    setData(null);
+                    setCalculationState('EMPTY');
+                  }}
+                >
+                  {'Return to current calculation'}
+                </Button>
+              )}
+            </div>
+          )}
       </div>
 
-      {view === "PERIOD" && !!farmId && periodsFailed && <InlineAlert>{t("ffPeriodsLoadFailed")}</InlineAlert>}
-      {view === "PERIOD" && !!farmId && !periodsFailed && periods !== null && periodList.length === 0 && (
+      {view === 'PERIOD' && !!farmId && periodsFailed && (
+        <InlineAlert>{t('ffPeriodsLoadFailed')}</InlineAlert>
+      )}
+      {view === 'PERIOD' &&
+        !!farmId &&
+        !periodsFailed &&
+        periods !== null &&
+        periodList.length === 0 && (
+          <InlineAlert variant="info">
+            <span className="mr-3">{t('ffNoPeriods')}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={generatePeriods}
+              disabled={generating || isTenantWorkspace}
+            >
+              {t('ffGenerateDraftPeriods', { year: businessYear })}
+            </Button>
+            {isTenantWorkspace && (
+              <span
+                className="ml-3 text-xs"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {t('ffGenerateNeedsCompany')}
+              </span>
+            )}
+          </InlineAlert>
+        )}
+      {rangeBeforePlanning && (
         <InlineAlert variant="info">
-          <span className="mr-3">{t("ffNoPeriods")}</span>
-          <Button size="sm" variant="outline" onClick={generatePeriods} disabled={generating || isTenantWorkspace}>
-            {t("ffGenerateDraftPeriods", { year: businessYear })}
-          </Button>
-          {isTenantWorkspace && <span className="ml-3 text-xs" style={{ color: "var(--text-secondary)" }}>{t("ffGenerateNeedsCompany")}</span>}
+          {t('ffNoteRangeBeforePlanning', {
+            date: formatDateShort(data!.planningDate),
+          })}
         </InlineAlert>
       )}
-      {rangeBeforePlanning && <InlineAlert variant="info">{t("ffNoteRangeBeforePlanning", { date: formatDateShort(data!.planningDate) })}</InlineAlert>}
-      {rangeStartsAtPlanning && <InlineAlert variant="info">{t("ffNoteRangeStartsAtPlanning", { date: formatDateShort(data!.forecastFrom!) })}</InlineAlert>}
+      {rangeStartsAtPlanning && (
+        <InlineAlert variant="info">
+          {t('ffNoteRangeStartsAtPlanning', {
+            date: formatDateShort(data!.forecastFrom!),
+          })}
+        </InlineAlert>
+      )}
 
       {farm.failed ? (
         // The request failed: say so and offer to try again. "No farms to show."
         // would claim this user has none, which is a different fact.
         <InlineAlert>
-          <span className="mr-3">{t("ffFarmsLoadFailed")}</span>
-          <Button size="sm" variant="outline" onClick={farm.retry}>{t("ffRetry")}</Button>
+          <span className="mr-3">{t('ffFarmsLoadFailed')}</span>
+          <Button size="sm" variant="outline" onClick={farm.retry}>
+            {t('ffRetry')}
+          </Button>
         </InlineAlert>
       ) : !farm.loaded ? (
-        <LoadingState label={t("ffLoading")} />
+        <LoadingState label={t('ffLoading')} />
       ) : noFarms || (!farmId && !farm.isFixed) ? (
-        <EmptyState title={t("ffNoFarms")} />
+        <EmptyState title={t('ffNoFarms')} />
       ) : (
         <>
           {data ? (
             <>
-              <FeedForecastGrid rows={rows} sourceBalances={sourceBalances} view={data.view} from={data.from} loading={loading} t={t} />
+              <FeedForecastGrid
+                rows={rows}
+                sourceBalances={sourceBalances}
+                view={data.view}
+                from={data.from}
+                loading={loading}
+                t={t}
+              />
               <FeedForecastNotes flags={flags} t={t} compact />
             </>
-          ) : loading ? <LoadingState label={t("ffLoading")} /> : savedRunFailed ? (
+          ) : loading ? (
+            <LoadingState label={t('ffLoading')} />
+          ) : savedRunFailed ? (
             <InlineAlert>
-              <span className="mr-3">{t("ffSavedRunLoadFailed")}</span>
-              <Button size="sm" variant="outline" onClick={() => setSavedRunReload((n) => n + 1)}>{t("ffRetry")}</Button>
+              <span className="mr-3">{t('ffSavedRunLoadFailed')}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setSavedRunReload((n) => n + 1)}
+              >
+                {t('ffRetry')}
+              </Button>
             </InlineAlert>
-          ) : <EmptyState title={t("ffCalculatePrompt")} />}
-          {!!farmId && <FeedForecastRunHistory farmId={farmId} reloadToken={runHistoryReload} compact />}
+          ) : (
+            <EmptyState title={t('ffCalculatePrompt')} />
+          )}
+          {!!farmId && (
+            <FeedForecastRunHistory
+              farmId={farmId}
+              reloadToken={runHistoryReload}
+              compact
+            />
+          )}
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}
             runId={currentRun?.run_id ?? currentRun?.runId ?? null}
@@ -564,12 +830,25 @@ function FeedForecastPanelContent() {
             onView={(view) => {
               setFromRunOpen(false);
               setCreatedRequisition(view);
-              setCurrentRun((run) => run ? { ...run, existingRequisitionId: view.requisition_id } : run);
+              setCurrentRun((run) =>
+                run
+                  ? { ...run, existingRequisitionId: view.requisition_id }
+                  : run,
+              );
             }}
           />
           {createdRequisition && (
-            <Dialog open onClose={() => setCreatedRequisition(null)} title={createdRequisition.req_no}>
-              <FeedRequisitionDetail embedded view={createdRequisition} onView={setCreatedRequisition} onBack={() => setCreatedRequisition(null)} />
+            <Dialog
+              open
+              onClose={() => setCreatedRequisition(null)}
+              title={createdRequisition.req_no}
+            >
+              <FeedRequisitionDetail
+                embedded
+                view={createdRequisition}
+                onView={setCreatedRequisition}
+                onBack={() => setCreatedRequisition(null)}
+              />
             </Dialog>
           )}
         </>

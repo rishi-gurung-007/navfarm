@@ -1,21 +1,21 @@
-"use client";
+'use client';
 
-import { Globe, ChevronDown } from "lucide-react";
-import { useLanguage } from "../../hooks/useLanguage";
-import { Select } from "./select";
+import { Globe, ChevronDown } from 'lucide-react';
+import { useLanguage } from '../../hooks/useLanguage';
+import { Select } from './select';
 
 // Each language's own name, in its own script — not the English name and
 // not a 2-letter code — so a reader who can't read English can still find
 // their language in the list.
 const NATIVE_NAMES: Record<string, string> = {
-  en: "English",
-  hi: "हिन्दी",
-  mr: "मराठी",
-  es: "Español",
-  fr: "Français",
-  bn: "বাংলা",
-  te: "తెలుగు",
-  ta: "தமிழ்",
+  en: 'English',
+  hi: 'हिन्दी',
+  mr: 'मराठी',
+  es: 'Español',
+  fr: 'Français',
+  bn: 'বাংলা',
+  te: 'తెలుగు',
+  ta: 'தமிழ்',
 };
 
 /**
@@ -35,7 +35,7 @@ export function LanguageSelector() {
         value={language}
         fullWidth={false}
         onChange={(e) => setLanguage(e.target.value as any)}
-        aria-label={t("settingsLanguage")}
+        aria-label={t('settingsLanguage')}
         className="nf-lang-select"
       >
         {Object.entries(NATIVE_NAMES).map(([code, name]) => (

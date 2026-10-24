@@ -1,6 +1,6 @@
 'use client';
 
-import { NA } from "@/utils/na";
+import { NA } from '@/utils/na';
 import { Badge } from '@/components/ui/badge';
 import { InlineAlert } from '@/components/ui/alert';
 import {

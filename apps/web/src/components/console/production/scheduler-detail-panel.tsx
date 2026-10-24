@@ -1,74 +1,136 @@
-"use client";
+'use client';
 
-import { NA } from "@/utils/na";
-import { useEffect, useState, useMemo } from "react";
-import { Plus, Loader2, Trash2, Pencil, ChevronDown, ChevronUp, Copy } from "lucide-react";
-import { api } from "@/services/api-client";
-import { Button } from "@/components/ui/button";
-import { InlineAlert } from "@/components/ui/alert";
-import { Toast } from "@/components/ui/toast";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { useLanguage } from "@/hooks/useLanguage";
-import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
-import { formatDecimal, formatQuantity, toInputNumber } from "@/lib/utils";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { DAYS_OF_WEEK_OPTIONS, DAYS_OF_MONTH_OPTIONS } from "./create-scheduler-modal";
-import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
-import { confirmAction } from "@/components/ui/confirm-dialog";
+import { NA } from '@/utils/na';
+import { useEffect, useState, useMemo } from 'react';
+import {
+  Plus,
+  Loader2,
+  Trash2,
+  Pencil,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import { Button } from '@/components/ui/button';
+import { InlineAlert } from '@/components/ui/alert';
+import { Toast } from '@/components/ui/toast';
+import { StatusBadge } from '@/components/ui/status-badge';
+import {
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import { useLanguage } from '@/hooks/useLanguage';
+import { findConflictingSchedulerLine } from './scheduler-line-overlap';
+import { formatDecimal, formatQuantity, toInputNumber } from '@/lib/utils';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import {
+  DAYS_OF_WEEK_OPTIONS,
+  DAYS_OF_MONTH_OPTIONS,
+} from './create-scheduler-modal';
+import CopyActivitiesDialog, { CopySourceType } from './copy-activities-dialog';
+import { confirmAction } from '@/components/ui/confirm-dialog';
 
 type Row = Record<string, any>;
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  raised: { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  raised: {
+    backgroundColor: 'var(--surface-raised)',
+    borderColor: 'var(--border)',
+  },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
+  input: {
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--input-text)',
+    borderColor: 'var(--input-border)',
+  },
 };
 
-const inputCls = "nf-input";
+const inputCls = 'nf-input';
 
-const LINE_TYPES = ["CONSUMPTION", "OUTPUT", "DESCRIPTIVE", "OVERHEAD", "RESOURCE", "TRANSFER"];
-const OCCURRENCES = ["DAILY", "WEEKLY", "MONTHLY", "ONCE", "CUSTOM"];
-const QTY_BASES = ["PER_HEAD", "TOTAL_BATCH"];
-const OUTPUT_BASES = ["PER_SOW", "PER_PEN", "PER_BATCH"];
-const ALERT_SEVERITIES = ["INFO", "WARNING", "CRITICAL"];
-const KPI_METRICS = [
-  "BODY_WEIGHT", "FCR", "ADG", "BCS_SCORE", "MORTALITY_COUNT", "TEMPERATURE",
-  "HEAD_COUNT", "LITTER_SIZE", "WEANING_WEIGHT", "PIGLETS_BORN", "SEMEN_MOTILITY",
-  "EGG_COUNT", "MILK_LITRES", "CUSTOM",
+const LINE_TYPES = [
+  'CONSUMPTION',
+  'OUTPUT',
+  'DESCRIPTIVE',
+  'OVERHEAD',
+  'RESOURCE',
+  'TRANSFER',
 ];
-const CAPTURE_PERS = ["AVERAGE", "TOTAL", "PER_HEAD"];
+const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'];
+const QTY_BASES = ['PER_HEAD', 'TOTAL_BATCH'];
+const OUTPUT_BASES = ['PER_SOW', 'PER_PEN', 'PER_BATCH'];
+const ALERT_SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'];
+const KPI_METRICS = [
+  'BODY_WEIGHT',
+  'FCR',
+  'ADG',
+  'BCS_SCORE',
+  'MORTALITY_COUNT',
+  'TEMPERATURE',
+  'HEAD_COUNT',
+  'LITTER_SIZE',
+  'WEANING_WEIGHT',
+  'PIGLETS_BORN',
+  'SEMEN_MOTILITY',
+  'EGG_COUNT',
+  'MILK_LITRES',
+  'CUSTOM',
+];
+const CAPTURE_PERS = ['AVERAGE', 'TOTAL', 'PER_HEAD'];
 
 const KPI_UOM_MAP: Record<string, string> = {
-  BODY_WEIGHT: "KG",
-  ADG: "GRAM",
-  FCR: "RATIO",
-  MORTALITY_COUNT: "HEAD",
-  HEAD_COUNT: "HEAD",
-  BCS_SCORE: "SCORE",
-  TEMPERATURE: "CELSIUS",
-  LITTER_SIZE: "HEAD",
-  WEANING_WEIGHT: "KG",
-  PIGLETS_BORN: "HEAD",
-  SEMEN_MOTILITY: "PCT",
-  EGG_COUNT: "HEAD",
-  MILK_LITRES: "LITRE",
+  BODY_WEIGHT: 'KG',
+  ADG: 'GRAM',
+  FCR: 'RATIO',
+  MORTALITY_COUNT: 'HEAD',
+  HEAD_COUNT: 'HEAD',
+  BCS_SCORE: 'SCORE',
+  TEMPERATURE: 'CELSIUS',
+  LITTER_SIZE: 'HEAD',
+  WEANING_WEIGHT: 'KG',
+  PIGLETS_BORN: 'HEAD',
+  SEMEN_MOTILITY: 'PCT',
+  EGG_COUNT: 'HEAD',
+  MILK_LITRES: 'LITRE',
 };
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 const emptyLine = () => ({
-  line_type: "CONSUMPTION", activity_name: "", occurrence: "DAILY", start_day: 1, end_day: "",
-  day_of_week: "", custom_days: "", is_mandatory: false, item_id: "", item_description: "",
-  standard_qty: "", qty_basis: "PER_HEAD", output_basis: "PER_BATCH", kpi_metric: "BODY_WEIGHT", kpi_uom: "KG",
-  std_value: "", capture_per: "AVERAGE", lower_alert_limit: "", upper_alert_limit: "",
-  alert_severity: "WARNING", overhead_category: "", resource_id: "",
-  allow_qty_edit: true, lot_required: false, creates_inventory: false, output_lot_auto: true,
+  line_type: 'CONSUMPTION',
+  activity_name: '',
+  occurrence: 'DAILY',
+  start_day: 1,
+  end_day: '',
+  day_of_week: '',
+  custom_days: '',
+  is_mandatory: false,
+  item_id: '',
+  item_description: '',
+  standard_qty: '',
+  qty_basis: 'PER_HEAD',
+  output_basis: 'PER_BATCH',
+  kpi_metric: 'BODY_WEIGHT',
+  kpi_uom: 'KG',
+  std_value: '',
+  capture_per: 'AVERAGE',
+  lower_alert_limit: '',
+  upper_alert_limit: '',
+  alert_severity: 'WARNING',
+  overhead_category: '',
+  resource_id: '',
+  allow_qty_edit: true,
+  lot_required: false,
+  creates_inventory: false,
+  output_lot_auto: true,
 });
 
 interface SchedulerDetailPanelProps {
@@ -81,16 +143,22 @@ interface SchedulerDetailPanelProps {
   items?: Row[];
   resources?: Row[];
   /** "system" shows a system scheduler (no batch, dates or status cycle) through the same line table and form. */
-  kind?: "batch" | "system";
+  kind?: 'batch' | 'system';
 }
 
-export default function SchedulerDetailPanel({ schedulerId, onChanged, items: itemsProp, resources: resourcesProp, kind = "batch" }: SchedulerDetailPanelProps) {
+export default function SchedulerDetailPanel({
+  schedulerId,
+  onChanged,
+  items: itemsProp,
+  resources: resourcesProp,
+  kind = 'batch',
+}: SchedulerDetailPanelProps) {
   const { t } = useLanguage();
-  const isSystem = kind === "system";
-  const apiBase = isSystem ? "/system-scheduler" : "/scheduler-header";
+  const isSystem = kind === 'system';
+  const apiBase = isSystem ? '/system-scheduler' : '/scheduler-header';
   const [header, setHeader] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [acting, setActing] = useState(false);
 
   const [items, setItems] = useState<Row[]>(itemsProp || []);
@@ -99,7 +167,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   const [addingLine, setAddingLine] = useState(false);
   const [lineForm, setLineForm] = useState<Row>(emptyLine());
-  const [lineError, setLineError] = useState("");
+  const [lineError, setLineError] = useState('');
   const [savingLine, setSavingLine] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
 
@@ -114,9 +182,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       (it) =>
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
-          it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVING_ASSET") ||
-        it.item_id === lineForm.item_id
+          it.is_biological_asset !== '1' &&
+          it.item_type !== 'LIVING_ASSET') ||
+        it.item_id === lineForm.item_id,
     );
   }, [items, lineForm.item_id]);
 
@@ -125,19 +193,22 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       (it) =>
         Boolean(it.is_biological_asset) ||
         it.is_biological_asset === 1 ||
-        it.is_biological_asset === "1" ||
-        it.item_type === "LIVING_ASSET" ||
-        it.item_id === lineForm.item_id
+        it.is_biological_asset === '1' ||
+        it.item_type === 'LIVING_ASSET' ||
+        it.item_id === lineForm.item_id,
     );
   }, [items, lineForm.item_id]);
 
   const load = () => {
     if (!schedulerId) return;
     setLoading(true);
-    setError("");
-    api.get(`${apiBase}/${schedulerId}`)
+    setError('');
+    api
+      .get(`${apiBase}/${schedulerId}`)
       .then((r) => setHeader(unwrap<Row>(r)))
-      .catch((err: any) => setError(err?.message || "Could not load the scheduler."))
+      .catch((err: any) =>
+        setError(err?.message || 'Could not load the scheduler.'),
+      )
       .finally(() => setLoading(false));
   };
 
@@ -146,30 +217,51 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   useEffect(() => {
     if (itemsProp || resourcesProp || !header) return;
     const params = new URLSearchParams();
-    if (header.company_id) params.set("companyId", header.company_id);
-    if (header.nob_id) params.set("nobId", header.nob_id);
-    if (header.lob_id) params.set("lobId", header.lob_id);
-    params.set("limit", "500");
+    if (header.company_id) params.set('companyId', header.company_id);
+    if (header.nob_id) params.set('nobId', header.nob_id);
+    if (header.lob_id) params.set('lobId', header.lob_id);
+    params.set('limit', '500');
     const qs = params.toString();
-    if (!itemsProp) api.get(`/item?${qs}&isActive=true&isBlocked=false`).then((r) => setItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => setItems([]));
-    if (!resourcesProp) api.get(`/resource?${qs}`).then((r) => setResources(unwrap<Row[]>(r) || [])).catch(() => setResources([]));
-    api.get(`/activity?isActive=true&limit=500`).then((r) => setActivities(unwrap<Row[]>(r) || [])).catch(() => setActivities([]));
+    if (!itemsProp)
+      api
+        .get(`/item?${qs}&isActive=true&isBlocked=false`)
+        .then((r) =>
+          setItems(
+            (unwrap<Row[]>(r) || []).filter(
+              (i) => !i.is_blocked && i.is_active !== false,
+            ),
+          ),
+        )
+        .catch(() => setItems([]));
+    if (!resourcesProp)
+      api
+        .get(`/resource?${qs}`)
+        .then((r) => setResources(unwrap<Row[]>(r) || []))
+        .catch(() => setResources([]));
+    api
+      .get(`/activity?isActive=true&limit=500`)
+      .then((r) => setActivities(unwrap<Row[]>(r) || []))
+      .catch(() => setActivities([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [header?.scheduler_id ?? header?.system_scheduler_id]);
 
-  const itemLabel = (id: string) => items.find((i) => i.item_id === id)?.item_name || id;
-  const resourceLabel = (id: string) => resources.find((r) => r.resource_id === id)?.resource_name || id;
+  const itemLabel = (id: string) =>
+    items.find((i) => i.item_id === id)?.item_name || id;
+  const resourceLabel = (id: string) =>
+    resources.find((r) => r.resource_id === id)?.resource_name || id;
 
   const runStatusChange = async (status: string) => {
     if (!header) return;
     setActing(true);
-    setError("");
+    setError('');
     try {
-      await api.put(`/scheduler-header/${header.scheduler_id}/status`, { scheduler_status: status });
+      await api.put(`/scheduler-header/${header.scheduler_id}/status`, {
+        scheduler_status: status,
+      });
       load();
       onChanged?.();
     } catch (err: any) {
-      setError(err?.message || "Could not update the scheduler status.");
+      setError(err?.message || 'Could not update the scheduler status.');
     } finally {
       setActing(false);
     }
@@ -178,13 +270,15 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   const toggleSystemActive = async () => {
     if (!header) return;
     setActing(true);
-    setError("");
+    setError('');
     try {
-      await api.patch(`/system-scheduler/${schedulerId}`, { is_active: !header.is_active });
+      await api.patch(`/system-scheduler/${schedulerId}`, {
+        is_active: !header.is_active,
+      });
       load();
       onChanged?.();
     } catch (err: any) {
-      setError(err?.message || "Could not update the system scheduler.");
+      setError(err?.message || 'Could not update the system scheduler.');
     } finally {
       setActing(false);
     }
@@ -193,7 +287,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
   const openAddLine = () => {
     setEditingLineId(null);
     setLineForm(emptyLine());
-    setLineError("");
+    setLineError('');
     setAddingLine(true);
   };
 
@@ -202,9 +296,11 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     setLineForm({
       ...emptyLine(),
       ...line,
-      custom_days: (line.custom_days || []).map((d: Row) => d.day_number).join(", "),
-      end_day: line.end_day ?? "",
-      day_of_week: line.day_of_week ?? "",
+      custom_days: (line.custom_days || [])
+        .map((d: Row) => d.day_number)
+        .join(', '),
+      end_day: line.end_day ?? '',
+      day_of_week: line.day_of_week ?? '',
       // Edit boxes get the stored number without its padding zeros ("2.500000" -> 2.5), never rounded.
       std_value: toInputNumber(line.std_value),
       standard_qty: toInputNumber(line.standard_qty),
@@ -214,7 +310,7 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       allow_qty_edit: line.allow_qty_edit !== false,
       output_lot_auto: line.output_lot_auto !== false,
     });
-    setLineError("");
+    setLineError('');
     setAddingLine(true);
   };
 
@@ -227,21 +323,30 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       if (act) {
         if (act.default_occurrence) updated.occurrence = act.default_occurrence;
         if (act.default_qty_basis) updated.qty_basis = act.default_qty_basis;
-        if (act.default_output_basis) updated.output_basis = act.default_output_basis;
+        if (act.default_output_basis)
+          updated.output_basis = act.default_output_basis;
         if (act.default_kpi_metric) updated.kpi_metric = act.default_kpi_metric;
-        if (act.default_capture_per) updated.capture_per = act.default_capture_per;
-        if (act.default_overhead_category) updated.overhead_category = act.default_overhead_category;
+        if (act.default_capture_per)
+          updated.capture_per = act.default_capture_per;
+        if (act.default_overhead_category)
+          updated.overhead_category = act.default_overhead_category;
         if (act.default_gl_account) updated.gl_account = act.default_gl_account;
-        if (act.default_is_mandatory !== undefined) updated.is_mandatory = !!act.default_is_mandatory;
-        if (act.default_lot_required !== undefined) updated.lot_required = !!act.default_lot_required;
+        if (act.default_is_mandatory !== undefined)
+          updated.is_mandatory = !!act.default_is_mandatory;
+        if (act.default_lot_required !== undefined)
+          updated.lot_required = !!act.default_lot_required;
         if (act.default_item_id && !f.item_id) {
           updated.item_id = act.default_item_id;
-          const matchedItem = items.find((it) => it.item_id === act.default_item_id);
+          const matchedItem = items.find(
+            (it) => it.item_id === act.default_item_id,
+          );
           if (matchedItem) updated.item_description = matchedItem.item_name;
         }
         if (act.default_resource_id && !f.resource_id) {
           updated.resource_id = act.default_resource_id;
-          const matchedRes = resources.find((r) => r.resource_id === act.default_resource_id);
+          const matchedRes = resources.find(
+            (r) => r.resource_id === act.default_resource_id,
+          );
           if (matchedRes) updated.resource_name = matchedRes.resource_name;
         }
       }
@@ -253,84 +358,105 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
     if (!header) return;
 
     // Check for conflicting lines (same item/resource/metric with overlapping time period)
-    const otherLines = (header.lines || []).filter((l: Row) => l.line_id !== editingLineId);
-    const conflict = findConflictingSchedulerLine(lineForm, otherLines, { items, resources });
+    const otherLines = (header.lines || []).filter(
+      (l: Row) => l.line_id !== editingLineId,
+    );
+    const conflict = findConflictingSchedulerLine(lineForm, otherLines, {
+      items,
+      resources,
+    });
     if (conflict) {
       setLineError(conflict.message);
       return;
     }
 
-    if (lineForm.occurrence === "WEEKLY") {
+    if (lineForm.occurrence === 'WEEKLY') {
       if (!lineForm.day_of_week) {
-        setLineError("Day of Week (1-7) is required for Weekly occurrence.");
+        setLineError('Day of Week (1-7) is required for Weekly occurrence.');
         return;
       }
       const dow = Number(lineForm.day_of_week);
       if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
-        setLineError("Day of Week must be between 1 (Monday) and 7 (Sunday).");
+        setLineError('Day of Week must be between 1 (Monday) and 7 (Sunday).');
         return;
       }
     }
-    if (lineForm.occurrence === "MONTHLY") {
+    if (lineForm.occurrence === 'MONTHLY') {
       if (!lineForm.day_of_week) {
-        setLineError("Day of Month (1-28) is required for Monthly occurrence.");
+        setLineError('Day of Month (1-28) is required for Monthly occurrence.');
         return;
       }
       const dom = Number(lineForm.day_of_week);
       if (!Number.isInteger(dom) || dom < 1 || dom > 28) {
-        setLineError("Day of Month must be between 1 and 28.");
+        setLineError('Day of Month must be between 1 and 28.');
         return;
       }
     }
 
     setSavingLine(true);
-    setLineError("");
+    setLineError('');
     try {
-      const customDays = String(lineForm.custom_days || "")
-        .split(",").map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !Number.isNaN(n));
+      const customDays = String(lineForm.custom_days || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !Number.isNaN(n));
       const payload: Row = {
         line_type: lineForm.line_type,
         activity_name: lineForm.activity_name,
         occurrence: lineForm.occurrence,
         start_day: Number(lineForm.start_day) || 1,
-        end_day: lineForm.end_day === "" ? null : Number(lineForm.end_day),
-        day_of_week: lineForm.day_of_week === "" ? null : Number(lineForm.day_of_week),
-        custom_days: lineForm.occurrence === "CUSTOM" ? customDays : undefined,
+        end_day: lineForm.end_day === '' ? null : Number(lineForm.end_day),
+        day_of_week:
+          lineForm.day_of_week === '' ? null : Number(lineForm.day_of_week),
+        custom_days: lineForm.occurrence === 'CUSTOM' ? customDays : undefined,
         is_mandatory: !!lineForm.is_mandatory,
       };
-      if (["CONSUMPTION", "OUTPUT", "TRANSFER"].includes(lineForm.line_type)) {
+      if (['CONSUMPTION', 'OUTPUT', 'TRANSFER'].includes(lineForm.line_type)) {
         payload.item_id = lineForm.item_id || null;
         payload.item_description = lineForm.item_description || null;
-        payload.standard_qty = lineForm.standard_qty === "" ? null : Number(lineForm.standard_qty);
+        payload.standard_qty =
+          lineForm.standard_qty === '' ? null : Number(lineForm.standard_qty);
         payload.allow_qty_edit = !!lineForm.allow_qty_edit;
       }
-      if (lineForm.line_type === "CONSUMPTION") {
+      if (lineForm.line_type === 'CONSUMPTION') {
         payload.qty_basis = lineForm.qty_basis || null;
         payload.lot_required = !!lineForm.lot_required;
       }
-      if (lineForm.line_type === "OUTPUT") {
+      if (lineForm.line_type === 'OUTPUT') {
         payload.output_basis = lineForm.output_basis || null;
         payload.creates_inventory = !!lineForm.creates_inventory;
         payload.output_lot_auto = !!lineForm.output_lot_auto;
       }
-      if (lineForm.line_type === "DESCRIPTIVE") {
+      if (lineForm.line_type === 'DESCRIPTIVE') {
         payload.kpi_metric = lineForm.kpi_metric || null;
         payload.kpi_uom = lineForm.kpi_uom || null;
-        payload.std_value = lineForm.std_value === "" ? null : Number(lineForm.std_value);
+        payload.std_value =
+          lineForm.std_value === '' ? null : Number(lineForm.std_value);
         payload.capture_per = lineForm.capture_per || null;
-        payload.lower_alert_limit = lineForm.lower_alert_limit === "" ? null : Number(lineForm.lower_alert_limit);
-        payload.upper_alert_limit = lineForm.upper_alert_limit === "" ? null : Number(lineForm.upper_alert_limit);
-        payload.alert_severity = lineForm.alert_severity || "WARNING";
+        payload.lower_alert_limit =
+          lineForm.lower_alert_limit === ''
+            ? null
+            : Number(lineForm.lower_alert_limit);
+        payload.upper_alert_limit =
+          lineForm.upper_alert_limit === ''
+            ? null
+            : Number(lineForm.upper_alert_limit);
+        payload.alert_severity = lineForm.alert_severity || 'WARNING';
       }
-      if (lineForm.line_type === "OVERHEAD") {
+      if (lineForm.line_type === 'OVERHEAD') {
         payload.overhead_category = lineForm.overhead_category || null;
       }
-      if (lineForm.line_type === "RESOURCE") {
+      if (lineForm.line_type === 'RESOURCE') {
         payload.resource_id = lineForm.resource_id || null;
       }
 
       if (editingLineId) {
-        await api.put(`${apiBase}/${schedulerId}/lines/${editingLineId}`, payload);
+        await api.put(
+          `${apiBase}/${schedulerId}/lines/${editingLineId}`,
+          payload,
+        );
       } else {
         await api.post(`${apiBase}/${schedulerId}/lines`, payload);
       }
@@ -338,33 +464,50 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       load();
       onChanged?.();
     } catch (err: any) {
-      setLineError(err?.message || "Could not save this line.");
+      setLineError(err?.message || 'Could not save this line.');
     } finally {
       setSavingLine(false);
     }
   };
 
   /** Fills this (empty) scheduler from the one picked in the copy dialog; the API refuses once it has a line. */
-  const copyActivities = async (sourceType: CopySourceType, sourceId: string) => {
-    await api.post(`${apiBase}/${schedulerId}/copy-lines`, { source_type: sourceType, source_id: sourceId });
+  const copyActivities = async (
+    sourceType: CopySourceType,
+    sourceId: string,
+  ) => {
+    await api.post(`${apiBase}/${schedulerId}/copy-lines`, {
+      source_type: sourceType,
+      source_id: sourceId,
+    });
     load();
     onChanged?.();
   };
 
   const deactivateLine = async (line: Row) => {
     if (!header) return;
-    if (!(await confirmAction({ title: t("cfRemoveActivityTitle"), message: t("scConfirmDeactivateLine"), tone: "danger" }))) return;
+    if (
+      !(await confirmAction({
+        title: t('cfRemoveActivityTitle'),
+        message: t('scConfirmDeactivateLine'),
+        tone: 'danger',
+      }))
+    )
+      return;
     try {
       await api.delete(`${apiBase}/${schedulerId}/lines/${line.line_id}`);
       load();
       onChanged?.();
     } catch (err: any) {
-      setError(err?.message || "Could not deactivate this line.");
+      setError(err?.message || 'Could not deactivate this line.');
     }
   };
 
   if (loading && !header) {
-    return <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" style={S.muted} /></div>;
+    return (
+      <div className="flex justify-center py-8">
+        <Loader2 className="h-5 w-5 animate-spin" style={S.muted} />
+      </div>
+    );
   }
   if (error && !header) return <InlineAlert>{error}</InlineAlert>;
   if (!header) return null;
@@ -375,20 +518,79 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
   return (
     <div className="flex flex-col gap-4 text-xs">
-      <Toast variant="danger" message={error} onClose={() => setError("")} />
+      <Toast variant="danger" message={error} onClose={() => setError('')} />
 
       {isSystem && (
-        <div className="rounded-[var(--radius-md)] border shadow-2xs p-3.5" style={S.raised}>
+        <div
+          className="rounded-[var(--radius-md)] border shadow-2xs p-3.5"
+          style={S.raised}
+        >
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("sysSchColName")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.scheduler_name}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || NA}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || t("sysSchAllBreeds")}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || NA}</p></div>
-            <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStatus")}</p><StatusBadge status={header.is_active ? "ACTIVE" : "INACTIVE"} className="mt-1" /></div>
+            <div>
+              <p
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={S.muted}
+              >
+                {t('sysSchColName')}
+              </p>
+              <p className="font-semibold mt-0.5" style={S.primary}>
+                {header.scheduler_name}
+              </p>
+            </div>
+            <div>
+              <p
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={S.muted}
+              >
+                {t('scLabelStage')}
+              </p>
+              <p className="font-semibold mt-0.5" style={S.primary}>
+                {header.stage_name || NA}
+              </p>
+            </div>
+            <div>
+              <p
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={S.muted}
+              >
+                {t('scLabelBreed')}
+              </p>
+              <p className="font-semibold mt-0.5" style={S.primary}>
+                {header.breed_name || t('sysSchAllBreeds')}
+              </p>
+            </div>
+            <div>
+              <p
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={S.muted}
+              >
+                {t('scLabelDataEntryLevel')}
+              </p>
+              <p className="font-semibold mt-0.5" style={S.primary}>
+                {header.data_entry_level || NA}
+              </p>
+            </div>
+            <div>
+              <p
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={S.muted}
+              >
+                {t('scLabelStatus')}
+              </p>
+              <StatusBadge
+                status={header.is_active ? 'ACTIVE' : 'INACTIVE'}
+                className="mt-1"
+              />
+            </div>
           </div>
           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
-            <Button size="sm" variant={header.is_active ? "outline" : "default"} onClick={toggleSystemActive} disabled={acting}>
-              {header.is_active ? t("sysSchDeactivate") : t("sysSchActivate")}
+            <Button
+              size="sm"
+              variant={header.is_active ? 'outline' : 'default'}
+              onClick={toggleSystemActive}
+              disabled={acting}
+            >
+              {header.is_active ? t('sysSchDeactivate') : t('sysSchActivate')}
             </Button>
           </div>
         </div>
@@ -396,88 +598,271 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
 
       {/* Collapsible Header Section */}
       {!isSystem && (
-      <div className="rounded-[var(--radius-md)] border shadow-2xs overflow-hidden" style={S.raised}>
         <div
-          className="flex items-center justify-between p-3 cursor-pointer select-none hover:bg-(--surface) transition-colors"
-          onClick={() => setHeaderCollapsed((prev) => !prev)}
+          className="rounded-[var(--radius-md)] border shadow-2xs overflow-hidden"
+          style={S.raised}
         >
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={S.primary}>
-              Scheduler Header Details
-            </span>
-            <StatusBadge status={header.scheduler_status} />
-            <span className="font-medium text-xs" style={S.sub}>
-              {header.batch_no} • {header.stage_name || NA} {header.breed_name ? `• ${header.breed_name}` : ""}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="p-1 rounded hover:opacity-75 text-[var(--text-secondary)] transition-transform"
-            onClick={(e) => {
-              e.stopPropagation();
-              setHeaderCollapsed((prev) => !prev);
-            }}
-            title={headerCollapsed ? "Expand Header" : "Collapse Header"}
-            aria-label={headerCollapsed ? "Expand Header" : "Collapse Header"}
+          <div
+            className="flex items-center justify-between p-3 cursor-pointer select-none hover:bg-(--surface) transition-colors"
+            onClick={() => setHeaderCollapsed((prev) => !prev)}
           >
-            {headerCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </button>
-        </div>
-
-        {!headerCollapsed && (
-          <div className="p-3.5 pt-2 border-t border-[var(--border)]">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStatus")}</p><StatusBadge status={header.scheduler_status} className="mt-1" /></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBatch")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.batch_no || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelStage")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.stage_name || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelBreed")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.breed_name || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveFrom")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_from || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelEffectiveTo")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.effective_to || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelAnimalCount")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.animal_count != null ? formatQuantity(header.animal_count, "HEAD") : NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelDataEntryLevel")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.data_entry_level || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelLocation")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.location_name || NA}</p></div>
-              <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelAutoGenerated")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.auto_generated ? t("yes") : t("no")}</p></div>
-              {header.actual_end_date && (
-                <div><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("scLabelActualEndDate")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.actual_end_date}</p></div>
-              )}
-              {header.system_scheduler_name && (
-                <div className="col-span-2"><p className="text-[10px] font-bold uppercase tracking-wider" style={S.muted}>{t("schTabSystem")}</p><p className="font-semibold mt-0.5" style={S.primary}>{header.system_scheduler_name}</p></div>
-              )}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span
+                className="text-[11px] font-bold uppercase tracking-wider"
+                style={S.primary}
+              >
+                Scheduler Header Details
+              </span>
+              <StatusBadge status={header.scheduler_status} />
+              <span className="font-medium text-xs" style={S.sub}>
+                {header.batch_no} • {header.stage_name || NA}{' '}
+                {header.breed_name ? `• ${header.breed_name}` : ''}
+              </span>
             </div>
-
-            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
-              {header.scheduler_status === "DRAFT" && (
-                <Button size="sm" onClick={() => runStatusChange("ACTIVE")} disabled={acting} className="nf-btn-primary">{t("scActivate")}</Button>
+            <button
+              type="button"
+              className="p-1 rounded hover:opacity-75 text-[var(--text-secondary)] transition-transform"
+              onClick={(e) => {
+                e.stopPropagation();
+                setHeaderCollapsed((prev) => !prev);
+              }}
+              title={headerCollapsed ? 'Expand Header' : 'Collapse Header'}
+              aria-label={headerCollapsed ? 'Expand Header' : 'Collapse Header'}
+            >
+              {headerCollapsed ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronUp className="h-4 w-4" />
               )}
-              {header.scheduler_status === "ACTIVE" && (
-                <>
-                  <Button size="sm" variant="outline" onClick={() => runStatusChange("SUSPENDED")} disabled={acting}>{t("scSuspend")}</Button>
-                  <Button size="sm" variant="outline" onClick={() => runStatusChange("COMPLETED")} disabled={acting}>{t("scComplete")}</Button>
-                </>
-              )}
-              {header.scheduler_status === "SUSPENDED" && (
-                <Button size="sm" onClick={() => runStatusChange("ACTIVE")} disabled={acting} className="nf-btn-primary">{t("scResume")}</Button>
-              )}
-            </div>
+            </button>
           </div>
-        )}
-      </div>
+
+          {!headerCollapsed && (
+            <div className="p-3.5 pt-2 border-t border-[var(--border)]">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelStatus')}
+                  </p>
+                  <StatusBadge
+                    status={header.scheduler_status}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelBatch')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.batch_no || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelStage')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.stage_name || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelBreed')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.breed_name || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelEffectiveFrom')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.effective_from || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelEffectiveTo')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.effective_to || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelAnimalCount')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.animal_count != null
+                      ? formatQuantity(header.animal_count, 'HEAD')
+                      : NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelDataEntryLevel')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.data_entry_level || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelLocation')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.location_name || NA}
+                  </p>
+                </div>
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={S.muted}
+                  >
+                    {t('scLabelAutoGenerated')}
+                  </p>
+                  <p className="font-semibold mt-0.5" style={S.primary}>
+                    {header.auto_generated ? t('yes') : t('no')}
+                  </p>
+                </div>
+                {header.actual_end_date && (
+                  <div>
+                    <p
+                      className="text-[10px] font-bold uppercase tracking-wider"
+                      style={S.muted}
+                    >
+                      {t('scLabelActualEndDate')}
+                    </p>
+                    <p className="font-semibold mt-0.5" style={S.primary}>
+                      {header.actual_end_date}
+                    </p>
+                  </div>
+                )}
+                {header.system_scheduler_name && (
+                  <div className="col-span-2">
+                    <p
+                      className="text-[10px] font-bold uppercase tracking-wider"
+                      style={S.muted}
+                    >
+                      {t('schTabSystem')}
+                    </p>
+                    <p className="font-semibold mt-0.5" style={S.primary}>
+                      {header.system_scheduler_name}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--border)]">
+                {header.scheduler_status === 'DRAFT' && (
+                  <Button
+                    size="sm"
+                    onClick={() => runStatusChange('ACTIVE')}
+                    disabled={acting}
+                    className="nf-btn-primary"
+                  >
+                    {t('scActivate')}
+                  </Button>
+                )}
+                {header.scheduler_status === 'ACTIVE' && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => runStatusChange('SUSPENDED')}
+                      disabled={acting}
+                    >
+                      {t('scSuspend')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => runStatusChange('COMPLETED')}
+                      disabled={acting}
+                    >
+                      {t('scComplete')}
+                    </Button>
+                  </>
+                )}
+                {header.scheduler_status === 'SUSPENDED' && (
+                  <Button
+                    size="sm"
+                    onClick={() => runStatusChange('ACTIVE')}
+                    disabled={acting}
+                    className="nf-btn-primary"
+                  >
+                    {t('scResume')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {header.silo_stock && header.silo_stock.length > 0 && (
         <div>
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("scSiloStockTitle")}</p>
-          <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+          <p
+            className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider"
+            style={S.sub}
+          >
+            {t('scSiloStockTitle')}
+          </p>
+          <div
+            className="overflow-x-auto rounded-[var(--radius-sm)] border"
+            style={S.surface}
+          >
             <table className="w-full border-collapse text-left text-xs">
-              <TableHeader><tr className="border-b border-[var(--row-border)]">
-                <TableHead className="h-auto px-3 py-2">{t("scColItem")}</TableHead>
-                <TableHead className="h-auto px-3 py-2">{t("scColOnHandQty")}</TableHead>
-              </tr></TableHeader>
+              <TableHeader>
+                <tr className="border-b border-[var(--row-border)]">
+                  <TableHead className="h-auto px-3 py-2">
+                    {t('scColItem')}
+                  </TableHead>
+                  <TableHead className="h-auto px-3 py-2">
+                    {t('scColOnHandQty')}
+                  </TableHead>
+                </tr>
+              </TableHeader>
               <TableBody>
                 {header.silo_stock.map((s: Row) => (
                   <TableRow key={s.item_id}>
-                    <TableCell className="px-3 py-2 font-medium" style={S.primary}>{s.item_description || s.item_code}</TableCell>
-                    <TableCell className="px-3 py-2" style={S.primary}>{formatQuantity(s.on_hand_qty, s.uom)} {s.uom}</TableCell>
+                    <TableCell
+                      className="px-3 py-2 font-medium"
+                      style={S.primary}
+                    >
+                      {s.item_description || s.item_code}
+                    </TableCell>
+                    <TableCell className="px-3 py-2" style={S.primary}>
+                      {formatQuantity(s.on_hand_qty, s.uom)} {s.uom}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -495,30 +880,64 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       */}
 
       {/* Collapsible Lines Section */}
-      <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
+      <div
+        className="rounded-[var(--radius-sm)] border overflow-hidden"
+        style={S.surface}
+      >
         <div
           className="flex items-center justify-between p-3 cursor-pointer select-none hover:bg-(--surface-raised) transition-colors"
           onClick={() => setLinesCollapsed((prev) => !prev)}
         >
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={S.primary}>{t("scLinesTitle")}</span>
-            <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--accent)", color: "white" }}>
+            <span
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={S.primary}
+            >
+              {t('scLinesTitle')}
+            </span>
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+              style={{ backgroundColor: 'var(--accent)', color: 'white' }}
+            >
               {(header.lines || []).length}
             </span>
           </div>
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="flex items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
             {canCopy && (
-              <Button size="sm" variant="outline" onClick={() => setCopyOpen(true)} className="gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCopyOpen(true)}
+                className="gap-1.5"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                {t('scCopyActivities')}
+              </Button>
             )}
-            <Button size="sm" variant="outline" onClick={openAddLine} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("scAddLine")}</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={openAddLine}
+              className="gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t('scAddLine')}
+            </Button>
             <button
               type="button"
               className="p-1 rounded hover:bg-(--surface) text-[var(--text-secondary)] transition-transform"
               onClick={() => setLinesCollapsed((prev) => !prev)}
-              title={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
-              aria-label={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
+              title={linesCollapsed ? 'Expand Lines' : 'Collapse Lines'}
+              aria-label={linesCollapsed ? 'Expand Lines' : 'Collapse Lines'}
             >
-              {linesCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              {linesCollapsed ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronUp className="h-4 w-4" />
+              )}
             </button>
           </div>
         </div>
@@ -527,91 +946,245 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
           <div className="border-t border-[var(--border)]">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
-                <TableHeader><tr className="border-b border-[var(--row-border)]">
-                  <TableHead className="h-auto px-3 py-2">{t("scColLineType")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("scColActivity")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("scColOccurrence")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("scColItem")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">{t("scColQty")}</TableHead>
-                  <TableHead className="h-auto px-3 py-2">UOM</TableHead>
-                  {!isSystem && <TableHead className="h-auto px-3 py-2">{t("scColSource")}</TableHead>}
-                  <TableHead className="h-auto px-3 py-2"></TableHead>
-                </tr></TableHeader>
+                <TableHeader>
+                  <tr className="border-b border-[var(--row-border)]">
+                    <TableHead className="h-auto px-3 py-2">
+                      {t('scColLineType')}
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      {t('scColActivity')}
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      {t('scColOccurrence')}
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      {t('scColItem')}
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">
+                      {t('scColQty')}
+                    </TableHead>
+                    <TableHead className="h-auto px-3 py-2">UOM</TableHead>
+                    {!isSystem && (
+                      <TableHead className="h-auto px-3 py-2">
+                        {t('scColSource')}
+                      </TableHead>
+                    )}
+                    <TableHead className="h-auto px-3 py-2"></TableHead>
+                  </tr>
+                </TableHeader>
                 <TableBody>
                   {(header.lines || []).length === 0 ? (
-                    <tr><TableCell colSpan={isSystem ? 7 : 8} className="py-6 text-center" style={S.sub}>
-                      <p>{t("scCopyEmptyHint")}</p>
-                      {canCopy && (
-                        <Button size="sm" onClick={() => setCopyOpen(true)} className="mt-3 gap-1.5"><Copy className="h-3.5 w-3.5" />{t("scCopyActivities")}</Button>
-                      )}
-                    </TableCell></tr>
-                  ) : (header.lines || []).map((line: Row) => {
-                    const itemObj = items.find((i) => i.item_id === line.item_id);
-                    const resObj = resources.find((r) => r.resource_id === line.resource_id);
-                    const lineUom = line.uom || line.kpi_uom || itemObj?.uom_primary || itemObj?.uom || resObj?.uom || "";
+                    <tr>
+                      <TableCell
+                        colSpan={isSystem ? 7 : 8}
+                        className="py-6 text-center"
+                        style={S.sub}
+                      >
+                        <p>{t('scCopyEmptyHint')}</p>
+                        {canCopy && (
+                          <Button
+                            size="sm"
+                            onClick={() => setCopyOpen(true)}
+                            className="mt-3 gap-1.5"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            {t('scCopyActivities')}
+                          </Button>
+                        )}
+                      </TableCell>
+                    </tr>
+                  ) : (
+                    (header.lines || []).map((line: Row) => {
+                      const itemObj = items.find(
+                        (i) => i.item_id === line.item_id,
+                      );
+                      const resObj = resources.find(
+                        (r) => r.resource_id === line.resource_id,
+                      );
+                      const lineUom =
+                        line.uom ||
+                        line.kpi_uom ||
+                        itemObj?.uom_primary ||
+                        itemObj?.uom ||
+                        resObj?.uom ||
+                        '';
 
-                    return (
-                      <TableRow key={line.line_id} style={line.is_active === false ? { opacity: 0.5 } : undefined}>
-                        <TableCell className="px-3 py-2" style={S.sub}>{line.line_type}</TableCell>
-                        <TableCell className="px-3 py-2 font-medium" style={S.primary}>{line.activity_name}{line.is_mandatory && <span className="ml-1 text-[10px]" style={S.muted}>*</span>}</TableCell>
-                        <TableCell className="px-3 py-2" style={S.sub}>
-                          {(() => {
-                            if (line.occurrence === "WEEKLY" && line.day_of_week) {
-                              const days = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-                              const dayName = days[Number(line.day_of_week)] || `Day ${line.day_of_week}`;
-                              return <span className="font-medium text-sky-700 dark:text-sky-300">WEEKLY ({dayName})</span>;
-                            }
-                            if (line.occurrence === "MONTHLY" && line.day_of_week) {
-                              const d = Number(line.day_of_week);
-                              const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
-                              return <span className="font-medium text-indigo-700 dark:text-indigo-300">MONTHLY (Day {d}{sfx})</span>;
-                            }
-                            if (line.occurrence === "CUSTOM" && line.custom_days) {
-                              const cDays = Array.isArray(line.custom_days)
-                                ? line.custom_days.map((d: any) => d.day_number ?? d).join(", ")
-                                : line.custom_days;
-                              return <span>CUSTOM [{cDays}]</span>;
-                            }
-                            return <span>{line.occurrence}</span>;
-                          })()}
-                        </TableCell>
-                        <TableCell className="px-3 py-2" style={S.sub}>
-                          {line.item_id ? (
-                            <span>
-                              {line.item_description || itemLabel(line.item_id)}
-                              {line.withdrawal_days ? (
-                                <span className="ml-1.5 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] font-semibold text-amber-600">
-                                  {line.withdrawal_days}d w/d
-                                </span>
-                              ) : null}
-                            </span>
-                          ) : (line.resource_id ? (line.resource_name || resourceLabel(line.resource_id)) : (line.kpi_metric || NA))}
-                        </TableCell>
-                        <TableCell className="px-3 py-2 font-semibold" style={S.primary}>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span>{line.standard_qty != null ? formatDecimal(line.standard_qty) : line.std_value != null ? formatDecimal(line.std_value) : NA}</span>
-                            {lineUom && (
-                              <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
-                                {lineUom}
+                      return (
+                        <TableRow
+                          key={line.line_id}
+                          style={
+                            line.is_active === false
+                              ? { opacity: 0.5 }
+                              : undefined
+                          }
+                        >
+                          <TableCell className="px-3 py-2" style={S.sub}>
+                            {line.line_type}
+                          </TableCell>
+                          <TableCell
+                            className="px-3 py-2 font-medium"
+                            style={S.primary}
+                          >
+                            {line.activity_name}
+                            {line.is_mandatory && (
+                              <span
+                                className="ml-1 text-[10px]"
+                                style={S.muted}
+                              >
+                                *
                               </span>
                             )}
-                            {line.qty_basis ? <span className="text-[10px] font-normal" style={S.muted}>({line.qty_basis})</span> : null}
-                            {line.output_basis ? <span className="text-[10px] font-normal" style={S.muted}>({line.output_basis})</span> : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="px-3 py-2 font-mono" style={S.sub}>{lineUom || NA}</TableCell>
-                        {!isSystem && <TableCell className="px-3 py-2" style={S.sub}>{line.source}</TableCell>}
-                        <TableCell className="px-2 py-1.5">
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openEditLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scEditLine")}><Pencil className="h-3.5 w-3.5" style={S.sub} /></button>
-                            {line.is_active !== false && (
-                              <button onClick={() => deactivateLine(line)} className="rounded p-1 hover:opacity-70" aria-label={t("scDeactivateLine")}><Trash2 className="h-3.5 w-3.5" style={{ color: "var(--danger)" }} /></button>
+                          </TableCell>
+                          <TableCell className="px-3 py-2" style={S.sub}>
+                            {(() => {
+                              if (
+                                line.occurrence === 'WEEKLY' &&
+                                line.day_of_week
+                              ) {
+                                const days = [
+                                  '',
+                                  'Mon',
+                                  'Tue',
+                                  'Wed',
+                                  'Thu',
+                                  'Fri',
+                                  'Sat',
+                                  'Sun',
+                                ];
+                                const dayName =
+                                  days[Number(line.day_of_week)] ||
+                                  `Day ${line.day_of_week}`;
+                                return (
+                                  <span className="font-medium text-sky-700 dark:text-sky-300">
+                                    WEEKLY ({dayName})
+                                  </span>
+                                );
+                              }
+                              if (
+                                line.occurrence === 'MONTHLY' &&
+                                line.day_of_week
+                              ) {
+                                const d = Number(line.day_of_week);
+                                const sfx =
+                                  d % 10 === 1 && d !== 11
+                                    ? 'st'
+                                    : d % 10 === 2 && d !== 12
+                                      ? 'nd'
+                                      : d % 10 === 3 && d !== 13
+                                        ? 'rd'
+                                        : 'th';
+                                return (
+                                  <span className="font-medium text-indigo-700 dark:text-indigo-300">
+                                    MONTHLY (Day {d}
+                                    {sfx})
+                                  </span>
+                                );
+                              }
+                              if (
+                                line.occurrence === 'CUSTOM' &&
+                                line.custom_days
+                              ) {
+                                const cDays = Array.isArray(line.custom_days)
+                                  ? line.custom_days
+                                      .map((d: any) => d.day_number ?? d)
+                                      .join(', ')
+                                  : line.custom_days;
+                                return <span>CUSTOM [{cDays}]</span>;
+                              }
+                              return <span>{line.occurrence}</span>;
+                            })()}
+                          </TableCell>
+                          <TableCell className="px-3 py-2" style={S.sub}>
+                            {line.item_id ? (
+                              <span>
+                                {line.item_description ||
+                                  itemLabel(line.item_id)}
+                                {line.withdrawal_days ? (
+                                  <span className="ml-1.5 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] font-semibold text-amber-600">
+                                    {line.withdrawal_days}d w/d
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : line.resource_id ? (
+                              line.resource_name ||
+                              resourceLabel(line.resource_id)
+                            ) : (
+                              line.kpi_metric || NA
                             )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                          </TableCell>
+                          <TableCell
+                            className="px-3 py-2 font-semibold"
+                            style={S.primary}
+                          >
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>
+                                {line.standard_qty != null
+                                  ? formatDecimal(line.standard_qty)
+                                  : line.std_value != null
+                                    ? formatDecimal(line.std_value)
+                                    : NA}
+                              </span>
+                              {lineUom && (
+                                <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                                  {lineUom}
+                                </span>
+                              )}
+                              {line.qty_basis ? (
+                                <span
+                                  className="text-[10px] font-normal"
+                                  style={S.muted}
+                                >
+                                  ({line.qty_basis})
+                                </span>
+                              ) : null}
+                              {line.output_basis ? (
+                                <span
+                                  className="text-[10px] font-normal"
+                                  style={S.muted}
+                                >
+                                  ({line.output_basis})
+                                </span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell
+                            className="px-3 py-2 font-mono"
+                            style={S.sub}
+                          >
+                            {lineUom || NA}
+                          </TableCell>
+                          {!isSystem && (
+                            <TableCell className="px-3 py-2" style={S.sub}>
+                              {line.source}
+                            </TableCell>
+                          )}
+                          <TableCell className="px-2 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openEditLine(line)}
+                                className="rounded p-1 hover:opacity-70"
+                                aria-label={t('scEditLine')}
+                              >
+                                <Pencil className="h-3.5 w-3.5" style={S.sub} />
+                              </button>
+                              {line.is_active !== false && (
+                                <button
+                                  onClick={() => deactivateLine(line)}
+                                  className="rounded p-1 hover:opacity-70"
+                                  aria-label={t('scDeactivateLine')}
+                                >
+                                  <Trash2
+                                    className="h-3.5 w-3.5"
+                                    style={{ color: 'var(--danger)' }}
+                                  />
+                                </button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
                 </TableBody>
               </table>
             </div>
@@ -620,25 +1193,45 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
       </div>
 
       {addingLine && (
-        <div className="rounded-[var(--radius-md)] border p-3.5" style={S.raised}>
-          <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{editingLineId ? t("scEditLineTitle") : t("scAddLineTitle")}</p>
-          <Toast variant="danger" message={lineError} onClose={() => setLineError("")} />
+        <div
+          className="rounded-[var(--radius-md)] border p-3.5"
+          style={S.raised}
+        >
+          <p
+            className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider"
+            style={S.sub}
+          >
+            {editingLineId ? t('scEditLineTitle') : t('scAddLineTitle')}
+          </p>
+          <Toast
+            variant="danger"
+            message={lineError}
+            onClose={() => setLineError('')}
+          />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+              <label
+                className="mb-1 block text-[11px] font-semibold"
+                style={S.sub}
+              >
                 Line Type <span className="text-red-500">*</span>
               </label>
               <SearchableSelect
                 ariaLabel="Line Type"
                 value={lineForm.line_type}
-                onChange={(val) => setLineForm((f: Row) => ({ ...f, line_type: val }))}
+                onChange={(val) =>
+                  setLineForm((f: Row) => ({ ...f, line_type: val }))
+                }
                 options={LINE_TYPES}
-                disabled={!!editingLineId && lineForm.source === "AUTO"}
+                disabled={!!editingLineId && lineForm.source === 'AUTO'}
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+              <label
+                className="mb-1 block text-[11px] font-semibold"
+                style={S.sub}
+              >
                 Activity Name <span className="text-red-500">*</span>
               </label>
               <SearchableSelect
@@ -657,7 +1250,10 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+              <label
+                className="mb-1 block text-[11px] font-semibold"
+                style={S.sub}
+              >
                 Occurrence <span className="text-red-500">*</span>
               </label>
               <SearchableSelect
@@ -668,11 +1264,11 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                     ...f,
                     occurrence: val,
                     day_of_week:
-                      val === "WEEKLY" && Number(f.day_of_week) > 7
-                        ? ""
-                        : val === "WEEKLY" || val === "MONTHLY"
-                        ? f.day_of_week
-                        : "",
+                      val === 'WEEKLY' && Number(f.day_of_week) > 7
+                        ? ''
+                        : val === 'WEEKLY' || val === 'MONTHLY'
+                          ? f.day_of_week
+                          : '',
                   }))
                 }
                 options={OCCURRENCES}
@@ -680,93 +1276,175 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+              <label
+                className="mb-1 block text-[11px] font-semibold"
+                style={S.sub}
+              >
                 Start Day <span className="text-red-500">*</span>
               </label>
-              <input type="number" min={1} placeholder={t("scPlaceholderStartDay")} value={lineForm.start_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, start_day: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+              <input
+                type="number"
+                min={1}
+                placeholder={t('scPlaceholderStartDay')}
+                value={lineForm.start_day}
+                onChange={(e) =>
+                  setLineForm((f: Row) => ({ ...f, start_day: e.target.value }))
+                }
+                className={`${inputCls} w-full`}
+                style={S.input}
+              />
             </div>
 
             <div>
-              <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+              <label
+                className="mb-1 block text-[11px] font-semibold"
+                style={S.sub}
+              >
                 End Day
               </label>
-              <input type="number" min={1} placeholder={t("scPlaceholderEndDay")} value={lineForm.end_day} onChange={(e) => setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+              <input
+                type="number"
+                min={1}
+                placeholder={t('scPlaceholderEndDay')}
+                value={lineForm.end_day}
+                onChange={(e) =>
+                  setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))
+                }
+                className={`${inputCls} w-full`}
+                style={S.input}
+              />
             </div>
 
-            {lineForm.occurrence === "WEEKLY" && (
+            {lineForm.occurrence === 'WEEKLY' && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <label className="text-[11px] font-semibold" style={S.sub}>
-                    Day of Week (1=Mon..7=Sun) <span className="text-red-500">*</span>
+                    Day of Week (1=Mon..7=Sun){' '}
+                    <span className="text-red-500">*</span>
                   </label>
-                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 7 && (
-                    <span className="font-medium text-[10px]" style={S.sub}>
-                      {DAYS_OF_WEEK_OPTIONS.find((o) => o.value === String(lineForm.day_of_week))?.label}
-                    </span>
-                  )}
+                  {lineForm.day_of_week &&
+                    Number(lineForm.day_of_week) >= 1 &&
+                    Number(lineForm.day_of_week) <= 7 && (
+                      <span className="font-medium text-[10px]" style={S.sub}>
+                        {
+                          DAYS_OF_WEEK_OPTIONS.find(
+                            (o) => o.value === String(lineForm.day_of_week),
+                          )?.label
+                        }
+                      </span>
+                    )}
                 </div>
                 <SearchableSelect
                   ariaLabel="Day of Week"
                   placeholder="Select day of week (Monday–Sunday)…"
                   searchPlaceholder="Search day (e.g. Monday)…"
-                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
-                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  value={
+                    lineForm.day_of_week ? String(lineForm.day_of_week) : ''
+                  }
+                  onChange={(val) =>
+                    setLineForm((f: Row) => ({ ...f, day_of_week: val }))
+                  }
                   options={DAYS_OF_WEEK_OPTIONS}
                 />
               </div>
             )}
 
-            {lineForm.occurrence === "MONTHLY" && (
+            {lineForm.occurrence === 'MONTHLY' && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <label className="text-[11px] font-semibold" style={S.sub}>
                     Day of Month (1–28) <span className="text-red-500">*</span>
                   </label>
-                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 28 && (
-                    <span className="font-medium text-[10px]" style={S.sub}>
-                      {(() => {
-                        const d = Number(lineForm.day_of_week);
-                        const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
-                        return `${d}${sfx} of month`;
-                      })()}
-                    </span>
-                  )}
+                  {lineForm.day_of_week &&
+                    Number(lineForm.day_of_week) >= 1 &&
+                    Number(lineForm.day_of_week) <= 28 && (
+                      <span className="font-medium text-[10px]" style={S.sub}>
+                        {(() => {
+                          const d = Number(lineForm.day_of_week);
+                          const sfx =
+                            d % 10 === 1 && d !== 11
+                              ? 'st'
+                              : d % 10 === 2 && d !== 12
+                                ? 'nd'
+                                : d % 10 === 3 && d !== 13
+                                  ? 'rd'
+                                  : 'th';
+                          return `${d}${sfx} of month`;
+                        })()}
+                      </span>
+                    )}
                 </div>
                 <SearchableSelect
                   ariaLabel="Day of Month"
                   placeholder="Select day of month (1–28)…"
                   searchPlaceholder="Search day (e.g. 15)…"
-                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
-                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  value={
+                    lineForm.day_of_week ? String(lineForm.day_of_week) : ''
+                  }
+                  onChange={(val) =>
+                    setLineForm((f: Row) => ({ ...f, day_of_week: val }))
+                  }
                   options={DAYS_OF_MONTH_OPTIONS}
                 />
               </div>
             )}
 
-            {lineForm.occurrence === "CUSTOM" && (
+            {lineForm.occurrence === 'CUSTOM' && (
               <div>
-                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                <label
+                  className="mb-1 block text-[11px] font-semibold"
+                  style={S.sub}
+                >
                   Custom Days (e.g. 1, 3, 7)
                 </label>
-                <input placeholder={t("scPlaceholderCustomDays")} value={lineForm.custom_days} onChange={(e) => setLineForm((f: Row) => ({ ...f, custom_days: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                <input
+                  placeholder={t('scPlaceholderCustomDays')}
+                  value={lineForm.custom_days}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({
+                      ...f,
+                      custom_days: e.target.value,
+                    }))
+                  }
+                  className={`${inputCls} w-full`}
+                  style={S.input}
+                />
               </div>
             )}
 
             <div className="flex items-end pb-2">
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
-                <input type="checkbox" checked={!!lineForm.is_mandatory} onChange={(e) => setLineForm((f: Row) => ({ ...f, is_mandatory: e.target.checked }))} />
-                <span className="font-semibold">{t("scIsMandatory")}</span>
+              <label
+                className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                style={S.sub}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!lineForm.is_mandatory}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({
+                      ...f,
+                      is_mandatory: e.target.checked,
+                    }))
+                  }
+                />
+                <span className="font-semibold">{t('scIsMandatory')}</span>
               </label>
             </div>
 
-            {["CONSUMPTION", "OUTPUT", "TRANSFER"].includes(lineType) && (
+            {['CONSUMPTION', 'OUTPUT', 'TRANSFER'].includes(lineType) && (
               <>
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
-                    {lineType === "TRANSFER" ? "Biological Asset Item" : "Item"} <span className="text-red-500">*</span>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
+                    {lineType === 'TRANSFER' ? 'Biological Asset Item' : 'Item'}{' '}
+                    <span className="text-red-500">*</span>
                   </label>
                   <SearchableSelect
-                    ariaLabel={lineType === "TRANSFER" ? "Biological Asset Item" : "Item"}
+                    ariaLabel={
+                      lineType === 'TRANSFER' ? 'Biological Asset Item' : 'Item'
+                    }
                     value={lineForm.item_id}
                     onChange={(val) => {
                       const sel = items.find((i) => i.item_id === val);
@@ -774,23 +1452,48 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                         ...f,
                         item_id: val,
                         item_description: sel?.item_name || f.item_description,
-                        lot_required: val ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked) : f.lot_required,
+                        lot_required: val
+                          ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked)
+                          : f.lot_required,
                       }));
                     }}
-                    options={(lineType === "CONSUMPTION" ? consumableItems : lineType === "TRANSFER" ? bioAssetItems : items).map((i) => ({
+                    options={(lineType === 'CONSUMPTION'
+                      ? consumableItems
+                      : lineType === 'TRANSFER'
+                        ? bioAssetItems
+                        : items
+                    ).map((i) => ({
                       value: i.item_id,
-                      label: `${i.item_name} ${i.uom_primary ? `(${i.uom_primary})` : ""}`,
+                      label: `${i.item_name} ${i.uom_primary ? `(${i.uom_primary})` : ''}`,
                     }))}
-                    placeholder={lineType === "TRANSFER" ? "— Select Bio Asset —" : t("scPlaceholderSelectItem")}
+                    placeholder={
+                      lineType === 'TRANSFER'
+                        ? '— Select Bio Asset —'
+                        : t('scPlaceholderSelectItem')
+                    }
                     searchPlaceholder="Search items…"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Item Description
                   </label>
-                  <input placeholder={t("scPlaceholderItemDescription")} value={lineForm.item_description} onChange={(e) => setLineForm((f: Row) => ({ ...f, item_description: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                  <input
+                    placeholder={t('scPlaceholderItemDescription')}
+                    value={lineForm.item_description}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        item_description: e.target.value,
+                      }))
+                    }
+                    className={`${inputCls} w-full`}
+                    style={S.input}
+                  />
                 </div>
 
                 <div>
@@ -799,7 +1502,9 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                       Standard / Expected Qty
                     </label>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom || lineForm.uom;
                       return uom ? (
                         <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
@@ -813,20 +1518,38 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                       type="number"
                       step="any"
                       placeholder={(() => {
-                        const sel = items.find((i) => i.item_id === lineForm.item_id);
-                        const uom = sel?.uom_primary || sel?.uom || lineForm.uom;
-                        return uom ? `${t("scPlaceholderStandardQty")} (${uom})` : t("scPlaceholderStandardQty");
+                        const sel = items.find(
+                          (i) => i.item_id === lineForm.item_id,
+                        );
+                        const uom =
+                          sel?.uom_primary || sel?.uom || lineForm.uom;
+                        return uom
+                          ? `${t('scPlaceholderStandardQty')} (${uom})`
+                          : t('scPlaceholderStandardQty');
                       })()}
                       value={lineForm.standard_qty}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          standard_qty: e.target.value,
+                        }))
+                      }
                       className={`${inputCls} w-full pr-16`}
                       style={S.input}
                     />
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom || lineForm.uom;
                       return uom ? (
-                        <span className="pointer-events-none absolute right-2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
+                        <span
+                          className="pointer-events-none absolute right-2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
+                          style={{
+                            backgroundColor: 'var(--surface-raised)',
+                            color: 'var(--accent)',
+                          }}
+                        >
                           {uom}
                         </span>
                       ) : null;
@@ -834,51 +1557,82 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                   </div>
                   <p className="mt-1 text-[10px]" style={S.muted}>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom || lineForm.uom;
                       return uom
                         ? `Units consumed/produced in ${uom}`
-                        : "Select an item to view unit of measure.";
+                        : 'Select an item to view unit of measure.';
                     })()}
                   </p>
                 </div>
 
                 <div className="flex items-end pb-2">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
-                    <input type="checkbox" checked={!!lineForm.allow_qty_edit} onChange={(e) => setLineForm((f: Row) => ({ ...f, allow_qty_edit: e.target.checked }))} />
-                    <span className="font-semibold">Allow Qty Edit at Entry</span>
+                  <label
+                    className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    style={S.sub}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!lineForm.allow_qty_edit}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          allow_qty_edit: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="font-semibold">
+                      Allow Qty Edit at Entry
+                    </span>
                   </label>
                 </div>
               </>
             )}
 
-            {lineType === "CONSUMPTION" && (
+            {lineType === 'CONSUMPTION' && (
               <>
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Quantity Basis
                   </label>
                   <SearchableSelect
                     ariaLabel="Quantity Basis"
                     value={lineForm.qty_basis}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, qty_basis: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, qty_basis: val }))
+                    }
                     options={QTY_BASES}
-                    placeholder={t("scPlaceholderQtyBasis")}
+                    placeholder={t('scPlaceholderQtyBasis')}
                   />
                 </div>
 
                 <div className="flex flex-col items-start pb-2 gap-0.5">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
+                  <label
+                    className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    style={S.sub}
+                  >
                     <input
                       type="checkbox"
                       checked={!!lineForm.lot_required}
                       disabled={!!lineForm.item_id}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          lot_required: e.target.checked,
+                        }))
+                      }
                     />
-                    <span className="font-semibold">{t("scLotRequired")}</span>
+                    <span className="font-semibold">{t('scLotRequired')}</span>
                   </label>
                   {lineForm.item_id && (
-                    <span className="text-[10px]" style={S.muted}>Auto-set from item's lot/serial tracking flag</span>
+                    <span className="text-[10px]" style={S.muted}>
+                      Auto-set from item's lot/serial tracking flag
+                    </span>
                   )}
                 </div>
 
@@ -887,48 +1641,84 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                   return it?.withdrawal_days ? (
                     <div className="col-span-2 text-[11px] font-medium text-amber-600 flex items-center gap-1">
                       <span>⚠️ Medicine/Vaccine Withdrawal Period:</span>
-                      <span className="font-bold">{it.withdrawal_days} days</span>
+                      <span className="font-bold">
+                        {it.withdrawal_days} days
+                      </span>
                     </div>
                   ) : null;
                 })()}
               </>
             )}
 
-            {lineType === "OUTPUT" && (
+            {lineType === 'OUTPUT' && (
               <>
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Output Basis
                   </label>
                   <SearchableSelect
                     ariaLabel="Output Basis"
                     value={lineForm.output_basis}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, output_basis: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, output_basis: val }))
+                    }
                     options={OUTPUT_BASES}
-                    placeholder={t("scPlaceholderOutputBasis")}
+                    placeholder={t('scPlaceholderOutputBasis')}
                   />
                 </div>
 
                 <div className="flex items-end pb-2">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
-                    <input type="checkbox" checked={!!lineForm.creates_inventory} onChange={(e) => setLineForm((f: Row) => ({ ...f, creates_inventory: e.target.checked }))} />
-                    <span className="font-semibold">{t("scCreatesInventory")}</span>
+                  <label
+                    className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    style={S.sub}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!lineForm.creates_inventory}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          creates_inventory: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="font-semibold">
+                      {t('scCreatesInventory')}
+                    </span>
                   </label>
                 </div>
 
                 <div className="flex items-end pb-2">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={S.sub}>
-                    <input type="checkbox" checked={!!lineForm.output_lot_auto} onChange={(e) => setLineForm((f: Row) => ({ ...f, output_lot_auto: e.target.checked }))} />
+                  <label
+                    className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                    style={S.sub}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!lineForm.output_lot_auto}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          output_lot_auto: e.target.checked,
+                        }))
+                      }
+                    />
                     <span className="font-semibold">Auto Create Lot</span>
                   </label>
                 </div>
               </>
             )}
 
-            {lineType === "DESCRIPTIVE" && (
+            {lineType === 'DESCRIPTIVE' && (
               <>
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     KPI Metric <span className="text-red-500">*</span>
                   </label>
                   <SearchableSelect
@@ -938,31 +1728,47 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                       setLineForm((f: Row) => ({
                         ...f,
                         kpi_metric: metric,
-                        kpi_uom: KPI_UOM_MAP[metric] || (metric === "CUSTOM" ? f.kpi_uom : ""),
+                        kpi_uom:
+                          KPI_UOM_MAP[metric] ||
+                          (metric === 'CUSTOM' ? f.kpi_uom : ''),
                       }));
                     }}
-                    options={KPI_METRICS.map((m) => ({ value: m, label: m.replace(/_/g, " ") }))}
+                    options={KPI_METRICS.map((m) => ({
+                      value: m,
+                      label: m.replace(/_/g, ' '),
+                    }))}
                     placeholder="— Select KPI Metric —"
                     searchPlaceholder="Search KPI metrics…"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     KPI UOM
                   </label>
                   <input
-                    placeholder={t("scPlaceholderKpiUom")}
+                    placeholder={t('scPlaceholderKpiUom')}
                     value={lineForm.kpi_uom}
-                    disabled={lineForm.kpi_metric !== "CUSTOM"}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, kpi_uom: e.target.value }))}
+                    disabled={lineForm.kpi_metric !== 'CUSTOM'}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        kpi_uom: e.target.value,
+                      }))
+                    }
                     className={`${inputCls} w-full`}
                     style={S.input}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Standard Target Value
                   </label>
                   <input
@@ -970,90 +1776,178 @@ export default function SchedulerDetailPanel({ schedulerId, onChanged, items: it
                     step="any"
                     placeholder="Standard Target Value"
                     value={lineForm.std_value}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, std_value: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        std_value: e.target.value,
+                      }))
+                    }
                     className={`${inputCls} w-full`}
                     style={S.input}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Capture Method
                   </label>
                   <SearchableSelect
                     ariaLabel="Capture Method"
-                    value={lineForm.capture_per || "AVERAGE"}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, capture_per: val }))}
-                    options={CAPTURE_PERS.map((cp) => ({ value: cp, label: cp.replace(/_/g, " ") }))}
+                    value={lineForm.capture_per || 'AVERAGE'}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, capture_per: val }))
+                    }
+                    options={CAPTURE_PERS.map((cp) => ({
+                      value: cp,
+                      label: cp.replace(/_/g, ' '),
+                    }))}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Lower Alert Limit
                   </label>
-                  <input type="number" step="any" placeholder={t("scPlaceholderLowerLimit")} value={lineForm.lower_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, lower_alert_limit: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder={t('scPlaceholderLowerLimit')}
+                    value={lineForm.lower_alert_limit}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        lower_alert_limit: e.target.value,
+                      }))
+                    }
+                    className={`${inputCls} w-full`}
+                    style={S.input}
+                  />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Upper Alert Limit
                   </label>
-                  <input type="number" step="any" placeholder={t("scPlaceholderUpperLimit")} value={lineForm.upper_alert_limit} onChange={(e) => setLineForm((f: Row) => ({ ...f, upper_alert_limit: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder={t('scPlaceholderUpperLimit')}
+                    value={lineForm.upper_alert_limit}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        upper_alert_limit: e.target.value,
+                      }))
+                    }
+                    className={`${inputCls} w-full`}
+                    style={S.input}
+                  />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                  <label
+                    className="mb-1 block text-[11px] font-semibold"
+                    style={S.sub}
+                  >
                     Alert Severity
                   </label>
                   <SearchableSelect
                     ariaLabel="Alert Severity"
                     value={lineForm.alert_severity}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, alert_severity: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, alert_severity: val }))
+                    }
                     options={ALERT_SEVERITIES}
                   />
                 </div>
               </>
             )}
 
-            {lineType === "OVERHEAD" && (
+            {lineType === 'OVERHEAD' && (
               <div>
-                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                <label
+                  className="mb-1 block text-[11px] font-semibold"
+                  style={S.sub}
+                >
                   Overhead Category
                 </label>
-                <input placeholder={t("scPlaceholderOverheadCategory")} value={lineForm.overhead_category} onChange={(e) => setLineForm((f: Row) => ({ ...f, overhead_category: e.target.value }))} className={`${inputCls} w-full`} style={S.input} />
+                <input
+                  placeholder={t('scPlaceholderOverheadCategory')}
+                  value={lineForm.overhead_category}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({
+                      ...f,
+                      overhead_category: e.target.value,
+                    }))
+                  }
+                  className={`${inputCls} w-full`}
+                  style={S.input}
+                />
               </div>
             )}
 
-            {lineType === "RESOURCE" && (
+            {lineType === 'RESOURCE' && (
               <div>
-                <label className="mb-1 block text-[11px] font-semibold" style={S.sub}>
+                <label
+                  className="mb-1 block text-[11px] font-semibold"
+                  style={S.sub}
+                >
                   Resource <span className="text-red-500">*</span>
                 </label>
                 <SearchableSelect
                   ariaLabel="Resource"
                   value={lineForm.resource_id}
-                  onChange={(val) => setLineForm((f: Row) => ({ ...f, resource_id: val }))}
+                  onChange={(val) =>
+                    setLineForm((f: Row) => ({ ...f, resource_id: val }))
+                  }
                   options={resources.map((r) => ({
                     value: r.resource_id,
                     label: r.resource_name,
                   }))}
-                  placeholder={t("scPlaceholderSelectResource")}
+                  placeholder={t('scPlaceholderSelectResource')}
                   searchPlaceholder="Search resources…"
                 />
               </div>
             )}
           </div>
           <div className="mt-3 flex gap-2">
-            <Button size="sm" onClick={saveLine} disabled={savingLine || !lineForm.activity_name} className="nf-btn-primary">{savingLine ? t("scSaving") : t("scSaveLine")}</Button>
-            <Button size="sm" variant="outline" onClick={() => setAddingLine(false)} disabled={savingLine}>{t("cancel")}</Button>
+            <Button
+              size="sm"
+              onClick={saveLine}
+              disabled={savingLine || !lineForm.activity_name}
+              className="nf-btn-primary"
+            >
+              {savingLine ? t('scSaving') : t('scSaveLine')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setAddingLine(false)}
+              disabled={savingLine}
+            >
+              {t('cancel')}
+            </Button>
           </div>
         </div>
       )}
 
       {header.notes && (
         <div>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider" style={S.sub}>{t("scLabelNotes")}</p>
+          <p
+            className="mb-1 text-[11px] font-semibold uppercase tracking-wider"
+            style={S.sub}
+          >
+            {t('scLabelNotes')}
+          </p>
           <p style={S.sub}>{header.notes}</p>
         </div>
       )}

@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import type { ReactNode } from 'react';
+import { cn } from '@/lib/utils';
 
 /**
  * Shared visual frame for requisition documents.
@@ -11,11 +11,19 @@ import { cn } from "@/lib/utils";
  * presentation so create, edit and later workflow views keep the same rhythm
  * and responsive behaviour without coupling their business rules.
  */
-export function RequisitionDocumentShell({ children, className }: { children: ReactNode; className?: string }) {
+export function RequisitionDocumentShell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className={cn("flex min-w-0 flex-col gap-6", className)} data-requisition-document>
+    <div
+      className={cn('flex min-w-0 flex-col gap-6', className)}
+      data-requisition-document
+    >
       {children}
     </div>
   );
 }
-

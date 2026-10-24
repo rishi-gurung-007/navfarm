@@ -1,5 +1,5 @@
-import { NA } from "@/utils/na";
-import type { PiggeryStage } from "./piggery-lifecycle-stepper";
+import { NA } from '@/utils/na';
+import type { PiggeryStage } from './piggery-lifecycle-stepper';
 
 /**
  * Turns a batch's real stage history into the lifecycle stepper's model.
@@ -61,9 +61,12 @@ export function buildLifecycleStages({
 }): { stages: PiggeryStage[]; currentStageId: number } {
   if (!stageMaster.length) return { stages: [], currentStageId: 0 };
 
-  const all = [...stageMaster].sort((a, b) => a.stage_sequence - b.stage_sequence);
+  const all = [...stageMaster].sort(
+    (a, b) => a.stage_sequence - b.stage_sequence,
+  );
   const log = [...stageLog].sort(
-    (a, b) => toDate(a.transferred_at).getTime() - toDate(b.transferred_at).getTime()
+    (a, b) =>
+      toDate(a.transferred_at).getTime() - toDate(b.transferred_at).getTime(),
   );
 
   // The path the batch actually walked: where it started, then each stage it
@@ -77,7 +80,8 @@ export function buildLifecycleStages({
   // later one at the transfer that moved the batch into it.
   const enteredOn = new Map<string, string>();
   if (path.length) enteredOn.set(path[0], batchStartDate);
-  for (const entry of log) enteredOn.set(entry.to_stage_code, entry.transferred_at.slice(0, 10));
+  for (const entry of log)
+    enteredOn.set(entry.to_stage_code, entry.transferred_at.slice(0, 10));
 
   const visited = new Set(path);
   const endOfDay = today ?? toYmd(new Date());
@@ -90,25 +94,34 @@ export function buildLifecycleStages({
 
   const stages: PiggeryStage[] = ordered.map((row, index) => {
     const isCurrent = currentStageCode === row.stage_code;
-    const status: PiggeryStage["status"] = isCurrent
-      ? "CURRENT"
+    const status: PiggeryStage['status'] = isCurrent
+      ? 'CURRENT'
       : visited.has(row.stage_code)
-      ? "COMPLETED"
-      : "UPCOMING";
+        ? 'COMPLETED'
+        : 'UPCOMING';
 
     const from = enteredOn.get(row.stage_code);
     // A stage ends when the batch moved on from it; the current stage runs to today.
     const movedOn = log.find((e) => e.from_stage_code === row.stage_code);
-    const to = movedOn ? movedOn.transferred_at.slice(0, 10) : isCurrent ? endOfDay : undefined;
+    const to = movedOn
+      ? movedOn.transferred_at.slice(0, 10)
+      : isCurrent
+        ? endOfDay
+        : undefined;
 
-    let daysRange = row.typical_duration_days ? `${row.typical_duration_days} days (standard)` : NA;
+    let daysRange = row.typical_duration_days
+      ? `${row.typical_duration_days} days (standard)`
+      : NA;
     let dateRange: string | undefined;
 
     if (from) {
       const startDay = dayOfBatch(batchStartDate, from);
       // A completed stage ends the day before the batch entered the next one.
-      const endDay = to ? dayOfBatch(batchStartDate, to) - (movedOn ? 1 : 0) : null;
-      daysRange = endDay !== null ? `Day ${startDay} – ${endDay}` : `Day ${startDay}`;
+      const endDay = to
+        ? dayOfBatch(batchStartDate, to) - (movedOn ? 1 : 0)
+        : null;
+      daysRange =
+        endDay !== null ? `Day ${startDay} – ${endDay}` : `Day ${startDay}`;
       dateRange = to && to !== from ? `${from} → ${to}` : from;
     }
 
@@ -116,7 +129,7 @@ export function buildLifecycleStages({
       id: index + 1,
       code: row.stage_code,
       name: row.stage_name,
-      type: row.stage_category || "",
+      type: row.stage_category || '',
       daysRange,
       dateRange,
       status,
@@ -124,7 +137,7 @@ export function buildLifecycleStages({
     };
   });
 
-  const current = stages.find((s) => s.status === "CURRENT");
+  const current = stages.find((s) => s.status === 'CURRENT');
   return { stages, currentStageId: current?.id ?? 0 };
 }
 
@@ -150,7 +163,8 @@ export function stageWindows({
   today?: string;
 }): Array<{ code: string; from: string; to: string }> {
   const log = [...stageLog].sort(
-    (a, b) => toDate(a.transferred_at).getTime() - toDate(b.transferred_at).getTime()
+    (a, b) =>
+      toDate(a.transferred_at).getTime() - toDate(b.transferred_at).getTime(),
   );
 
   const entries: Array<{ code: string; from: string }> = [];
@@ -159,7 +173,11 @@ export function stageWindows({
   } else if (currentStageCode) {
     entries.push({ code: currentStageCode, from: batchStartDate });
   }
-  for (const e of log) entries.push({ code: e.to_stage_code, from: e.transferred_at.slice(0, 10) });
+  for (const e of log)
+    entries.push({
+      code: e.to_stage_code,
+      from: e.transferred_at.slice(0, 10),
+    });
 
   const last = batchEndDate || today || toYmd(new Date());
   return entries.map((entry, i) => {

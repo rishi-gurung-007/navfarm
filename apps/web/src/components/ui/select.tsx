@@ -2,10 +2,12 @@ import * as React from 'react';
 import SearchableSelect from './searchable-select';
 
 function textOf(node: React.ReactNode): string {
-  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (node === null || node === undefined || typeof node === 'boolean')
+    return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(textOf).join('');
-  if (React.isValidElement(node)) return textOf((node.props as { children?: React.ReactNode }).children);
+  if (React.isValidElement(node))
+    return textOf((node.props as { children?: React.ReactNode }).children);
   return '';
 }
 
@@ -15,17 +17,47 @@ type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
 };
 
 const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, children, onChange, value, defaultValue, disabled, required, id, name, 'aria-label': ariaLabel, fullWidth = true, ...props }, ref) => {
+  (
+    {
+      className,
+      children,
+      onChange,
+      value,
+      defaultValue,
+      disabled,
+      required,
+      id,
+      name,
+      'aria-label': ariaLabel,
+      fullWidth = true,
+      ...props
+    },
+    ref,
+  ) => {
     const options = React.Children.toArray(children)
-      .filter((child): child is React.ReactElement<{ value?: string | number; children?: React.ReactNode }> =>
-        React.isValidElement(child) && child.type === 'option')
+      .filter(
+        (
+          child,
+        ): child is React.ReactElement<{
+          value?: string | number;
+          children?: React.ReactNode;
+        }> => React.isValidElement(child) && child.type === 'option',
+      )
       .map((option) => ({
         value: String(option.props.value ?? ''),
         label: textOf(option.props.children).replace(/\s+/g, ' ').trim(),
       }));
-    const selectedValue = value !== undefined ? String(value) : defaultValue !== undefined ? String(defaultValue) : '';
+    const selectedValue =
+      value !== undefined
+        ? String(value)
+        : defaultValue !== undefined
+          ? String(defaultValue)
+          : '';
     const handleChange = (next: string) => {
-      onChange?.({ target: { value: next }, currentTarget: { value: next } } as React.ChangeEvent<HTMLSelectElement>);
+      onChange?.({
+        target: { value: next },
+        currentTarget: { value: next },
+      } as React.ChangeEvent<HTMLSelectElement>);
     };
 
     return (
@@ -38,7 +70,9 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           options={options}
           valueKey="value"
           labelKey="label"
-          placeholder={options.find((option) => option.value === '')?.label || 'Select…'}
+          placeholder={
+            options.find((option) => option.value === '')?.label || 'Select…'
+          }
           disabled={disabled}
           fullWidth={fullWidth}
           triggerClassName={className}
@@ -61,7 +95,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         </select>
       </>
     );
-  }
+  },
 );
 Select.displayName = 'Select';
 

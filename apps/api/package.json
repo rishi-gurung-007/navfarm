@@ -160,7 +160,7 @@
           "cwd": "apps/api"
         }
       },
-"db-align-production-permissions": {
+      "db-align-production-permissions": {
         "executor": "nx:run-commands",
         "options": {
           "cwd": "apps/api",
@@ -411,7 +411,9 @@
       "start": {
         "executor": "nx:run-commands",
         "continuous": true,
-        "dependsOn": ["build"],
+        "dependsOn": [
+          "build"
+        ],
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env dist/main.js",

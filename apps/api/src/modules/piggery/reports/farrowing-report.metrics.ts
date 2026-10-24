@@ -1,4 +1,7 @@
-import { kpiLimits, KpiLimitsInput } from '../../production/lifecycle/kpi-limits';
+import {
+  kpiLimits,
+  KpiLimitsInput,
+} from '../../production/lifecycle/kpi-limits';
 
 /**
  * The arithmetic of the R07 Farrowing Report, kept apart from the queries so it can be tested on plain rows.
@@ -79,7 +82,8 @@ export interface FarrowingMetrics {
 }
 
 const round = (value: number, places = 2) => Number(value.toFixed(places));
-const ratio = (num: number, den: number, scale = 1) => (den > 0 ? round((num / den) * scale) : null);
+const ratio = (num: number, den: number, scale = 1) =>
+  den > 0 ? round((num / den) * scale) : null;
 
 /** Monday of the week that holds `date` (YYYY-MM-DD), as YYYY-MM-DD. */
 export function weekStart(date: string): string {
@@ -104,13 +108,18 @@ export function computeFarrowingMetrics(
   dateTo: string,
   weaning: WeaningData = { weaned: [], weights: [] },
 ): FarrowingMetrics {
-  const sum = (rows: FarrowingRow[], pick: (r: FarrowingRow) => number) => rows.reduce((acc, r) => acc + pick(r), 0);
+  const sum = (rows: FarrowingRow[], pick: (r: FarrowingRow) => number) =>
+    rows.reduce((acc, r) => acc + pick(r), 0);
   const served = services.length;
   const farrowed = farrowings.length;
 
   // Pre-wean mortality: piglets lost from the litter's lot up to its weaning (or to date, while still nursing),
   // over the lot it started with — born live, plus fostered in, less fostered out.
-  const weaningOf = new Map(farrowings.filter((f) => f.piglet_batch_id).map((f) => [f.piglet_batch_id as string, f.weaning_date]));
+  const weaningOf = new Map(
+    farrowings
+      .filter((f) => f.piglet_batch_id)
+      .map((f) => [f.piglet_batch_id as string, f.weaning_date]),
+  );
   const preWeanDeaths = mortality
     .filter((m) => weaningOf.has(m.piglet_batch_id))
     .filter((m) => {
@@ -118,23 +127,42 @@ export function computeFarrowingMetrics(
       return !weaned || m.transaction_date <= weaned;
     })
     .reduce((acc, m) => acc + m.quantity, 0);
-  const startingLot = sum(farrowings, (f) => f.piglets_born_live + f.foster_received - f.fostered_out);
+  const startingLot = sum(
+    farrowings,
+    (f) => f.piglets_born_live + f.foster_received - f.fostered_out,
+  );
 
   const activeFrom = weekStart(dateTo);
   const activeWeek = mortality
-    .filter((m) => weaningOf.has(m.piglet_batch_id) && m.transaction_date >= activeFrom && m.transaction_date <= dateTo)
+    .filter(
+      (m) =>
+        weaningOf.has(m.piglet_batch_id) &&
+        m.transaction_date >= activeFrom &&
+        m.transaction_date <= dateTo,
+    )
     .reduce((acc, m) => acc + m.quantity, 0);
 
-  const weighed = farrowings.filter((f) => f.piglets_weaned > 0 && f.avg_weaning_weight_kg != null);
+  const weighed = farrowings.filter(
+    (f) => f.piglets_weaned > 0 && f.avg_weaning_weight_kg != null,
+  );
   const weanedHead = sum(weighed, (f) => f.piglets_weaned);
-  const litterMass = sum(weighed, (f) => f.piglets_weaned * (f.avg_weaning_weight_kg as number));
+  const litterMass = sum(
+    weighed,
+    (f) => f.piglets_weaned * (f.avg_weaning_weight_kg as number),
+  );
 
   return {
     sows_served: served,
     sows_farrowed: farrowed,
     farrowing_rate_pct: ratio(farrowed, served, 100),
-    total_born_per_sow: ratio(sum(farrowings, (f) => f.piglets_born_total), farrowed),
-    born_alive_per_sow: ratio(sum(farrowings, (f) => f.piglets_born_live), farrowed),
+    total_born_per_sow: ratio(
+      sum(farrowings, (f) => f.piglets_born_total),
+      farrowed,
+    ),
+    born_alive_per_sow: ratio(
+      sum(farrowings, (f) => f.piglets_born_live),
+      farrowed,
+    ),
     born_dead: sum(farrowings, (f) => f.piglets_stillborn),
     mummified: sum(farrowings, (f) => f.piglets_mummified),
     active_week_mortality: activeWeek,
@@ -146,7 +174,10 @@ export function computeFarrowingMetrics(
     gilts_served: services.filter((s) => s.parity_number === 1).length,
     second_parity_served: services.filter((s) => s.parity_number === 2).length,
     sows_weaned: weaning.weaned.length,
-    wean_per_sow: ratio(weaning.weaned.reduce((acc, w) => acc + w.piglets_weaned, 0), weaning.weaned.length),
+    wean_per_sow: ratio(
+      weaning.weaned.reduce((acc, w) => acc + w.piglets_weaned, 0),
+      weaning.weaned.length,
+    ),
     gilt_body_loss_pct: giltBodyLossPct(weaning),
   };
 }
@@ -158,17 +189,46 @@ export function computeFarrowingMetrics(
  * is her latest lactation weighing from farrowing to the weaning date. Null when no gilt litter has both.
  */
 function giltBodyLossPct({ weaned, weights }: WeaningData): number | null {
-  const latest = (animalId: string, stage: SowWeightRow['stage_code'], from: string, to: string) =>
+  const latest = (
+    animalId: string,
+    stage: SowWeightRow['stage_code'],
+    from: string,
+    to: string,
+  ) =>
     weights
-      .filter((w) => w.animal_id === animalId && w.stage_code === stage && w.entry_date >= from && w.entry_date <= to)
-      .reduce<SowWeightRow | null>((best, w) => (!best || w.entry_date > best.entry_date ? w : best), null);
+      .filter(
+        (w) =>
+          w.animal_id === animalId &&
+          w.stage_code === stage &&
+          w.entry_date >= from &&
+          w.entry_date <= to,
+      )
+      .reduce<SowWeightRow | null>(
+        (best, w) => (!best || w.entry_date > best.entry_date ? w : best),
+        null,
+      );
   const losses: number[] = [];
   for (const litter of weaned.filter((w) => w.parity_number === 1)) {
-    const before = latest(litter.sow_animal_id, 'GESTATION', '0000-01-01', litter.farrowing_date);
-    const after = latest(litter.sow_animal_id, 'LACTATION', litter.farrowing_date, litter.weaning_date);
-    if (before && after && before.weight_kg > 0) losses.push(((before.weight_kg - after.weight_kg) / before.weight_kg) * 100);
+    const before = latest(
+      litter.sow_animal_id,
+      'GESTATION',
+      '0000-01-01',
+      litter.farrowing_date,
+    );
+    const after = latest(
+      litter.sow_animal_id,
+      'LACTATION',
+      litter.farrowing_date,
+      litter.weaning_date,
+    );
+    if (before && after && before.weight_kg > 0)
+      losses.push(
+        ((before.weight_kg - after.weight_kg) / before.weight_kg) * 100,
+      );
   }
-  return losses.length ? round(losses.reduce((a, b) => a + b, 0) / losses.length) : null;
+  return losses.length
+    ? round(losses.reduce((a, b) => a + b, 0) / losses.length)
+    : null;
 }
 
 /** True when a period had nothing recorded at all — the report shows "No data" rather than a row of zeros. */
@@ -215,21 +275,36 @@ interface ThresholdRow extends KpiLimitsInput {
  * Targets for one breed from its lifecycle rows. A farm's own row wins over the company-wide one, the way a
  * lifecycle farm override does everywhere else.
  */
-export function targetsFromLifecycle(rows: Array<{ farm_id: string | null; kpi_thresholds: unknown }>, farmId: string): Targets {
-  const ordered = [...rows].sort((a, b) => Number(b.farm_id === farmId) - Number(a.farm_id === farmId));
+export function targetsFromLifecycle(
+  rows: Array<{ farm_id: string | null; kpi_thresholds: unknown }>,
+  farmId: string,
+): Targets {
+  const ordered = [...rows].sort(
+    (a, b) => Number(b.farm_id === farmId) - Number(a.farm_id === farmId),
+  );
   const found = new Map<string, Target>();
   for (const row of ordered) {
-    const list = typeof row.kpi_thresholds === 'string' ? safeParse(row.kpi_thresholds) : row.kpi_thresholds;
+    const list =
+      typeof row.kpi_thresholds === 'string'
+        ? safeParse(row.kpi_thresholds)
+        : row.kpi_thresholds;
     if (!Array.isArray(list)) continue;
     for (const t of list as ThresholdRow[]) {
       if (!t?.metric || found.has(t.metric)) continue;
       const target = kpiLimits(t);
-      if (target.average === null && target.lower === null && target.upper === null) continue;
+      if (
+        target.average === null &&
+        target.lower === null &&
+        target.upper === null
+      )
+        continue;
       found.set(t.metric, target);
     }
   }
   const out = {} as Targets;
-  for (const [key, metric] of Object.entries(TARGET_METRICS) as Array<[TargetKey, string]>) {
+  for (const [key, metric] of Object.entries(TARGET_METRICS) as Array<
+    [TargetKey, string]
+  >) {
     out[key] = found.get(metric) ?? null;
   }
   return out;
@@ -250,7 +325,16 @@ export function commonTargets(all: Targets[]): Targets {
     const values = all.map((t) => t[key]);
     const first = values[0];
     out[key] =
-      first && values.every((v) => v && v.average === first.average && v.lower === first.lower && v.upper === first.upper) ? first : null;
+      first &&
+      values.every(
+        (v) =>
+          v &&
+          v.average === first.average &&
+          v.lower === first.lower &&
+          v.upper === first.upper,
+      )
+        ? first
+        : null;
   }
   return out;
 }
@@ -270,8 +354,11 @@ export function matchPriorBatch(
   let best: { id: string; gap: number } | null = null;
   for (const c of candidates) {
     if (!c.first_service) continue;
-    const gap = Math.abs(Date.parse(`${c.first_service}T00:00:00Z`) - target) / 86_400_000;
-    if (gap <= windowDays && (!best || gap < best.gap)) best = { id: c.batch_id, gap };
+    const gap =
+      Math.abs(Date.parse(`${c.first_service}T00:00:00Z`) - target) /
+      86_400_000;
+    if (gap <= windowDays && (!best || gap < best.gap))
+      best = { id: c.batch_id, gap };
   }
   return best?.id ?? null;
 }

@@ -1,5 +1,10 @@
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull, ne, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -9,7 +14,10 @@ import { CreateStageDto, UpdateStageDto, QueryStageDto } from './dto/stage.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 @Injectable()
@@ -30,19 +38,39 @@ export class StageService {
   }
 
   /** Resolves by stage_category first (e.g. STAGE_PRODUCTIVE), then the master-alone STAGE series, else manual. */
-  private async resolveStageCode(dto: CreateStageDto, tenantId: string): Promise<string> {
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('STAGE', dto.stage_category, tenantId, dto.company_id);
+  private async resolveStageCode(
+    dto: CreateStageDto,
+    tenantId: string,
+  ): Promise<string> {
+    const seriesCode = await this.numberSeriesService.resolveSeriesFor(
+      'STAGE',
+      dto.stage_category,
+      tenantId,
+      dto.company_id,
+    );
     if (!seriesCode) {
       if (!dto.stage_code) {
-        throw new BadRequestException('Enter a Code for this stage — no number series is configured for stages.');
+        throw new BadRequestException(
+          'Enter a Code for this stage — no number series is configured for stages.',
+        );
       }
       return dto.stage_code.toUpperCase();
     }
-    const series = await this.numberSeriesService.lockSeries(seriesCode, tenantId, dto.company_id);
+    const series = await this.numberSeriesService.lockSeries(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+    );
     if (series.manual_nos && dto.stage_code) {
       return dto.stage_code.toUpperCase();
     }
-    return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
+    return this.numberSeriesService.generateNext(
+      seriesCode,
+      tenantId,
+      dto.company_id,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
   }
 
   /** AUTO_BY_DAY stages must specify which day to auto-move on, and cannot exceed typical_duration_days. */
@@ -53,10 +81,14 @@ export class StageService {
   ) {
     if (transitionTrigger === 'AUTO_BY_DAY') {
       if (autoMoveOnDay == null) {
-        throw new ConflictException('Enter the day to move automatically when the transition trigger is Automatic by Day.');
+        throw new ConflictException(
+          'Enter the day to move automatically when the transition trigger is Automatic by Day.',
+        );
       }
       if (typicalDurationDays != null && autoMoveOnDay > typicalDurationDays) {
-        throw new BadRequestException('Auto-Move On Day cannot be greater than Duration (days).');
+        throw new BadRequestException(
+          'Auto-Move On Day cannot be greater than Duration (days).',
+        );
       }
     }
   }
@@ -64,9 +96,19 @@ export class StageService {
   /** KPI_BASED/EVENT_BASED stages must name where they go on failure and why —
    * mirrors assertAutoMoveDayWhenAutoByDay above, same reasoning applied to the
    * alt-path fields instead of auto_move_on_day. */
-  private assertAltFieldsWhenConditional(transitionTrigger: string, altNextStageId?: string | null, altTriggerCondition?: string | null) {
-    if ((transitionTrigger === 'KPI_BASED' || transitionTrigger === 'EVENT_BASED') && (!altNextStageId || !altTriggerCondition)) {
-      throw new ConflictException('Choose an alternate next stage and enter its trigger condition when the transition trigger is KPI Based or Event Based.');
+  private assertAltFieldsWhenConditional(
+    transitionTrigger: string,
+    altNextStageId?: string | null,
+    altTriggerCondition?: string | null,
+  ) {
+    if (
+      (transitionTrigger === 'KPI_BASED' ||
+        transitionTrigger === 'EVENT_BASED') &&
+      (!altNextStageId || !altTriggerCondition)
+    ) {
+      throw new ConflictException(
+        'Choose an alternate next stage and enter its trigger condition when the transition trigger is KPI Based or Event Based.',
+      );
     }
   }
 
@@ -74,7 +116,12 @@ export class StageService {
     const [stage] = await this.db
       .select()
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.stage_id, stageId), isNull(schema.stageMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.stageMaster.stage_id, stageId),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
       .limit(1);
     if (!stage) {
       throw new NotFoundException(`Stage with ID '${stageId}' not found.`);
@@ -88,10 +135,14 @@ export class StageService {
     // (operational areas split across LOBs) surfaces a clear error here
     // instead of a raw DB constraint failure — unlike item/resource/number-series,
     // a stage genuinely cannot exist without knowing which LOB it belongs to.
-    const resolved = await this.nobLobResolution.resolve(tenantId, dto.company_id, {
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
-    });
+    const resolved = await this.nobLobResolution.resolve(
+      tenantId,
+      dto.company_id,
+      {
+        nob_id: dto.nob_id,
+        lob_id: dto.lob_id,
+      },
+    );
     if (!resolved.nob_id || !resolved.lob_id) {
       throw new BadRequestException(
         "Cannot determine this stage's Nature of Business / Line of Business — this company's operational areas span multiple business verticals. Choose the Nature of Business and Line of Business explicitly.",
@@ -118,11 +169,20 @@ export class StageService {
       throw new NotFoundException(`LOB with ID '${lobId}' not found.`);
     }
 
-    this.assertAutoMoveDayWhenAutoByDay(dto.transition_trigger, dto.auto_move_on_day, dto.typical_duration_days);
-    this.assertAltFieldsWhenConditional(dto.transition_trigger, dto.alt_next_stage_id, dto.alt_trigger_condition);
+    this.assertAutoMoveDayWhenAutoByDay(
+      dto.transition_trigger,
+      dto.auto_move_on_day,
+      dto.typical_duration_days,
+    );
+    this.assertAltFieldsWhenConditional(
+      dto.transition_trigger,
+      dto.alt_next_stage_id,
+      dto.alt_trigger_condition,
+    );
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
-    if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);
+    if (dto.alt_next_stage_id)
+      await this.assertStageExists(dto.alt_next_stage_id);
 
     // Resolve the stage code — a series (stage_category first, then STAGE alone) if
     // one is configured, else the user-supplied code.
@@ -138,7 +198,9 @@ export class StageService {
       isNull(schema.stageMaster.deleted_at),
     ];
     if (dto.company_id) {
-      duplicateConditions.push(eq(schema.stageMaster.company_id, dto.company_id));
+      duplicateConditions.push(
+        eq(schema.stageMaster.company_id, dto.company_id),
+      );
     } else {
       duplicateConditions.push(isNull(schema.stageMaster.company_id));
     }
@@ -158,10 +220,12 @@ export class StageService {
       const match = existing[0];
       if (match.stage_sequence === dto.stage_sequence) {
         throw new ConflictException(
-          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${match.stage_name}'. Stage display order must be unique per Line of Business.`
+          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${match.stage_name}'. Stage display order must be unique per Line of Business.`,
         );
       }
-      throw new ConflictException(`Stage code '${stageCode}' already exists for this LOB.`);
+      throw new ConflictException(
+        `Stage code '${stageCode}' already exists for this LOB.`,
+      );
     }
 
     const stageId = randomUUID();
@@ -182,7 +246,9 @@ export class StageService {
       next_stage_id: dto.next_stage_id || null,
       alt_next_stage_id: dto.alt_next_stage_id || null,
       alt_trigger_condition: dto.alt_trigger_condition || null,
-      required_kpi_to_pass: dto.required_kpi_to_pass ? JSON.stringify(dto.required_kpi_to_pass) : null,
+      required_kpi_to_pass: dto.required_kpi_to_pass
+        ? JSON.stringify(dto.required_kpi_to_pass)
+        : null,
       data_entry_form: dto.data_entry_form || 'STANDARD',
       applicable_gender: dto.applicable_gender ?? null,
       scheduler_auto_create: dto.scheduler_auto_create ?? true,
@@ -227,33 +293,44 @@ export class StageService {
 
   async findAll(query: QueryStageDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.stageMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.stageMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.stageMaster, query.companyId));
-    if (query.nobId) conditions.push(eq(schema.stageMaster.nob_id, query.nobId));
-    if (query.lobId) conditions.push(eq(schema.stageMaster.lob_id, query.lobId));
+    conditions.push(
+      ...masterScopeConditions(this.cls, schema.stageMaster, query.companyId),
+    );
+    if (query.nobId)
+      conditions.push(eq(schema.stageMaster.nob_id, query.nobId));
+    if (query.lobId)
+      conditions.push(eq(schema.stageMaster.lob_id, query.lobId));
     if (query.breedId) {
-      conditions.push(inArray(
-        schema.stageMaster.stage_id,
-        this.db.select({ stage_id: schema.breedLifecycleStages.stage_id })
-          .from(schema.breedLifecycleStages)
-          .where(and(
-            eq(schema.breedLifecycleStages.breed_id, query.breedId),
-            eq(schema.breedLifecycleStages.is_active, true),
-            isNull(schema.breedLifecycleStages.retired_at),
-          )),
-      ));
+      conditions.push(
+        inArray(
+          schema.stageMaster.stage_id,
+          this.db
+            .select({ stage_id: schema.breedLifecycleStages.stage_id })
+            .from(schema.breedLifecycleStages)
+            .where(
+              and(
+                eq(schema.breedLifecycleStages.breed_id, query.breedId),
+                eq(schema.breedLifecycleStages.is_active, true),
+                isNull(schema.breedLifecycleStages.retired_at),
+              ),
+            ),
+        ),
+      );
     }
-    if (query.stageCategory) conditions.push(eq(schema.stageMaster.stage_category, query.stageCategory));
-    if (query.isActive !== undefined) conditions.push(eq(schema.stageMaster.is_active, query.isActive));
+    if (query.stageCategory)
+      conditions.push(
+        eq(schema.stageMaster.stage_category, query.stageCategory),
+      );
+    if (query.isActive !== undefined)
+      conditions.push(eq(schema.stageMaster.is_active, query.isActive));
     if (query.search) {
       conditions.push(
         or(
           like(schema.stageMaster.stage_code, `%${query.search}%`),
-          like(schema.stageMaster.stage_name, `%${query.search}%`)
-        )
+          like(schema.stageMaster.stage_name, `%${query.search}%`),
+        ),
       );
     }
 
@@ -266,24 +343,59 @@ export class StageService {
       .select()
       .from(schema.stageMaster)
       .where(and(...conditions))
-      .orderBy(listOrderBy(schema.stageMaster, query, schema.stageMaster.stage_sequence))
+      .orderBy(
+        listOrderBy(
+          schema.stageMaster,
+          query,
+          schema.stageMaster.stage_sequence,
+        ),
+      )
       .limit(limit)
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateStageDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateStageDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const stage = await this.findOne(id);
 
-    const effectiveTrigger = dto.transition_trigger !== undefined ? dto.transition_trigger : stage.transition_trigger;
-    const effectiveAutoMoveDay = dto.auto_move_on_day !== undefined ? dto.auto_move_on_day : stage.auto_move_on_day;
-    const effectiveDuration = dto.typical_duration_days !== undefined ? dto.typical_duration_days : stage.typical_duration_days;
-    this.assertAutoMoveDayWhenAutoByDay(effectiveTrigger, effectiveAutoMoveDay as any, effectiveDuration as any);
-    const effectiveAltNextStageId = dto.alt_next_stage_id !== undefined ? dto.alt_next_stage_id : stage.alt_next_stage_id;
-    const effectiveAltTriggerCondition = dto.alt_trigger_condition !== undefined ? dto.alt_trigger_condition : stage.alt_trigger_condition;
-    this.assertAltFieldsWhenConditional(effectiveTrigger, effectiveAltNextStageId as any, effectiveAltTriggerCondition as any);
+    const effectiveTrigger =
+      dto.transition_trigger !== undefined
+        ? dto.transition_trigger
+        : stage.transition_trigger;
+    const effectiveAutoMoveDay =
+      dto.auto_move_on_day !== undefined
+        ? dto.auto_move_on_day
+        : stage.auto_move_on_day;
+    const effectiveDuration =
+      dto.typical_duration_days !== undefined
+        ? dto.typical_duration_days
+        : stage.typical_duration_days;
+    this.assertAutoMoveDayWhenAutoByDay(
+      effectiveTrigger,
+      effectiveAutoMoveDay as any,
+      effectiveDuration as any,
+    );
+    const effectiveAltNextStageId =
+      dto.alt_next_stage_id !== undefined
+        ? dto.alt_next_stage_id
+        : stage.alt_next_stage_id;
+    const effectiveAltTriggerCondition =
+      dto.alt_trigger_condition !== undefined
+        ? dto.alt_trigger_condition
+        : stage.alt_trigger_condition;
+    this.assertAltFieldsWhenConditional(
+      effectiveTrigger,
+      effectiveAltNextStageId as any,
+      effectiveAltTriggerCondition as any,
+    );
 
     if (dto.next_stage_id) await this.assertStageExists(dto.next_stage_id);
-    if (dto.alt_next_stage_id) await this.assertStageExists(dto.alt_next_stage_id);
+    if (dto.alt_next_stage_id)
+      await this.assertStageExists(dto.alt_next_stage_id);
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
@@ -308,7 +420,10 @@ export class StageService {
         if (edited) updates.stage_code = edited;
       }
     }
-    if (dto.stage_sequence !== undefined && dto.stage_sequence !== stage.stage_sequence) {
+    if (
+      dto.stage_sequence !== undefined &&
+      dto.stage_sequence !== stage.stage_sequence
+    ) {
       const seqDuplicateConditions = [
         eq(schema.stageMaster.tenant_id, tenantId),
         eq(schema.stageMaster.lob_id, stage.lob_id),
@@ -317,40 +432,60 @@ export class StageService {
         isNull(schema.stageMaster.deleted_at),
       ];
       if (stage.company_id) {
-        seqDuplicateConditions.push(eq(schema.stageMaster.company_id, stage.company_id));
+        seqDuplicateConditions.push(
+          eq(schema.stageMaster.company_id, stage.company_id),
+        );
       } else {
         seqDuplicateConditions.push(isNull(schema.stageMaster.company_id));
       }
 
       const [existingSeq] = await this.db
-        .select({ id: schema.stageMaster.stage_id, name: schema.stageMaster.stage_name })
+        .select({
+          id: schema.stageMaster.stage_id,
+          name: schema.stageMaster.stage_name,
+        })
         .from(schema.stageMaster)
         .where(and(...seqDuplicateConditions))
         .limit(1);
 
       if (existingSeq) {
         throw new ConflictException(
-          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${existingSeq.name}'. Stage display order must be unique per Line of Business.`
+          `Display Order (sequence) '${dto.stage_sequence}' already belongs to stage '${existingSeq.name}'. Stage display order must be unique per Line of Business.`,
         );
       }
     }
     if (dto.stage_name !== undefined) updates.stage_name = dto.stage_name;
-    if (dto.stage_category !== undefined) updates.stage_category = dto.stage_category;
-    if (dto.stage_sequence !== undefined) updates.stage_sequence = dto.stage_sequence;
-    if (dto.typical_duration_days !== undefined) updates.typical_duration_days = dto.typical_duration_days;
-    if (dto.min_days_before_move !== undefined) updates.min_days_before_move = dto.min_days_before_move;
-    if (dto.transition_trigger !== undefined) updates.transition_trigger = dto.transition_trigger;
-    if (dto.auto_move_on_day !== undefined) updates.auto_move_on_day = dto.auto_move_on_day;
-    if (dto.next_stage_id !== undefined) updates.next_stage_id = dto.next_stage_id;
-    if (dto.alt_next_stage_id !== undefined) updates.alt_next_stage_id = dto.alt_next_stage_id;
-    if (dto.alt_trigger_condition !== undefined) updates.alt_trigger_condition = dto.alt_trigger_condition;
-    if (dto.required_kpi_to_pass !== undefined) updates.required_kpi_to_pass = JSON.stringify(dto.required_kpi_to_pass);
-    if (dto.data_entry_form !== undefined) updates.data_entry_form = dto.data_entry_form;
-    if (dto.applicable_gender !== undefined) updates.applicable_gender = dto.applicable_gender;
-    if (dto.scheduler_auto_create !== undefined) updates.scheduler_auto_create = dto.scheduler_auto_create;
-    if (dto.show_on_animal_card !== undefined) updates.show_on_animal_card = dto.show_on_animal_card;
+    if (dto.stage_category !== undefined)
+      updates.stage_category = dto.stage_category;
+    if (dto.stage_sequence !== undefined)
+      updates.stage_sequence = dto.stage_sequence;
+    if (dto.typical_duration_days !== undefined)
+      updates.typical_duration_days = dto.typical_duration_days;
+    if (dto.min_days_before_move !== undefined)
+      updates.min_days_before_move = dto.min_days_before_move;
+    if (dto.transition_trigger !== undefined)
+      updates.transition_trigger = dto.transition_trigger;
+    if (dto.auto_move_on_day !== undefined)
+      updates.auto_move_on_day = dto.auto_move_on_day;
+    if (dto.next_stage_id !== undefined)
+      updates.next_stage_id = dto.next_stage_id;
+    if (dto.alt_next_stage_id !== undefined)
+      updates.alt_next_stage_id = dto.alt_next_stage_id;
+    if (dto.alt_trigger_condition !== undefined)
+      updates.alt_trigger_condition = dto.alt_trigger_condition;
+    if (dto.required_kpi_to_pass !== undefined)
+      updates.required_kpi_to_pass = JSON.stringify(dto.required_kpi_to_pass);
+    if (dto.data_entry_form !== undefined)
+      updates.data_entry_form = dto.data_entry_form;
+    if (dto.applicable_gender !== undefined)
+      updates.applicable_gender = dto.applicable_gender;
+    if (dto.scheduler_auto_create !== undefined)
+      updates.scheduler_auto_create = dto.scheduler_auto_create;
+    if (dto.show_on_animal_card !== undefined)
+      updates.show_on_animal_card = dto.show_on_animal_card;
     if (dto.icon_code !== undefined) updates.icon_code = dto.icon_code;
-    if (dto.stage_description !== undefined) updates.stage_description = dto.stage_description;
+    if (dto.stage_description !== undefined)
+      updates.stage_description = dto.stage_description;
     if (dto.sort_order !== undefined) updates.sort_order = dto.sort_order;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
 
@@ -380,7 +515,10 @@ export class StageService {
       .update(schema.stageMaster)
       .set({
         is_active: false,
-        deleted_at: new Date().toISOString().slice(0, 19).replace('T', ' ') as any,
+        deleted_at: new Date()
+          .toISOString()
+          .slice(0, 19)
+          .replace('T', ' ') as any,
         updated_by: userPayload?.userId || null,
       })
       .where(eq(schema.stageMaster.stage_id, id));
@@ -395,7 +533,10 @@ export class StageService {
       oldValues: stage,
     });
 
-    return { success: true, message: `Stage '${stage.stage_name}' has been deactivated.` };
+    return {
+      success: true,
+      message: `Stage '${stage.stage_name}' has been deactivated.`,
+    };
   }
 
   /**
@@ -415,7 +556,10 @@ export class StageService {
     }
 
     if (stage.is_active) {
-      return { success: true, message: `Stage '${stage.stage_name}' is already active.` };
+      return {
+        success: true,
+        message: `Stage '${stage.stage_name}' is already active.`,
+      };
     }
 
     await this.db
@@ -437,6 +581,9 @@ export class StageService {
       oldValues: stage,
     });
 
-    return { success: true, message: `Stage '${stage.stage_name}' has been restored.` };
+    return {
+      success: true,
+      message: `Stage '${stage.stage_name}' has been restored.`,
+    };
   }
 }

@@ -11,9 +11,17 @@ export type CountType = 'WEEKLY' | 'MONTHLY';
 export type StockTakeType = 'FARM' | 'FEED_MILL';
 
 /** r30: ST-FarmCode-YYYY-NNNNN for a farm, ST-MILL-YYYY-NNNNN for the feed mill. */
-export function stockTakeNo(type: StockTakeType, farmCode: string, year: number, seq: number): string {
+export function stockTakeNo(
+  type: StockTakeType,
+  farmCode: string,
+  year: number,
+  seq: number,
+): string {
   const middle = type === 'FEED_MILL' ? 'MILL' : farmCode;
-  if (!middle) throw new BadRequestException('A farm stock take needs the farm code for its number.');
+  if (!middle)
+    throw new BadRequestException(
+      'A farm stock take needs the farm code for its number.',
+    );
   return `ST-${middle}-${year}-${String(seq).padStart(5, '0')}`;
 }
 
@@ -22,8 +30,15 @@ export function stockTakeNo(type: StockTakeType, farmCode: string, year: number,
  * NAVFarm design; the workbook numbers only the monthly take). It replaced FSC-<farm uuid>-<epoch>, which named no
  * farm a person could read and was cut short on the approval request.
  */
-export function physicalCountNo(farmCode: string, year: number, seq: number): string {
-  if (!farmCode) throw new BadRequestException('A physical count needs the farm code for its number.');
+export function physicalCountNo(
+  farmCode: string,
+  year: number,
+  seq: number,
+): string {
+  if (!farmCode)
+    throw new BadRequestException(
+      'A physical count needs the farm code for its number.',
+    );
   return `PC-${farmCode}-${year}-${String(seq).padStart(5, '0')}`;
 }
 
@@ -38,12 +53,18 @@ export interface StockTakePeriod {
 }
 
 /** r40: refused when the period does not exist; a closed period cannot take a new count. */
-export function assertStockTakePeriod(period: StockTakePeriod | null | undefined): StockTakePeriod {
+export function assertStockTakePeriod(
+  period: StockTakePeriod | null | undefined,
+): StockTakePeriod {
   if (!period || period.deleted_at) {
-    throw new BadRequestException('The reporting period does not exist. Define it in the Reporting Period Master before taking stock.');
+    throw new BadRequestException(
+      'The reporting period does not exist. Define it in the Reporting Period Master before taking stock.',
+    );
   }
   if (period.period_status === 'CLOSED') {
-    throw new BadRequestException(`Reporting period ${period.period_code} is closed; stock cannot be taken in it.`);
+    throw new BadRequestException(
+      `Reporting period ${period.period_code} is closed; stock cannot be taken in it.`,
+    );
   }
   return period;
 }
@@ -53,10 +74,16 @@ export function assertStockTakePeriod(period: StockTakePeriod | null | undefined
  * when that is not set). `countedDate` is the farm-local calendar day of counted_at.
  */
 export function assertStockTakeDate(
-  period: { period_code: string; stock_take_date?: string | null; end_date?: string | null },
+  period: {
+    period_code: string;
+    stock_take_date?: string | null;
+    end_date?: string | null;
+  },
   countedDate: string,
 ): void {
-  const expected = String(period.stock_take_date ?? period.end_date ?? '').slice(0, 10);
+  const expected = String(
+    period.stock_take_date ?? period.end_date ?? '',
+  ).slice(0, 10);
   if (expected && expected !== countedDate) {
     throw new BadRequestException(
       `A monthly stock take for period ${period.period_code} must be dated ${expected} (the Stock Take Date); this count is dated ${countedDate}.`,
@@ -65,8 +92,17 @@ export function assertStockTakeDate(
 }
 
 /** `countable` = has at least one active SILO (farm) or BIN (mill) a count can use; omitted means countable. */
-export interface CloseLocation { location_id: string; code: string; countable?: boolean }
-export interface CloseTake { farm_id: string; count_type: string; reporting_period_id: string | null; status: string }
+export interface CloseLocation {
+  location_id: string;
+  code: string;
+  countable?: boolean;
+}
+export interface CloseTake {
+  farm_id: string;
+  count_type: string;
+  reporting_period_id: string | null;
+  status: string;
+}
 
 /** Controller reading of r31 (awaiting Rishi): a farm or mill with nothing to count owes no take. */
 export function nothingToCount(locations: CloseLocation[]): CloseLocation[] {
@@ -74,11 +110,24 @@ export function nothingToCount(locations: CloseLocation[]): CloseLocation[] {
 }
 
 /** r31: every farm and mill that has something to count needs a POSTED monthly stock take for the period. */
-export function periodCloseBlockers(periodId: string, locations: CloseLocation[], takes: CloseTake[]): CloseLocation[] {
+export function periodCloseBlockers(
+  periodId: string,
+  locations: CloseLocation[],
+  takes: CloseTake[],
+): CloseLocation[] {
   const posted = new Set(
-    takes.filter((t) => t.count_type === 'MONTHLY' && t.reporting_period_id === periodId && t.status === 'POSTED').map((t) => t.farm_id),
+    takes
+      .filter(
+        (t) =>
+          t.count_type === 'MONTHLY' &&
+          t.reporting_period_id === periodId &&
+          t.status === 'POSTED',
+      )
+      .map((t) => t.farm_id),
   );
-  return locations.filter((l) => l.countable !== false && !posted.has(l.location_id));
+  return locations.filter(
+    (l) => l.countable !== false && !posted.has(l.location_id),
+  );
 }
 
 export function assertPeriodCanClose(
@@ -86,13 +135,18 @@ export function assertPeriodCanClose(
   locations: CloseLocation[],
   takes: CloseTake[],
 ): void {
-  if (period.period_status === 'CLOSED') throw new BadRequestException(`Reporting period ${period.period_code} is already closed.`);
+  if (period.period_status === 'CLOSED')
+    throw new BadRequestException(
+      `Reporting period ${period.period_code} is already closed.`,
+    );
   const missing = periodCloseBlockers(period.period_id, locations, takes);
   const empty = nothingToCount(locations);
   if (missing.length) {
     throw new BadRequestException(
-      `Reporting period ${period.period_code} cannot close: no posted monthly stock take for ${missing.map((m) => m.code).join(', ')}.`
-      + (empty.length ? ` Nothing to count (not required): ${empty.map((m) => m.code).join(', ')}.` : ''),
+      `Reporting period ${period.period_code} cannot close: no posted monthly stock take for ${missing.map((m) => m.code).join(', ')}.` +
+        (empty.length
+          ? ` Nothing to count (not required): ${empty.map((m) => m.code).join(', ')}.`
+          : ''),
     );
   }
 }

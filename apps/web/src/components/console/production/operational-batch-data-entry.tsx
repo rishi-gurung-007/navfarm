@@ -1,6 +1,6 @@
 'use client';
 
-import { NA } from "@/utils/na";
+import { NA } from '@/utils/na';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -46,9 +46,14 @@ import { useSystemSchedulerPrompt } from './system-scheduler-prompt';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { InlineAlert } from '@/components/ui/alert';
-import { Toast } from "@/components/ui/toast";
+import { Toast } from '@/components/ui/toast';
 import { ConsumptionLotPicker } from './entry/consumption-lot-picker';
-import { asStageTotalLine, isTotalBatch, round4, splitTotal } from './entry/stage-total';
+import {
+  asStageTotalLine,
+  isTotalBatch,
+  round4,
+  splitTotal,
+} from './entry/stage-total';
 import {
   TableHeader,
   TableBody,
@@ -62,8 +67,18 @@ import AnimalDetailsModal from '@/components/console/piggery/animal-details-moda
 import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
-import { MortalityAnimalsField, draftPicks, useMortalityCandidates } from './entry/mortality-animals-field';
-import { countOnlyPicks, mortalityPayload, mortalityPicksComplete, requiredMortalityAnimals, type MortalityPick } from './entry/mortality-animals';
+import {
+  MortalityAnimalsField,
+  draftPicks,
+  useMortalityCandidates,
+} from './entry/mortality-animals-field';
+import {
+  countOnlyPicks,
+  mortalityPayload,
+  mortalityPicksComplete,
+  requiredMortalityAnimals,
+  type MortalityPick,
+} from './entry/mortality-animals';
 import AnimalSerialAssignmentModal from './animal-serial-assignment-modal';
 
 // file_url from the API is server-relative (e.g. "/uploads/xyz.jpg"). Next.js
@@ -107,13 +122,15 @@ const outputEventLabel = (event: Row, bioItemChosen?: boolean): string => {
   if (event.kind === 'FARROWING')
     return 'Posts as a farrowing: the live-born piglets become a piglet lot.';
   const lot = event.piglet_lot_no ? `, lot ${event.piglet_lot_no}` : '';
-  const onHand = event.piglets_on_hand != null ? ` — ${event.piglets_on_hand} on hand` : '';
+  const onHand =
+    event.piglets_on_hand != null ? ` — ${event.piglets_on_hand} on hand` : '';
   return `Posts as the weaning of litter ${event.litter}${lot}${onHand}: losses are recorded as mortality.`;
 };
 /** A line that issues stock names the lot or serial it draws from. An output does not: its lot is made when it posts,
  *  so it is never asked for one (a lot-tracked output item used to show the issue picker and send an old lot). */
 const drawsFromLots = (line: Row) =>
-  line.line_type !== 'OUTPUT' && Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
+  line.line_type !== 'OUTPUT' &&
+  Boolean(line.lot_required || line.is_lot_tracked || line.is_serial_tracked);
 const isTextCapture = (line: Row) =>
   line.line_type === 'DESCRIPTIVE' &&
   !!line.kpi_uom &&
@@ -207,7 +224,6 @@ export default function OperationalBatchDataEntry() {
   // first open day" instead of wherever the picker was left.
   const userPickedDateRef = React.useRef(false);
 
-
   // Real lifecycle for the selected batch, built from stage_master + this
   // batch's stage_log — BATCH_WISE only (ANIMAL_WISE has no single stage).
   const [lifecycle, setLifecycle] = useState<{
@@ -289,7 +305,9 @@ export default function OperationalBatchDataEntry() {
             .filter((i: Row) => !i.is_blocked && i.is_active !== false)
             .map((i: Row) => ({
               value: i.item_id,
-              label: i.item_code ? `${i.item_code} — ${i.item_name}` : i.item_name,
+              label: i.item_code
+                ? `${i.item_code} — ${i.item_name}`
+                : i.item_name,
               bio: Boolean(i.is_biological_asset),
             })),
         ),
@@ -305,12 +323,24 @@ export default function OperationalBatchDataEntry() {
     setDataEntryMortality({});
   }, [selectedBatchId, selectedDate]);
   // Animal-wise: the selected stage's lines, so its dead animals can be shown greyed in the All-animals picker.
-  const mortalityLineIds = (isAnimalWise
-    ? (dataEntryStages.find((s) => s.stage_id === selectedStageId)?.animals?.[0]?.lines ?? [])
-    : dataEntryLines)
-    .filter((l: Row) => l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT')
+  const mortalityLineIds = (
+    isAnimalWise
+      ? (dataEntryStages.find((s) => s.stage_id === selectedStageId)
+          ?.animals?.[0]?.lines ?? [])
+      : dataEntryLines
+  )
+    .filter(
+      (l: Row) =>
+        l.line_type === 'DESCRIPTIVE' && l.kpi_metric === 'MORTALITY_COUNT',
+    )
     .map((l: Row) => l.line_id as string);
-  const mortalityInfo = useMortalityCandidates(currentBatch?.id, selectedDate, mortalityLineIds, true, isAnimalWise ? dataEntryStages : dataEntryLines);
+  const mortalityInfo = useMortalityCandidates(
+    currentBatch?.id,
+    selectedDate,
+    mortalityLineIds,
+    true,
+    isAnimalWise ? dataEntryStages : dataEntryLines,
+  );
   /**
    * The deaths this line adds for the value typed and what is entered for them so far. A batch with registered
    * animals names each animal; a count-only batch gives one weight-and-reason row per death.
@@ -319,27 +349,73 @@ export default function OperationalBatchDataEntry() {
     if (isAnimalWise) {
       // Animal-wise (Rishi, 13 Oct): the entry names its animal, whose death needs a weight and reason too. The
       // "All animals" view would post the same count to every animal, so a death is entered on its own animal only.
-      if (!animalId || line.line_type !== 'DESCRIPTIVE' || line.kpi_metric !== 'MORTALITY_COUNT') return null;
+      if (
+        !animalId ||
+        line.line_type !== 'DESCRIPTIVE' ||
+        line.kpi_metric !== 'MORTALITY_COUNT'
+      )
+        return null;
       const key = entryKey(line.line_id, animalId);
       const raw = dataEntryValues[key];
-      const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), 0);
+      const required = requiredMortalityAnimals(
+        raw === undefined || raw === '' ? 0 : Number(raw),
+        0,
+      );
       if (animalId === '__ALL__') {
         // "All animals": several can die together (Rishi, 13 Oct) - pick which of the stage's pending animals died.
         const animals = (selectedStage?.animals || [])
           .filter((a: Row) => !a.is_posted)
-          .map((a: Row) => ({ animal_id: a.animal_id as string, animal_code: (a.animal_code ?? a.animal_id) as string, rfid_tag: (a.rfid_tag ?? null) as string | null }));
-        return { kind: 'ALL' as const, key, required, picks: dataEntryMortality[key] ?? [], animals, label: '', dead: mortalityInfo[line.line_id]?.dead_animals ?? [] };
+          .map((a: Row) => ({
+            animal_id: a.animal_id as string,
+            animal_code: (a.animal_code ?? a.animal_id) as string,
+            rfid_tag: (a.rfid_tag ?? null) as string | null,
+          }));
+        return {
+          kind: 'ALL' as const,
+          key,
+          required,
+          picks: dataEntryMortality[key] ?? [],
+          animals,
+          label: '',
+          dead: mortalityInfo[line.line_id]?.dead_animals ?? [],
+        };
       }
-      const label = (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.animal_code ?? '';
-      return { kind: 'ANIMAL' as const, key, required, picks: countOnlyPicks(dataEntryMortality[key] ?? [], Math.min(required, 1)), animals: [], label, dead: [] };
+      const label =
+        (selectedStage?.animals || []).find(
+          (a: Row) => a.animal_id === animalId,
+        )?.animal_code ?? '';
+      return {
+        kind: 'ANIMAL' as const,
+        key,
+        required,
+        picks: countOnlyPicks(
+          dataEntryMortality[key] ?? [],
+          Math.min(required, 1),
+        ),
+        animals: [],
+        label,
+        dead: [],
+      };
     }
     const info = mortalityInfo[line.line_id];
     if (!info) return null;
     const key = entryKey(line.line_id, undefined);
     const raw = dataEntryValues[key];
-    const required = requiredMortalityAnimals(raw === undefined || raw === '' ? 0 : Number(raw), info.already_posted);
+    const required = requiredMortalityAnimals(
+      raw === undefined || raw === '' ? 0 : Number(raw),
+      info.already_posted,
+    );
     const picks = dataEntryMortality[key] ?? draftPicks(info);
-    return { kind: 'BATCH' as const, key, required, picks: info.animals.length === 0 ? countOnlyPicks(picks, required) : picks, animals: info.animals, label: '', dead: info.dead_animals ?? [] };
+    return {
+      kind: 'BATCH' as const,
+      key,
+      required,
+      picks:
+        info.animals.length === 0 ? countOnlyPicks(picks, required) : picks,
+      animals: info.animals,
+      label: '',
+      dead: info.dead_animals ?? [],
+    };
   };
   /** True when the line needs nothing more for its deaths (or is not a mortality line). */
   const mortalityOk = (need: ReturnType<typeof mortalityNeed>) => {
@@ -347,25 +423,35 @@ export default function OperationalBatchDataEntry() {
     if (need.kind === 'ANIMAL' && need.required > 1) return false;
     return mortalityPicksComplete(need.picks, need.required);
   };
-  const mortalityIncomplete = dataEntryLines.some((line) => !mortalityOk(mortalityNeed(line)));
+  const mortalityIncomplete = dataEntryLines.some(
+    (line) => !mortalityOk(mortalityNeed(line)),
+  );
   const selectedStage = dataEntryStages.find(
     (s) => s.stage_id === selectedStageId,
   );
   // Animal-wise: Post would drop a mortality line that cannot be saved, so it waits until the death is complete.
-  const awScopeLines: Row[] = isAnimalWise && selectedStage
-    ? (entryScope === 'ALL'
-        ? selectedStage.animals?.[0]?.lines
-        : selectedStage.animals?.find((a: Row) => a.animal_id === entryScope)?.lines) ?? []
-    : [];
+  const awScopeLines: Row[] =
+    isAnimalWise && selectedStage
+      ? ((entryScope === 'ALL'
+          ? selectedStage.animals?.[0]?.lines
+          : selectedStage.animals?.find((a: Row) => a.animal_id === entryScope)
+              ?.lines) ?? [])
+      : [];
   const awMortalityIncomplete = awScopeLines.some(
-    (line) => !mortalityOk(mortalityNeed(line, entryScope === 'ALL' ? '__ALL__' : entryScope)),
+    (line) =>
+      !mortalityOk(
+        mortalityNeed(line, entryScope === 'ALL' ? '__ALL__' : entryScope),
+      ),
   );
   const [serialModalLine, setSerialModalLine] = useState<Row | null>(null);
 
   const [stageActionBusy, setStageActionBusy] = useState(false);
   const [stageActionError, setStageActionError] = useState('');
   // What a reopen did: how many entries went back to drafts, and what it had to leave posted and why.
-  const [reopenNotice, setReopenNotice] = useState<{ unposted: number; kept: Array<{ activity_name: string; reason: string }> } | null>(null);
+  const [reopenNotice, setReopenNotice] = useState<{
+    unposted: number;
+    kept: Array<{ activity_name: string; reason: string }>;
+  } | null>(null);
   const [reopenBoxOpen, setReopenBoxOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
 
@@ -390,7 +476,10 @@ export default function OperationalBatchDataEntry() {
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   })();
-  const pendingStageAnimalCount = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted).length || (selectedStage?.animals || []).length || 1;
+  const pendingStageAnimalCount =
+    (selectedStage?.animals || []).filter((a: Row) => !a.is_posted).length ||
+    (selectedStage?.animals || []).length ||
+    1;
   const isFutureDate = selectedDate > todayStr;
 
   // ── General-notes quick capture — OBSERVATION transactions,
@@ -403,11 +492,15 @@ export default function OperationalBatchDataEntry() {
   // One History entry per day: an animal-wise day has one lock per stage, and listing each made 14 days read
   // "42 posted dates" (13 Oct). The day's stages are named in its label.
   const postedDays = useMemo(() => {
-    const byDate = new Map<string, { date: string; stages: string[]; reopened: boolean }>();
+    const byDate = new Map<
+      string,
+      { date: string; stages: string[]; reopened: boolean }
+    >();
     for (const d of postedDates) {
       const date = String(d.entry_date).slice(0, 10);
       const day = byDate.get(date) ?? { date, stages: [], reopened: false };
-      if (d.stage_name && !day.stages.includes(d.stage_name)) day.stages.push(d.stage_name);
+      if (d.stage_name && !day.stages.includes(d.stage_name))
+        day.stages.push(d.stage_name);
       if (d.status === 'REOPENED') day.reopened = true;
       byDate.set(date, day);
     }
@@ -463,8 +556,9 @@ export default function OperationalBatchDataEntry() {
     useState<Row | null>(null);
 
   // Animal detail modal popup from clicking an animal row in the dialog
-  const [selectedAnimalIdForDetails, setSelectedAnimalIdForDetails] =
-    useState<string | null>(null);
+  const [selectedAnimalIdForDetails, setSelectedAnimalIdForDetails] = useState<
+    string | null
+  >(null);
 
   // Bulk manual stage change for every animal currently in the selected
   // stage (ANIMAL_WISE, "All animals" entry scope) — same
@@ -550,7 +644,10 @@ export default function OperationalBatchDataEntry() {
     if (a.dob) {
       const bornTime = new Date(a.dob).getTime();
       if (!Number.isNaN(bornTime)) {
-        const days = Math.max(0, Math.floor((Date.now() - bornTime) / 86400000));
+        const days = Math.max(
+          0,
+          Math.floor((Date.now() - bornTime) / 86400000),
+        );
         const weeks = Math.floor(days / 7);
         return {
           weeks: `${weeks} wks`,
@@ -852,10 +949,14 @@ export default function OperationalBatchDataEntry() {
         const initialDests: Record<string, string> = {};
         const initialPools: Record<string, string[]> = {};
         const rememberChoices = (line: Row, k: string) => {
-          if (Array.isArray(line.already_entered_pool) && line.already_entered_pool.length)
+          if (
+            Array.isArray(line.already_entered_pool) &&
+            line.already_entered_pool.length
+          )
             initialPools[k] = line.already_entered_pool;
           if (line.line_type === 'OUTPUT')
-            initialItems[k] = line.already_entered_item_id || line.item_id || '';
+            initialItems[k] =
+              line.already_entered_item_id || line.item_id || '';
           if (line.already_entered_destination)
             initialDests[k] = line.already_entered_destination;
         };
@@ -881,7 +982,8 @@ export default function OperationalBatchDataEntry() {
                 if (line.already_entered_lot) {
                   initialLots[k] = line.already_entered_lot;
                 }
-                if (line.already_entered_empty_bags != null) initialBags[k] = String(line.already_entered_empty_bags);
+                if (line.already_entered_empty_bags != null)
+                  initialBags[k] = String(line.already_entered_empty_bags);
                 // The "All animals in this stage" broadcast view has no real
                 // animal of its own to read an already-entered value from —
                 // without this, a value saved via broadcast reappeared blank
@@ -890,7 +992,9 @@ export default function OperationalBatchDataEntry() {
                 // the template both here and in the broadcast row renderer.
                 if (animalIdx === 0) {
                   rememberChoices(line, entryKey(line.line_id, '__ALL__'));
-                  const pendingForAll = (stage.animals || []).filter((a: Row) => !a.is_posted).length || (stage.animals || []).length;
+                  const pendingForAll =
+                    (stage.animals || []).filter((a: Row) => !a.is_posted)
+                      .length || (stage.animals || []).length;
                   values[entryKey(line.line_id, '__ALL__')] =
                     enteredStr !== '' && isTotalBatch(line) && pendingForAll > 1
                       ? String(round4(Number(enteredStr) * pendingForAll))
@@ -902,12 +1006,21 @@ export default function OperationalBatchDataEntry() {
                   if (isMortalityLine(line)) {
                     // Deaths already saved for the stage's pending animals: the All-animals count is how many died.
                     values[entryKey(line.line_id, '__ALL__')] = String(
-                      (stage.animals || []).filter((a: Row) =>
-                        !a.is_posted && (a.lines || []).some((l: Row) => l.line_id === line.line_id && Number(l.already_entered_qty) >= 1),
+                      (stage.animals || []).filter(
+                        (a: Row) =>
+                          !a.is_posted &&
+                          (a.lines || []).some(
+                            (l: Row) =>
+                              l.line_id === line.line_id &&
+                              Number(l.already_entered_qty) >= 1,
+                          ),
                       ).length,
                     );
                   }
-                  if (line.already_entered_empty_bags != null) initialBags[entryKey(line.line_id, '__ALL__')] = String(line.already_entered_empty_bags);
+                  if (line.already_entered_empty_bags != null)
+                    initialBags[entryKey(line.line_id, '__ALL__')] = String(
+                      line.already_entered_empty_bags,
+                    );
                 }
               }
             });
@@ -986,7 +1099,10 @@ export default function OperationalBatchDataEntry() {
           for (const l of lines) {
             values[entryKey(l.line_id)] = defaultEntryValue(l);
             rememberChoices(l, entryKey(l.line_id));
-            if (l.already_entered_empty_bags != null) initialBags[entryKey(l.line_id)] = String(l.already_entered_empty_bags);
+            if (l.already_entered_empty_bags != null)
+              initialBags[entryKey(l.line_id)] = String(
+                l.already_entered_empty_bags,
+              );
             if (l.already_entered_lot) {
               initialLots[entryKey(l.line_id)] = l.already_entered_lot;
             }
@@ -1117,8 +1233,6 @@ export default function OperationalBatchDataEntry() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatchId, selectedStageId]);
 
-
-
   const loadAttachments = () => {
     if (!selectedBatchId) return;
     api
@@ -1179,9 +1293,13 @@ export default function OperationalBatchDataEntry() {
     const isTracked = drawsFromLots(line);
     if (isTracked) {
       if (line.is_serial_tracked && animalId === '__ALL__') {
-        const pending = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
+        const pending = (selectedStage?.animals || []).filter(
+          (a: Row) => !a.is_posted,
+        );
         if (pending.length === 0) return false;
-        const allAssigned = pending.every((a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)]));
+        const allAssigned = pending.every((a: Row) =>
+          Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)]),
+        );
         if (!allAssigned) return false;
       } else if (!dataEntryLotNos[key]) {
         return false;
@@ -1190,12 +1308,13 @@ export default function OperationalBatchDataEntry() {
     if (line.line_type === 'TRANSFER' && !dataEntryDestBatches[key])
       return false;
     // An output posts the item chosen for it — it cannot post without one.
-    if (line.line_type === 'OUTPUT' && !(dataEntryOutputItems[key] || line.item_id))
+    if (
+      line.line_type === 'OUTPUT' &&
+      !(dataEntryOutputItems[key] || line.item_id)
+    )
       return false;
     return true;
   };
-
-
 
   // Collect and save all filled input fields as draft entries so they exist in batch_daily_data
   const saveDraftEntries = async (): Promise<number> => {
@@ -1213,9 +1332,13 @@ export default function OperationalBatchDataEntry() {
       if (isTracked) {
         if (line.is_serial_tracked) {
           const serialKey = animalId ? entryKey(line.line_id, animalId) : key;
-          payload.serial_no = dataEntryLotNos[serialKey] || dataEntryLotNos[key];
+          payload.serial_no =
+            dataEntryLotNos[serialKey] || dataEntryLotNos[key];
           if (payload.serial_no) {
-            const count = payload.serial_no.split(',').map((s: string) => s.trim()).filter(Boolean).length;
+            const count = payload.serial_no
+              .split(',')
+              .map((s: string) => s.trim())
+              .filter(Boolean).length;
             if (count > 0) {
               payload.entered_value = count;
             }
@@ -1227,17 +1350,26 @@ export default function OperationalBatchDataEntry() {
       if (line.line_type === 'TRANSFER')
         payload.destination_batch_id = dataEntryDestBatches[key];
       const need = mortalityNeed(line, animalId);
-      if (need && need.kind !== 'ALL' && need.required > 0) payload.mortality_animals = mortalityPayload(need.picks);
+      if (need && need.kind !== 'ALL' && need.required > 0)
+        payload.mortality_animals = mortalityPayload(need.picks);
       if (line.line_type === 'OUTPUT') {
         const chosen = dataEntryOutputItems[key];
         if (chosen && chosen !== line.item_id) payload.item_id = chosen;
         // A weaning entered as output may send the weaned piglets on to a batch.
-        if (dataEntryDestBatches[key]) payload.destination_batch_id = dataEntryDestBatches[key];
+        if (dataEntryDestBatches[key])
+          payload.destination_batch_id = dataEntryDestBatches[key];
         // A boar's collection pooled with other boars: one lot is mixed from all of them.
-        if (dataEntryPoolBoars[key]?.length) payload.pool_animal_ids = dataEntryPoolBoars[key];
+        if (dataEntryPoolBoars[key]?.length)
+          payload.pool_animal_ids = dataEntryPoolBoars[key];
       }
       const bags = dataEntryEmptyBags[key];
-      if (line.is_bagged_feed && bags !== undefined && bags !== '' && Number.isInteger(Number(bags)) && Number(bags) >= 0) {
+      if (
+        line.is_bagged_feed &&
+        bags !== undefined &&
+        bags !== '' &&
+        Number.isInteger(Number(bags)) &&
+        Number(bags) >= 0
+      ) {
         payload.empty_bags = Number(bags);
       }
       return payload;
@@ -1260,7 +1392,10 @@ export default function OperationalBatchDataEntry() {
           if (!dataEntryCanSave(line, '__ALL__')) continue;
           const key = entryKey(line.line_id, '__ALL__');
           // A per-batch line holds the stage total here: each animal gets its share of it.
-          const shares = isTotalBatch(line) && !isTextCapture(line) ? splitTotal(Number(dataEntryValues[key]), animalIds.length) : null;
+          const shares =
+            isTotalBatch(line) && !isTextCapture(line)
+              ? splitTotal(Number(dataEntryValues[key]), animalIds.length)
+              : null;
           // Mortality for all animals: each chosen animal records its own death with its weight and reason, the rest 0.
           const mortAll = mortalityNeed(line, '__ALL__');
           animalIds.forEach((animalId: string, i: number) => {
@@ -1269,10 +1404,15 @@ export default function OperationalBatchDataEntry() {
             if (mortAll?.kind === 'ALL') {
               const pick = mortAll.picks.find((p) => p.animal_id === animalId);
               payload.entered_value = pick ? 1 : 0;
-              if (pick) payload.mortality_animals = mortalityPayload([{ ...pick, animal_id: '' }]);
+              if (pick)
+                payload.mortality_animals = mortalityPayload([
+                  { ...pick, animal_id: '' },
+                ]);
               else delete payload.mortality_animals;
             }
-            tasks.push(api.post(`/batch/${currentBatch.id}/daily-data`, payload));
+            tasks.push(
+              api.post(`/batch/${currentBatch.id}/daily-data`, payload),
+            );
           });
         }
       } else {
@@ -1365,7 +1505,11 @@ export default function OperationalBatchDataEntry() {
     } else {
       const pendingCount = stageAnimals.filter((a: Row) => !a.is_posted).length;
       // Every animal posted but the stage never locked: posting locks it, so the date can move on (13 Oct).
-      if (stageAnimals.length > 0 && pendingCount === 0 && selectedStage?.lock_status === 'LOCKED') {
+      if (
+        stageAnimals.length > 0 &&
+        pendingCount === 0 &&
+        selectedStage?.lock_status === 'LOCKED'
+      ) {
         const msg = `All animals in this stage have already been posted on ${selectedDate}.`;
         setStageActionError(msg);
         setSaveErrorMsg(msg);
@@ -1441,8 +1585,7 @@ export default function OperationalBatchDataEntry() {
         loadPostedDates();
       }
     } catch (err: any) {
-      const errMsg =
-        err?.message || err?.error || 'Could not post stage data.';
+      const errMsg = err?.message || err?.error || 'Could not post stage data.';
       setStageActionError(
         typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg),
       );
@@ -1461,7 +1604,10 @@ export default function OperationalBatchDataEntry() {
         { reason: reopenReason },
       );
       const done = res?.data ?? res;
-      setReopenNotice({ unposted: Number(done?.unposted ?? 0), kept: done?.kept_posted ?? [] });
+      setReopenNotice({
+        unposted: Number(done?.unposted ?? 0),
+        kept: done?.kept_posted ?? [],
+      });
       setReopenBoxOpen(false);
       setReopenReason('');
       loadDataEntry();
@@ -1698,7 +1844,9 @@ export default function OperationalBatchDataEntry() {
         );
       }
 
-      const schedulerSource = await askSchedulerSource(changeStageForm.to_stage_code);
+      const schedulerSource = await askSchedulerSource(
+        changeStageForm.to_stage_code,
+      );
       if (schedulerSource === null) return;
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: changeStageForm.to_stage_code,
@@ -1722,7 +1870,9 @@ export default function OperationalBatchDataEntry() {
     setAutoTransitionSaving(true);
     setAutoTransitionError('');
     try {
-      const schedulerSource = await askSchedulerSource(stageTransition.next_stage.stage_code);
+      const schedulerSource = await askSchedulerSource(
+        stageTransition.next_stage.stage_code,
+      );
       if (schedulerSource === null) return;
       await api.post(`/batch/${currentBatch.id}/transfer-stage`, {
         to_stage_code: stageTransition.next_stage.stage_code,
@@ -1822,7 +1972,8 @@ export default function OperationalBatchDataEntry() {
   );
 
   // The name half of a "CODE — Name" label.
-  const nameOf = (label?: string | null) => (label ? label.split(' — ').slice(1).join(' — ') || label : NA);
+  const nameOf = (label?: string | null) =>
+    label ? label.split(' — ').slice(1).join(' — ') || label : NA;
 
   const renderDataEntryRow = (
     line: Row,
@@ -1840,21 +1991,30 @@ export default function OperationalBatchDataEntry() {
     // Once the entry is posted the row shows what it did (entry_note), not what a new entry would do.
     const outputEvent: Row | null =
       isOutput && !line.is_entry_posted && animalId && animalId !== '__ALL__'
-        ? (selectedStage?.animals || []).find((a: Row) => a.animal_id === animalId)?.output_event ?? null
+        ? ((selectedStage?.animals || []).find(
+            (a: Row) => a.animal_id === animalId,
+          )?.output_event ?? null)
         : null;
     const chosenItemId = dataEntryOutputItems[key] ?? line.item_id ?? '';
     const itemChoices =
       line.item_id && !outputItemOptions.some((o) => o.value === line.item_id)
-        ? [{ value: line.item_id, label: line.item_label || line.item_id, bio: false }, ...outputItemOptions]
+        ? [
+            {
+              value: line.item_id,
+              label: line.item_label || line.item_id,
+              bio: false,
+            },
+            ...outputItemOptions,
+          ]
         : outputItemOptions;
     const chosenItem = itemChoices.find((o) => o.value === chosenItemId);
     const actualNumericVal =
       line.is_serial_tracked && dataEntryValues[key] !== undefined
         ? dataEntryValues[key]
         : !allowEdit && line.expected_qty != null
-        ? String(line.expected_qty)
-        : (dataEntryValues[key] ??
-          (line.expected_qty != null ? String(line.expected_qty) : ''));
+          ? String(line.expected_qty)
+          : (dataEntryValues[key] ??
+            (line.expected_qty != null ? String(line.expected_qty) : ''));
 
     return (
       <TableRow key={key}>
@@ -1865,41 +2025,56 @@ export default function OperationalBatchDataEntry() {
               {outputEventLabel(outputEvent, chosenItem?.bio)}
             </span>
           )}
-          {outputEvent?.kind === 'SEMEN' && !rowLocked && (() => {
-            // Other boars of this stage whose semen can be mixed into this lot. One with an entry of his own on this line
-            // is left out — his doses would be counted twice.
-            const picked = dataEntryPoolBoars[key] || [];
-            const others = (selectedStage?.animals || []).filter(
-              (a: Row) =>
-                a.animal_id !== animalId &&
-                a.output_event?.kind === 'SEMEN' &&
-                !a.is_posted &&
-                ((dataEntryValues[entryKey(line.line_id, a.animal_id)] ?? '') === '' || picked.includes(a.animal_id)),
-            );
-            if (!others.length) return null;
-            return (
-              <div className="mt-1.5 min-w-[200px]">
-                <EntityLookupField
-                  id={`pool-${key}`}
-                  label="Boars to pool"
-                  options={others.map((a: Row) => ({ animal_id: a.animal_id, code: a.animal_code, name: a.animal_code }))}
-                  value={picked}
-                  valueKey="animal_id"
-                  labelKeys={['code']}
-                  onChange={(next) =>
-                    setDataEntryPoolBoars((v) => ({ ...v, [key]: Array.isArray(next) ? next : next ? [next] : [] }))
-                  }
-                  multiple
-                  placeholder="Pool with other boars…"
-                />
-                {picked.length > 0 && (
-                  <p className="mt-1 text-[10px] leading-snug" style={S.muted}>
-                    One lot from {picked.length + 1} boars: the doses entered are the whole mix.
-                  </p>
-                )}
-              </div>
-            );
-          })()}
+          {outputEvent?.kind === 'SEMEN' &&
+            !rowLocked &&
+            (() => {
+              // Other boars of this stage whose semen can be mixed into this lot. One with an entry of his own on this line
+              // is left out — his doses would be counted twice.
+              const picked = dataEntryPoolBoars[key] || [];
+              const others = (selectedStage?.animals || []).filter(
+                (a: Row) =>
+                  a.animal_id !== animalId &&
+                  a.output_event?.kind === 'SEMEN' &&
+                  !a.is_posted &&
+                  ((dataEntryValues[entryKey(line.line_id, a.animal_id)] ??
+                    '') === '' ||
+                    picked.includes(a.animal_id)),
+              );
+              if (!others.length) return null;
+              return (
+                <div className="mt-1.5 min-w-[200px]">
+                  <EntityLookupField
+                    id={`pool-${key}`}
+                    label="Boars to pool"
+                    options={others.map((a: Row) => ({
+                      animal_id: a.animal_id,
+                      code: a.animal_code,
+                      name: a.animal_code,
+                    }))}
+                    value={picked}
+                    valueKey="animal_id"
+                    labelKeys={['code']}
+                    onChange={(next) =>
+                      setDataEntryPoolBoars((v) => ({
+                        ...v,
+                        [key]: Array.isArray(next) ? next : next ? [next] : [],
+                      }))
+                    }
+                    multiple
+                    placeholder="Pool with other boars…"
+                  />
+                  {picked.length > 0 && (
+                    <p
+                      className="mt-1 text-[10px] leading-snug"
+                      style={S.muted}
+                    >
+                      One lot from {picked.length + 1} boars: the doses entered
+                      are the whole mix.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           {outputForAll && (
             <span className="block text-[10px] font-normal" style={S.muted}>
               Enter outputs one animal at a time — pick the animal above.
@@ -1908,8 +2083,15 @@ export default function OperationalBatchDataEntry() {
         </TableCell>
         <TableCell className="px-3 py-2 whitespace-nowrap" style={S.sub}>
           {(() => {
-            const chosen = isOutput ? itemChoices.find((o) => o.value === (line.already_entered_item_id || chosenItemId)) : undefined;
-            return (chosen ? chosen.label.split(' — ')[0] : line.item_code) || NA;
+            const chosen = isOutput
+              ? itemChoices.find(
+                  (o) =>
+                    o.value === (line.already_entered_item_id || chosenItemId),
+                )
+              : undefined;
+            return (
+              (chosen ? chosen.label.split(' — ')[0] : line.item_code) || NA
+            );
           })()}
         </TableCell>
         <TableCell className="px-3 py-2" style={S.sub}>
@@ -1927,7 +2109,10 @@ export default function OperationalBatchDataEntry() {
               />
             </div>
           ) : isOutput && line.already_entered_item_id ? (
-            nameOf(itemChoices.find((o) => o.value === line.already_entered_item_id)?.label || line.item_label)
+            nameOf(
+              itemChoices.find((o) => o.value === line.already_entered_item_id)
+                ?.label || line.item_label,
+            )
           ) : (
             nameOf(line.item_label) || line.item_description || NA
           )}
@@ -1966,14 +2151,20 @@ export default function OperationalBatchDataEntry() {
               className={`${inputCls} ${!allowEdit ? 'opacity-75 bg-[var(--surface-muted)] cursor-not-allowed' : ''}`}
               style={S.input}
               disabled={isRowDisabled}
-              title={!allowEdit ? 'Quantity edit disabled in scheduler' : undefined}
+              title={
+                !allowEdit ? 'Quantity edit disabled in scheduler' : undefined
+              }
             />
           ) : (
             <div className="relative flex items-center">
               <input
                 type="number"
                 min={isMortalityLine(line) ? 0 : undefined}
-                max={isMortalityLine(line) && animalId && animalId !== '__ALL__' ? 1 : undefined}
+                max={
+                  isMortalityLine(line) && animalId && animalId !== '__ALL__'
+                    ? 1
+                    : undefined
+                }
                 step={isMortalityLine(line) ? 1 : undefined}
                 value={actualNumericVal}
                 readOnly={line.is_serial_tracked}
@@ -1987,8 +2178,8 @@ export default function OperationalBatchDataEntry() {
                   line.is_serial_tracked
                     ? 'Quantity is automatically set by the number of selected serial numbers'
                     : !allowEdit
-                    ? 'Quantity edit disabled in scheduler'
-                    : undefined
+                      ? 'Quantity edit disabled in scheduler'
+                      : undefined
                 }
               />
               {!allowEdit && (
@@ -1998,60 +2189,97 @@ export default function OperationalBatchDataEntry() {
           )}
           {drawsFromLots(line) && (
             <div className="mt-1">
-              {broadcast && line.is_serial_tracked ? (() => {
-                const pendingStageAnimals = (selectedStage?.animals || []).filter((a: Row) => !a.is_posted);
-                const totalPending = pendingStageAnimals.length;
-                const assignedCount = totalPending > 0
-                  ? pendingStageAnimals.filter(
-                      (a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)])
-                    ).length
-                  : (selectedStage?.animals || []).filter(
-                      (a: Row) => Boolean(dataEntryLotNos[entryKey(line.line_id, a.animal_id)])
-                    ).length;
-                const isAllAssigned = totalPending > 0 && assignedCount === totalPending;
-                return (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSerialModalLine(line)}
-                    className="h-8 text-xs gap-1.5 w-full justify-between"
-                    disabled={rowLocked}
-                  >
-                    <span className={`truncate font-medium ${isAllAssigned ? 'text-emerald-600 dark:text-emerald-400' : assignedCount > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>
-                      {totalPending === 0
-                        ? `Serials Assigned (${assignedCount})`
-                        : isAllAssigned
-                        ? `✓ Serials Assigned (${assignedCount}/${totalPending})`
-                        : assignedCount > 0
-                        ? `Assign Serials (${assignedCount}/${totalPending})`
-                        : `Assign Serials… (${totalPending})`}
-                    </span>
-                    <ExternalLink className="w-3.5 h-3.5 opacity-70 shrink-0" />
-                  </Button>
-                );
-              })() : (
+              {broadcast && line.is_serial_tracked ? (
+                (() => {
+                  const pendingStageAnimals = (
+                    selectedStage?.animals || []
+                  ).filter((a: Row) => !a.is_posted);
+                  const totalPending = pendingStageAnimals.length;
+                  const assignedCount =
+                    totalPending > 0
+                      ? pendingStageAnimals.filter((a: Row) =>
+                          Boolean(
+                            dataEntryLotNos[
+                              entryKey(line.line_id, a.animal_id)
+                            ],
+                          ),
+                        ).length
+                      : (selectedStage?.animals || []).filter((a: Row) =>
+                          Boolean(
+                            dataEntryLotNos[
+                              entryKey(line.line_id, a.animal_id)
+                            ],
+                          ),
+                        ).length;
+                  const isAllAssigned =
+                    totalPending > 0 && assignedCount === totalPending;
+                  return (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSerialModalLine(line)}
+                      className="h-8 text-xs gap-1.5 w-full justify-between"
+                      disabled={rowLocked}
+                    >
+                      <span
+                        className={`truncate font-medium ${isAllAssigned ? 'text-emerald-600 dark:text-emerald-400' : assignedCount > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}
+                      >
+                        {totalPending === 0
+                          ? `Serials Assigned (${assignedCount})`
+                          : isAllAssigned
+                            ? `✓ Serials Assigned (${assignedCount}/${totalPending})`
+                            : assignedCount > 0
+                              ? `Assign Serials (${assignedCount}/${totalPending})`
+                              : `Assign Serials… (${totalPending})`}
+                      </span>
+                      <ExternalLink className="w-3.5 h-3.5 opacity-70 shrink-0" />
+                    </Button>
+                  );
+                })()
+              ) : (
                 <ConsumptionLotPicker
                   batchId={currentBatch?.id}
                   lineId={line.line_id}
                   refreshKey={stockVersion}
-                  quantity={(Number(dataEntryValues[key]) || 0) * (animalId === '__ALL__' && !isTotalBatch(line) ? pendingStageAnimalCount : 1)}
+                  quantity={
+                    (Number(dataEntryValues[key]) || 0) *
+                    (animalId === '__ALL__' && !isTotalBatch(line)
+                      ? pendingStageAnimalCount
+                      : 1)
+                  }
                   itemId={line.item_id || ''}
                   warehouseId={(currentBatch as any)?.warehouse_id}
                   trackingType={line.is_serial_tracked ? 'SERIAL' : 'LOT'}
                   multiSelect
-                  targetQuantity={line.expected_qty != null ? Number(line.expected_qty) : undefined}
+                  targetQuantity={
+                    line.expected_qty != null
+                      ? Number(line.expected_qty)
+                      : undefined
+                  }
                   value={dataEntryLotNos[key] ?? ''}
                   align="end"
                   onChange={(val) => {
                     setDataEntryLotNos((v) => ({ ...v, [key]: val }));
                     if (line.is_serial_tracked) {
-                      const count = val ? val.split(',').map((s) => s.trim()).filter(Boolean).length : 0;
-                      setDataEntryValues((v) => ({ ...v, [key]: count > 0 ? String(count) : '' }));
+                      const count = val
+                        ? val
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean).length
+                        : 0;
+                      setDataEntryValues((v) => ({
+                        ...v,
+                        [key]: count > 0 ? String(count) : '',
+                      }));
                     }
                   }}
                   disabled={rowLocked}
-                  placeholder={line.is_serial_tracked ? 'Select Serial No.…' : (t('blPlaceholderLotNo') || 'Select Lot No.…')}
+                  placeholder={
+                    line.is_serial_tracked
+                      ? 'Select Serial No.…'
+                      : t('blPlaceholderLotNo') || 'Select Lot No.…'
+                  }
                 />
               )}
             </div>
@@ -2061,7 +2289,10 @@ export default function OperationalBatchDataEntry() {
             if (!need || need.required <= 0) return null;
             if (need.kind === 'ANIMAL' && need.required > 1) {
               return (
-                <p className="mt-1 text-xs font-medium text-red-600" data-testid="mortality-animal-wise-blocked">
+                <p
+                  className="mt-1 text-xs font-medium text-red-600"
+                  data-testid="mortality-animal-wise-blocked"
+                >
                   {t('deMortOneAnimal')}
                 </p>
               );
@@ -2070,10 +2301,16 @@ export default function OperationalBatchDataEntry() {
               <MortalityAnimalsField
                 animals={need.animals}
                 deadAnimals={need.dead}
-                fixedLabel={need.kind === 'ANIMAL' ? need.label || t('deMortThisAnimal') : undefined}
+                fixedLabel={
+                  need.kind === 'ANIMAL'
+                    ? need.label || t('deMortThisAnimal')
+                    : undefined
+                }
                 required={need.required}
                 picks={need.picks}
-                onChange={(next) => setDataEntryMortality((v) => ({ ...v, [need.key]: next }))}
+                onChange={(next) =>
+                  setDataEntryMortality((v) => ({ ...v, [need.key]: next }))
+                }
                 disabled={rowLocked}
               />
             );
@@ -2101,30 +2338,36 @@ export default function OperationalBatchDataEntry() {
               />
             </div>
           )}
-          {outputEvent?.kind === 'WEANING' && outputEvent.piglet_batch_id && chosenItem?.bio && (
-            <div className="mt-1 min-w-[160px]">
-              <SearchableSelect
-                ariaLabel="Move weaned piglets to"
-                value={dataEntryDestBatches[key] ?? ''}
-                onChange={(val) =>
-                  setDataEntryDestBatches((v) => ({ ...v, [key]: val }))
-                }
-                onClear={() =>
-                  setDataEntryDestBatches((v) => {
-                    const next = { ...v };
-                    delete next[key];
-                    return next;
-                  })
-                }
-                options={batches
-                  .filter((b) => b.id !== currentBatch?.id && b.id !== outputEvent.piglet_batch_id)
-                  .map((b) => ({ value: b.id, label: b.code }))}
-                placeholder="Keep in their lot, or move to…"
-                searchPlaceholder="Search batches…"
-                disabled={rowLocked}
-              />
-            </div>
-          )}
+          {outputEvent?.kind === 'WEANING' &&
+            outputEvent.piglet_batch_id &&
+            chosenItem?.bio && (
+              <div className="mt-1 min-w-[160px]">
+                <SearchableSelect
+                  ariaLabel="Move weaned piglets to"
+                  value={dataEntryDestBatches[key] ?? ''}
+                  onChange={(val) =>
+                    setDataEntryDestBatches((v) => ({ ...v, [key]: val }))
+                  }
+                  onClear={() =>
+                    setDataEntryDestBatches((v) => {
+                      const next = { ...v };
+                      delete next[key];
+                      return next;
+                    })
+                  }
+                  options={batches
+                    .filter(
+                      (b) =>
+                        b.id !== currentBatch?.id &&
+                        b.id !== outputEvent.piglet_batch_id,
+                    )
+                    .map((b) => ({ value: b.id, label: b.code }))}
+                  placeholder="Keep in their lot, or move to…"
+                  searchPlaceholder="Search batches…"
+                  disabled={rowLocked}
+                />
+              </div>
+            )}
           {line.entry_note && (
             <p className="mt-1 text-[10px] leading-snug" style={S.muted}>
               {line.entry_note}
@@ -2180,15 +2423,26 @@ export default function OperationalBatchDataEntry() {
             uoms.size === 1 && box.lines.every((l) => !isTextCapture(l));
           // In the "All animals" view a per-head value is each animal's own, so what is consumed is the
           // value times the animals still to post; a per-batch value is already the stage total.
-          const allViewAnimals = animalId === '__ALL__'
-            ? (selectedStage?.animals || []).filter((a: Row) => !a.is_posted).length || (selectedStage?.animals || []).length
-            : 1;
+          const allViewAnimals =
+            animalId === '__ALL__'
+              ? (selectedStage?.animals || []).filter((a: Row) => !a.is_posted)
+                  .length || (selectedStage?.animals || []).length
+              : 1;
           const total = canTotal
             ? box.lines.reduce((sum, l) => {
                 const v = Number(
                   dataEntryValues[entryKey(l.line_id, animalId)],
                 );
-                return sum + (Number.isFinite(v) ? v * (isTotalBatch(l) || (animalId === '__ALL__' && isMortalityLine(l)) ? 1 : allViewAnimals) : 0);
+                return (
+                  sum +
+                  (Number.isFinite(v)
+                    ? v *
+                      (isTotalBatch(l) ||
+                      (animalId === '__ALL__' && isMortalityLine(l))
+                        ? 1
+                        : allViewAnimals)
+                    : 0)
+                );
               }, 0)
             : null;
           return (
@@ -2252,7 +2506,11 @@ export default function OperationalBatchDataEntry() {
                       style={{ borderColor: 'var(--border)' }}
                     >
                       <span style={S.muted}>
-                        Total{allViewAnimals > 1 ? ` (${allViewAnimals} animals)` : ''}:
+                        Total
+                        {allViewAnimals > 1
+                          ? ` (${allViewAnimals} animals)`
+                          : ''}
+                        :
                       </span>
                       <span className="font-bold" style={S.primary}>
                         {total.toLocaleString(undefined, {
@@ -2618,7 +2876,9 @@ export default function OperationalBatchDataEntry() {
                       {dataEntryProgress.map((p) => {
                         const isActive =
                           p.stage_code === currentBatch?.currentStageCode ||
-                          p.stage_id === (stageTransition?.current_stage_id || selectedStageId);
+                          p.stage_id ===
+                            (stageTransition?.current_stage_id ||
+                              selectedStageId);
                         const isNextEligible =
                           !isActive &&
                           stageTransition?.valid_next_stages?.some(
@@ -2693,12 +2953,22 @@ export default function OperationalBatchDataEntry() {
                         Single Active Stage:
                       </span>
                       <span className="font-bold text-[var(--accent)] px-2.5 py-0.5 rounded bg-[var(--accent-muted)]/20 border border-[var(--accent-muted)]">
-                        {stageTransition?.current_stage_name || currentBatch?.currentStage || 'Current Stage'}
+                        {stageTransition?.current_stage_name ||
+                          currentBatch?.currentStage ||
+                          'Current Stage'}
                       </span>
                       {stageTransition && (
                         <div className="flex items-center gap-2 text-[var(--text-secondary)] flex-wrap">
-                          <span>• Day <strong>{stageTransition.days_in_stage}</strong></span>
-                          <span>• Min Days Rule: <strong>{stageTransition.min_days_before_move}d</strong></span>
+                          <span>
+                            • Day{' '}
+                            <strong>{stageTransition.days_in_stage}</strong>
+                          </span>
+                          <span>
+                            • Min Days Rule:{' '}
+                            <strong>
+                              {stageTransition.min_days_before_move}d
+                            </strong>
+                          </span>
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                               stageTransition.can_move_without_remarks
@@ -2714,7 +2984,9 @@ export default function OperationalBatchDataEntry() {
                       )}
                     </div>
 
-                    {(!noScheduler || dataEntryLines.length > 0 || dataEntryProgress.length > 0) && (
+                    {(!noScheduler ||
+                      dataEntryLines.length > 0 ||
+                      dataEntryProgress.length > 0) && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -2722,7 +2994,8 @@ export default function OperationalBatchDataEntry() {
                         className="h-7 text-xs gap-1.5 font-semibold shrink-0"
                         title="Transfer whole batch to the next valid stage"
                       >
-                        <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                        <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer
+                        Stage
                       </Button>
                     )}
                   </div>
@@ -2735,7 +3008,9 @@ export default function OperationalBatchDataEntry() {
                   />
                   <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
                     <span className="font-semibold text-[var(--text-secondary)]">
-                      Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
+                      Current Stage:{' '}
+                      <strong>{currentBatch?.currentStage}</strong> (Single
+                      active stage)
                     </span>
                     <Button
                       variant="outline"
@@ -2743,14 +3018,16 @@ export default function OperationalBatchDataEntry() {
                       onClick={openChangeStage}
                       className="h-7 text-xs gap-1.5 font-semibold"
                     >
-                      <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer Stage
+                      <ArrowRightCircle className="h-3.5 w-3.5" /> Transfer
+                      Stage
                     </Button>
                   </div>
                 </div>
               ) : currentBatch?.currentStage ? (
                 <div className="flex items-center justify-between text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)]">
                   <span className="font-semibold text-[var(--text-secondary)]">
-                    Current Stage: <strong>{currentBatch?.currentStage}</strong> (Single active stage)
+                    Current Stage: <strong>{currentBatch?.currentStage}</strong>{' '}
+                    (Single active stage)
                   </span>
                   <Button
                     variant="outline"
@@ -2770,7 +3047,10 @@ export default function OperationalBatchDataEntry() {
             <div className="flex items-end gap-4 flex-wrap">
               <div>
                 <label className="nf-text-label mb-1 block text-[var(--text-muted)] font-semibold">
-                  Posting Date <span className="text-[10px] text-[var(--accent)] font-normal">(Next Pending Date)</span>
+                  Posting Date{' '}
+                  <span className="text-[10px] text-[var(--accent)] font-normal">
+                    (Next Pending Date)
+                  </span>
                 </label>
                 <input
                   type="date"
@@ -2809,21 +3089,26 @@ export default function OperationalBatchDataEntry() {
                 </div>
               )}
 
-              {userPickedDateRef.current && nextPendingDate && selectedDate !== nextPendingDate && (
-                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-[var(--radius-sm)] text-xs h-8">
-                  <span>Viewing Past Date: <strong>{selectedDate}</strong> (Read-only)</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      userPickedDateRef.current = false;
-                      setSelectedDate(nextPendingDate);
-                    }}
-                    className="font-bold underline ml-1 hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
-                  >
-                    Return to Next Pending Date ({nextPendingDate})
-                  </button>
-                </div>
-              )}
+              {userPickedDateRef.current &&
+                nextPendingDate &&
+                selectedDate !== nextPendingDate && (
+                  <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-[var(--radius-sm)] text-xs h-8">
+                    <span>
+                      Viewing Past Date: <strong>{selectedDate}</strong>{' '}
+                      (Read-only)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        userPickedDateRef.current = false;
+                        setSelectedDate(nextPendingDate);
+                      }}
+                      className="font-bold underline ml-1 hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
+                    >
+                      Return to Next Pending Date ({nextPendingDate})
+                    </button>
+                  </div>
+                )}
 
               {dataEntryLoading && (
                 <div className="flex h-8 items-center">
@@ -2839,7 +3124,11 @@ export default function OperationalBatchDataEntry() {
               <div
                 role="status"
                 className="rounded-[var(--radius-sm)] border px-3 py-2 text-xs font-semibold"
-                style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-muted)', color: 'var(--warning)' }}
+                style={{
+                  borderColor: 'var(--warning)',
+                  backgroundColor: 'var(--warning-muted)',
+                  color: 'var(--warning)',
+                }}
               >
                 {entryBlocked}
               </div>
@@ -2889,10 +3178,10 @@ export default function OperationalBatchDataEntry() {
                     mortalityIncomplete
                       ? t('deMortPostBlocked')
                       : isFutureDate
-                      ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
-                      : !!nextPendingDate && selectedDate !== nextPendingDate
-                        ? `Only the next pending date (${nextPendingDate}) can be posted.`
-                        : undefined
+                        ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                        : !!nextPendingDate && selectedDate !== nextPendingDate
+                          ? `Only the next pending date (${nextPendingDate}) can be posted.`
+                          : undefined
                   }
                   className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                 >
@@ -2933,7 +3222,12 @@ export default function OperationalBatchDataEntry() {
                       size="sm"
                       variant="outline"
                       onClick={handleSaveAllToDraft}
-                      disabled={!!entryBlocked || savingAllDraft || stageActionBusy || isFutureDate}
+                      disabled={
+                        !!entryBlocked ||
+                        savingAllDraft ||
+                        stageActionBusy ||
+                        isFutureDate
+                      }
                       title={
                         isFutureDate
                           ? `Cannot save draft for future date (${selectedDate})`
@@ -2950,19 +3244,31 @@ export default function OperationalBatchDataEntry() {
                     </Button>
                     {(() => {
                       const stageAnimals: Row[] = selectedStage?.animals || [];
-                      const postedAnimalsCount = stageAnimals.filter((a) => a.is_posted).length;
-                      const pendingAnimalsCount = stageAnimals.length - postedAnimalsCount;
-                      const currentAnimal = stageAnimals.find((a) => a.animal_id === entryScope);
-                      const isCurrentAnimalPosted = entryScope !== 'ALL' && Boolean(currentAnimal?.is_posted);
-                      const areAllAnimalsPosted = stageAnimals.length > 0 && pendingAnimalsCount === 0;
+                      const postedAnimalsCount = stageAnimals.filter(
+                        (a) => a.is_posted,
+                      ).length;
+                      const pendingAnimalsCount =
+                        stageAnimals.length - postedAnimalsCount;
+                      const currentAnimal = stageAnimals.find(
+                        (a) => a.animal_id === entryScope,
+                      );
+                      const isCurrentAnimalPosted =
+                        entryScope !== 'ALL' &&
+                        Boolean(currentAnimal?.is_posted);
+                      const areAllAnimalsPosted =
+                        stageAnimals.length > 0 && pendingAnimalsCount === 0;
                       // All animals posted but no stage lock: Post locks the stage day, so it stays enabled.
-                      const needsStageLock = areAllAnimalsPosted && selectedStage?.lock_status !== 'LOCKED';
+                      const needsStageLock =
+                        areAllAnimalsPosted &&
+                        selectedStage?.lock_status !== 'LOCKED';
 
                       const isPostDisabled =
                         stageActionBusy ||
                         awMortalityIncomplete ||
                         isFutureDate ||
-                        (entryScope !== 'ALL' ? isCurrentAnimalPosted : areAllAnimalsPosted && !needsStageLock);
+                        (entryScope !== 'ALL'
+                          ? isCurrentAnimalPosted
+                          : areAllAnimalsPosted && !needsStageLock);
 
                       let postButtonLabel = 'Post Stage Data';
                       if (isFutureDate) {
@@ -2988,12 +3294,12 @@ export default function OperationalBatchDataEntry() {
                             awMortalityIncomplete
                               ? t('deMortPostBlocked')
                               : isFutureDate
-                              ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
-                              : isCurrentAnimalPosted
-                                ? `Data entry for animal ${currentAnimal?.animal_code} is already posted on this date.`
-                                : areAllAnimalsPosted
-                                  ? `All animals in this stage are already posted on this date.`
-                                  : undefined
+                                ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                                : isCurrentAnimalPosted
+                                  ? `Data entry for animal ${currentAnimal?.animal_code} is already posted on this date.`
+                                  : areAllAnimalsPosted
+                                    ? `All animals in this stage are already posted on this date.`
+                                    : undefined
                           }
                           className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
                         >
@@ -3010,30 +3316,33 @@ export default function OperationalBatchDataEntry() {
                     })()}
                   </>
                 )}
-                {(selectedStage.animals || []).length > 0 && (() => {
-                  const stageAnimals: Row[] = selectedStage.animals || [];
-                  const pendingCount = stageAnimals.filter((a) => !a.is_posted).length;
-                  return (
-                    <div className="w-80">
-                      <SearchableSelect
-                        ariaLabel="Animal Selection"
-                        value={entryScope}
-                        onChange={(val) => setEntryScope(val)}
-                        options={[
-                          {
-                            value: 'ALL',
-                            label: `All animals in this stage (${selectedStage.animal_count}) — ${pendingCount} pending`,
-                          },
-                          ...stageAnimals.map((a: Row) => ({
-                            value: a.animal_id,
-                            label: `${a.animal_code} ${a.is_posted ? '(✓ Posted)' : '(Pending)'}`,
-                          })),
-                        ]}
-                        searchPlaceholder="Search animal code…"
-                      />
-                    </div>
-                  );
-                })()}
+                {(selectedStage.animals || []).length > 0 &&
+                  (() => {
+                    const stageAnimals: Row[] = selectedStage.animals || [];
+                    const pendingCount = stageAnimals.filter(
+                      (a) => !a.is_posted,
+                    ).length;
+                    return (
+                      <div className="w-80">
+                        <SearchableSelect
+                          ariaLabel="Animal Selection"
+                          value={entryScope}
+                          onChange={(val) => setEntryScope(val)}
+                          options={[
+                            {
+                              value: 'ALL',
+                              label: `All animals in this stage (${selectedStage.animal_count}) — ${pendingCount} pending`,
+                            },
+                            ...stageAnimals.map((a: Row) => ({
+                              value: a.animal_id,
+                              label: `${a.animal_code} ${a.is_posted ? '(✓ Posted)' : '(Pending)'}`,
+                            })),
+                          ]}
+                          searchPlaceholder="Search animal code…"
+                        />
+                      </div>
+                    );
+                  })()}
               </div>
             )}
           </div>
@@ -3068,9 +3377,13 @@ export default function OperationalBatchDataEntry() {
                 border: '1px solid rgba(245, 158, 11, 0.25)',
               }}
             >
-              <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: '#d97706' }} />
+              <AlertTriangle
+                className="h-4 w-4 shrink-0"
+                style={{ color: '#d97706' }}
+              />
               <span>
-                Cannot post data entry for future date ({selectedDate}). Today is {todayStr}.
+                Cannot post data entry for future date ({selectedDate}). Today
+                is {todayStr}.
               </span>
             </div>
           )}
@@ -3182,7 +3495,11 @@ export default function OperationalBatchDataEntry() {
                 </div>
               )}
 
-              <Toast variant="danger" message={dataEntryError} onClose={() => setDataEntryError('')} />
+              <Toast
+                variant="danger"
+                message={dataEntryError}
+                onClose={() => setDataEntryError('')}
+              />
 
               {!dataEntryLoading && !selectedStageId ? (
                 <InlineAlert variant="info">
@@ -3204,16 +3521,22 @@ export default function OperationalBatchDataEntry() {
                     </span>
                   </div>
 
-                  <Toast variant="danger" message={stageActionError} onClose={() => setStageActionError('')} />
+                  <Toast
+                    variant="danger"
+                    message={stageActionError}
+                    onClose={() => setStageActionError('')}
+                  />
 
                   <Toast
                     variant={reopenNotice?.kept.length ? 'warning' : 'success'}
-                    message={reopenNotice
-                      ? `${reopenNotice.unposted} entr${reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.`
-                        + (reopenNotice.kept.length > 0
-                          ? ` Left posted: ${reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.`
-                          : '')
-                      : ''}
+                    message={
+                      reopenNotice
+                        ? `${reopenNotice.unposted} entr${reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.` +
+                          (reopenNotice.kept.length > 0
+                            ? ` Left posted: ${reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.`
+                            : '')
+                        : ''
+                    }
                     onClose={() => setReopenNotice(null)}
                   />
 
@@ -3250,15 +3573,22 @@ export default function OperationalBatchDataEntry() {
                           </button>
                         ) : (
                           <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
-                            <p className="w-full text-[11px] sm:max-w-xs" style={S.muted}>
-                              Reopening reverses what this day posted — stock is returned and cost and journals are reversed — and puts the entries back to drafts so you can correct and post again. Transfers and recorded deaths stay posted.
+                            <p
+                              className="w-full text-[11px] sm:max-w-xs"
+                              style={S.muted}
+                            >
+                              Reopening reverses what this day posted — stock is
+                              returned and cost and journals are reversed — and
+                              puts the entries back to drafts so you can correct
+                              and post again. Transfers and recorded deaths stay
+                              posted.
                             </p>
                             <div className="w-full sm:w-72">
                               <ReasonSelect
                                 ariaLabel="Reason for reopening"
                                 value={reopenReason}
                                 onChange={(val) => setReopenReason(val)}
-                                onClear={() => setReopenReason("")}
+                                onClear={() => setReopenReason('')}
                                 placeholder="Reason for reopening (required)"
                                 triggerClassName="nf-input-sm"
                               />
@@ -3319,33 +3649,51 @@ export default function OperationalBatchDataEntry() {
                         const templateAnimal = (selectedStage.animals || [])[0];
                         if (!templateAnimal) {
                           return (
-                            <div className="py-8 text-center text-xs" style={S.muted}>
-                              No activities scheduled for this stage on {selectedDate}.
+                            <div
+                              className="py-8 text-center text-xs"
+                              style={S.muted}
+                            >
+                              No activities scheduled for this stage on{' '}
+                              {selectedDate}.
                             </div>
                           );
                         }
                         const stageAnimals: Row[] = selectedStage.animals || [];
-                        const pendingAnimals = stageAnimals.filter((a) => !a.is_posted);
-                        const allPosted = stageAnimals.length > 0 && pendingAnimals.length === 0;
+                        const pendingAnimals = stageAnimals.filter(
+                          (a) => !a.is_posted,
+                        );
+                        const allPosted =
+                          stageAnimals.length > 0 &&
+                          pendingAnimals.length === 0;
                         return (
                           <div>
-                            {pendingAnimals.length < stageAnimals.length && pendingAnimals.length > 0 && (
-                              <div
-                                className="mb-3 p-2.5 text-xs rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
-                                style={{
-                                  backgroundColor: 'var(--surface-raised)',
-                                  borderColor: 'var(--border)',
-                                }}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                                  <span style={S.primary}>
-                                    <strong>{stageAnimals.length - pendingAnimals.length}</strong> of <strong>{stageAnimals.length}</strong> animals already posted.
-                                    Entries saved or posted below will apply to the <strong>{pendingAnimals.length} remaining</strong> animal(s).
-                                  </span>
+                            {pendingAnimals.length < stageAnimals.length &&
+                              pendingAnimals.length > 0 && (
+                                <div
+                                  className="mb-3 p-2.5 text-xs rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
+                                  style={{
+                                    backgroundColor: 'var(--surface-raised)',
+                                    borderColor: 'var(--border)',
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                                    <span style={S.primary}>
+                                      <strong>
+                                        {stageAnimals.length -
+                                          pendingAnimals.length}
+                                      </strong>{' '}
+                                      of <strong>{stageAnimals.length}</strong>{' '}
+                                      animals already posted. Entries saved or
+                                      posted below will apply to the{' '}
+                                      <strong>
+                                        {pendingAnimals.length} remaining
+                                      </strong>{' '}
+                                      animal(s).
+                                    </span>
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
                             {allPosted && (
                               <div
                                 className="mb-3 p-2.5 text-xs font-semibold rounded-[var(--radius-sm)] border flex items-center justify-between gap-2"
@@ -3357,7 +3705,9 @@ export default function OperationalBatchDataEntry() {
                                 <div className="flex items-center gap-2">
                                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                                   <span style={S.primary}>
-                                    All {stageAnimals.length} animals in this stage are already posted for {selectedDate}. Data entry is locked.
+                                    All {stageAnimals.length} animals in this
+                                    stage are already posted for {selectedDate}.
+                                    Data entry is locked.
                                   </span>
                                 </div>
                                 <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
@@ -3382,9 +3732,16 @@ export default function OperationalBatchDataEntry() {
                                 </div>
                               )}
                             {renderActivityBoxes(
-                              (templateAnimal.lines || []).map((l: Row) => asStageTotalLine(l, pendingAnimals.length || stageAnimals.length)),
+                              (templateAnimal.lines || []).map((l: Row) =>
+                                asStageTotalLine(
+                                  l,
+                                  pendingAnimals.length || stageAnimals.length,
+                                ),
+                              ),
                               '__ALL__',
-                              selectedStage.lock_status === 'LOCKED' || isFutureDate || allPosted,
+                              selectedStage.lock_status === 'LOCKED' ||
+                                isFutureDate ||
+                                allPosted,
                               true,
                             )}
                           </div>
@@ -3396,8 +3753,12 @@ export default function OperationalBatchDataEntry() {
                         );
                         if (!animal) {
                           return (
-                            <div className="py-8 text-center text-xs" style={S.muted}>
-                              Selected animal not found in this stage on {selectedDate}.
+                            <div
+                              className="py-8 text-center text-xs"
+                              style={S.muted}
+                            >
+                              Selected animal not found in this stage on{' '}
+                              {selectedDate}.
                             </div>
                           );
                         }
@@ -3418,7 +3779,10 @@ export default function OperationalBatchDataEntry() {
                                 <div className="flex items-center gap-2">
                                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                                   <span style={S.primary}>
-                                    Data entry for <strong>{animal.animal_code}</strong> has already been posted on {selectedDate}. Fields are read-only.
+                                    Data entry for{' '}
+                                    <strong>{animal.animal_code}</strong> has
+                                    already been posted on {selectedDate}.
+                                    Fields are read-only.
                                   </span>
                                 </div>
                                 <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
@@ -3451,7 +3815,9 @@ export default function OperationalBatchDataEntry() {
                             {renderActivityBoxes(
                               animal.lines || [],
                               animal.animal_id,
-                              selectedStage.lock_status === 'LOCKED' || isFutureDate || isCurrentAnimalPosted,
+                              selectedStage.lock_status === 'LOCKED' ||
+                                isFutureDate ||
+                                isCurrentAnimalPosted,
                             )}
                           </div>
                         );
@@ -3470,7 +3836,11 @@ export default function OperationalBatchDataEntry() {
               module.
             </InlineAlert>
           ) : dataEntryLoading ? null : (
-            renderActivityBoxes(dataEntryLines, undefined, locked || isFutureDate)
+            renderActivityBoxes(
+              dataEntryLines,
+              undefined,
+              locked || isFutureDate,
+            )
           )}
 
           {/* ── Notes & Attachments — quick, non-scheduled captures,
@@ -3613,7 +3983,9 @@ export default function OperationalBatchDataEntry() {
                       <TableRow
                         key={a.animal_id}
                         className="cursor-pointer hover:bg-(--surface-raised) transition-colors"
-                        onClick={() => setSelectedAnimalIdForDetails(a.animal_id)}
+                        onClick={() =>
+                          setSelectedAnimalIdForDetails(a.animal_id)
+                        }
                         title="Click to view animal details"
                       >
                         <TableCell className="px-3 py-1.5 font-mono text-primary font-medium hover:underline">
@@ -3630,7 +4002,7 @@ export default function OperationalBatchDataEntry() {
                             ? 'Female'
                             : a.gender === 'M' || a.gender === 'Male'
                               ? 'Male'
-                              : (a.gender || NA)}
+                              : a.gender || NA}
                         </TableCell>
                         <TableCell className="px-3 py-1.5" style={S.sub}>
                           {a.breed_name || NA}
@@ -3708,7 +4080,11 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-3 text-xs pt-1">
-            <Toast variant="danger" message={bulkStageTransitionError} onClose={() => setBulkStageTransitionError('')} />
+            <Toast
+              variant="danger"
+              message={bulkStageTransitionError}
+              onClose={() => setBulkStageTransitionError('')}
+            />
             <div>
               <label className="font-semibold block mb-1">
                 Destination Stage
@@ -3724,7 +4100,8 @@ export default function OperationalBatchDataEntry() {
                 }
                 options={stageMasterList.map((s: Row) => ({
                   value: s.stage_id,
-                  label: `${s.stage_code} — ${s.stage_name}`, shortLabel: (s.stage_name) ?? "",
+                  label: `${s.stage_code} — ${s.stage_name}`,
+                  shortLabel: s.stage_name ?? '',
                 }))}
                 placeholder="Select a stage…"
                 searchPlaceholder="Search stages…"
@@ -3749,7 +4126,15 @@ export default function OperationalBatchDataEntry() {
                 }))}
                 placeholder="Keep current location"
                 searchPlaceholder="Search locations…"
-                onClear={bulkStageTransitionForm.to_location_id ? () => setBulkStageTransitionForm((f) => ({ ...f, to_location_id: '' })) : undefined}
+                onClear={
+                  bulkStageTransitionForm.to_location_id
+                    ? () =>
+                        setBulkStageTransitionForm((f) => ({
+                          ...f,
+                          to_location_id: '',
+                        }))
+                    : undefined
+                }
               />
             </div>
             <div>
@@ -3768,7 +4153,7 @@ export default function OperationalBatchDataEntry() {
                 onClear={() =>
                   setBulkStageTransitionForm((f) => ({
                     ...f,
-                    reason: "",
+                    reason: '',
                   }))
                 }
                 placeholder="Select reason from Reason Master…"
@@ -3791,11 +4176,11 @@ export default function OperationalBatchDataEntry() {
               onClick={handleChangeStage}
               disabled={Boolean(
                 changeStageSaving ||
-                  changeStageOptions.length === 0 ||
-                  !changeStageForm.to_stage_code ||
-                  (stageTransition &&
-                    !stageTransition.can_move_without_remarks &&
-                    !changeStageForm.remarks?.trim()),
+                changeStageOptions.length === 0 ||
+                !changeStageForm.to_stage_code ||
+                (stageTransition &&
+                  !stageTransition.can_move_without_remarks &&
+                  !changeStageForm.remarks?.trim()),
               )}
               className="nf-btn-primary"
             >
@@ -3808,7 +4193,11 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-3.5 text-xs pt-1">
-            <Toast variant="danger" message={changeStageError} onClose={() => setChangeStageError('')} />
+            <Toast
+              variant="danger"
+              message={changeStageError}
+              onClose={() => setChangeStageError('')}
+            />
 
             {/* Current Stage & Rule Context Box */}
             <div className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-subtle,#f8fafc)] dark:bg-[var(--surface-subtle,#0f172a)] space-y-2">
@@ -3850,8 +4239,9 @@ export default function OperationalBatchDataEntry() {
                     <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded p-2">
                       <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                       <span>
-                        Minimum duration satisfied ({stageTransition.days_in_stage}{' '}
-                        of {stageTransition.min_days_before_move} days).
+                        Minimum duration satisfied (
+                        {stageTransition.days_in_stage} of{' '}
+                        {stageTransition.min_days_before_move} days).
                       </span>
                     </div>
                   ) : (
@@ -3860,8 +4250,8 @@ export default function OperationalBatchDataEntry() {
                       <span>
                         Early move notice: Stage requires at least{' '}
                         {stageTransition.min_days_before_move} days before move
-                        (currently day {stageTransition.days_in_stage}). Justification /
-                        Remarks are mandatory to proceed.
+                        (currently day {stageTransition.days_in_stage}).
+                        Justification / Remarks are mandatory to proceed.
                       </span>
                     </div>
                   )}
@@ -3875,7 +4265,8 @@ export default function OperationalBatchDataEntry() {
               </label>
               {changeStageOptionsLoading ? (
                 <div className="flex items-center gap-2 text-[var(--text-muted)]">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading stages…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+                  stages…
                 </div>
               ) : (
                 <SearchableSelect
@@ -3888,22 +4279,25 @@ export default function OperationalBatchDataEntry() {
                       to_stage_code: val,
                     }))
                   }
-                  options={Array.from(new Set(changeStageOptions)).map((code) => {
-                    const stageDetail = stageTransition?.valid_next_stages?.find(
-                      (s) => s.stage_code === code,
-                    );
-                    const label = stageDetail
-                      ? `${stageDetail.stage_name} (${code}) — Seq ${stageDetail.stage_sequence}${
-                          stageDetail.typical_duration_days
-                            ? `, ~${stageDetail.typical_duration_days}d`
-                            : ''
-                        }`
-                      : code;
-                    return {
-                      value: code,
-                      label,
-                    };
-                  })}
+                  options={Array.from(new Set(changeStageOptions)).map(
+                    (code) => {
+                      const stageDetail =
+                        stageTransition?.valid_next_stages?.find(
+                          (s) => s.stage_code === code,
+                        );
+                      const label = stageDetail
+                        ? `${stageDetail.stage_name} (${code}) — Seq ${stageDetail.stage_sequence}${
+                            stageDetail.typical_duration_days
+                              ? `, ~${stageDetail.typical_duration_days}d`
+                              : ''
+                          }`
+                        : code;
+                      return {
+                        value: code,
+                        label,
+                      };
+                    },
+                  )}
                   placeholder="Select destination stage…"
                   searchPlaceholder="Search destination stages…"
                 />
@@ -3912,7 +4306,8 @@ export default function OperationalBatchDataEntry() {
             <div>
               <label className="font-semibold block mb-1">
                 Remarks{' '}
-                {stageTransition && !stageTransition.can_move_without_remarks ? (
+                {stageTransition &&
+                !stageTransition.can_move_without_remarks ? (
                   <span className="text-amber-600 dark:text-amber-400 font-medium">
                     * (Required for early move justification)
                   </span>
@@ -3987,7 +4382,11 @@ export default function OperationalBatchDataEntry() {
           }
         >
           <div className="space-y-4 text-xs pt-1">
-            <Toast variant="danger" message={autoTransitionError} onClose={() => setAutoTransitionError('')} />
+            <Toast
+              variant="danger"
+              message={autoTransitionError}
+              onClose={() => setAutoTransitionError('')}
+            />
 
             <div className="p-3.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 flex items-start gap-3">
               <Sparkles className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -3998,15 +4397,16 @@ export default function OperationalBatchDataEntry() {
                 <p className="mt-1 text-xs opacity-90 leading-relaxed">
                   Batch <strong>{currentBatch?.code}</strong> has spent{' '}
                   <strong>{stageTransition.days_in_stage} days</strong> in{' '}
-                  <strong>{stageTransition.current_stage_name}</strong>. According to
-                  the stage transition rules, the typical duration of{' '}
+                  <strong>{stageTransition.current_stage_name}</strong>.
+                  According to the stage transition rules, the typical duration
+                  of{' '}
                   <strong>
                     {stageTransition.auto_move_on_day ||
                       stageTransition.typical_duration_days}{' '}
                     days
                   </strong>{' '}
-                  has been reached. It is now time to transfer this batch to the next
-                  stage.
+                  has been reached. It is now time to transfer this batch to the
+                  next stage.
                 </p>
               </div>
             </div>
@@ -4065,12 +4465,14 @@ export default function OperationalBatchDataEntry() {
             </div>
 
             <p className="text-[11px] text-[var(--text-muted)] italic">
-              Note: Clicking &quot;Transfer to {stageTransition.next_stage.stage_code} Now&quot; will advance the batch to the destination stage and initialize its logs immediately.
+              Note: Clicking &quot;Transfer to{' '}
+              {stageTransition.next_stage.stage_code} Now&quot; will advance the
+              batch to the destination stage and initialize its logs
+              immediately.
             </p>
           </div>
         </Dialog>
       )}
-
 
       {/* ── MODAL: UPLOAD INSPECTION MEDIA ── */}
       {uploadModalOpen && (

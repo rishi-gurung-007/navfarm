@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import React, { useMemo } from "react";
-import { SearchableEntitySelect } from "@/modules/master-data/SearchableEntitySelect";
+import React, { useMemo } from 'react';
+import { SearchableEntitySelect } from '@/modules/master-data/SearchableEntitySelect';
 
 type Row = Record<string, unknown>;
 
@@ -44,16 +44,16 @@ export function SearchableSelect({
   value,
   onChange,
   options,
-  valueKey = "value",
-  labelKey = "label",
+  valueKey = 'value',
+  labelKey = 'label',
   getLabel,
   getSelectedLabel,
   getLabelParts,
   columnHeaders,
   columns,
-  placeholder = "Select…",
-  searchPlaceholder = "Search…",
-  noMatchesLabel = "No matches found",
+  placeholder = 'Select…',
+  searchPlaceholder = 'Search…',
+  noMatchesLabel = 'No matches found',
   disabled,
   loading,
   onClear,
@@ -64,7 +64,7 @@ export function SearchableSelect({
   // Normalize options array so strings and objects both work seamlessly
   const normalizedOptions: Row[] = useMemo(() => {
     return (options || []).map((opt) => {
-      if (typeof opt === "string") {
+      if (typeof opt === 'string') {
         return { [valueKey]: opt, [labelKey]: opt };
       }
       return opt;
@@ -74,27 +74,32 @@ export function SearchableSelect({
   const defaultGetLabel = (row: Row): string => {
     if (getLabel) return getLabel(row);
     if (row[labelKey] != null) return String(row[labelKey]);
-    if (row.code != null && row.name != null) return `${row.code} — ${row.name}`;
+    if (row.code != null && row.name != null)
+      return `${row.code} — ${row.name}`;
     if (row.name != null) return String(row.name);
     if (row.title != null) return String(row.title);
     if (row.code != null) return String(row.code);
     if (row[valueKey] != null) return String(row[valueKey]);
-    return "";
+    return '';
   };
 
   const effectiveColumnHeaders = useMemo(() => {
     // If explicitly provided as false or empty array, disable headers
-    if (columnHeaders === false || (Array.isArray(columnHeaders) && columnHeaders.length === 0)) {
+    if (
+      columnHeaders === false ||
+      (Array.isArray(columnHeaders) && columnHeaders.length === 0)
+    ) {
       return undefined;
     }
-    if (Array.isArray(columnHeaders) && columnHeaders.length > 0) return columnHeaders;
+    if (Array.isArray(columnHeaders) && columnHeaders.length > 0)
+      return columnHeaders;
     if (columns && columns.length > 0) return columns.map((c) => c.label);
 
     if (normalizedOptions.length === 0) return undefined;
 
     const nonEmptyOptions = normalizedOptions.filter((opt) => {
       const val = opt[valueKey];
-      return val !== "" && val != null;
+      return val !== '' && val != null;
     });
 
     if (nonEmptyOptions.length === 0) return undefined;
@@ -105,10 +110,10 @@ export function SearchableSelect({
         opt.code != null &&
         String(opt.code).trim().length > 0 &&
         String(opt.code).trim().length <= 25 &&
-        (opt.name != null || opt.description != null || opt.title != null)
+        (opt.name != null || opt.description != null || opt.title != null),
     );
     if (allHaveExplicitCodeAndName) {
-      return ["Code", "Name"];
+      return ['Code', 'Name'];
     }
 
     // Check if ALL non-empty options have genuine delimited "CODE — NAME" or "CODE - NAME"
@@ -118,7 +123,7 @@ export function SearchableSelect({
       const match = lbl.split(/\s+[—–-]\s+/);
       if (match.length >= 2) {
         const codePart = match[0].trim();
-        const namePart = match.slice(1).join(" — ").trim();
+        const namePart = match.slice(1).join(' — ').trim();
         // A genuine code is concise (<= 25 chars), not a sentence, and not starting with "All"
         const isCodeLike =
           codePart.length > 0 &&
@@ -131,7 +136,7 @@ export function SearchableSelect({
     });
 
     if (allHaveDelimitedCodeAndName) {
-      return ["Code", "Name"];
+      return ['Code', 'Name'];
     }
 
     return undefined;
@@ -142,7 +147,7 @@ export function SearchableSelect({
 
     if (columns && columns.length > 0) {
       return (row: Row) =>
-        columns.map((c) => (row[c.key] != null ? String(row[c.key]) : ""));
+        columns.map((c) => (row[c.key] != null ? String(row[c.key]) : ''));
     }
 
     if (effectiveColumnHeaders && effectiveColumnHeaders.length > 0) {
@@ -152,18 +157,18 @@ export function SearchableSelect({
           (row.name != null || row.description != null || row.title != null)
         ) {
           return [
-            String(row.code ?? ""),
-            String(row.name ?? row.description ?? row.title ?? ""),
+            String(row.code ?? ''),
+            String(row.name ?? row.description ?? row.title ?? ''),
           ];
         }
 
         const lbl = defaultGetLabel(row);
         const match = lbl.split(/\s+[—–-]\s+/);
         if (match.length >= 2) {
-          return [match[0].trim(), match.slice(1).join(" — ").trim()];
+          return [match[0].trim(), match.slice(1).join(' — ').trim()];
         }
 
-        return [lbl, ""];
+        return [lbl, ''];
       };
     }
 
@@ -175,7 +180,7 @@ export function SearchableSelect({
       id={id}
       ariaLabel={ariaLabel || placeholder}
       ariaRequired={ariaRequired}
-      value={value != null ? String(value) : ""}
+      value={value != null ? String(value) : ''}
       onChange={onChange}
       options={normalizedOptions}
       valueKey={valueKey}

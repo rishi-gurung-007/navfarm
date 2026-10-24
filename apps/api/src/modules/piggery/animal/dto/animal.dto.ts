@@ -1,5 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsIn, IsInt, Min, Max, IsNumber, IsPositive, IsDateString, IsArray, ArrayNotEmpty, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+  IsNumber,
+  IsPositive,
+  IsDateString,
+  IsArray,
+  ArrayNotEmpty,
+  MaxLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
@@ -21,12 +37,38 @@ export const ANIMAL_TYPES_BY_LOB = {
 
 const ANIMAL_TYPES = Object.values(ANIMAL_TYPES_BY_LOB).flat();
 const GENDERS = ['F', 'M'] as const;
-const ENTRY_TYPES = ['PURCHASED_IMPORTED', 'PURCHASED_LOCAL', 'BORN_ON_FARM', 'TRANSFERRED_IN'] as const;
-const STATUSES = ['ACTIVE', 'QUARANTINE', 'SICK', 'PREGNANT', 'LACTATING', 'DRY', 'CULLED', 'DEAD', 'SOLD', 'SLAUGHTERED'] as const;
-export const DISPOSAL_TYPES = ['SOLD', 'SLAUGHTERED', 'DIED', 'TRANSFERRED', 'CULLED'] as const;
+const ENTRY_TYPES = [
+  'PURCHASED_IMPORTED',
+  'PURCHASED_LOCAL',
+  'BORN_ON_FARM',
+  'TRANSFERRED_IN',
+] as const;
+const STATUSES = [
+  'ACTIVE',
+  'QUARANTINE',
+  'SICK',
+  'PREGNANT',
+  'LACTATING',
+  'DRY',
+  'CULLED',
+  'DEAD',
+  'SOLD',
+  'SLAUGHTERED',
+] as const;
+export const DISPOSAL_TYPES = [
+  'SOLD',
+  'SLAUGHTERED',
+  'DIED',
+  'TRANSFERRED',
+  'CULLED',
+] as const;
 
 export class CreateAnimalDto {
-  @ApiProperty({ description: 'Optional manual code; omit to allocate from the configured animal series', required: false })
+  @ApiProperty({
+    description:
+      'Optional manual code; omit to allocate from the configured animal series',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
@@ -38,12 +80,20 @@ export class CreateAnimalDto {
   @IsNotEmpty()
   company_id: string;
 
-  @ApiProperty({ description: 'Nature of Business UUID scope. Omit to derive it from the company\'s operational areas.', required: false })
+  @ApiProperty({
+    description:
+      "Nature of Business UUID scope. Omit to derive it from the company's operational areas.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   nob_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID scope. Omit to derive it from the company\'s operational areas.', required: false })
+  @ApiProperty({
+    description:
+      "Line of Business UUID scope. Omit to derive it from the company's operational areas.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lob_id?: string;
@@ -63,14 +113,18 @@ export class CreateAnimalDto {
   @IsIn(GENDERS)
   gender: string;
 
-  @ApiProperty({ description: 'Date of birth — omit if born on this farm and unknown or if imported/unknown', required: false })
+  @ApiProperty({
+    description:
+      'Date of birth — omit if born on this farm and unknown or if imported/unknown',
+    required: false,
+  })
   @IsDateString()
   @IsOptional()
   dob?: string;
 
   @ApiProperty({
     description:
-      "Age in whole weeks when the animal entered the farm. Computed from dob and entry_date whenever dob is given — a value sent alongside a dob is ignored, not merged. Supply it only for an imported animal whose date of birth is unknown.",
+      'Age in whole weeks when the animal entered the farm. Computed from dob and entry_date whenever dob is given — a value sent alongside a dob is ignored, not merged. Supply it only for an imported animal whose date of birth is unknown.',
     required: false,
   })
   @IsInt()
@@ -78,7 +132,10 @@ export class CreateAnimalDto {
   @IsOptional()
   age_at_entry_weeks?: number;
 
-  @ApiProperty({ description: 'How this animal entered the register', enum: ENTRY_TYPES })
+  @ApiProperty({
+    description: 'How this animal entered the register',
+    enum: ENTRY_TYPES,
+  })
   @IsString()
   @IsIn(ENTRY_TYPES)
   entry_type: string;
@@ -88,50 +145,82 @@ export class CreateAnimalDto {
   @IsNotEmpty()
   entry_date: string;
 
-  @ApiProperty({ description: 'GRN UUID this animal arrived on — required if entry_type is PURCHASED_IMPORTED/PURCHASED_LOCAL', required: false })
+  @ApiProperty({
+    description:
+      'GRN UUID this animal arrived on — required if entry_type is PURCHASED_IMPORTED/PURCHASED_LOCAL',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   source_receipt_id?: string;
 
-  @ApiProperty({ description: 'Batch UUID that produced this animal — required if entry_type is BORN_ON_FARM', required: false })
+  @ApiProperty({
+    description:
+      'Batch UUID that produced this animal — required if entry_type is BORN_ON_FARM',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   source_batch_id?: string;
 
-  @ApiProperty({ description: 'Item UUID (LIVING_ASSET catalogue entry) for this animal type' })
+  @ApiProperty({
+    description:
+      'Item UUID (LIVING_ASSET catalogue entry) for this animal type',
+  })
   @IsUUID()
   @IsNotEmpty()
   item_id: string;
 
-  @ApiProperty({ description: 'RFID tag number, the only tag identifier an animal carries; unique within the tenant', required: false })
+  @ApiProperty({
+    description:
+      'RFID tag number, the only tag identifier an animal carries; unique within the tenant',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   rfid_tag?: string;
 
-  @ApiProperty({ description: 'URL to a photo of the ear tag — file upload will move to Cloudflare R2 later', required: false })
+  @ApiProperty({
+    description:
+      'URL to a photo of the ear tag — file upload will move to Cloudflare R2 later',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   ear_tag_image_url?: string;
 
-  @ApiProperty({ description: 'Father boar UUID — self-referential', required: false })
+  @ApiProperty({
+    description: 'Father boar UUID — self-referential',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   sire_animal_id?: string;
 
-  @ApiProperty({ description: 'Mother sow UUID — self-referential', required: false })
+  @ApiProperty({
+    description: 'Mother sow UUID — self-referential',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
-  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @ApiProperty({
+    description:
+      "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   sire_serial_no?: string;
 
-  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @ApiProperty({
+    description:
+      "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   dam_serial_no?: string;
-
 
   // animal_register.acquisition_cost is decimal(18,4) (schema.ts);
   // the bound below is that column's own ceiling (14 integer digits), not a
@@ -139,7 +228,7 @@ export class CreateAnimalDto {
   // overflowing the column, nothing more.
   @ApiProperty({
     description:
-      "Purchase price per animal. Omit for a purchased entry — the API reads it off the source GRN line and discards anything sent. Required for every other entry type, which has no document to read it from; the service enforces that rather than this DTO, because the form legitimately omits the field for purchases.",
+      'Purchase price per animal. Omit for a purchased entry — the API reads it off the source GRN line and discards anything sent. Required for every other entry type, which has no document to read it from; the service enforces that rather than this DTO, because the form legitimately omits the field for purchases.',
     required: false,
   })
   @IsNumber({ maxDecimalPlaces: 4 })
@@ -148,38 +237,64 @@ export class CreateAnimalDto {
   @IsOptional()
   acquisition_cost?: number;
 
-  @ApiProperty({ description: 'Current production stage UUID — every registered animal stands in a stage' })
+  @ApiProperty({
+    description:
+      'Current production stage UUID — every registered animal stands in a stage',
+  })
   @IsUUID()
   @IsNotEmpty()
   current_stage_id: string;
 
-  @ApiProperty({ description: 'Batch UUID this animal is currently in', required: false })
+  @ApiProperty({
+    description: 'Batch UUID this animal is currently in',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   current_batch_id?: string;
 
-  @ApiProperty({ description: 'Current shed/pen location UUID', required: false })
+  @ApiProperty({
+    description: 'Current shed/pen location UUID',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   current_location_id?: string;
 
-  @ApiProperty({ description: 'Date animal entered productive stage — first farrowing or PRODUCTIVE_SOW status', required: false })
+  @ApiProperty({
+    description:
+      'Date animal entered productive stage — first farrowing or PRODUCTIVE_SOW status',
+    required: false,
+  })
   @IsDateString()
   @IsOptional()
   productive_life_start?: string;
 
-  @ApiProperty({ description: 'Status', enum: STATUSES, required: false, default: 'ACTIVE' })
+  @ApiProperty({
+    description: 'Status',
+    enum: STATUSES,
+    required: false,
+    default: 'ACTIVE',
+  })
   @IsString()
   @IsOptional()
   @IsIn(STATUSES)
   status?: string;
 
-  @ApiProperty({ description: 'Expected cull date, entered at registration. Nothing derives it.', required: false })
+  @ApiProperty({
+    description:
+      'Expected cull date, entered at registration. Nothing derives it.',
+    required: false,
+  })
   @IsDateString()
   @IsOptional()
   expected_cull_date?: string;
 
-  @ApiProperty({ description: 'Teat count, females only — ignored for a male. BBP: below 15 is a hard block on gilt selection regardless of TSI score', required: false })
+  @ApiProperty({
+    description:
+      'Teat count, females only — ignored for a male. BBP: below 15 is a hard block on gilt selection regardless of TSI score',
+    required: false,
+  })
   @IsInt()
   @Min(0)
   @IsOptional()
@@ -194,7 +309,11 @@ export class CreateAnimalDto {
   // Conformation/quality grading is a whole number 0–99 (two digits). The
   // column is varchar(20) and stays so — the number is stored as text, no
   // migration. The bound matches the web form's Grading field.
-  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @ApiProperty({
+    description:
+      'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)',
+    required: false,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -248,16 +367,23 @@ export class UpdateAnimalDto {
   @IsUUID()
   @IsOptional()
   dam_animal_id?: string;
-  @ApiProperty({ description: "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @ApiProperty({
+    description:
+      "Sire's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   sire_serial_no?: string;
 
-  @ApiProperty({ description: "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.", required: false })
+  @ApiProperty({
+    description:
+      "Dam's serial/registration number as the papers give it — for a parent not registered here (D42). Any entry type.",
+    required: false,
+  })
   @IsString()
   @IsOptional()
   dam_serial_no?: string;
-
 
   @ApiProperty({ required: false })
   @IsUUID()
@@ -292,7 +418,11 @@ export class UpdateAnimalDto {
   @IsOptional()
   total_piglets_weaned?: number;
 
-  @ApiProperty({ description: 'Not ledger-derived yet — settable directly until per-animal bio-asset ledger integration exists', required: false })
+  @ApiProperty({
+    description:
+      'Not ledger-derived yet — settable directly until per-animal bio-asset ledger integration exists',
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   @Min(0)
@@ -338,7 +468,11 @@ export class UpdateAnimalDto {
   @IsIn(STATUSES)
   status?: string;
 
-  @ApiProperty({ description: 'Teat count — BBP: below 15 is a hard block on gilt selection regardless of TSI score', required: false })
+  @ApiProperty({
+    description:
+      'Teat count — BBP: below 15 is a hard block on gilt selection regardless of TSI score',
+    required: false,
+  })
   @IsInt()
   @Min(0)
   @IsOptional()
@@ -352,7 +486,11 @@ export class UpdateAnimalDto {
 
   // Same bound as CreateAnimalDto: whole number 0–99, stored as text in the
   // varchar(20) column.
-  @ApiProperty({ description: 'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)', required: false })
+  @ApiProperty({
+    description:
+      'Conformation/quality grading — whole number 0–99, stored as text (varchar column, no migration)',
+    required: false,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -367,7 +505,10 @@ export class UpdateAnimalDto {
 }
 
 export class DisposeAnimalDto {
-  @ApiProperty({ description: 'How this animal left the register', enum: DISPOSAL_TYPES })
+  @ApiProperty({
+    description: 'How this animal left the register',
+    enum: DISPOSAL_TYPES,
+  })
   @IsString()
   @IsIn(DISPOSAL_TYPES)
   disposal_type: string;
@@ -376,42 +517,65 @@ export class DisposeAnimalDto {
   // codes) and CULL (10 codes) categories exist to be picked at exactly this
   // point — nothing referenced reason_master anywhere before this. Optional:
   // a SOLD/TRANSFERRED disposal commonly has no catalog reason behind it.
-  @ApiProperty({ description: 'Reason Master UUID — category should match disposal_type (MORTALITY for DIED, CULL for CULLED)', required: false })
+  @ApiProperty({
+    description:
+      'Reason Master UUID — category should match disposal_type (MORTALITY for DIED, CULL for CULLED)',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   disposal_reason_id?: string;
 
-  @ApiProperty({ description: 'Date of sale/slaughter/death — for CULLED, the cull date' })
+  @ApiProperty({
+    description: 'Date of sale/slaughter/death — for CULLED, the cull date',
+  })
   @IsDateString()
   @IsNotEmpty()
   disposal_date: string;
 
-  @ApiProperty({ description: 'Sale/salvage value realised, if any', required: false })
+  @ApiProperty({
+    description: 'Sale/salvage value realised, if any',
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   disposal_value?: number;
 
   // BBP-1: "Out-of-Production Date and Cull Date are TWO SEPARATE fields … System does not allow Cull Date <
   // Out-of-Production Date". CULLED needs it here, or set earlier with Out of production.
-  @ApiProperty({ description: 'CULLED: the date the animal was taken out of production (may have been set already)', required: false })
+  @ApiProperty({
+    description:
+      'CULLED: the date the animal was taken out of production (may have been set already)',
+    required: false,
+  })
   @IsDateString()
   @IsOptional()
   out_of_production_date?: string;
 
   // BBP-1: "weight at death/cull recorded". Required for CULLED, optional for the other exits.
-  @ApiProperty({ description: 'Weight at exit, kg — required for CULLED', required: false })
+  @ApiProperty({
+    description: 'Weight at exit, kg — required for CULLED',
+    required: false,
+  })
   @IsNumber()
   @IsPositive()
   @IsOptional()
   exit_weight_kg?: number;
 
   // BBP-1: "disposal destination … recorded". No list of destinations is specified, so it is free text.
-  @ApiProperty({ description: 'Where the animal went (buyer, abattoir, rendering) — required for CULLED', required: false })
+  @ApiProperty({
+    description:
+      'Where the animal went (buyer, abattoir, rendering) — required for CULLED',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   disposal_destination?: string;
 
-  @ApiProperty({ description: 'Customer UUID — who bought her on a SOLD exit', required: false })
+  @ApiProperty({
+    description: 'Customer UUID — who bought her on a SOLD exit',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   customer_id?: string;
@@ -452,7 +616,10 @@ export class QueryAnimalDto extends MasterListQueryDto {
   animalType?: string;
 
   /** D42: the Sire picker asks for males and the Dam picker for females. */
-  @ApiProperty({ description: "Filter by sex — the data uses 'M' and 'F'.", required: false })
+  @ApiProperty({
+    description: "Filter by sex — the data uses 'M' and 'F'.",
+    required: false,
+  })
   @IsOptional()
   @IsString()
   gender?: string;
@@ -472,24 +639,38 @@ export class QueryAnimalDto extends MasterListQueryDto {
   @IsUUID()
   currentLocationId?: string;
 
-  @ApiProperty({ description: 'Search animal_code or rfid_tag', required: false })
+  @ApiProperty({
+    description: 'Search animal_code or rfid_tag',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   search?: string;
 
-  @ApiProperty({ description: 'Include disposed (is_active=false) animals', required: false, default: false })
+  @ApiProperty({
+    description: 'Include disposed (is_active=false) animals',
+    required: false,
+    default: false,
+  })
   @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()
   includeDisposed?: boolean;
 
-  @ApiProperty({ description: 'Filter only animals not assigned to any batch', required: false })
+  @ApiProperty({
+    description: 'Filter only animals not assigned to any batch',
+    required: false,
+  })
   @IsOptional()
   @IsBoolean()
   @Type(() => Boolean)
   unassignedOnly?: boolean;
 
-  @ApiProperty({ description: 'Filter by active status (findAll already excludes disposed animals unless includeDisposed is set; declared so pickers can send the same isActive param every other list endpoint accepts without a 400)', required: false })
+  @ApiProperty({
+    description:
+      'Filter by active status (findAll already excludes disposed animals unless includeDisposed is set; declared so pickers can send the same isActive param every other list endpoint accepts without a 400)',
+    required: false,
+  })
   @IsOptional()
   @IsBoolean()
   @Type(() => Boolean)
@@ -502,12 +683,18 @@ export class TransitionAnimalStageDto {
   @IsNotEmpty()
   to_stage_id: string;
 
-  @ApiProperty({ description: 'Destination Location / Pen UUID (optional)', required: false })
+  @ApiProperty({
+    description: 'Destination Location / Pen UUID (optional)',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   to_location_id?: string;
 
-  @ApiProperty({ description: 'Destination Batch UUID (optional)', required: false })
+  @ApiProperty({
+    description: 'Destination Batch UUID (optional)',
+    required: false,
+  })
   @IsUUID()
   @IsOptional()
   to_batch_id?: string;
@@ -517,7 +704,11 @@ export class TransitionAnimalStageDto {
   @IsNotEmpty()
   transition_date: string;
 
-  @ApiProperty({ description: 'Reason for transition / Trigger condition (e.g. PREGNANCY_CONFIRMED, WEANED, MANUAL)', required: false })
+  @ApiProperty({
+    description:
+      'Reason for transition / Trigger condition (e.g. PREGNANCY_CONFIRMED, WEANED, MANUAL)',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   reason?: string;
@@ -529,7 +720,11 @@ export class TransitionAnimalStageDto {
 }
 
 export class BulkTransitionAnimalStageDto extends TransitionAnimalStageDto {
-  @ApiProperty({ description: 'Animals to move together — typically the tail-enders that a batch-level stage move deliberately left behind', type: [String] })
+  @ApiProperty({
+    description:
+      'Animals to move together — typically the tail-enders that a batch-level stage move deliberately left behind',
+    type: [String],
+  })
   @IsArray()
   @ArrayNotEmpty()
   @IsUUID('4', { each: true })

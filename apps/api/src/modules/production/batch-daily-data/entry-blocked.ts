@@ -12,7 +12,11 @@ import { animalsInBatchOn } from './animal-membership';
  * still takes entries for the days it had animals, and one that has animals now takes none for a day it had none.
  * Today and later are decided as before. A batch-wise batch keeps no dated head count, so it is judged as it stands.
  */
-export async function entryBlockedReason(db: MySql2Database<typeof schema>, batchId: string, date?: string): Promise<string | null> {
+export async function entryBlockedReason(
+  db: MySql2Database<typeof schema>,
+  batchId: string,
+  date?: string,
+): Promise<string | null> {
   const [batch] = await db
     .select({
       batch_no: schema.batchHeader.batch_no,
@@ -27,14 +31,25 @@ export async function entryBlockedReason(db: MySql2Database<typeof schema>, batc
   if (batch.tracking_mode === 'ANIMAL_WISE') {
     if (date && date < new Date().toISOString().slice(0, 10)) {
       const members = await animalsInBatchOn(db, batchId, date);
-      return members.length ? null : `Batch '${batch.batch_no}' had no animals in it on ${date}, so it takes no data entry for that day.`;
+      return members.length
+        ? null
+        : `Batch '${batch.batch_no}' had no animals in it on ${date}, so it takes no data entry for that day.`;
     }
     const [{ live }] = await db
       .select({ live: count() })
       .from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)));
-    return Number(live) > 0 ? null : `Batch '${batch.batch_no}' has no animals in it, so it takes no data entry.`;
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batchId),
+          eq(schema.animalRegister.is_active, true),
+        ),
+      );
+    return Number(live) > 0
+      ? null
+      : `Batch '${batch.batch_no}' has no animals in it, so it takes no data entry.`;
   }
   const head = Number(batch.closing_quantity ?? batch.opening_quantity ?? 0);
-  return head > 1e-9 ? null : `Batch '${batch.batch_no}' has a head count of 0, so it takes no data entry.`;
+  return head > 1e-9
+    ? null
+    : `Batch '${batch.batch_no}' has a head count of 0, so it takes no data entry.`;
 }

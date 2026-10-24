@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 /**
  * The common requisition (Item / Fixed Asset / Service) document and its
@@ -16,34 +16,56 @@
  * The draft is local state; the caller owns the last server view and is told
  * about each new one (`onView`), which also resets the draft to it.
  */
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import { api } from "@/services/api-client";
-import { showToast } from "@/components/ui/toast";
-import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
-import { Dialog, DialogFooterActions, DialogHeaderActions } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { getStoredUser, hasPermission } from "@/hooks/useAuth";
-import { useLanguage } from "@/hooks/useLanguage";
-import { todayIso, unwrap } from "../inventory/feed-format";
-import { CommonRequisitionDocument, type TrackingAssignment } from "./common-requisition-document";
-import { RecordLink } from "../inventory/feed-requisition-header";
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
+import { api } from '@/services/api-client';
+import { showToast } from '@/components/ui/toast';
+import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 import {
-  commonActions, isCommonEditable, toRequisitionPayload, toRequisitionUpdatePayload, type CommonRequisitionOptions, type CommonRequisitionView,
-} from "./common-requisition-model";
+  Dialog,
+  DialogFooterActions,
+  DialogHeaderActions,
+} from '@/components/ui/dialog';
+import { Field } from '@/components/ui/field';
+import { getStoredUser, hasPermission } from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
+import { todayIso, unwrap } from '../inventory/feed-format';
+import {
+  CommonRequisitionDocument,
+  type TrackingAssignment,
+} from './common-requisition-document';
+import { RecordLink } from '../inventory/feed-requisition-header';
+import {
+  commonActions,
+  isCommonEditable,
+  toRequisitionPayload,
+  toRequisitionUpdatePayload,
+  type CommonRequisitionOptions,
+  type CommonRequisitionView,
+} from './common-requisition-model';
 
-const inputStyle = { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" };
+const inputStyle = {
+  backgroundColor: 'var(--input-bg)',
+  color: 'var(--input-text)',
+  borderColor: 'var(--input-border)',
+};
 
 /** A quantity box's text as a number; blank is "nothing entered". */
-const entered = (raw: string | undefined) => (raw === undefined || raw.trim() === "" ? null : Number(raw));
+const entered = (raw: string | undefined) =>
+  raw === undefined || raw.trim() === '' ? null : Number(raw);
 /** Valid when blank, or a positive number no larger than the cap. */
 const withinCap = (raw: string | undefined, cap: number) => {
   const v = entered(raw);
   return v === null || (Number.isFinite(v) && v > 0 && v <= cap + 1e-9);
 };
 
-export function CommonRequisitionDetail({ initial, onView, onBack, embedded = false }: {
+export function CommonRequisitionDetail({
+  initial,
+  onView,
+  onBack,
+  embedded = false,
+}: {
   initial: CommonRequisitionView;
   onView: (next: CommonRequisitionView, notice?: string) => void;
   onBack: () => void;
@@ -61,11 +83,11 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
   const [draft, setDraft] = useState<CommonRequisitionView>(initial);
   const [options, setOptions] = useState<CommonRequisitionOptions | null>(null);
   const [busy, setBusy] = useState(false);
-  const [poNo, setPoNo] = useState("");
-  const [panel, setPanel] = useState<"ship" | "receive" | null>(null);
+  const [poNo, setPoNo] = useState('');
+  const [panel, setPanel] = useState<'ship' | 'receive' | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
   const [shipQty, setShipQty] = useState<Record<string, string>>({});
-  const [shipmentId, setShipmentId] = useState("");
+  const [shipmentId, setShipmentId] = useState('');
   const [recvQty, setRecvQty] = useState<Record<string, string>>({});
 
   // A new server view replaces the draft and closes whatever was half-entered against the old one.
@@ -74,15 +96,15 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     setPanel(null);
     setShipQty({});
     setRecvQty({});
-    setShipmentId("");
-    setPoNo("");
+    setShipmentId('');
+    setPoNo('');
   }, [initial]);
 
   const u = getStoredUser();
   const can = {
-    create: hasPermission(u, "PROCUREMENT", "REQUISITION", "can_create"),
-    approve: hasPermission(u, "PROCUREMENT", "REQUISITION", "can_approve"),
-    transfer: hasPermission(u, "INVENTORY", "STOCK_TRANSFER", "can_edit"),
+    create: hasPermission(u, 'PROCUREMENT', 'REQUISITION', 'can_create'),
+    approve: hasPermission(u, 'PROCUREMENT', 'REQUISITION', 'can_approve'),
+    transfer: hasPermission(u, 'INVENTORY', 'STOCK_TRANSFER', 'can_edit'),
   };
   const actions = commonActions(draft, can);
   const editable = isCommonEditable(draft);
@@ -90,7 +112,9 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
 
   // WP4a: a released Store document still needs the items' tracking flags,
   // for the Item Tracking button on lines with a balance to ship.
-  const releasedStore = draft.purpose === "STORE" && (draft.document_status ?? "OPEN") === "RELEASED";
+  const releasedStore =
+    draft.purpose === 'STORE' &&
+    (draft.document_status ?? 'OPEN') === 'RELEASED';
   const needsOptions = editable || releasedStore;
 
   useEffect(() => {
@@ -98,7 +122,9 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     if (!needsOptions) return;
     let live = true;
     api
-      .get(`/requisition/options?company_id=${draft.company_id}${draft.farm_id ? `&farm_id=${draft.farm_id}` : ""}`)
+      .get(
+        `/requisition/options?company_id=${draft.company_id}${draft.farm_id ? `&farm_id=${draft.farm_id}` : ''}`,
+      )
       .then((res) => {
         if (!live) return;
         const nextOptions = unwrap<CommonRequisitionOptions>(res);
@@ -116,7 +142,9 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
         }
       })
       .catch(() => undefined); // without options the pickers stay empty; the rest of the document still edits
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
   }, [needsOptions, draft.company_id, draft.farm_id, id]);
 
   const run = async (work: () => Promise<void>) => {
@@ -124,7 +152,7 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     try {
       await work();
     } catch (err: any) {
-      showToast.error(err?.message || tRef.current("crqActionFailed"));
+      showToast.error(err?.message || tRef.current('crqActionFailed'));
     } finally {
       setBusy(false);
     }
@@ -135,83 +163,211 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     onView(unwrap<CommonRequisitionView>(res), message);
   };
 
-  const save = () => run(async () => {
-    emit(id ? await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft)) : await api.post("/requisition", toRequisitionPayload(draft)), tRef.current("crqSaved"));
-  });
-  const submit = () => run(async () => {
-    await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft));
-    emit(await api.post(`/requisition/${id}/submit`, {}), tRef.current("crqSubmitted"));
-  });
-  const reopen = () => run(async () => emit(await api.post(`/requisition/${id}/reopen`, {}), tRef.current("crqReopened")));
-  const release = () => run(async () => {
-    const res = unwrap<CommonRequisitionView>(await api.post(`/requisition/${id}/release`, {}));
-    const message = res.purpose === "STORE"
-      ? tRef.current("crqReleasedStore", { no: res.linked_transfer_no ?? "" })
-      : tRef.current("crqReleasedPurchase");
-    showToast.success(message);
-    onView(res, message);
-  });
+  const save = () =>
+    run(async () => {
+      emit(
+        id
+          ? await api.put(
+              `/requisition/${id}`,
+              toRequisitionUpdatePayload(draft),
+            )
+          : await api.post('/requisition', toRequisitionPayload(draft)),
+        tRef.current('crqSaved'),
+      );
+    });
+  const submit = () =>
+    run(async () => {
+      await api.put(`/requisition/${id}`, toRequisitionUpdatePayload(draft));
+      emit(
+        await api.post(`/requisition/${id}/submit`, {}),
+        tRef.current('crqSubmitted'),
+      );
+    });
+  const reopen = () =>
+    run(async () =>
+      emit(
+        await api.post(`/requisition/${id}/reopen`, {}),
+        tRef.current('crqReopened'),
+      ),
+    );
+  const release = () =>
+    run(async () => {
+      const res = unwrap<CommonRequisitionView>(
+        await api.post(`/requisition/${id}/release`, {}),
+      );
+      const message =
+        res.purpose === 'STORE'
+          ? tRef.current('crqReleasedStore', {
+              no: res.linked_transfer_no ?? '',
+            })
+          : tRef.current('crqReleasedPurchase');
+      showToast.success(message);
+      onView(res, message);
+    });
   // WP4a: Item Tracking after release, for the unshipped balance. Refusals
   // (department, coverage, nothing left to ship) come back as the action error.
-  const assignTracking = async (lineId: string, value: TrackingAssignment): Promise<boolean> => {
+  const assignTracking = async (
+    lineId: string,
+    value: TrackingAssignment,
+  ): Promise<boolean> => {
     let ok = false;
     await run(async () => {
-      emit(await api.post(`/requisition/${id}/item-tracking`, { lines: [{ line_id: lineId, ...value }] }), tRef.current("crqTrackingSaved"));
+      emit(
+        await api.post(`/requisition/${id}/item-tracking`, {
+          lines: [{ line_id: lineId, ...value }],
+        }),
+        tRef.current('crqTrackingSaved'),
+      );
       ok = true;
     });
     return ok;
   };
-  const linkPo = () => run(async () => emit(await api.post(`/requisition/${id}/link-po`, { linked_po_no: poNo.trim() }), tRef.current("crqPoLinked")));
+  const linkPo = () =>
+    run(async () =>
+      emit(
+        await api.post(`/requisition/${id}/link-po`, {
+          linked_po_no: poNo.trim(),
+        }),
+        tRef.current('crqPoLinked'),
+      ),
+    );
 
   const lineNo = (lineId: string) => {
     const i = draft.lines.findIndex((l) => l.line_id === lineId);
-    return i < 0 ? 0 : draft.lines[i].line_seq ?? i + 1;
+    return i < 0 ? 0 : (draft.lines[i].line_seq ?? i + 1);
   };
 
   // Ship: every line with a balance, capped at that balance.
-  const shipLines = draft.lines.filter((l) => !!l.line_id && (l.balance_to_ship ?? 0) > 1e-9);
+  const shipLines = draft.lines.filter(
+    (l) => !!l.line_id && (l.balance_to_ship ?? 0) > 1e-9,
+  );
   const shipBody = shipLines
-    .map((l) => ({ line_id: l.line_id as string, quantity: entered(shipQty[l.line_id as string]) }))
-    .filter((l) => l.quantity !== null && l.quantity > 0) as { line_id: string; quantity: number }[];
-  const shipValid = shipLines.every((l) => withinCap(shipQty[l.line_id as string], l.balance_to_ship ?? 0)) && shipBody.length > 0;
-  const ship = () => run(async () =>
-    emit(await api.post(`/requisition/${id}/shipment`, { posting_date: postingDate, lines: shipBody }), tRef.current("crqShipped")));
+    .map((l) => ({
+      line_id: l.line_id as string,
+      quantity: entered(shipQty[l.line_id as string]),
+    }))
+    .filter((l) => l.quantity !== null && l.quantity > 0) as {
+    line_id: string;
+    quantity: number;
+  }[];
+  const shipValid =
+    shipLines.every((l) =>
+      withinCap(shipQty[l.line_id as string], l.balance_to_ship ?? 0),
+    ) && shipBody.length > 0;
+  const ship = () =>
+    run(async () =>
+      emit(
+        await api.post(`/requisition/${id}/shipment`, {
+          posting_date: postingDate,
+          lines: shipBody,
+        }),
+        tRef.current('crqShipped'),
+      ),
+    );
 
   // Receive: shipments with something left, then that shipment's lines with something left.
-  const openShipments = (draft.shipments ?? []).filter((s) => s.lines.some((l) => l.remaining > 1e-9));
-  const chosen = openShipments.find((s) => s.shipment_id === shipmentId) ?? null;
+  const openShipments = (draft.shipments ?? []).filter((s) =>
+    s.lines.some((l) => l.remaining > 1e-9),
+  );
+  const chosen =
+    openShipments.find((s) => s.shipment_id === shipmentId) ?? null;
   const recvLines = (chosen?.lines ?? []).filter((l) => l.remaining > 1e-9);
   const recvBody = recvLines
-    .map((l) => ({ line_id: l.requisition_line_id, quantity: entered(recvQty[l.requisition_line_id]) }))
-    .filter((l) => l.quantity !== null && l.quantity > 0) as { line_id: string; quantity: number }[];
-  const recvValid = !!chosen && recvLines.every((l) => withinCap(recvQty[l.requisition_line_id], l.remaining)) && recvBody.length > 0;
-  const receive = () => run(async () =>
-    emit(await api.post(`/requisition/${id}/receipt`, { posting_date: postingDate, shipment_id: shipmentId, lines: recvBody }), tRef.current("crqReceived")));
+    .map((l) => ({
+      line_id: l.requisition_line_id,
+      quantity: entered(recvQty[l.requisition_line_id]),
+    }))
+    .filter((l) => l.quantity !== null && l.quantity > 0) as {
+    line_id: string;
+    quantity: number;
+  }[];
+  const recvValid =
+    !!chosen &&
+    recvLines.every((l) =>
+      withinCap(recvQty[l.requisition_line_id], l.remaining),
+    ) &&
+    recvBody.length > 0;
+  const receive = () =>
+    run(async () =>
+      emit(
+        await api.post(`/requisition/${id}/receipt`, {
+          posting_date: postingDate,
+          shipment_id: shipmentId,
+          lines: recvBody,
+        }),
+        tRef.current('crqReceived'),
+      ),
+    );
 
   const dateField = (
-    <Field className="w-40" label={t("crqPostingDate")} htmlFor="crq-posting-date">
-      <input id="crq-posting-date" type="date" className="nf-input-sm" style={inputStyle} value={postingDate} onChange={(e) => setPostingDate(e.target.value)} />
+    <Field
+      className="w-40"
+      label={t('crqPostingDate')}
+      htmlFor="crq-posting-date"
+    >
+      <input
+        id="crq-posting-date"
+        type="date"
+        className="nf-input-sm"
+        style={inputStyle}
+        value={postingDate}
+        onChange={(e) => setPostingDate(e.target.value)}
+      />
     </Field>
   );
   const actionBar = (
     <div className="flex flex-wrap items-end gap-2">
-      {actions.includes("reopen") && <Button size="sm" variant="outline" onClick={reopen} disabled={busy}>{t("crqReopen")}</Button>}
-      <Button size="sm" onClick={release} disabled={busy || !actions.includes("release")}>{t("crqRelease")}</Button>
-      {draft.purpose === "PURCHASE" && (
+      {actions.includes('reopen') && (
+        <Button size="sm" variant="outline" onClick={reopen} disabled={busy}>
+          {t('crqReopen')}
+        </Button>
+      )}
+      <Button
+        size="sm"
+        onClick={release}
+        disabled={busy || !actions.includes('release')}
+      >
+        {t('crqRelease')}
+      </Button>
+      {draft.purpose === 'PURCHASE' && (
         <>
-          <Field className="w-56" label={t("crqPoNo")} htmlFor="crq-po-no">
-            <input id="crq-po-no" className="nf-input-sm" style={inputStyle} value={poNo}
-              disabled={busy || !actions.includes("linkPo")} onChange={(e) => setPoNo(e.target.value)} />
+          <Field className="w-56" label={t('crqPoNo')} htmlFor="crq-po-no">
+            <input
+              id="crq-po-no"
+              className="nf-input-sm"
+              style={inputStyle}
+              value={poNo}
+              disabled={busy || !actions.includes('linkPo')}
+              onChange={(e) => setPoNo(e.target.value)}
+            />
           </Field>
-          <Button size="sm" onClick={linkPo} disabled={busy || !actions.includes("linkPo") || !poNo.trim()}>{t("crqLinkPo")}</Button>
+          <Button
+            size="sm"
+            onClick={linkPo}
+            disabled={busy || !actions.includes('linkPo') || !poNo.trim()}
+          >
+            {t('crqLinkPo')}
+          </Button>
         </>
       )}
-      {draft.purpose === "STORE" && (
+      {draft.purpose === 'STORE' && (
         <>
-          <Button size="sm" variant="outline" onClick={() => setPanel("ship")}
-            disabled={busy || !actions.includes("ship")}>{t("crqShip")}</Button>
-          <Button size="sm" variant="outline" onClick={() => setPanel("receive")}
-            disabled={busy || !actions.includes("receive")}>{t("crqReceive")}</Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setPanel('ship')}
+            disabled={busy || !actions.includes('ship')}
+          >
+            {t('crqShip')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setPanel('receive')}
+            disabled={busy || !actions.includes('receive')}
+          >
+            {t('crqReceive')}
+          </Button>
         </>
       )}
     </div>
@@ -221,26 +377,63 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
     <>
       {!embedded && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={onBack}><ArrowLeft className="h-3.5 w-3.5" /> {t("crqBack")}</Button>
-          <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{draft.req_no}</h2>
+          <Button size="sm" variant="ghost" onClick={onBack}>
+            <ArrowLeft className="h-3.5 w-3.5" /> {t('crqBack')}
+          </Button>
+          <h2
+            className="text-base font-semibold"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {draft.req_no}
+          </h2>
         </div>
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
-      {(draft.document_status ?? "OPEN") === "RELEASED" && (
+      {(draft.document_status ?? 'OPEN') === 'RELEASED' && (
         // W2D W12: the record the release created — the Store transfer order, or the Purchase's PO no.
-        <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-          {draft.purpose === "STORE" ? (
-            <span className="inline-flex gap-1.5"><span>{t("crqLinkedTransfer")}</span>{draft.linked_transfer_no
-              ? <RecordLink code={draft.linked_transfer_no} href={draft.linked_transfer_id ? `/inventory/transfers?id=${encodeURIComponent(draft.linked_transfer_id)}` : null} />
-              : t("crqNoLinkedTransfer")}</span>
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 text-xs"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          {draft.purpose === 'STORE' ? (
+            <span className="inline-flex gap-1.5">
+              <span>{t('crqLinkedTransfer')}</span>
+              {draft.linked_transfer_no ? (
+                <RecordLink
+                  code={draft.linked_transfer_no}
+                  href={
+                    draft.linked_transfer_id
+                      ? `/inventory/transfers?id=${encodeURIComponent(draft.linked_transfer_id)}`
+                      : null
+                  }
+                />
+              ) : (
+                t('crqNoLinkedTransfer')
+              )}
+            </span>
           ) : (
-            <span className="inline-flex gap-1.5"><span>{t("crqLinkedPo")}</span><span className="font-mono" style={{ color: "var(--text-primary)" }}>{draft.linked_po_no || t("crqNoLinkedPo")}</span></span>
+            <span className="inline-flex gap-1.5">
+              <span>{t('crqLinkedPo')}</span>
+              <span
+                className="font-mono"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {draft.linked_po_no || t('crqNoLinkedPo')}
+              </span>
+            </span>
           )}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
-        <CommonRequisitionDocument view={draft} editable={editable} options={options} onChange={setDraft}
-          onAssignTracking={releasedStore && can.transfer ? assignTracking : undefined} />
+        <CommonRequisitionDocument
+          view={draft}
+          editable={editable}
+          options={options}
+          onChange={setDraft}
+          onAssignTracking={
+            releasedStore && can.transfer ? assignTracking : undefined
+          }
+        />
       </div>
       <div className="flex shrink-0 flex-col gap-3">
         {/* Keep action results after the affected lines and scroll them into
@@ -248,54 +441,129 @@ export function CommonRequisitionDetail({ initial, onView, onBack, embedded = fa
             workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
         {/* Rishi, 11 Oct: Ship and Receive open in their own dialog stacked on the requisition. */}
-        <Dialog open={panel === "ship" && actions.includes("ship")} onClose={() => setPanel(null)} title={t("crqShip")} presentation="compact" maxWidth="xl"
-          footer={<Button size="sm" onClick={ship} disabled={busy || !shipValid}>{t("crqPostShipment")}</Button>}>
+        <Dialog
+          open={panel === 'ship' && actions.includes('ship')}
+          onClose={() => setPanel(null)}
+          title={t('crqShip')}
+          presentation="compact"
+          maxWidth="xl"
+          footer={
+            <Button size="sm" onClick={ship} disabled={busy || !shipValid}>
+              {t('crqPostShipment')}
+            </Button>
+          }
+        >
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
             {shipLines.map((l) => {
               const no = lineNo(l.line_id as string);
               const key = l.line_id as string;
               return (
-                <Field key={key} className="w-40" label={t("crqShipQtyFor", { line: no })} htmlFor={`crq-ship-${key}`}>
-                  <input id={`crq-ship-${key}`} type="number" min={0} max={l.balance_to_ship} className="nf-input-sm text-right" style={inputStyle}
-                    value={shipQty[key] ?? ""} onChange={(e) => setShipQty((cur) => ({ ...cur, [key]: e.target.value }))} />
+                <Field
+                  key={key}
+                  className="w-40"
+                  label={t('crqShipQtyFor', { line: no })}
+                  htmlFor={`crq-ship-${key}`}
+                >
+                  <input
+                    id={`crq-ship-${key}`}
+                    type="number"
+                    min={0}
+                    max={l.balance_to_ship}
+                    className="nf-input-sm text-right"
+                    style={inputStyle}
+                    value={shipQty[key] ?? ''}
+                    onChange={(e) =>
+                      setShipQty((cur) => ({ ...cur, [key]: e.target.value }))
+                    }
+                  />
                 </Field>
               );
             })}
           </div>
         </Dialog>
 
-        <Dialog open={panel === "receive" && actions.includes("receive")} onClose={() => setPanel(null)} title={t("crqReceive")} presentation="compact" maxWidth="xl"
-          footer={<Button size="sm" onClick={receive} disabled={busy || !recvValid}>{t("crqPostReceipt")}</Button>}>
+        <Dialog
+          open={panel === 'receive' && actions.includes('receive')}
+          onClose={() => setPanel(null)}
+          title={t('crqReceive')}
+          presentation="compact"
+          maxWidth="xl"
+          footer={
+            <Button size="sm" onClick={receive} disabled={busy || !recvValid}>
+              {t('crqPostReceipt')}
+            </Button>
+          }
+        >
           <div className="flex flex-wrap items-end gap-3">
             {dateField}
-            <Field className="w-48" label={t("crqShipment")} htmlFor="crq-shipment">
-              <Select id="crq-shipment" className="nf-input-sm nf-select w-full" style={inputStyle} value={shipmentId}
-                onChange={(e) => { setShipmentId(e.target.value); setRecvQty({}); }}>
-                <option value="">{t("crqChoose")}</option>
-                {openShipments.map((s) => <option key={s.shipment_id} value={s.shipment_id}>{s.shipment_no}</option>)}
+            <Field
+              className="w-48"
+              label={t('crqShipment')}
+              htmlFor="crq-shipment"
+            >
+              <Select
+                id="crq-shipment"
+                className="nf-input-sm nf-select w-full"
+                style={inputStyle}
+                value={shipmentId}
+                onChange={(e) => {
+                  setShipmentId(e.target.value);
+                  setRecvQty({});
+                }}
+              >
+                <option value="">{t('crqChoose')}</option>
+                {openShipments.map((s) => (
+                  <option key={s.shipment_id} value={s.shipment_id}>
+                    {s.shipment_no}
+                  </option>
+                ))}
               </Select>
             </Field>
             {recvLines.map((l) => {
               const key = l.requisition_line_id;
               return (
-                <Field key={key} className="w-40" label={t("crqReceiveQtyFor", { line: lineNo(key) })} htmlFor={`crq-recv-${key}`}>
-                  <input id={`crq-recv-${key}`} type="number" min={0} max={l.remaining} className="nf-input-sm text-right" style={inputStyle}
-                    value={recvQty[key] ?? ""} onChange={(e) => setRecvQty((cur) => ({ ...cur, [key]: e.target.value }))} />
+                <Field
+                  key={key}
+                  className="w-40"
+                  label={t('crqReceiveQtyFor', { line: lineNo(key) })}
+                  htmlFor={`crq-recv-${key}`}
+                >
+                  <input
+                    id={`crq-recv-${key}`}
+                    type="number"
+                    min={0}
+                    max={l.remaining}
+                    className="nf-input-sm text-right"
+                    style={inputStyle}
+                    value={recvQty[key] ?? ''}
+                    onChange={(e) =>
+                      setRecvQty((cur) => ({ ...cur, [key]: e.target.value }))
+                    }
+                  />
                 </Field>
               );
             })}
           </div>
         </Dialog>
       </div>
-      {(actions.includes("save") || actions.includes("submit")) && (
+      {(actions.includes('save') || actions.includes('submit')) && (
         <DialogFooterActions>
-          {actions.includes("save") && (
-            <Button size="sm" variant={id ? "outline" : undefined} onClick={save} disabled={busy}>
-              {t(id ? "crqSave" : "crqCreate")}
+          {actions.includes('save') && (
+            <Button
+              size="sm"
+              variant={id ? 'outline' : undefined}
+              onClick={save}
+              disabled={busy}
+            >
+              {t(id ? 'crqSave' : 'crqCreate')}
             </Button>
           )}
-          {id && actions.includes("submit") && <Button size="sm" onClick={submit} disabled={busy}>{t("crqSubmit")}</Button>}
+          {id && actions.includes('submit') && (
+            <Button size="sm" onClick={submit} disabled={busy}>
+              {t('crqSubmit')}
+            </Button>
+          )}
         </DialogFooterActions>
       )}
     </>

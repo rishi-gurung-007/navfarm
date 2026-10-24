@@ -1,8 +1,14 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Search, Check, Plus, List, Loader2, X } from "lucide-react";
-import { Popover, usePopoverSurface } from "@/components/ui/popover";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
+import { Search, Check, Plus, List, Loader2, X } from 'lucide-react';
+import { Popover, usePopoverSurface } from '@/components/ui/popover';
 
 type Row = Record<string, any>;
 
@@ -44,7 +50,7 @@ function SearchableEntityPanel({
   onViewAll?: () => void;
 }) {
   const { close } = usePopoverSurface();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -61,14 +67,23 @@ function SearchableEntityPanel({
     // Matched against every column as well as the joined label, so typing the
     // farm name still finds a breed whose only match is in the last column.
     return options.filter((o) =>
-      [getLabel(o), ...(getLabelParts?.(o) || [])].join(" ").toLowerCase().includes(q),
+      [getLabel(o), ...(getLabelParts?.(o) || [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
     );
   }, [options, query, getLabel, getLabelParts]);
 
   // The widest row decides the column count, so a row missing its last value
   // still lines its first columns up with the rows around it.
   const columnCount = useMemo(
-    () => (getLabelParts ? filtered.reduce((widest, o) => Math.max(widest, getLabelParts(o).length), 1) : 1),
+    () =>
+      getLabelParts
+        ? filtered.reduce(
+            (widest, o) => Math.max(widest, getLabelParts(o).length),
+            1,
+          )
+        : 1,
     [filtered, getLabelParts],
   );
   // The code column sizes to its content; the prose columns share what is left
@@ -77,14 +92,20 @@ function SearchableEntityPanel({
   // would size its own columns and nothing would line up.
   const columnar = columnCount > 1;
   const listTemplate = columnar
-    ? ["max-content", ...Array(columnCount - 1).fill("minmax(0,1fr)"), "auto"].join(" ")
+    ? [
+        'max-content',
+        ...Array(columnCount - 1).fill('minmax(0,1fr)'),
+        'auto',
+      ].join(' ')
     : undefined;
 
   const selectedIdx = useMemo(() => {
     return filtered.findIndex((o) => String(o[valueKey]) === String(value));
   }, [filtered, valueKey, value]);
 
-  const [highlight, setHighlight] = useState(selectedIdx >= 0 ? selectedIdx : 0);
+  const [highlight, setHighlight] = useState(
+    selectedIdx >= 0 ? selectedIdx : 0,
+  );
 
   // The option elements, not every child: the loading and empty-state rows are
   // children of the same list, so indexing children directly can point one row
@@ -95,8 +116,11 @@ function SearchableEntityPanel({
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
     if (selectedIdx >= 0 && listRef.current) {
-      const activeEl = listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[selectedIdx];
-      activeEl?.scrollIntoView?.({ block: "nearest" });
+      const activeEl =
+        listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[
+          selectedIdx
+        ];
+      activeEl?.scrollIntoView?.({ block: 'nearest' });
     }
   }, []);
 
@@ -110,32 +134,34 @@ function SearchableEntityPanel({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown") {
+    if (event.key === 'ArrowDown') {
       event.preventDefault();
       setHighlight((h) => {
         const next = Math.min(h + 1, Math.max(0, filtered.length - 1));
-        optionEl(next)?.scrollIntoView({ block: "nearest" });
+        optionEl(next)?.scrollIntoView({ block: 'nearest' });
         return next;
       });
-    } else if (event.key === "ArrowUp") {
+    } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setHighlight((h) => {
         const prev = Math.max(h - 1, 0);
-        optionEl(prev)?.scrollIntoView({ block: "nearest" });
+        optionEl(prev)?.scrollIntoView({ block: 'nearest' });
         return prev;
       });
-    } else if (event.key === "Enter") {
+    } else if (event.key === 'Enter') {
       event.preventDefault();
       if (filtered[highlight]) pick(filtered[highlight]);
     }
   }
 
   return (
-    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? "min-w-[480px]" : "min-w-[280px]") : ""}`}>
+    <div
+      className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? 'min-w-[480px]' : 'min-w-[280px]') : ''}`}
+    >
       <div className="relative shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-          style={{ color: "var(--text-muted)" }}
+          style={{ color: 'var(--text-muted)' }}
         />
         <input
           ref={inputRef}
@@ -149,10 +175,10 @@ function SearchableEntityPanel({
           placeholder={searchPlaceholder}
           className="nf-input-sm w-full"
           style={{
-            backgroundColor: "var(--input-bg)",
-            color: "var(--input-text)",
-            borderColor: "var(--input-border)",
-            paddingLeft: "1.75rem",
+            backgroundColor: 'var(--input-bg)',
+            color: 'var(--input-text)',
+            borderColor: 'var(--input-border)',
+            paddingLeft: '1.75rem',
           }}
         />
       </div>
@@ -160,39 +186,63 @@ function SearchableEntityPanel({
         ref={listRef}
         role="listbox"
         aria-label={ariaLabel}
-        className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? "grid" : "flex flex-col"}`}
-        style={columnar ? { maxHeight: "240px", gridTemplateColumns: listTemplate } : { maxHeight: "240px" }}
+        className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? 'grid' : 'flex flex-col'}`}
+        style={
+          columnar
+            ? { maxHeight: '240px', gridTemplateColumns: listTemplate }
+            : { maxHeight: '240px' }
+        }
       >
-        {columnar && columnHeaders && columnHeaders.length > 0 && !loading && filtered.length > 0 && (
-          <div
-            role="presentation"
-            aria-hidden="true"
-            className="sticky top-0 z-10 grid gap-x-3 px-2.5 py-1.5 text-[11px] font-bold tracking-wider uppercase select-none border-b shrink-0"
-            style={{
-              gridColumn: "1 / -1",
-              gridTemplateColumns: "subgrid",
-              color: "var(--text-muted)",
-              borderColor: "var(--border-subtle)",
-              backgroundColor: "var(--surface)",
-            }}
-          >
-            {Array.from({ length: columnCount }, (_, col) => (
-              <span key={col} className={col === 0 ? "whitespace-nowrap" : "truncate"}>
-                {columnHeaders[col] ?? ""}
-              </span>
-            ))}
-            <span className="w-4 shrink-0" aria-hidden="true" />
-          </div>
-        )}
+        {columnar &&
+          columnHeaders &&
+          columnHeaders.length > 0 &&
+          !loading &&
+          filtered.length > 0 && (
+            <div
+              role="presentation"
+              aria-hidden="true"
+              className="sticky top-0 z-10 grid gap-x-3 px-2.5 py-1.5 text-[11px] font-bold tracking-wider uppercase select-none border-b shrink-0"
+              style={{
+                gridColumn: '1 / -1',
+                gridTemplateColumns: 'subgrid',
+                color: 'var(--text-muted)',
+                borderColor: 'var(--border-subtle)',
+                backgroundColor: 'var(--surface)',
+              }}
+            >
+              {Array.from({ length: columnCount }, (_, col) => (
+                <span
+                  key={col}
+                  className={col === 0 ? 'whitespace-nowrap' : 'truncate'}
+                >
+                  {columnHeaders[col] ?? ''}
+                </span>
+              ))}
+              <span className="w-4 shrink-0" aria-hidden="true" />
+            </div>
+          )}
         {loading ? (
-          <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
-            <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
+          <div
+            role="status"
+            aria-live="polite"
+            className="px-2.5 py-3 text-xs"
+            style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
+          >
+            <Loader2
+              className="mr-1.5 inline h-3.5 w-3.5 animate-spin"
+              aria-hidden
+            />
             Loading records…
           </div>
-        ) : filtered.length === 0 && (
-          <div className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
-            {noMatchesLabel}
-          </div>
+        ) : (
+          filtered.length === 0 && (
+            <div
+              className="px-2.5 py-3 text-xs"
+              style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
+            >
+              {noMatchesLabel}
+            </div>
+          )
         )}
         {filtered.map((o, idx) => {
           const v = String(o[valueKey]);
@@ -211,12 +261,16 @@ function SearchableEntityPanel({
               aria-label={getLabel(o)}
               onMouseEnter={() => setHighlight(idx)}
               onClick={() => pick(o)}
-              className={`shrink-0 items-center w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer ${columnar ? "grid gap-x-3" : "flex justify-between"}`}
+              className={`shrink-0 items-center w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer ${columnar ? 'grid gap-x-3' : 'flex justify-between'}`}
               style={{
-                backgroundColor: isHighlighted ? "var(--surface-secondary)" : "transparent",
-                color: "var(--text-primary)",
+                backgroundColor: isHighlighted
+                  ? 'var(--surface-secondary)'
+                  : 'transparent',
+                color: 'var(--text-primary)',
                 fontWeight: isSelected ? 600 : 400,
-                ...(columnar ? { gridColumn: "1 / -1", gridTemplateColumns: "subgrid" } : null),
+                ...(columnar
+                  ? { gridColumn: '1 / -1', gridTemplateColumns: 'subgrid' }
+                  : null),
               }}
             >
               {columnar ? (
@@ -224,21 +278,33 @@ function SearchableEntityPanel({
                   {Array.from({ length: columnCount }, (_, col) => (
                     <span
                       key={col}
-                      className={col === 0 ? "whitespace-nowrap" : "truncate"}
-                      style={col === 0 ? undefined : { color: "var(--text-secondary)" }}
+                      className={col === 0 ? 'whitespace-nowrap' : 'truncate'}
+                      style={
+                        col === 0
+                          ? undefined
+                          : { color: 'var(--text-secondary)' }
+                      }
                     >
-                      {cells[col] ?? ""}
+                      {cells[col] ?? ''}
                     </span>
                   ))}
                   <span className="flex w-4 shrink-0 justify-end">
-                    {isSelected && <Check className="h-4 w-4" style={{ color: "var(--accent)" }} />}
+                    {isSelected && (
+                      <Check
+                        className="h-4 w-4"
+                        style={{ color: 'var(--accent)' }}
+                      />
+                    )}
                   </span>
                 </>
               ) : (
                 <>
                   <span className="truncate pr-2">{cells[0]}</span>
                   {isSelected && (
-                    <Check className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
+                    <Check
+                      className="h-4 w-4 shrink-0"
+                      style={{ color: 'var(--accent)' }}
+                    />
                   )}
                 </>
               )}
@@ -255,7 +321,10 @@ function SearchableEntityPanel({
           {onClear && (
             <button
               type="button"
-              onClick={() => { close(); onClear(); }}
+              onClick={() => {
+                close();
+                onClear();
+              }}
               aria-label={`Clear ${ariaLabel}`}
               className="nf-press me-auto inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -266,7 +335,10 @@ function SearchableEntityPanel({
           {onCreate && (
             <button
               type="button"
-              onClick={() => { close(); onCreate(); }}
+              onClick={() => {
+                close();
+                onCreate();
+              }}
               aria-label={`New ${ariaLabel}`}
               className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -277,7 +349,10 @@ function SearchableEntityPanel({
           {onViewAll && (
             <button
               type="button"
-              onClick={() => { close(); onViewAll(); }}
+              onClick={() => {
+                close();
+                onViewAll();
+              }}
               aria-label={`View All ${ariaLabel}`}
               className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -357,34 +432,51 @@ export function SearchableEntitySelect({
   // A field can go from enabled to disabled mid-interaction (e.g. its restrictOptionsBy
   // selector changes while this panel is open), or its options can begin loading — force it
   // closed rather than leave an open panel over a now-disabled trigger.
-  useEffect(() => { if (unavailable) setOpen(false); }, [unavailable]);
+  useEffect(() => {
+    if (unavailable) setOpen(false);
+  }, [unavailable]);
 
   const selected = options.find((o) => String(o[valueKey]) === String(value));
-  const selectedText = selected ? (() => {
-    if (getSelectedLabel) return getSelectedLabel(selected);
-    if (!getLabelParts) return getLabel(selected);
+  const selectedText = selected
+    ? (() => {
+        if (getSelectedLabel) return getSelectedLabel(selected);
+        if (!getLabelParts) return getLabel(selected);
 
-    const parts = getLabelParts(selected);
-    if (!columnHeaders?.length) return parts[1] || parts[0] || getLabel(selected);
-    const normalizedHeaders = columnHeaders.map((header) => header.trim().toLowerCase());
-    const codeIndex = normalizedHeaders.findIndex((header) => /\b(code|no\.?|number)\b/.test(header));
-    const descriptionIndex = normalizedHeaders.findIndex((header) => /\b(description|desc)\b/.test(header));
-    const nameIndex = normalizedHeaders.findIndex((header) => /\bname\b/.test(header));
-    const field = ariaLabel.trim().toLowerCase();
+        const parts = getLabelParts(selected);
+        if (!columnHeaders?.length)
+          return parts[1] || parts[0] || getLabel(selected);
+        const normalizedHeaders = columnHeaders.map((header) =>
+          header.trim().toLowerCase(),
+        );
+        const codeIndex = normalizedHeaders.findIndex((header) =>
+          /\b(code|no\.?|number)\b/.test(header),
+        );
+        const descriptionIndex = normalizedHeaders.findIndex((header) =>
+          /\b(description|desc)\b/.test(header),
+        );
+        const nameIndex = normalizedHeaders.findIndex((header) =>
+          /\bname\b/.test(header),
+        );
+        const field = ariaLabel.trim().toLowerCase();
 
-    if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
-    // A UOM or currency is its code (KG, USD): the code is the thing itself (Rishi, 14 Oct).
-    if (/\b(uom|unit|currency)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
-    if (/\b(description|desc)\b/.test(field)) {
-      const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
-      if (index >= 0) return parts[index] || getLabel(selected);
-    }
+        if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0)
+          return parts[codeIndex] || getLabel(selected);
+        // A UOM or currency is its code (KG, USD): the code is the thing itself (Rishi, 14 Oct).
+        if (/\b(uom|unit|currency)\b/.test(field) && codeIndex >= 0)
+          return parts[codeIndex] || getLabel(selected);
+        if (/\b(description|desc)\b/.test(field)) {
+          const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
+          if (index >= 0) return parts[index] || getLabel(selected);
+        }
 
-    // A generic entity field (Item, Supplier, Farm...) displays its human
-    // name/description after selection, while the open list retains all parts.
-    const humanIndex = nameIndex >= 0 ? nameIndex : descriptionIndex;
-    return humanIndex >= 0 ? parts[humanIndex] || getLabel(selected) : getLabel(selected);
-  })() : null;
+        // A generic entity field (Item, Supplier, Farm...) displays its human
+        // name/description after selection, while the open list retains all parts.
+        const humanIndex = nameIndex >= 0 ? nameIndex : descriptionIndex;
+        return humanIndex >= 0
+          ? parts[humanIndex] || getLabel(selected)
+          : getLabel(selected);
+      })()
+    : null;
 
   return (
     <Popover
@@ -392,7 +484,7 @@ export function SearchableEntitySelect({
       onOpenChange={setOpen}
       align="start"
       haspopup="listbox"
-      className={fullWidth ? "w-full" : "inline-flex max-w-full"}
+      className={fullWidth ? 'w-full' : 'inline-flex max-w-full'}
       panelClassName="nf-combobox-panel"
       // Every one of these lives inside the Master create/edit Dialog, whose
       // body scrolls. An anchored panel is clipped by that scroll container —
@@ -412,15 +504,15 @@ export function SearchableEntitySelect({
             const v = e?.target?.value ?? e;
             if (v !== undefined) onChange(String(v));
           }}
-          className={`nf-input nf-select w-full min-w-0 truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
+          className={`nf-input nf-select w-full min-w-0 truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ''}`}
           style={{
-            backgroundColor: "var(--input-bg)",
-            color: selected ? "var(--input-text)" : "var(--text-muted)",
-            borderColor: "var(--input-border)",
+            backgroundColor: 'var(--input-bg)',
+            color: selected ? 'var(--input-text)' : 'var(--text-muted)',
+            borderColor: 'var(--input-border)',
             ...triggerStyle,
           }}
         >
-          {loading ? "Loading records…" : selected ? selectedText : placeholder}
+          {loading ? 'Loading records…' : selected ? selectedText : placeholder}
         </button>
       )}
     >

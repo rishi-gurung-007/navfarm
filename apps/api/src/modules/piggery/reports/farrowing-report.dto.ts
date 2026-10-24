@@ -1,10 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsDateString, IsInt, IsNotEmpty, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 /** The R07 Farrowing Report's filters (Triple-C_reports COMMENTS.xlsx, row 2; Rishi 18 Oct: dates only, no week). */
 export class FarrowingReportQueryDto {
-  @ApiPropertyOptional({ description: 'Company UUID — taken from the workspace when it has one' })
+  @ApiPropertyOptional({
+    description: 'Company UUID — taken from the workspace when it has one',
+  })
   @IsOptional()
   @IsUUID()
   companyId?: string;
@@ -29,7 +38,9 @@ export class FarrowingReportQueryDto {
   @IsUUID()
   batchId?: string;
 
-  @ApiPropertyOptional({ description: 'Parity at farrowing — the litter number' })
+  @ApiPropertyOptional({
+    description: 'Parity at farrowing — the litter number',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -43,7 +54,9 @@ export class FarrowingReportQueryDto {
 }
 
 export class FarrowingReportFiltersQueryDto {
-  @ApiPropertyOptional({ description: 'Company UUID — taken from the workspace when it has one' })
+  @ApiPropertyOptional({
+    description: 'Company UUID — taken from the workspace when it has one',
+  })
   @IsOptional()
   @IsUUID()
   companyId?: string;

@@ -1,9 +1,29 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  sql,
+  SQL,
+} from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { batchScopeConditions, farmPickerConditions, farmScope } from '../../../common/farm-scope';
+import {
+  batchScopeConditions,
+  farmPickerConditions,
+  farmScope,
+} from '../../../common/farm-scope';
 import { FarrowingReportQueryDto } from './farrowing-report.dto';
 import {
   commonTargets,
@@ -39,7 +59,13 @@ export interface FarrowingReportRow {
 
 export interface FarrowingReport {
   farm: { farm_id: string; farm_code: string; farm_name: string };
-  filters: { date_from: string; date_to: string; batch_no: string | null; parity: number | null; sow_code: string | null };
+  filters: {
+    date_from: string;
+    date_to: string;
+    batch_no: string | null;
+    parity: number | null;
+    sow_code: string | null;
+  };
   generated_at: string;
   rows: FarrowingReportRow[];
 }
@@ -50,13 +76,21 @@ export class FarrowingReportService {
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
-    if (!tenantDb) throw new Error('Tenant database connection context not established.');
+    if (!tenantDb)
+      throw new Error('Tenant database connection context not established.');
     return tenantDb;
   }
 
-  async getFarrowingReport(tenantId: string, query: FarrowingReportQueryDto): Promise<FarrowingReport> {
+  async getFarrowingReport(
+    tenantId: string,
+    query: FarrowingReportQueryDto,
+  ): Promise<FarrowingReport> {
     const scope = farmScope(this.cls);
-    if (scope.companyId && query.companyId && query.companyId !== scope.companyId) {
+    if (
+      scope.companyId &&
+      query.companyId &&
+      query.companyId !== scope.companyId
+    ) {
       throw new ForbiddenException('Report company must match the workspace.');
     }
     if (scope.farmId && scope.farmId !== query.farmId) {
@@ -65,11 +99,22 @@ export class FarrowingReportService {
     const companyId = scope.companyId || query.companyId || null;
 
     const [farm] = await this.db
-      .select({ farm_id: schema.locationMaster.location_id, farm_code: schema.locationMaster.location_code, farm_name: schema.locationMaster.location_name, company_id: schema.locationMaster.company_id })
+      .select({
+        farm_id: schema.locationMaster.location_id,
+        farm_code: schema.locationMaster.location_code,
+        farm_name: schema.locationMaster.location_name,
+        company_id: schema.locationMaster.company_id,
+      })
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, query.farmId), eq(schema.locationMaster.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, query.farmId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
-    if (!farm || (companyId && farm.company_id !== companyId)) throw new NotFoundException('Farm not found.');
+    if (!farm || (companyId && farm.company_id !== companyId))
+      throw new NotFoundException('Farm not found.');
 
     const batchConditions: SQL[] = [
       eq(schema.batchHeader.tenant_id, tenantId),
@@ -77,9 +122,14 @@ export class FarrowingReportService {
       isNull(schema.batchHeader.deleted_at),
       ...batchScopeConditions(scope),
     ];
-    if (companyId) batchConditions.push(eq(schema.batchHeader.company_id, companyId));
+    if (companyId)
+      batchConditions.push(eq(schema.batchHeader.company_id, companyId));
     const farmBatches = await this.db
-      .select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no, breed_id: schema.batchHeader.breed_id })
+      .select({
+        batch_id: schema.batchHeader.batch_id,
+        batch_no: schema.batchHeader.batch_no,
+        breed_id: schema.batchHeader.breed_id,
+      })
       .from(schema.batchHeader)
       .where(and(...batchConditions))
       .orderBy(asc(schema.batchHeader.batch_no));
@@ -89,34 +139,81 @@ export class FarrowingReportService {
       const [sow] = await this.db
         .select({ animal_code: schema.animalRegister.animal_code })
         .from(schema.animalRegister)
-        .where(and(eq(schema.animalRegister.animal_id, query.sowId), eq(schema.animalRegister.tenant_id, tenantId)))
+        .where(
+          and(
+            eq(schema.animalRegister.animal_id, query.sowId),
+            eq(schema.animalRegister.tenant_id, tenantId),
+          ),
+        )
         .limit(1);
       if (!sow) throw new NotFoundException('Sow not found.');
       sowCode = sow.animal_code;
     }
 
-    const selected = query.batchId ? farmBatches.filter((b) => b.batch_id === query.batchId) : farmBatches;
-    if (query.batchId && selected.length === 0) throw new NotFoundException('Batch not found on this farm.');
+    const selected = query.batchId
+      ? farmBatches.filter((b) => b.batch_id === query.batchId)
+      : farmBatches;
+    if (query.batchId && selected.length === 0)
+      throw new NotFoundException('Batch not found on this farm.');
 
-    const current = await this.periodData(selected.map((b) => b.batch_id), query, query.dateFrom, query.dateTo);
+    const current = await this.periodData(
+      selected.map((b) => b.batch_id),
+      query,
+      query.dateFrom,
+      query.dateTo,
+    );
     // Prior year: the farm's batches of a year earlier, not the selected batch — batch numbers do not repeat.
-    const prior = await this.periodData(farmBatches.map((b) => b.batch_id), query, minusOneYear(query.dateFrom), minusOneYear(query.dateTo));
+    const prior = await this.periodData(
+      farmBatches.map((b) => b.batch_id),
+      query,
+      minusOneYear(query.dateFrom),
+      minusOneYear(query.dateTo),
+    );
 
-    const firstServices = await this.firstServices(farmBatches.map((b) => b.batch_id));
-    const batchNoById = new Map(farmBatches.map((b) => [b.batch_id, b.batch_no]));
-    const candidates = farmBatches.map((b) => ({ batch_id: b.batch_id, first_service: firstServices.get(b.batch_id) ?? null }));
+    const firstServices = await this.firstServices(
+      farmBatches.map((b) => b.batch_id),
+    );
+    const batchNoById = new Map(
+      farmBatches.map((b) => [b.batch_id, b.batch_no]),
+    );
+    const candidates = farmBatches.map((b) => ({
+      batch_id: b.batch_id,
+      first_service: firstServices.get(b.batch_id) ?? null,
+    }));
     const priorDateTo = minusOneYear(query.dateTo);
 
-    const targetsByBreed = await this.targetsByBreed(tenantId, farm.company_id, query.farmId, query.dateFrom, query.dateTo, selected.map((b) => b.breed_id));
+    const targetsByBreed = await this.targetsByBreed(
+      tenantId,
+      farm.company_id,
+      query.farmId,
+      query.dateFrom,
+      query.dateTo,
+      selected.map((b) => b.breed_id),
+    );
 
     const rows: FarrowingReportRow[] = [];
     for (const batch of selected) {
-      const services = current.services.filter((s) => s.batch_id === batch.batch_id);
-      const farrowings = current.farrowings.filter((f) => f.batch_id === batch.batch_id);
-      const metrics = computeFarrowingMetrics(services, farrowings, this.mortalityOf(current.mortality, farrowings), query.dateTo, this.weaningOf(current, [batch.batch_id]));
+      const services = current.services.filter(
+        (s) => s.batch_id === batch.batch_id,
+      );
+      const farrowings = current.farrowings.filter(
+        (f) => f.batch_id === batch.batch_id,
+      );
+      const metrics = computeFarrowingMetrics(
+        services,
+        farrowings,
+        this.mortalityOf(current.mortality, farrowings),
+        query.dateTo,
+        this.weaningOf(current, [batch.batch_id]),
+      );
       if (isEmptyPeriod(metrics)) continue;
-      const priorId = matchPriorBatch(firstServices.get(batch.batch_id), candidates.filter((c) => c.batch_id !== batch.batch_id));
-      const priorFarrowings = priorId ? prior.farrowings.filter((f) => f.batch_id === priorId) : [];
+      const priorId = matchPriorBatch(
+        firstServices.get(batch.batch_id),
+        candidates.filter((c) => c.batch_id !== batch.batch_id),
+      );
+      const priorFarrowings = priorId
+        ? prior.farrowings.filter((f) => f.batch_id === priorId)
+        : [];
       const priorMetrics = priorId
         ? computeFarrowingMetrics(
             prior.services.filter((s) => s.batch_id === priorId),
@@ -131,23 +228,37 @@ export class FarrowingReportService {
         batch_no: batch.batch_no,
         is_total: false,
         metrics,
-        targets: targetsByBreed.get(batch.breed_id ?? '') ?? targetsFromLifecycle([], query.farmId),
-        prior_year: priorMetrics && !isEmptyPeriod(priorMetrics) ? priorMetrics : null,
-        prior_batch_no: priorId ? batchNoById.get(priorId) ?? null : null,
+        targets:
+          targetsByBreed.get(batch.breed_id ?? '') ??
+          targetsFromLifecycle([], query.farmId),
+        prior_year:
+          priorMetrics && !isEmptyPeriod(priorMetrics) ? priorMetrics : null,
+        prior_batch_no: priorId ? (batchNoById.get(priorId) ?? null) : null,
       });
     }
 
     if (rows.length) {
       const inRows = new Set(rows.map((r) => r.batch_id));
-      const farrowings = current.farrowings.filter((f) => inRows.has(f.batch_id));
+      const farrowings = current.farrowings.filter((f) =>
+        inRows.has(f.batch_id),
+      );
       const totalMetrics = computeFarrowingMetrics(
         current.services.filter((s) => inRows.has(s.batch_id)),
         farrowings,
         this.mortalityOf(current.mortality, farrowings),
         query.dateTo,
-        this.weaningOf(current, [...inRows].filter((id): id is string => Boolean(id))),
+        this.weaningOf(
+          current,
+          [...inRows].filter((id): id is string => Boolean(id)),
+        ),
       );
-      const priorMetrics = computeFarrowingMetrics(prior.services, prior.farrowings, prior.mortality, priorDateTo, prior);
+      const priorMetrics = computeFarrowingMetrics(
+        prior.services,
+        prior.farrowings,
+        prior.mortality,
+        priorDateTo,
+        prior,
+      );
       rows.push({
         batch_id: null,
         batch_no: farm.farm_name,
@@ -161,8 +272,18 @@ export class FarrowingReportService {
 
     const batchNo = query.batchId ? selected[0].batch_no : null;
     return {
-      farm: { farm_id: farm.farm_id, farm_code: farm.farm_code, farm_name: farm.farm_name },
-      filters: { date_from: query.dateFrom, date_to: query.dateTo, batch_no: batchNo, parity: query.parity ?? null, sow_code: sowCode },
+      farm: {
+        farm_id: farm.farm_id,
+        farm_code: farm.farm_code,
+        farm_name: farm.farm_name,
+      },
+      filters: {
+        date_from: query.dateFrom,
+        date_to: query.dateTo,
+        batch_no: batchNo,
+        parity: query.parity ?? null,
+        sow_code: sowCode,
+      },
       generated_at: new Date().toISOString(),
       rows,
     };
@@ -170,21 +291,38 @@ export class FarrowingReportService {
 
   /** The farms this caller may report on, with the company each belongs to (farmPickerConditions). */
   async listFarms(tenantId: string, userType: string | undefined) {
-    const conditions = farmPickerConditions(farmScope(this.cls), tenantId, userType);
+    const conditions = farmPickerConditions(
+      farmScope(this.cls),
+      tenantId,
+      userType,
+    );
     if (!conditions) return [];
     const L = schema.locationMaster;
     return this.db
-      .select({ farm_id: L.location_id, farm_code: L.location_code, farm_name: L.location_name, company_id: L.company_id, company_name: schema.companyMaster.company_name })
+      .select({
+        farm_id: L.location_id,
+        farm_code: L.location_code,
+        farm_name: L.location_name,
+        company_id: L.company_id,
+        company_name: schema.companyMaster.company_name,
+      })
       .from(L)
-      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .leftJoin(
+        schema.companyMaster,
+        eq(schema.companyMaster.company_id, L.company_id),
+      )
       .where(and(...conditions))
       .orderBy(asc(L.location_code));
   }
 
   /** The batches on a farm and the sows that have a service or a farrowing in them — the report's own pickers. */
-  async getFilterOptions(tenantId: string, query: { companyId?: string; farmId: string }) {
+  async getFilterOptions(
+    tenantId: string,
+    query: { companyId?: string; farmId: string },
+  ) {
     const scope = farmScope(this.cls);
-    if (scope.farmId && scope.farmId !== query.farmId) throw new ForbiddenException('This farm is outside your workspace.');
+    if (scope.farmId && scope.farmId !== query.farmId)
+      throw new ForbiddenException('This farm is outside your workspace.');
     const companyId = scope.companyId || query.companyId || null;
     const conditions: SQL[] = [
       eq(schema.batchHeader.tenant_id, tenantId),
@@ -192,9 +330,14 @@ export class FarrowingReportService {
       isNull(schema.batchHeader.deleted_at),
       ...batchScopeConditions(scope),
     ];
-    if (companyId) conditions.push(eq(schema.batchHeader.company_id, companyId));
+    if (companyId)
+      conditions.push(eq(schema.batchHeader.company_id, companyId));
     const batches = await this.db
-      .select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no, status: schema.batchHeader.status })
+      .select({
+        batch_id: schema.batchHeader.batch_id,
+        batch_no: schema.batchHeader.batch_no,
+        status: schema.batchHeader.status,
+      })
       .from(schema.batchHeader)
       .where(and(...conditions))
       .orderBy(asc(schema.batchHeader.batch_no));
@@ -218,44 +361,87 @@ export class FarrowingReportService {
       .selectDistinct({ batch_id: schema.farrowingRecord.batch_id })
       .from(schema.farrowingRecord)
       .where(inArray(schema.farrowingRecord.batch_id, batchIds));
-    const sowBatchIds = new Set([...servedIn, ...farrowedIn].map((r) => r.batch_id));
-    const sowIds = [...new Set([...served, ...farrowed].map((r) => r.animal_id).filter((id): id is string => Boolean(id)))];
+    const sowBatchIds = new Set(
+      [...servedIn, ...farrowedIn].map((r) => r.batch_id),
+    );
+    const sowIds = [
+      ...new Set(
+        [...served, ...farrowed]
+          .map((r) => r.animal_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
     const sows = sowIds.length
       ? await this.db
-          .select({ animal_id: schema.animalRegister.animal_id, animal_code: schema.animalRegister.animal_code, parity_count: schema.animalRegister.parity_count })
+          .select({
+            animal_id: schema.animalRegister.animal_id,
+            animal_code: schema.animalRegister.animal_code,
+            parity_count: schema.animalRegister.parity_count,
+          })
           .from(schema.animalRegister)
           .where(inArray(schema.animalRegister.animal_id, sowIds))
           .orderBy(asc(schema.animalRegister.animal_code))
       : [];
-    return { batches: batches.filter((b) => sowBatchIds.has(b.batch_id)), sows };
+    return {
+      batches: batches.filter((b) => sowBatchIds.has(b.batch_id)),
+      sows,
+    };
   }
 
   /** Each batch's first service date (its service week), from all its services — not only those in the dates. */
-  private async firstServices(batchIds: string[]): Promise<Map<string, string>> {
+  private async firstServices(
+    batchIds: string[],
+  ): Promise<Map<string, string>> {
     if (!batchIds.length) return new Map();
     const rows = await this.db
-      .select({ batch_id: schema.breedingRecord.batch_id, first: sql<string>`MIN(${schema.breedingRecord.mating_date})` })
+      .select({
+        batch_id: schema.breedingRecord.batch_id,
+        first: sql<string>`MIN(${schema.breedingRecord.mating_date})`,
+      })
       .from(schema.breedingRecord)
       .where(inArray(schema.breedingRecord.batch_id, batchIds))
       .groupBy(schema.breedingRecord.batch_id);
-    return new Map(rows.filter((r) => r.batch_id && r.first).map((r) => [r.batch_id as string, String(r.first).slice(0, 10)]));
+    return new Map(
+      rows
+        .filter((r) => r.batch_id && r.first)
+        .map((r) => [r.batch_id as string, String(r.first).slice(0, 10)]),
+    );
   }
 
   /** The weaned litters of some batches, with the weights of their sows. */
   private weaningOf(data: WeaningData, batchIds: string[]): WeaningData {
     const ids = new Set(batchIds);
-    return { weaned: data.weaned.filter((w) => ids.has(w.batch_id)), weights: data.weights };
+    return {
+      weaned: data.weaned.filter((w) => ids.has(w.batch_id)),
+      weights: data.weights,
+    };
   }
 
-  private mortalityOf(all: MortalityRow[], farrowings: FarrowingRow[]): MortalityRow[] {
-    const lots = new Set(farrowings.map((f) => f.piglet_batch_id).filter(Boolean));
+  private mortalityOf(
+    all: MortalityRow[],
+    farrowings: FarrowingRow[],
+  ): MortalityRow[] {
+    const lots = new Set(
+      farrowings.map((f) => f.piglet_batch_id).filter(Boolean),
+    );
     return all.filter((m) => lots.has(m.piglet_batch_id));
   }
 
   /** Services and farrowings in the batches between the dates, with the piglet deaths of those litters. */
-  private async periodData(batchIds: string[], query: FarrowingReportQueryDto, from: string, to: string) {
+  private async periodData(
+    batchIds: string[],
+    query: FarrowingReportQueryDto,
+    from: string,
+    to: string,
+  ) {
     if (!batchIds.length) {
-      return { services: [] as ServiceRow[], farrowings: [] as FarrowingRow[], mortality: [] as MortalityRow[], weaned: [] as WeanedRow[], weights: [] as SowWeightRow[] };
+      return {
+        services: [] as ServiceRow[],
+        farrowings: [] as FarrowingRow[],
+        mortality: [] as MortalityRow[],
+        weaned: [] as WeanedRow[],
+        weights: [] as SowWeightRow[],
+      };
     }
 
     const serviceConditions: SQL[] = [
@@ -264,22 +450,40 @@ export class FarrowingReportService {
       lte(schema.breedingRecord.mating_date, to),
     ];
     // Parity is the parity at farrowing (Rishi, 18 Oct); a service carries the litter it is for, so it matches as is.
-    if (query.parity) serviceConditions.push(eq(schema.breedingRecord.parity_number, query.parity));
-    if (query.sowId) serviceConditions.push(eq(schema.breedingRecord.sow_animal_id, query.sowId));
+    if (query.parity)
+      serviceConditions.push(
+        eq(schema.breedingRecord.parity_number, query.parity),
+      );
+    if (query.sowId)
+      serviceConditions.push(
+        eq(schema.breedingRecord.sow_animal_id, query.sowId),
+      );
     const services = (
       await this.db
-        .select({ batch_id: schema.breedingRecord.batch_id, parity_number: schema.breedingRecord.parity_number })
+        .select({
+          batch_id: schema.breedingRecord.batch_id,
+          parity_number: schema.breedingRecord.parity_number,
+        })
         .from(schema.breedingRecord)
         .where(and(...serviceConditions))
-    ).map((s) => ({ batch_id: s.batch_id as string, parity_number: s.parity_number ?? null }));
+    ).map((s) => ({
+      batch_id: s.batch_id as string,
+      parity_number: s.parity_number ?? null,
+    }));
 
     const farrowConditions: SQL[] = [
       inArray(schema.farrowingRecord.batch_id, batchIds),
       gte(schema.farrowingRecord.farrowing_date, from),
       lte(schema.farrowingRecord.farrowing_date, to),
     ];
-    if (query.parity) farrowConditions.push(eq(schema.farrowingRecord.parity_number, query.parity));
-    if (query.sowId) farrowConditions.push(eq(schema.farrowingRecord.sow_animal_id, query.sowId));
+    if (query.parity)
+      farrowConditions.push(
+        eq(schema.farrowingRecord.parity_number, query.parity),
+      );
+    if (query.sowId)
+      farrowConditions.push(
+        eq(schema.farrowingRecord.sow_animal_id, query.sowId),
+      );
     const f = schema.farrowingRecord;
     const farrowings: FarrowingRow[] = (
       await this.db
@@ -311,10 +515,19 @@ export class FarrowingReportService {
       fostered_out: Number(r.fostered_out ?? 0),
       weaning_date: r.weaning_date ? String(r.weaning_date).slice(0, 10) : null,
       piglets_weaned: Number(r.piglets_weaned ?? 0),
-      avg_weaning_weight_kg: r.avg_weaning_weight_kg != null ? Number(r.avg_weaning_weight_kg) : null,
+      avg_weaning_weight_kg:
+        r.avg_weaning_weight_kg != null
+          ? Number(r.avg_weaning_weight_kg)
+          : null,
     }));
 
-    const lots = [...new Set(farrowings.map((r) => r.piglet_batch_id).filter((id): id is string => Boolean(id)))];
+    const lots = [
+      ...new Set(
+        farrowings
+          .map((r) => r.piglet_batch_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
     const mortality: MortalityRow[] = lots.length
       ? (
           await this.db
@@ -368,16 +581,37 @@ export class FarrowingReportService {
     }));
 
     // The gilts' posted body weights from data entry, taken in gestation or lactation, up to the last weaning.
-    const gilts = [...new Set(weaned.filter((w) => w.parity_number === 1).map((w) => w.sow_animal_id))];
+    const gilts = [
+      ...new Set(
+        weaned.filter((w) => w.parity_number === 1).map((w) => w.sow_animal_id),
+      ),
+    ];
     const d = schema.batchDailyData;
     const weights: SowWeightRow[] = gilts.length
       ? (
           await this.db
-            .select({ animal_id: d.animal_id, stage_code: schema.stageMaster.stage_code, entry_date: d.entry_date, value: d.entered_value })
+            .select({
+              animal_id: d.animal_id,
+              stage_code: schema.stageMaster.stage_code,
+              entry_date: d.entry_date,
+              value: d.entered_value,
+            })
             .from(d)
-            .innerJoin(schema.schedulerLine, eq(d.line_id, schema.schedulerLine.line_id))
-            .innerJoin(schema.schedulerHeader, eq(schema.schedulerLine.scheduler_id, schema.schedulerHeader.scheduler_id))
-            .innerJoin(schema.stageMaster, eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id))
+            .innerJoin(
+              schema.schedulerLine,
+              eq(d.line_id, schema.schedulerLine.line_id),
+            )
+            .innerJoin(
+              schema.schedulerHeader,
+              eq(
+                schema.schedulerLine.scheduler_id,
+                schema.schedulerHeader.scheduler_id,
+              ),
+            )
+            .innerJoin(
+              schema.stageMaster,
+              eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id),
+            )
             .where(
               and(
                 inArray(d.animal_id, gilts),
@@ -385,7 +619,10 @@ export class FarrowingReportService {
                 isNotNull(d.entered_value),
                 lte(d.entry_date, to),
                 eq(schema.schedulerLine.kpi_metric, 'BODY_WEIGHT'),
-                inArray(schema.stageMaster.stage_code, ['GESTATION', 'LACTATION']),
+                inArray(schema.stageMaster.stage_code, [
+                  'GESTATION',
+                  'LACTATION',
+                ]),
               ),
             )
         ).map((w) => ({
@@ -408,7 +645,9 @@ export class FarrowingReportService {
     to: string,
     breedIds: Array<string | null>,
   ): Promise<Map<string, Targets>> {
-    const ids = [...new Set(breedIds.filter((id): id is string => Boolean(id)))];
+    const ids = [
+      ...new Set(breedIds.filter((id): id is string => Boolean(id))),
+    ];
     const out = new Map<string, Targets>();
     if (!ids.length) return out;
     const l = schema.breedLifecycleStages;
@@ -422,12 +661,25 @@ export class FarrowingReportService {
       or(isNull(l.effective_to), gte(l.effective_to, from)) as SQL,
     ];
     // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
-    conditions.push(companyId ? eq(l.company_id, companyId) : isNull(l.company_id));
+    conditions.push(
+      companyId ? eq(l.company_id, companyId) : isNull(l.company_id),
+    );
     const rows = await this.db
-      .select({ breed_id: l.breed_id, farm_id: l.farm_id, kpi_thresholds: l.kpi_thresholds })
+      .select({
+        breed_id: l.breed_id,
+        farm_id: l.farm_id,
+        kpi_thresholds: l.kpi_thresholds,
+      })
       .from(l)
       .where(and(...conditions));
-    for (const id of ids) out.set(id, targetsFromLifecycle(rows.filter((r) => r.breed_id === id), farmId));
+    for (const id of ids)
+      out.set(
+        id,
+        targetsFromLifecycle(
+          rows.filter((r) => r.breed_id === id),
+          farmId,
+        ),
+      );
     return out;
   }
 }

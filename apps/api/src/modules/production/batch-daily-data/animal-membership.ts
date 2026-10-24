@@ -45,23 +45,34 @@ const day = (value: string) => String(value).slice(0, 10);
  * the order they were written. Before its first move the animal was where that move says it came from (the stage from
  * the first row that names one); an animal the log never mentions is where the register has it, if it is still live.
  */
-export function placementOn(movements: MovementRow[], now: AnimalNow, date: string): Placement {
+export function placementOn(
+  movements: MovementRow[],
+  now: AnimalNow,
+  date: string,
+): Placement {
   if (!movements.length) {
     return now.is_active
       ? { batch_id: now.current_batch_id, stage_id: now.current_stage_id }
       : { batch_id: null, stage_id: null };
   }
   const rows = [...movements].sort(
-    (a, b) => day(a.event_date).localeCompare(day(b.event_date)) || String(a.created_at).localeCompare(String(b.created_at)),
+    (a, b) =>
+      day(a.event_date).localeCompare(day(b.event_date)) ||
+      String(a.created_at).localeCompare(String(b.created_at)),
   );
   let batch = rows[0].from_batch_id ?? null;
-  let stage = rows.find((r) => r.from_stage_id)?.from_stage_id ?? now.current_stage_id ?? null;
+  let stage =
+    rows.find((r) => r.from_stage_id)?.from_stage_id ??
+    now.current_stage_id ??
+    null;
   for (const row of rows) {
     if (day(row.event_date) > date) break;
     if (JOINS.has(row.movement_type)) batch = row.to_batch_id ?? null;
     else if (LEAVES.has(row.movement_type)) batch = null;
-    else if (row.movement_type === 'MORTALITY_REVERSED') batch = row.to_batch_id ?? row.from_batch_id ?? null;
-    if (RESTAGES.has(row.movement_type) && row.to_stage_id) stage = row.to_stage_id;
+    else if (row.movement_type === 'MORTALITY_REVERSED')
+      batch = row.to_batch_id ?? row.from_batch_id ?? null;
+    if (RESTAGES.has(row.movement_type) && row.to_stage_id)
+      stage = row.to_stage_id;
   }
   return { batch_id: batch, stage_id: stage };
 }
@@ -73,7 +84,10 @@ export interface BatchMembership {
 
 const CHUNK = 400;
 
-async function loadAnimals(db: MySql2Database<typeof schema>, animalIds: string[]) {
+async function loadAnimals(
+  db: MySql2Database<typeof schema>,
+  animalIds: string[],
+) {
   const registers: Array<{ animal_id: string } & AnimalNow> = [];
   const moves = new Map<string, MovementRow[]>();
   for (let i = 0; i < animalIds.length; i += CHUNK) {
@@ -102,7 +116,10 @@ async function loadAnimals(db: MySql2Database<typeof schema>, animalIds: string[
       })
       .from(schema.animalMovementLog)
       .where(inArray(schema.animalMovementLog.animal_id, ids))
-      .orderBy(asc(schema.animalMovementLog.event_date), asc(schema.animalMovementLog.created_at));
+      .orderBy(
+        asc(schema.animalMovementLog.event_date),
+        asc(schema.animalMovementLog.created_at),
+      );
     for (const row of rows) {
       const list = moves.get(row.animal_id) ?? [];
       list.push(row);
@@ -116,11 +133,19 @@ async function loadAnimals(db: MySql2Database<typeof schema>, animalIds: string[
  * The batch's membership over time, loaded once: the animals the log says were ever in it, plus those the register
  * holds in it now (an animal the log never mentions). Ask it for as many dates as needed.
  */
-export async function loadBatchMembership(db: MySql2Database<typeof schema>, batchId: string): Promise<BatchMembership> {
+export async function loadBatchMembership(
+  db: MySql2Database<typeof schema>,
+  batchId: string,
+): Promise<BatchMembership> {
   const logged = await db
     .selectDistinct({ animal_id: schema.animalMovementLog.animal_id })
     .from(schema.animalMovementLog)
-    .where(or(eq(schema.animalMovementLog.from_batch_id, batchId), eq(schema.animalMovementLog.to_batch_id, batchId)));
+    .where(
+      or(
+        eq(schema.animalMovementLog.from_batch_id, batchId),
+        eq(schema.animalMovementLog.to_batch_id, batchId),
+      ),
+    );
   const held = await db
     .select({ animal_id: schema.animalRegister.animal_id })
     .from(schema.animalRegister)
@@ -132,7 +157,8 @@ export async function loadBatchMembership(db: MySql2Database<typeof schema>, bat
       const out: Array<{ animal_id: string; stage_id: string | null }> = [];
       for (const animal of registers) {
         const at = placementOn(moves.get(animal.animal_id) ?? [], animal, date);
-        if (at.batch_id === batchId) out.push({ animal_id: animal.animal_id, stage_id: at.stage_id });
+        if (at.batch_id === batchId)
+          out.push({ animal_id: animal.animal_id, stage_id: at.stage_id });
       }
       return out;
     },
@@ -140,12 +166,20 @@ export async function loadBatchMembership(db: MySql2Database<typeof schema>, bat
 }
 
 /** The animals in the batch on `date`, each with the stage it was at that day. */
-export async function animalsInBatchOn(db: MySql2Database<typeof schema>, batchId: string, date: string) {
+export async function animalsInBatchOn(
+  db: MySql2Database<typeof schema>,
+  batchId: string,
+  date: string,
+) {
   return (await loadBatchMembership(db, batchId)).on(date);
 }
 
 /** One animal's batch and stage on `date`; both null when it was in none. */
-export async function animalPlacementOn(db: MySql2Database<typeof schema>, animalId: string, date: string): Promise<Placement> {
+export async function animalPlacementOn(
+  db: MySql2Database<typeof schema>,
+  animalId: string,
+  date: string,
+): Promise<Placement> {
   const { registers, moves } = await loadAnimals(db, [animalId]);
   const [animal] = registers;
   if (!animal) return { batch_id: null, stage_id: null };

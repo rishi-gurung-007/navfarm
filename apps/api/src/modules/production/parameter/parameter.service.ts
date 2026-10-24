@@ -1,11 +1,22 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { MasterScope, masterScopeConditions } from '../../../common/master-data-scope';
-import { CreateParameterDto, UpdateParameterDto, QueryParameterDto } from './dto/parameter.dto';
+import {
+  MasterScope,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  CreateParameterDto,
+  UpdateParameterDto,
+  QueryParameterDto,
+} from './dto/parameter.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 @Injectable()
@@ -36,13 +47,18 @@ export class ParameterService {
       .where(
         and(
           eq(schema.parameterMaster.tenant_id, tenantId),
-          eq(schema.parameterMaster.parameter_code, dto.parameter_code.toUpperCase())
-        )
+          eq(
+            schema.parameterMaster.parameter_code,
+            dto.parameter_code.toUpperCase(),
+          ),
+        ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`Parameter code '${dto.parameter_code}' already exists.`);
+      throw new ConflictException(
+        `Parameter code '${dto.parameter_code}' already exists.`,
+      );
     }
 
     const parameterId = randomUUID();
@@ -85,7 +101,12 @@ export class ParameterService {
       .select()
       .from(schema.parameterMaster)
       // A company reads and changes only its own rows (Rishi, 20 Oct): never a tenant template or another company's.
-      .where(and(eq(schema.parameterMaster.parameter_id, id), ...masterScopeConditions(this.cls, schema.parameterMaster)))
+      .where(
+        and(
+          eq(schema.parameterMaster.parameter_id, id),
+          ...masterScopeConditions(this.cls, schema.parameterMaster),
+        ),
+      )
       .limit(1);
 
     if (!parameter) {
@@ -98,16 +119,27 @@ export class ParameterService {
   async findAll(query: QueryParameterDto, tenantId: string) {
     const conditions: any[] = [eq(schema.parameterMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.parameterMaster, query.companyId));
-    if (query.nobId) conditions.push(eq(schema.parameterMaster.nob_id, query.nobId));
-    if (query.lobId) conditions.push(eq(schema.parameterMaster.lob_id, query.lobId));
-    if (query.parameterType) conditions.push(eq(schema.parameterMaster.parameter_type, query.parameterType));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.parameterMaster,
+        query.companyId,
+      ),
+    );
+    if (query.nobId)
+      conditions.push(eq(schema.parameterMaster.nob_id, query.nobId));
+    if (query.lobId)
+      conditions.push(eq(schema.parameterMaster.lob_id, query.lobId));
+    if (query.parameterType)
+      conditions.push(
+        eq(schema.parameterMaster.parameter_type, query.parameterType),
+      );
     if (query.search) {
       conditions.push(
         or(
           like(schema.parameterMaster.parameter_code, `%${query.search}%`),
-          like(schema.parameterMaster.parameter_name, `%${query.search}%`)
-        )!
+          like(schema.parameterMaster.parameter_name, `%${query.search}%`),
+        )!,
       );
     }
 
@@ -122,7 +154,12 @@ export class ParameterService {
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateParameterDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateParameterDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const parameter = await this.findOne(id);
 
     await this.db
@@ -130,11 +167,20 @@ export class ParameterService {
       .set({
         parameter_name: dto.parameter_name ?? parameter.parameter_name,
         item_id: dto.item_id !== undefined ? dto.item_id : parameter.item_id,
-        resource_id: dto.resource_id !== undefined ? dto.resource_id : parameter.resource_id,
+        resource_id:
+          dto.resource_id !== undefined
+            ? dto.resource_id
+            : parameter.resource_id,
         default_uom: dto.default_uom ?? parameter.default_uom,
         qty_method: dto.qty_method ?? parameter.qty_method,
-        default_qty_per_unit: dto.default_qty_per_unit !== undefined ? dto.default_qty_per_unit.toString() : parameter.default_qty_per_unit,
-        default_qty_per_batch: dto.default_qty_per_batch !== undefined ? dto.default_qty_per_batch.toString() : parameter.default_qty_per_batch,
+        default_qty_per_unit:
+          dto.default_qty_per_unit !== undefined
+            ? dto.default_qty_per_unit.toString()
+            : parameter.default_qty_per_unit,
+        default_qty_per_batch:
+          dto.default_qty_per_batch !== undefined
+            ? dto.default_qty_per_batch.toString()
+            : parameter.default_qty_per_batch,
         description: dto.description ?? parameter.description,
         is_mandatory: dto.is_mandatory ?? parameter.is_mandatory,
         is_active: dto.is_active ?? parameter.is_active,
@@ -173,6 +219,9 @@ export class ParameterService {
       oldValues: parameter,
     });
 
-    return { success: true, message: `Parameter '${parameter.parameter_code}' has been deactivated.` };
+    return {
+      success: true,
+      message: `Parameter '${parameter.parameter_code}' has been deactivated.`,
+    };
   }
 }

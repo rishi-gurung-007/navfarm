@@ -5,12 +5,17 @@
  * its default: in particular the planning date is then today in the farm's
  * time zone (spec D16), which the browser does not know.
  */
-import type { TranslationKeys } from "@/utils/translations";
+import type { TranslationKeys } from '@/utils/translations';
 
-export const FORECAST_VIEWS = ["DAILY", "WEEKLY", "PERIOD", "CUSTOM"] as const;
+export const FORECAST_VIEWS = ['DAILY', 'WEEKLY', 'PERIOD', 'CUSTOM'] as const;
 export type ForecastView = (typeof FORECAST_VIEWS)[number];
 /** The words for each view, shared by the View selects and the run history. */
-export const FORECAST_VIEW_LABEL: Record<ForecastView, TranslationKeys> = { DAILY: "ffViewDaily", WEEKLY: "ffViewWeekly", PERIOD: "ffViewPeriod", CUSTOM: "ffViewCustom" };
+export const FORECAST_VIEW_LABEL: Record<ForecastView, TranslationKeys> = {
+  DAILY: 'ffViewDaily',
+  WEEKLY: 'ffViewWeekly',
+  PERIOD: 'ffViewPeriod',
+  CUSTOM: 'ffViewCustom',
+};
 
 export interface ForecastQueryState {
   farmId: string;
@@ -35,13 +40,13 @@ export function forecastQueryString(s: ForecastQueryState): string {
   const p = new URLSearchParams({ farmId: s.farmId, view: s.view });
   const from = clampToPlanning(s.from, s.planningDate);
   const to = clampToPlanning(s.to, s.planningDate);
-  if (s.planningDate) p.set("planningDate", s.planningDate);
-  if (s.view === "PERIOD") {
+  if (s.planningDate) p.set('planningDate', s.planningDate);
+  if (s.view === 'PERIOD') {
     // Field spec: the period's From/To "are pulled from the Reporting Period Master, not typed manually".
-    if (s.periodId) p.set("periodId", s.periodId);
+    if (s.periodId) p.set('periodId', s.periodId);
   } else {
-    if (from) p.set("from", from);
-    if (s.view === "CUSTOM" && to) p.set("to", to);
+    if (from) p.set('from', from);
+    if (s.view === 'CUSTOM' && to) p.set('to', to);
   }
   return p.toString();
 }
@@ -53,16 +58,16 @@ export function forecastQueryString(s: ForecastQueryState): string {
  * tested in isolation.
  */
 function addDaysIso(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
+  const [y, m, d] = iso.split('-').map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
   date.setUTCDate(date.getUTCDate() + days);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
 /** The month's last Saturday, mirroring reporting-period.rules.ts lastSaturdayOfMonth (api cannot be imported from web). */
 function lastSaturdayOfMonth(year: number, month: number): string {
   const last = new Date(Date.UTC(year, month, 0)); // day 0 of the next month = the last day of this one
-  const lastIso = `${year}-${String(month).padStart(2, "0")}-${String(last.getUTCDate()).padStart(2, "0")}`;
+  const lastIso = `${year}-${String(month).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
   return addDaysIso(lastIso, -((last.getUTCDay() + 1) % 7)); // Saturday → 0 days back, Sunday → 1, Friday → 6
 }
 
@@ -76,7 +81,7 @@ function lastSaturdayOfMonth(year: number, month: number): string {
  * date its first period, or Generate Periods would draft the wrong year.
  */
 export function businessYearStartOf(iso: string): number {
-  const [y, m] = iso.split("-").map(Number);
+  const [y, m] = iso.split('-').map(Number);
   if (m > 6) return y;
   if (m < 6) return y - 1;
   // June: the pivot is the day after June's own last Saturday.

@@ -1,4 +1,14 @@
-import { commonTargets, computeFarrowingMetrics, FarrowingRow, isEmptyPeriod, minusOneYear, SowWeightRow, targetsFromLifecycle, WeanedRow, weekStart } from './farrowing-report.metrics';
+import {
+  commonTargets,
+  computeFarrowingMetrics,
+  FarrowingRow,
+  isEmptyPeriod,
+  minusOneYear,
+  SowWeightRow,
+  targetsFromLifecycle,
+  WeanedRow,
+  weekStart,
+} from './farrowing-report.metrics';
 
 const litter = (over: Partial<FarrowingRow>): FarrowingRow => ({
   batch_id: 'B1',
@@ -25,9 +35,35 @@ describe('farrowing report metrics', () => {
       { batch_id: 'B1', parity_number: 4 },
     ];
     const farrowings = [
-      litter({ farrow_id: 'F1', piglet_batch_id: 'L1', piglets_born_total: 14, piglets_born_live: 12, piglets_stillborn: 1, piglets_mummified: 1, weaning_date: '2026-03-20', piglets_weaned: 11, avg_weaning_weight_kg: 7 }),
-      litter({ farrow_id: 'F2', piglet_batch_id: 'L2', piglets_born_total: 12, piglets_born_live: 12, foster_received: 1, fostered_out: 1 }),
-      litter({ farrow_id: 'F3', piglet_batch_id: 'L3', piglets_born_total: 10, piglets_born_live: 8, piglets_stillborn: 2, weaning_date: '2026-03-25', piglets_weaned: 8, avg_weaning_weight_kg: 6 }),
+      litter({
+        farrow_id: 'F1',
+        piglet_batch_id: 'L1',
+        piglets_born_total: 14,
+        piglets_born_live: 12,
+        piglets_stillborn: 1,
+        piglets_mummified: 1,
+        weaning_date: '2026-03-20',
+        piglets_weaned: 11,
+        avg_weaning_weight_kg: 7,
+      }),
+      litter({
+        farrow_id: 'F2',
+        piglet_batch_id: 'L2',
+        piglets_born_total: 12,
+        piglets_born_live: 12,
+        foster_received: 1,
+        fostered_out: 1,
+      }),
+      litter({
+        farrow_id: 'F3',
+        piglet_batch_id: 'L3',
+        piglets_born_total: 10,
+        piglets_born_live: 8,
+        piglets_stillborn: 2,
+        weaning_date: '2026-03-25',
+        piglets_weaned: 8,
+        avg_weaning_weight_kg: 6,
+      }),
     ];
     const mortality = [
       { piglet_batch_id: 'L1', transaction_date: '2026-03-01', quantity: 1 },
@@ -35,7 +71,12 @@ describe('farrowing report metrics', () => {
       { piglet_batch_id: 'L2', transaction_date: '2026-03-30', quantity: 2 },
       { piglet_batch_id: 'OTHER', transaction_date: '2026-03-30', quantity: 5 },
     ];
-    const m = computeFarrowingMetrics(services, farrowings, mortality, '2026-03-31');
+    const m = computeFarrowingMetrics(
+      services,
+      farrowings,
+      mortality,
+      '2026-03-31',
+    );
     expect(m.sows_served).toBe(4);
     expect(m.sows_farrowed).toBe(3);
     expect(m.farrowing_rate_pct).toBe(75);
@@ -71,16 +112,33 @@ describe('farrowing report metrics', () => {
   it('reads targets from lifecycle KPI rows, a farm row first, and "not available" otherwise', () => {
     const t = targetsFromLifecycle(
       [
-        { farm_id: null, kpi_thresholds: [{ metric: 'FARROWING_RATE', lower_limit: 80, upper_limit: 95 }, { metric: 'TOTAL_BORN', lower_limit: 13 }] },
-        { farm_id: 'FARM', kpi_thresholds: JSON.stringify([{ metric: 'FARROWING_RATE', lower_limit: 85, upper_limit: null }]) },
+        {
+          farm_id: null,
+          kpi_thresholds: [
+            { metric: 'FARROWING_RATE', lower_limit: 80, upper_limit: 95 },
+            { metric: 'TOTAL_BORN', lower_limit: 13 },
+          ],
+        },
+        {
+          farm_id: 'FARM',
+          kpi_thresholds: JSON.stringify([
+            { metric: 'FARROWING_RATE', lower_limit: 85, upper_limit: null },
+          ]),
+        },
       ],
       'FARM',
     );
     expect(t.farrowing_rate).toEqual({ average: null, lower: 85, upper: null });
     expect(t.total_born).toEqual({ average: null, lower: 13, upper: null });
     expect(t.mummified).toBeNull();
-    expect(commonTargets([t, t]).farrowing_rate).toEqual({ average: null, lower: 85, upper: null });
-    expect(commonTargets([t, targetsFromLifecycle([], 'FARM')]).farrowing_rate).toBeNull();
+    expect(commonTargets([t, t]).farrowing_rate).toEqual({
+      average: null,
+      lower: 85,
+      upper: null,
+    });
+    expect(
+      commonTargets([t, targetsFromLifecycle([], 'FARM')]).farrowing_rate,
+    ).toBeNull();
   });
 });
 
@@ -92,10 +150,24 @@ describe('targets from Average Value and Tolerance', () => {
           farm_id: null,
           kpi_thresholds: [
             { metric: 'TOTAL_BORN', average_value: 14, tolerance_pct: 10 }, // both sides: 12.6–15.4
-            { metric: 'BORN_DEAD', average_value: 1, tolerance_pct: 50, tolerance_type: 'UPPER' }, // at most 1.5
-            { metric: 'FARROWING_RATE', average_value: 88, tolerance_pct: 5, tolerance_type: 'LOWER' }, // at least 83.6
+            {
+              metric: 'BORN_DEAD',
+              average_value: 1,
+              tolerance_pct: 50,
+              tolerance_type: 'UPPER',
+            }, // at most 1.5
+            {
+              metric: 'FARROWING_RATE',
+              average_value: 88,
+              tolerance_pct: 5,
+              tolerance_type: 'LOWER',
+            }, // at least 83.6
             { metric: 'GILT_SERVICE_TARGET', average_value: 4 }, // the average alone
-            { metric: 'SECOND_PARITY_SERVICE_TARGET', average_value: 3, tolerance_pct: 0 },
+            {
+              metric: 'SECOND_PARITY_SERVICE_TARGET',
+              average_value: 3,
+              tolerance_pct: 0,
+            },
           ],
         },
       ],
@@ -104,8 +176,16 @@ describe('targets from Average Value and Tolerance', () => {
     expect(t.total_born).toEqual({ average: 14, lower: 12.6, upper: 15.4 });
     expect(t.born_dead).toEqual({ average: 1, lower: null, upper: 1.5 });
     expect(t.farrowing_rate).toEqual({ average: 88, lower: 83.6, upper: null });
-    expect(t.gilt_service_target).toEqual({ average: 4, lower: null, upper: null });
-    expect(t.second_parity_service_target).toEqual({ average: 3, lower: 3, upper: 3 });
+    expect(t.gilt_service_target).toEqual({
+      average: 4,
+      lower: null,
+      upper: null,
+    });
+    expect(t.second_parity_service_target).toEqual({
+      average: 3,
+      lower: 3,
+      upper: 3,
+    });
   });
 });
 
@@ -136,7 +216,12 @@ describe('weaning columns', () => {
     piglets_weaned: 0,
     ...over,
   });
-  const w = (animal_id: string, stage_code: SowWeightRow['stage_code'], entry_date: string, weight_kg: number): SowWeightRow => ({
+  const w = (
+    animal_id: string,
+    stage_code: SowWeightRow['stage_code'],
+    entry_date: string,
+    weight_kg: number,
+  ): SowWeightRow => ({
     animal_id,
     stage_code,
     entry_date,
@@ -145,15 +230,20 @@ describe('weaning columns', () => {
 
   it('weans per sow: piglets weaned over the litters weaned in the dates', () => {
     const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
-      weaned: [weaned({ piglets_weaned: 11 }), weaned({ sow_animal_id: 'S2', piglets_weaned: 10, parity_number: 3 })],
+      weaned: [
+        weaned({ piglets_weaned: 11 }),
+        weaned({ sow_animal_id: 'S2', piglets_weaned: 10, parity_number: 3 }),
+      ],
       weights: [],
     });
     expect(m.sows_weaned).toBe(2);
     expect(m.wean_per_sow).toBe(10.5);
-    expect(computeFarrowingMetrics([], [], [], '2026-03-31').wean_per_sow).toBeNull();
+    expect(
+      computeFarrowingMetrics([], [], [], '2026-03-31').wean_per_sow,
+    ).toBeNull();
   });
 
-  it("gilt body loss: the latest gestation weight before farrowing against the latest lactation weight by weaning", () => {
+  it('gilt body loss: the latest gestation weight before farrowing against the latest lactation weight by weaning', () => {
     const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
       weaned: [
         weaned({ sow_animal_id: 'G1' }),
@@ -187,8 +277,13 @@ describe('weaning columns', () => {
   });
 
   it('a batch that only weaned in the dates still has something recorded', () => {
-    const m = computeFarrowingMetrics([], [], [], '2026-03-31', { weaned: [weaned({ piglets_weaned: 9 })], weights: [] });
+    const m = computeFarrowingMetrics([], [], [], '2026-03-31', {
+      weaned: [weaned({ piglets_weaned: 9 })],
+      weights: [],
+    });
     expect(isEmptyPeriod(m)).toBe(false);
-    expect(isEmptyPeriod(computeFarrowingMetrics([], [], [], '2026-03-31'))).toBe(true);
+    expect(
+      isEmptyPeriod(computeFarrowingMetrics([], [], [], '2026-03-31')),
+    ).toBe(true);
   });
 });

@@ -6,9 +6,16 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import { AnimalMovementLogService } from '../animal-movement-log/animal-movement-log.service';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
-import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
+import {
+  transactionCls,
+  useFarmScope,
+} from '../../../test-utils/transaction-cls';
 
 describe('AnimalService', () => {
   let service: AnimalService;
@@ -34,19 +41,54 @@ describe('AnimalService', () => {
     transaction: mockDbTransaction,
   };
 
-  const found = (row: any) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []), for: jest.fn().mockResolvedValue(row ? [row] : []) }) }) });
+  const found = (row: any) => ({
+    from: jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnValue({
+        limit: jest.fn().mockResolvedValue(row ? [row] : []),
+        for: jest.fn().mockResolvedValue(row ? [row] : []),
+      }),
+    }),
+  });
   // A read of any shape that resolves to `rows` (14 Oct): an animal registered from a GRN reads the GRN (locked), its
   // lines of the animal's item and how many animals are already registered from it.
   const rowsOf = (rows: any[]) => {
     const chain: any = {};
-    for (const k of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit', 'for', 'groupBy']) chain[k] = jest.fn(() => chain);
-    chain.then = (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject);
+    for (const k of [
+      'from',
+      'innerJoin',
+      'leftJoin',
+      'where',
+      'orderBy',
+      'limit',
+      'for',
+      'groupBy',
+    ])
+      chain[k] = jest.fn(() => chain);
+    chain.then = (resolve: any, reject: any) =>
+      Promise.resolve(rows).then(resolve, reject);
     return chain;
   };
-  const grnReceipt = (over: any = {}) => rowsOf([{ receipt_id: 'grn-1', receipt_no: 'GR-000001', status: 'POSTED', batch_id: 'batch-1', ...over }]);
+  const grnReceipt = (over: any = {}) =>
+    rowsOf([
+      {
+        receipt_id: 'grn-1',
+        receipt_no: 'GR-000001',
+        status: 'POSTED',
+        batch_id: 'batch-1',
+        ...over,
+      },
+    ]);
   // The GRN's Bio Asset Ledger entries of the animal's item, one per GRN line (14 Oct): each keeps what remains.
-  const grnEntries = (...entries: Array<{ rate: string | null; remaining: string }>) =>
-    rowsOf(entries.map((e, i) => ({ entry_id: `bio-grn-${i + 1}`, uom: 'HEAD', ...e })));
+  const grnEntries = (
+    ...entries: Array<{ rate: string | null; remaining: string }>
+  ) =>
+    rowsOf(
+      entries.map((e, i) => ({
+        entry_id: `bio-grn-${i + 1}`,
+        uom: 'HEAD',
+        ...e,
+      })),
+    );
   // Taking an animal from a GRN entry is one update of its remaining.
   const takeFromGrn = () => {
     const where = jest.fn().mockResolvedValue({});
@@ -54,9 +96,12 @@ describe('AnimalService', () => {
     mockDbUpdate.mockReturnValue({ set });
     return set;
   };
-  const joinedTreatmentRows = (rows: any[]) => ({ from: () => ({
-    innerJoin: jest.fn().mockReturnThis(), where: jest.fn().mockResolvedValue(rows),
-  }) });
+  const joinedTreatmentRows = (rows: any[]) => ({
+    from: () => ({
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockResolvedValue(rows),
+    }),
+  });
 
   const baseDto = {
     company_id: 'comp-1',
@@ -72,10 +117,12 @@ describe('AnimalService', () => {
   };
 
   const nobLobResolution = {
-    resolve: jest.fn(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    })),
+    resolve: jest.fn(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    ),
   };
 
   beforeEach(async () => {
@@ -85,22 +132,50 @@ describe('AnimalService', () => {
     mockDbTransaction.mockReset();
     mockDbTransaction.mockImplementation(async (work) => work(mockDb));
     nobLobResolution.resolve.mockReset();
-    nobLobResolution.resolve.mockImplementation(async (_tenantId: string, _companyId: any, explicit: any) => ({
-      nob_id: explicit?.nob_id ?? null,
-      lob_id: explicit?.lob_id ?? null,
-    }));
+    nobLobResolution.resolve.mockImplementation(
+      async (_tenantId: string, _companyId: any, explicit: any) => ({
+        nob_id: explicit?.nob_id ?? null,
+        lob_id: explicit?.lob_id ?? null,
+      }),
+    );
 
     cls = transactionCls(mockDb);
     module = await Test.createTestingModule({
       providers: [
         AnimalService,
         { provide: ClsService, useValue: cls },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-        { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PIG-2026-0001') } },
+        {
+          provide: AuditLogService,
+          useValue: { log: jest.fn().mockResolvedValue({}) },
+        },
+        {
+          provide: NumberSeriesService,
+          useValue: {
+            generateNext: jest.fn().mockResolvedValue('PIG-2026-0001'),
+          },
+        },
         { provide: NobLobResolutionService, useValue: nobLobResolution },
         // Checklist 6: transitionStage records a STAGE_CHANGE row.
-        { provide: AnimalMovementLogService, useValue: { record: jest.fn().mockResolvedValue(undefined), stageEnteredOn: jest.fn().mockResolvedValue(null) } },
-        { provide: BatchService, useValue: { addTransaction: jest.fn().mockResolvedValue({}), syncSchedulerCounts: jest.fn().mockResolvedValue(undefined), alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null), recordAnimalExit: jest.fn().mockResolvedValue({ valueRelieved: null, batch: null }), recordAnimalEntry: jest.fn().mockResolvedValue(null), postAnimalDisposalJournal: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: AnimalMovementLogService,
+          useValue: {
+            record: jest.fn().mockResolvedValue(undefined),
+            stageEnteredOn: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: BatchService,
+          useValue: {
+            addTransaction: jest.fn().mockResolvedValue({}),
+            syncSchedulerCounts: jest.fn().mockResolvedValue(undefined),
+            alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null),
+            recordAnimalExit: jest
+              .fn()
+              .mockResolvedValue({ valueRelieved: null, batch: null }),
+            recordAnimalEntry: jest.fn().mockResolvedValue(null),
+            postAnimalDisposalJournal: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -119,7 +194,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'PURCHASED_IMPORTED' } as any, 'tenant-123'),
+        service.create(
+          { ...baseDto, entry_type: 'PURCHASED_IMPORTED' } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -132,7 +210,14 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'PURCHASED_LOCAL', acquisition_cost: undefined } as any, 'tenant-123'),
+        service.create(
+          {
+            ...baseDto,
+            entry_type: 'PURCHASED_LOCAL',
+            acquisition_cost: undefined,
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -144,15 +229,26 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+        .mockReturnValue(
+          found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+        );
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({
-        ...baseDto,
-        entry_type: 'PURCHASED_LOCAL',
-        acquisition_cost: 350.50,
-      } as any, 'tenant-123', { userId: 'user-1' });
+      await service.create(
+        {
+          ...baseDto,
+          entry_type: 'PURCHASED_LOCAL',
+          acquisition_cost: 350.5,
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(inserted[0].acquisition_cost).toBe('350.5');
       expect(inserted[0].source_receipt_id).toBeNull();
@@ -167,7 +263,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, entry_type: 'BORN_ON_FARM' } as any, 'tenant-123'),
+        service.create(
+          { ...baseDto, entry_type: 'BORN_ON_FARM' } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -180,37 +279,51 @@ describe('AnimalService', () => {
     it.each([
       ['PURCHASED_IMPORTED', { source_receipt_id: 'grn-1' }],
       ['BORN_ON_FARM', { source_batch_id: 'batch-1' }],
-    ])('keeps a typed sire and dam serial on a %s animal, with no parent picked', async (entryType, extra) => {
-      mockDbSelect
-        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
-        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
-        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
-        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
-        .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        // the purchased path reads the receipt, its lines and the animals already registered from it;
-        // the born-on-farm path reads the source batch (the receipt row answers it too).
-        .mockReturnValueOnce(grnReceipt())
-        .mockReturnValueOnce(grnEntries({ rate: '2857.57', remaining: '6' }));
-      takeFromGrn();
-      mockDbSelect
-        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
-      const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+    ])(
+      'keeps a typed sire and dam serial on a %s animal, with no parent picked',
+      async (entryType, extra) => {
+        mockDbSelect
+          .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+          .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+          .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+          .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+          .mockReturnValueOnce(found({ item_id: 'item-1' }))
+          // the purchased path reads the receipt, its lines and the animals already registered from it;
+          // the born-on-farm path reads the source batch (the receipt row answers it too).
+          .mockReturnValueOnce(grnReceipt())
+          .mockReturnValueOnce(grnEntries({ rate: '2857.57', remaining: '6' }));
+        takeFromGrn();
+        mockDbSelect
+          .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+          .mockReturnValue(
+            found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+          );
+        const inserted: any[] = [];
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockImplementation((v) => {
+            inserted.push(v);
+            return Promise.resolve({});
+          }),
+        });
 
-      await service.create({
-        ...baseDto,
-        entry_type: entryType,
-        ...extra,
-        sire_serial_no: '  SIRE-PAPER-77  ',
-        dam_serial_no: 'DAM-PAPER-88',
-      } as any, 'tenant-123', { userId: 'user-1' });
+        await service.create(
+          {
+            ...baseDto,
+            entry_type: entryType,
+            ...extra,
+            sire_serial_no: '  SIRE-PAPER-77  ',
+            dam_serial_no: 'DAM-PAPER-88',
+          } as any,
+          'tenant-123',
+          { userId: 'user-1' },
+        );
 
-      expect(inserted[0].sire_serial_no).toBe('SIRE-PAPER-77'); // trimmed
-      expect(inserted[0].dam_serial_no).toBe('DAM-PAPER-88');
-      expect(inserted[0].sire_animal_id).toBeNull();
-      expect(inserted[0].dam_animal_id).toBeNull();
-    });
+        expect(inserted[0].sire_serial_no).toBe('SIRE-PAPER-77'); // trimmed
+        expect(inserted[0].dam_serial_no).toBe('DAM-PAPER-88');
+        expect(inserted[0].sire_animal_id).toBeNull();
+        expect(inserted[0].dam_animal_id).toBeNull();
+      },
+    );
 
     it('fills the sire and dam serial from the registered parents, overriding anything typed', async () => {
       mockDbSelect
@@ -219,19 +332,42 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({ animal_id: 'sire-1', rfid_tag: 'RFID-SIRE-9', animal_code: 'PIG-2026-0100' }))
-        .mockReturnValueOnce(found({ animal_id: 'dam-1', rfid_tag: null, animal_code: 'PIG-2026-0200' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'sire-1',
+            rfid_tag: 'RFID-SIRE-9',
+            animal_code: 'PIG-2026-0100',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'dam-1',
+            rfid_tag: null,
+            animal_code: 'PIG-2026-0200',
+          }),
+        )
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+        .mockReturnValue(
+          found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+        );
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({
-        ...baseDto,
-        sire_animal_id: '11111111-1111-4111-8111-111111111111',
-        dam_animal_id: '22222222-2222-4222-8222-222222222222',
-        sire_serial_no: 'typed-by-hand',
-      } as any, 'tenant-123', { userId: 'user-1' });
+      await service.create(
+        {
+          ...baseDto,
+          sire_animal_id: '11111111-1111-4111-8111-111111111111',
+          dam_animal_id: '22222222-2222-4222-8222-222222222222',
+          sire_serial_no: 'typed-by-hand',
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(inserted[0].sire_serial_no).toBe('RFID-SIRE-9');
       expect(inserted[0].dam_serial_no).toBe('PIG-2026-0200'); // no RFID: falls back to the animal code
@@ -245,11 +381,22 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+        .mockReturnValue(
+          found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+        );
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({ ...baseDto, sire_serial_no: '   ', dam_serial_no: '' } as any, 'tenant-123', { userId: 'user-1' });
+      await service.create(
+        { ...baseDto, sire_serial_no: '   ', dam_serial_no: '' } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
       expect(inserted[0].sire_serial_no).toBeNull();
       expect(inserted[0].dam_serial_no).toBeNull();
@@ -263,14 +410,33 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' })) // generateAnimalCode resolves the series prefix from the LOB
-        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001', total_opening_asset_value: '2857.57' })); // findOne
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            animal_code: 'PIG-2026-0001',
+            total_opening_asset_value: '2857.57',
+          }),
+        ); // findOne
 
       const insertedRecords: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          insertedRecords.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      const result = await service.create(baseDto as any, 'tenant-123', { userId: 'user-1' });
+      const result = await service.create(baseDto as any, 'tenant-123', {
+        userId: 'user-1',
+      });
 
-      expect(numberSeriesService.generateNext).toHaveBeenCalledWith('ANIMAL_PIGGERY', 'tenant-123', 'comp-1', undefined, expect.any(Object));
+      expect(numberSeriesService.generateNext).toHaveBeenCalledWith(
+        'ANIMAL_PIGGERY',
+        'tenant-123',
+        'comp-1',
+        undefined,
+        expect.any(Object),
+      );
       const animalInsert = insertedRecords[0];
       expect(animalInsert.total_opening_asset_value).toBe('2857.57');
       expect(animalInsert.animal_code).toBe('PIG-2026-0001');
@@ -288,18 +454,37 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }));
+        .mockReturnValueOnce(
+          found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+        );
       const insertedRecords: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
-      batchService.recordAnimalEntry.mockResolvedValueOnce({ batch_id: 'b-171', batch_no: 'BATCH-000171' });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          insertedRecords.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      batchService.recordAnimalEntry.mockResolvedValueOnce({
+        batch_id: 'b-171',
+        batch_no: 'BATCH-000171',
+      });
 
       await service.create(baseDto as any, 'tenant-123', { userId: 'user-1' });
 
       expect(batchService.recordAnimalEntry).toHaveBeenCalledWith(
-        expect.objectContaining({ animal_id: insertedRecords[0].animal_id, book_value: '2857.57' }),
-        baseDto.entry_date, 'tenant-123', { userId: 'user-1' },
+        expect.objectContaining({
+          animal_id: insertedRecords[0].animal_id,
+          book_value: '2857.57',
+        }),
+        baseDto.entry_date,
+        'tenant-123',
+        { userId: 'user-1' },
       );
-      expect(insertedRecords[1]).toMatchObject({ entry_type: 'ACQUISITION', batch_id: 'b-171', batch_no: 'BATCH-000171' });
+      expect(insertedRecords[1]).toMatchObject({
+        entry_type: 'ACQUISITION',
+        batch_id: 'b-171',
+        batch_no: 'BATCH-000171',
+      });
     });
 
     it('runs number issuance, Animal insert, and opening ledger insert in one transaction', async () => {
@@ -312,9 +497,13 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }));
       mockDbInsert
         .mockReturnValueOnce({ values: jest.fn().mockResolvedValue({}) })
-        .mockReturnValueOnce({ values: jest.fn().mockRejectedValue(new Error('ledger unavailable')) });
+        .mockReturnValueOnce({
+          values: jest.fn().mockRejectedValue(new Error('ledger unavailable')),
+        });
 
-      await expect(service.create(baseDto as any, 'tenant-123')).rejects.toThrow('ledger unavailable');
+      await expect(
+        service.create(baseDto as any, 'tenant-123'),
+      ).rejects.toThrow('ledger unavailable');
       expect(mockDbTransaction).toHaveBeenCalledTimes(1);
     });
 
@@ -325,11 +514,18 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({ animal_id: 'existing-animal', animal_code: 'PIG-2026-0007' }));
+        .mockReturnValueOnce(
+          found({ animal_id: 'existing-animal', animal_code: 'PIG-2026-0007' }),
+        );
 
       await expect(
-        service.create({ ...baseDto, rfid_tag: ' rfid-001 ' } as any, 'tenant-123'),
-      ).rejects.toThrow("RFID tag 'RFID-001' is already assigned to animal PIG-2026-0007.");
+        service.create(
+          { ...baseDto, rfid_tag: ' rfid-001 ' } as any,
+          'tenant-123',
+        ),
+      ).rejects.toThrow(
+        "RFID tag 'RFID-001' is already assigned to animal PIG-2026-0007.",
+      );
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -340,17 +536,29 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({
-          batch_id: 'count-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1',
-          breed_id: 'breed-1', animal_tracking: 'COUNT_ONLY',
-        }));
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'count-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-1',
+            breed_id: 'breed-1',
+            animal_tracking: 'COUNT_ONLY',
+          }),
+        );
 
-      await expect(service.create({
-        ...baseDto,
-        current_batch_id: 'count-1',
-        current_stage_id: 'stage-1',
-      } as any, 'tenant-123')).rejects.toThrow(/Count Only/i);
+      await expect(
+        service.create(
+          {
+            ...baseDto,
+            current_batch_id: 'count-1',
+            current_stage_id: 'stage-1',
+          } as any,
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Count Only/i);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
@@ -358,7 +566,9 @@ describe('AnimalService', () => {
 
   describe('update', () => {
     it('rejects sire_animal_id equal to the animal itself', async () => {
-      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1' }));
+      mockDbSelect.mockReturnValueOnce(
+        found({ animal_id: 'a-1', company_id: 'comp-1' }),
+      );
 
       await expect(
         service.update('a-1', { sire_animal_id: 'a-1' }, 'tenant-123'),
@@ -366,7 +576,9 @@ describe('AnimalService', () => {
     });
 
     it('rejects dam_animal_id equal to the animal itself', async () => {
-      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1' }));
+      mockDbSelect.mockReturnValueOnce(
+        found({ animal_id: 'a-1', company_id: 'comp-1' }),
+      );
 
       await expect(
         service.update('a-1', { dam_animal_id: 'a-1' }, 'tenant-123'),
@@ -377,31 +589,40 @@ describe('AnimalService', () => {
       ['batch', { current_batch_id: 'batch-other' }],
       ['location', { current_location_id: 'pen-other' }],
       ['stage', { current_stage_id: 'stage-other' }],
-    ])('does not let the ordinary edit path change the animal %s', async (_field, change) => {
-      mockDbSelect.mockReturnValueOnce(found({
-        animal_id: 'a-1',
-        company_id: 'comp-1',
-        current_batch_id: 'batch-1',
-        current_location_id: 'pen-1',
-        current_stage_id: 'stage-1',
-      }));
+    ])(
+      'does not let the ordinary edit path change the animal %s',
+      async (_field, change) => {
+        mockDbSelect.mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            current_batch_id: 'batch-1',
+            current_location_id: 'pen-1',
+            current_stage_id: 'stage-1',
+          }),
+        );
 
-      await expect(service.update('a-1', change as any, 'tenant-123'))
-        .rejects.toThrow(/transfer|stage transition/i);
-      expect(mockDbUpdate).not.toHaveBeenCalled();
-    });
+        await expect(
+          service.update('a-1', change as any, 'tenant-123'),
+        ).rejects.toThrow(/transfer|stage transition/i);
+        expect(mockDbUpdate).not.toHaveBeenCalled();
+      },
+    );
 
     it('does not let the ordinary edit path clear placement', async () => {
-      mockDbSelect.mockReturnValueOnce(found({
-        animal_id: 'a-1',
-        company_id: 'comp-1',
-        current_batch_id: 'batch-1',
-        current_location_id: 'pen-1',
-        current_stage_id: 'stage-1',
-      }));
+      mockDbSelect.mockReturnValueOnce(
+        found({
+          animal_id: 'a-1',
+          company_id: 'comp-1',
+          current_batch_id: 'batch-1',
+          current_location_id: 'pen-1',
+          current_stage_id: 'stage-1',
+        }),
+      );
 
-      await expect(service.update('a-1', { current_batch_id: null } as any, 'tenant-123'))
-        .rejects.toThrow(/transfer/i);
+      await expect(
+        service.update('a-1', { current_batch_id: null } as any, 'tenant-123'),
+      ).rejects.toThrow(/transfer/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -412,19 +633,36 @@ describe('AnimalService', () => {
   // active farm must not read, nor place an animal onto, another farm.
   describe('farm scope', () => {
     it('answers 404 for an animal on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       // findOne's own select answers empty — as it would once the farm
       // condition excludes a row that exists but sits on another farm.
       mockDbSelect.mockReturnValueOnce(found(null));
 
-      await expect(service.findOne('animal-on-kintyre')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('animal-on-kintyre')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('refuses placing an animal on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       // location_type matters since the pen-only placement rule: a non-Pen row
       // is refused before the farm assertion this test exists to exercise.
-      const penOnKintyre = { location_id: 'pen-k', parent: 'shed-k', farm_id: 'farm-k', location_type: 'PEN' };
+      const penOnKintyre = {
+        location_id: 'pen-k',
+        parent: 'shed-k',
+        farm_id: 'farm-k',
+        location_type: 'PEN',
+      };
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
         .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
@@ -436,16 +674,36 @@ describe('AnimalService', () => {
 
       await expect(
         // In the caller's own company and LOB, so only the location is at fault.
-        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_location_id: 'pen-k' } as any, 'tenant-1'),
+        service.create(
+          {
+            ...baseDto,
+            company_id: 'co-1',
+            lob_id: 'lob-pig',
+            current_location_id: 'pen-k',
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow('Animal placement is not on your active farm.');
     });
 
     it('refuses a location-only placement when the Breed is not available in this operational scope', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       const penOnGrasmere = {
-        location_id: 'pen-g', parent_location_id: 'shed-g', farm_id: 'farm-g', location_type: 'PEN',
-        tenant_id: 'tenant-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-pig',
-        is_active: true, deleted_at: null,
+        location_id: 'pen-g',
+        parent_location_id: 'shed-g',
+        farm_id: 'farm-g',
+        location_type: 'PEN',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        nob_id: 'nob-1',
+        lob_id: 'lob-pig',
+        is_active: true,
+        deleted_at: null,
       };
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'co-1' }))
@@ -454,11 +712,27 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-k' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
         .mockReturnValueOnce(found(penOnGrasmere))
-        .mockReturnValueOnce(found({ ...penOnGrasmere, location_id: 'farm-g', location_type: 'FARM', parent_location_id: null }))
+        .mockReturnValueOnce(
+          found({
+            ...penOnGrasmere,
+            location_id: 'farm-g',
+            location_type: 'FARM',
+            parent_location_id: null,
+          }),
+        )
         .mockReturnValueOnce(found(null));
 
       await expect(
-        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', breed_id: 'breed-k', current_location_id: 'pen-g' } as any, 'tenant-1'),
+        service.create(
+          {
+            ...baseDto,
+            company_id: 'co-1',
+            lob_id: 'lob-pig',
+            breed_id: 'breed-k',
+            current_location_id: 'pen-g',
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(/Breed.*not available.*operational scope/i);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
@@ -471,9 +745,23 @@ describe('AnimalService', () => {
    * reference was a tenant-wide existence check — an oracle for other farms.
    */
   describe('create is bounded by the caller scope before anything is written', () => {
-    const grasmereOperator = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
-    const penOnGrasmere = { location_id: 'pen-g', parent: 'shed-g', parent_location_id: 'shed-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: null, location_type: 'PEN' };
-    const recordInserts = () => mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+    const grasmereOperator = {
+      farmId: 'farm-g',
+      restricted: true,
+      companyId: 'co-1',
+      lobId: 'lob-pig',
+    };
+    const penOnGrasmere = {
+      location_id: 'pen-g',
+      parent: 'shed-g',
+      parent_location_id: 'shed-g',
+      farm_id: 'farm-g',
+      company_id: 'co-1',
+      lob_id: null,
+      location_type: 'PEN',
+    };
+    const recordInserts = () =>
+      mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
     it("refuses another LOB's lob_id before any insert", async () => {
       useFarmScope(cls, grasmereOperator);
@@ -492,14 +780,27 @@ describe('AnimalService', () => {
       recordInserts();
 
       await expect(
-        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-other', current_location_id: 'pen-g' } as any, 'tenant-1'),
+        service.create(
+          {
+            ...baseDto,
+            company_id: 'co-1',
+            lob_id: 'lob-other',
+            current_location_id: 'pen-g',
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow('Not authorized for this line of business.');
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
 
     it("refuses a company admin's create in a company other than the selected one, before any insert", async () => {
-      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+      useFarmScope(cls, {
+        farmId: null,
+        restricted: false,
+        companyId: 'co-1',
+        lobId: null,
+      });
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'co-2' }))
         .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
@@ -510,24 +811,40 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
       recordInserts();
 
-      await expect(service.create({ ...baseDto, company_id: 'co-2' } as any, 'tenant-1')).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.create({ ...baseDto, company_id: 'co-2' } as any, 'tenant-1'),
+      ).rejects.toThrow(ForbiddenException);
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('refuses a restricted user who names neither a location nor a batch', async () => {
       useFarmScope(cls, grasmereOperator);
 
-      await expect(service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig' } as any, 'tenant-1'))
-        .rejects.toThrow(new BadRequestException('Choose where this animal is: a batch or a location on your farm.'));
+      await expect(
+        service.create(
+          { ...baseDto, company_id: 'co-1', lob_id: 'lob-pig' } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Choose where this animal is: a batch or a location on your farm.',
+        ),
+      );
       // Before the fix this animal was created on no farm at all.
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('also refuses a company admin who names neither a location nor a batch', async () => {
-      useFarmScope(cls, { farmId: null, restricted: false, companyId: 'co-1', lobId: null });
+      useFarmScope(cls, {
+        farmId: null,
+        restricted: false,
+        companyId: 'co-1',
+        lobId: null,
+      });
 
-      await expect(service.create({ ...baseDto, company_id: 'co-1' } as any, 'tenant-1'))
-        .rejects.toThrow('Choose where this animal is');
+      await expect(
+        service.create({ ...baseDto, company_id: 'co-1' } as any, 'tenant-1'),
+      ).rejects.toThrow('Choose where this animal is');
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
     });
@@ -540,14 +857,29 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ lob_id: 'lob-pig' }))
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValueOnce(found({
-          batch_id: 'b-legacy', tenant_id: 'tenant-1', company_id: 'co-1',
-          nob_id: 'nob-1', lob_id: 'lob-pig', breed_id: 'breed-1',
-          animal_tracking: 'REGISTERED', farm_id: null,
-        }));
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'b-legacy',
+            tenant_id: 'tenant-1',
+            company_id: 'co-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            breed_id: 'breed-1',
+            animal_tracking: 'REGISTERED',
+            farm_id: null,
+          }),
+        );
 
       await expect(
-        service.create({ ...baseDto, company_id: 'co-1', lob_id: 'lob-pig', current_batch_id: 'b-legacy' } as any, 'tenant-1'),
+        service.create(
+          {
+            ...baseDto,
+            company_id: 'co-1',
+            lob_id: 'lob-pig',
+            current_batch_id: 'b-legacy',
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow('Batch has no farm');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
@@ -557,33 +889,82 @@ describe('AnimalService', () => {
     // mocked query returns nothing either way, so the discriminating assertion
     // is the rendered WHERE: before the fix it carried no scope at all.
     it.each([
-      ['source batch', { source_batch_id: 'b-k' }, "Batch with ID 'b-k' not found.", '`batch_header`.`farm_id` = ?'],
-      ['current batch', { current_batch_id: 'b-k' }, "Current Batch with ID 'b-k' not found.", '`batch_header`.`company_id` = ?'],
-      ['sire', { sire_animal_id: 'sire-k' }, "Sire animal with ID 'sire-k' not found.", 'animal_register af'],
-      ['dam', { dam_animal_id: 'dam-k' }, "Dam animal with ID 'dam-k' not found.", 'animal_register af'],
-      ['source receipt', { entry_type: 'PURCHASED_LOCAL', source_receipt_id: 'grn-k' }, "Goods receipt with ID 'grn-k' not found.", 'lf.farm_id = ?'],
-    ])('answers an out-of-scope %s with the missing-id not-found', async (_label, reference, message, scopeSql) => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
-      let captured: any;
-      mockDbSelect
-        .mockReturnValueOnce(found({ company_id: 'co-1' }))
-        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
-        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
-        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
-        .mockReturnValueOnce(found({ item_id: 'item-1' }))
-        .mockReturnValue({ from: () => ({ where: (condition: any) => {
-          captured = condition;
-          // The source receipt is read FOR UPDATE (14 Oct): limit(1).for('update').
-          return { limit: () => Object.assign(Promise.resolve([]), { for: async () => [] }) };
-        } }) });
+      [
+        'source batch',
+        { source_batch_id: 'b-k' },
+        "Batch with ID 'b-k' not found.",
+        '`batch_header`.`farm_id` = ?',
+      ],
+      [
+        'current batch',
+        { current_batch_id: 'b-k' },
+        "Current Batch with ID 'b-k' not found.",
+        '`batch_header`.`company_id` = ?',
+      ],
+      [
+        'sire',
+        { sire_animal_id: 'sire-k' },
+        "Sire animal with ID 'sire-k' not found.",
+        'animal_register af',
+      ],
+      [
+        'dam',
+        { dam_animal_id: 'dam-k' },
+        "Dam animal with ID 'dam-k' not found.",
+        'animal_register af',
+      ],
+      [
+        'source receipt',
+        { entry_type: 'PURCHASED_LOCAL', source_receipt_id: 'grn-k' },
+        "Goods receipt with ID 'grn-k' not found.",
+        'lf.farm_id = ?',
+      ],
+    ])(
+      'answers an out-of-scope %s with the missing-id not-found',
+      async (_label, reference, message, scopeSql) => {
+        useFarmScope(cls, {
+          farmId: 'farm-g',
+          restricted: false,
+          companyId: 'co-1',
+          lobId: null,
+        });
+        let captured: any;
+        mockDbSelect
+          .mockReturnValueOnce(found({ company_id: 'co-1' }))
+          .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+          .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+          .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+          .mockReturnValueOnce(found({ item_id: 'item-1' }))
+          .mockReturnValue({
+            from: () => ({
+              where: (condition: any) => {
+                captured = condition;
+                // The source receipt is read FOR UPDATE (14 Oct): limit(1).for('update').
+                return {
+                  limit: () =>
+                    Object.assign(Promise.resolve([]), { for: async () => [] }),
+                };
+              },
+            }),
+          });
 
-      await expect(service.create({ ...baseDto, company_id: 'co-1', current_location_id: 'pen-g', ...reference } as any, 'tenant-1'))
-        .rejects.toThrow(new NotFoundException(message));
-      const rendered = new MySqlDialect().sqlToQuery(captured);
-      expect(rendered.sql).toContain(scopeSql);
-      expect(rendered.params).toContain('co-1');
-      expect(mockDbInsert).not.toHaveBeenCalled();
-    });
+        await expect(
+          service.create(
+            {
+              ...baseDto,
+              company_id: 'co-1',
+              current_location_id: 'pen-g',
+              ...reference,
+            } as any,
+            'tenant-1',
+          ),
+        ).rejects.toThrow(new NotFoundException(message));
+        const rendered = new MySqlDialect().sqlToQuery(captured);
+        expect(rendered.sql).toContain(scopeSql);
+        expect(rendered.params).toContain('co-1');
+        expect(mockDbInsert).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // BBP §6: "teat count < 15 is a hard block at selection" — regardless of TSI score. There is
@@ -591,7 +972,9 @@ describe('AnimalService', () => {
   // that can carry no_of_teats onto a GILT: create() and update().
   describe('teat count guard', () => {
     it('refuses to update an animal with a teat count below 1', async () => {
-      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }));
+      mockDbSelect.mockReturnValueOnce(
+        found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }),
+      );
 
       await expect(
         service.update('a-1', { no_of_teats: 0, tsi: 99.9 }, 'tenant-123'),
@@ -599,7 +982,9 @@ describe('AnimalService', () => {
     });
 
     it('refuses to update an animal with a teat count above 99', async () => {
-      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }));
+      mockDbSelect.mockReturnValueOnce(
+        found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }),
+      );
 
       await expect(
         service.update('a-1', { no_of_teats: 100 }, 'tenant-123'),
@@ -608,10 +993,20 @@ describe('AnimalService', () => {
 
     it('allows updating an animal with a teat count in 1..99 range, including below 15', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'GILT' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            animal_type: 'GILT',
+          }),
+        )
         .mockReturnValueOnce(found({ animal_id: 'a-1', no_of_teats: 12 }));
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
       await expect(
         service.update('a-1', { no_of_teats: 12 }, 'tenant-123'),
@@ -627,7 +1022,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, animal_type: 'GILT', no_of_teats: 0 } as any, 'tenant-123'),
+        service.create(
+          { ...baseDto, animal_type: 'GILT', no_of_teats: 0 } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(/teat/i);
     });
   });
@@ -651,7 +1049,6 @@ describe('AnimalService', () => {
       acquisition_cost: 999,
     };
 
-
     it('takes the cost from the receipt line, ignoring what the caller sent', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ company_id: 'comp-1' }))
@@ -666,7 +1063,12 @@ describe('AnimalService', () => {
       takeFromGrn();
 
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
       await service.create(purchased as any, 'tenant-123');
 
@@ -683,7 +1085,9 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(grnReceipt())
         .mockReturnValueOnce(grnEntries());
 
-      await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/receipt/i);
+      await expect(
+        service.create(purchased as any, 'tenant-123'),
+      ).rejects.toThrow(/receipt/i);
     });
 
     it('accepts a purchased entry that sends no cost at all', async () => {
@@ -704,7 +1108,12 @@ describe('AnimalService', () => {
       takeFromGrn();
 
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
       await service.create(noCost as any, 'tenant-123');
 
@@ -721,7 +1130,9 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
-      await expect(service.create(noCost, 'tenant-123')).rejects.toThrow(/acquisition cost/i);
+      await expect(service.create(noCost, 'tenant-123')).rejects.toThrow(
+        /acquisition cost/i,
+      );
     });
 
     it('leaves a non-purchased entry cost exactly as entered', async () => {
@@ -735,9 +1146,17 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({ ...baseDto, acquisition_cost: 2857.57 } as any, 'tenant-123');
+      await service.create(
+        { ...baseDto, acquisition_cost: 2857.57 } as any,
+        'tenant-123',
+      );
 
       expect(inserted[0].acquisition_cost).toBe('2857.57');
     });
@@ -745,16 +1164,17 @@ describe('AnimalService', () => {
     // 14 Oct (Rishi): a biological asset is not stock. A GRN is a + entry in the Bio Asset Ledger; each animal
     // registered from it is taken from that entry (its remaining counts down) and is the ledger's +1, at that
     // GRN line's cost. Nothing touches the inventory ledger.
-    const registerFrom = (receipt: any, entries: any) => mockDbSelect
-      .mockReturnValueOnce(found({ company_id: 'comp-1' }))
-      .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
-      .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
-      .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
-      .mockReturnValueOnce(found({ item_id: 'item-1' }))
-      .mockReturnValueOnce(receipt)
-      .mockReturnValueOnce(entries)
-      .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
-      .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-0001' }));
+    const registerFrom = (receipt: any, entries: any) =>
+      mockDbSelect
+        .mockReturnValueOnce(found({ company_id: 'comp-1' }))
+        .mockReturnValueOnce(found({ nob_id: 'nob-1' }))
+        .mockReturnValueOnce(found({ lob_id: 'lob-1' }))
+        .mockReturnValueOnce(found({ breed_id: 'breed-1' }))
+        .mockReturnValueOnce(found({ item_id: 'item-1' }))
+        .mockReturnValueOnce(receipt)
+        .mockReturnValueOnce(entries)
+        .mockReturnValueOnce(found({ lob_code: 'PIGGERY' }))
+        .mockReturnValue(found({ animal_id: 'a-1', animal_code: 'PIG-0001' }));
 
     it('takes the animal from the GRN entry and writes its +1, naming that entry, with the GRN and its entries locked', async () => {
       const receipt = grnReceipt();
@@ -762,54 +1182,96 @@ describe('AnimalService', () => {
       registerFrom(receipt, entries);
       const set = takeFromGrn();
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
       await service.create(purchased as any, 'tenant-123');
 
       expect(receipt.for).toHaveBeenCalledWith('update');
       expect(entries.for).toHaveBeenCalledWith('update');
-      expect(set).toHaveBeenCalledWith({ remaining_quantity: expect.anything() });
+      expect(set).toHaveBeenCalledWith({
+        remaining_quantity: expect.anything(),
+      });
       const bio = inserted.find((v) => v.entry_type === 'ACQUISITION');
-      expect(bio).toMatchObject({ document_type: 'ANIMAL_REGISTRATION', source_entry_id: 'bio-grn-1', quantity: '1.0000', cost_amount: '1500', uom: 'HEAD' });
+      expect(bio).toMatchObject({
+        document_type: 'ANIMAL_REGISTRATION',
+        source_entry_id: 'bio-grn-1',
+        quantity: '1.0000',
+        cost_amount: '1500',
+        uom: 'HEAD',
+      });
     });
 
-    it('takes from the next GRN line\'s entry, at its cost, once the first line has none left', async () => {
-      registerFrom(grnReceipt(), grnEntries({ rate: '1000.0000', remaining: '0' }, { rate: '1200.0000', remaining: '3' }));
+    it("takes from the next GRN line's entry, at its cost, once the first line has none left", async () => {
+      registerFrom(
+        grnReceipt(),
+        grnEntries(
+          { rate: '1000.0000', remaining: '0' },
+          { rate: '1200.0000', remaining: '3' },
+        ),
+      );
       takeFromGrn();
       const inserted: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { inserted.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
       await service.create(purchased as any, 'tenant-123');
 
       expect(inserted[0].acquisition_cost).toBe('1200');
-      expect(inserted.find((v) => v.entry_type === 'ACQUISITION').source_entry_id).toBe('bio-grn-2');
+      expect(
+        inserted.find((v) => v.entry_type === 'ACQUISITION').source_entry_id,
+      ).toBe('bio-grn-2');
     });
 
     it('refuses when every animal the GRN received is already registered', async () => {
-      registerFrom(grnReceipt(), grnEntries({ rate: '1500.0000', remaining: '0' }));
-      await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 has no animals of this item left/);
+      registerFrom(
+        grnReceipt(),
+        grnEntries({ rate: '1500.0000', remaining: '0' }),
+      );
+      await expect(
+        service.create(purchased as any, 'tenant-123'),
+      ).rejects.toThrow(/GR-000001 has no animals of this item left/);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses a GRN that is not posted yet', async () => {
-      registerFrom(grnReceipt({ status: 'DRAFT' }), grnEntries({ rate: '1500.0000', remaining: '6' }));
-      await expect(service.create(purchased as any, 'tenant-123')).rejects.toThrow(/GR-000001 is not posted yet/);
+      registerFrom(
+        grnReceipt({ status: 'DRAFT' }),
+        grnEntries({ rate: '1500.0000', remaining: '6' }),
+      );
+      await expect(
+        service.create(purchased as any, 'tenant-123'),
+      ).rejects.toThrow(/GR-000001 is not posted yet/);
     });
   });
 
   describe('age at entry weeks (TDD row 12)', () => {
     it('computes whole weeks between dob and entry_date', () => {
-      expect(resolveAgeAtEntryWeeks('2025-12-04', '2026-01-01', undefined)).toBe(4);
+      expect(
+        resolveAgeAtEntryWeeks('2025-12-04', '2026-01-01', undefined),
+      ).toBe(4);
     });
 
     it('floors a partial week rather than rounding it up', () => {
       // 27 days is three weeks and six days. The animal has not lived a fourth week.
-      expect(resolveAgeAtEntryWeeks('2025-12-05', '2026-01-01', undefined)).toBe(3);
+      expect(
+        resolveAgeAtEntryWeeks('2025-12-05', '2026-01-01', undefined),
+      ).toBe(3);
     });
 
     it('is zero for an animal born on the day it entered the register', () => {
-      expect(resolveAgeAtEntryWeeks('2026-01-01', '2026-01-01', undefined)).toBe(0);
+      expect(
+        resolveAgeAtEntryWeeks('2026-01-01', '2026-01-01', undefined),
+      ).toBe(0);
     });
 
     it('ignores a client-supplied value when dob is known', () => {
@@ -827,15 +1289,21 @@ describe('AnimalService', () => {
     });
 
     it('rejects a dob after the entry date', () => {
-      expect(() => resolveAgeAtEntryWeeks('2026-02-01', '2026-01-01', undefined)).toThrow(/before/i);
+      expect(() =>
+        resolveAgeAtEntryWeeks('2026-02-01', '2026-01-01', undefined),
+      ).toThrow(/before/i);
     });
 
     it('rejects a negative typed age', () => {
-      expect(() => resolveAgeAtEntryWeeks(null, '2026-01-01', -1)).toThrow(/age at entry/i);
+      expect(() => resolveAgeAtEntryWeeks(null, '2026-01-01', -1)).toThrow(
+        /age at entry/i,
+      );
     });
 
     it('rejects a typed age beyond the typo guard', () => {
-      expect(() => resolveAgeAtEntryWeeks(null, '2026-01-01', 521)).toThrow(/age at entry/i);
+      expect(() => resolveAgeAtEntryWeeks(null, '2026-01-01', 521)).toThrow(
+        /age at entry/i,
+      );
     });
 
     it('rejects a bad age before the number series issues a code', async () => {
@@ -850,7 +1318,10 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ item_id: 'item-1' }));
 
       await expect(
-        service.create({ ...baseDto, age_at_entry_weeks: 521 } as any, 'tenant-123'),
+        service.create(
+          { ...baseDto, age_at_entry_weeks: 521 } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(/age at entry/i);
 
       expect(numberSeriesService.generateNext).not.toHaveBeenCalled();
@@ -867,9 +1338,17 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       const insertedRecords: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          insertedRecords.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({ ...baseDto, dob: '2025-12-04', age_at_entry_weeks: 99 } as any, 'tenant-123');
+      await service.create(
+        { ...baseDto, dob: '2025-12-04', age_at_entry_weeks: 99 } as any,
+        'tenant-123',
+      );
 
       expect(insertedRecords[0].age_at_entry_weeks).toBe(4);
     });
@@ -885,20 +1364,41 @@ describe('AnimalService', () => {
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       const insertedRecords: any[] = [];
-      mockDbInsert.mockReturnValue({ values: jest.fn().mockImplementation((v) => { insertedRecords.push(v); return Promise.resolve({}); }) });
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((v) => {
+          insertedRecords.push(v);
+          return Promise.resolve({});
+        }),
+      });
 
-      await service.create({ ...baseDto, age_at_entry_weeks: 12 } as any, 'tenant-123');
+      await service.create(
+        { ...baseDto, age_at_entry_weeks: 12 } as any,
+        'tenant-123',
+      );
 
       expect(insertedRecords[0].age_at_entry_weeks).toBe(12);
     });
 
     it('recomputes the age when dob is edited', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'SOW', dob: null, entry_date: '2026-01-01' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            animal_type: 'SOW',
+            dob: null,
+            entry_date: '2026-01-01',
+          }),
+        )
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       let updated: any;
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockImplementation((v) => { updated = v; return { where: jest.fn().mockResolvedValue({}) }; }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockImplementation((v) => {
+          updated = v;
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      });
 
       await service.update('a-1', { dob: '2025-12-04' } as any, 'tenant-123');
 
@@ -907,11 +1407,24 @@ describe('AnimalService', () => {
 
     it('leaves the age untouched when the update names neither dob nor the age', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'SOW', dob: '2025-12-04', entry_date: '2026-01-01' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            animal_type: 'SOW',
+            dob: '2025-12-04',
+            entry_date: '2026-01-01',
+          }),
+        )
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       let updated: any;
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockImplementation((v) => { updated = v; return { where: jest.fn().mockResolvedValue({}) }; }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockImplementation((v) => {
+          updated = v;
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      });
 
       await service.update('a-1', { grading: 7 } as any, 'tenant-123');
 
@@ -920,13 +1433,30 @@ describe('AnimalService', () => {
 
     it('refuses a typed age on update when the animal has a dob', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', animal_type: 'SOW', dob: '2025-12-04', entry_date: '2026-01-01' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            animal_type: 'SOW',
+            dob: '2025-12-04',
+            entry_date: '2026-01-01',
+          }),
+        )
         .mockReturnValueOnce(found({ animal_id: 'a-1' }));
 
       let updated: any;
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockImplementation((v) => { updated = v; return { where: jest.fn().mockResolvedValue({}) }; }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockImplementation((v) => {
+          updated = v;
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      });
 
-      await service.update('a-1', { age_at_entry_weeks: 99 } as any, 'tenant-123');
+      await service.update(
+        'a-1',
+        { age_at_entry_weeks: 99 } as any,
+        'tenant-123',
+      );
 
       // The dob still governs — the typed value is discarded, not merged.
       expect(updated.age_at_entry_weeks).toBe(4);
@@ -936,107 +1466,293 @@ describe('AnimalService', () => {
   describe('dispose', () => {
     // E1: a sale, slaughter, transfer out or cull keeps the batch in step, as a death does.
     it('tells the batch when an animal leaves it other than by dying', async () => {
-      const sow = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '3000.00', animal_code: 'PIG-2026-0001', current_batch_id: 'batch-1', current_stage_id: 'st', current_location_id: 'pen' };
-      mockDbSelect.mockReturnValueOnce(found(sow)).mockReturnValueOnce(found({ ...sow, is_active: false }));
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      const sow = {
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        is_active: true,
+        book_value: '3000.00',
+        animal_code: 'PIG-2026-0001',
+        current_batch_id: 'batch-1',
+        current_stage_id: 'st',
+        current_location_id: 'pen',
+      };
+      mockDbSelect
+        .mockReturnValueOnce(found(sow))
+        .mockReturnValueOnce(found({ ...sow, is_active: false }));
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-06-01', disposal_value: 3200 }, 'tenant-123', { userId: 'user-1' });
+      await service.dispose(
+        'a-1',
+        {
+          disposal_type: 'SOLD',
+          disposal_date: '2026-06-01',
+          disposal_value: 3200,
+        },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
-      expect(batchService.recordAnimalExit).toHaveBeenCalledWith(expect.objectContaining({ animal_id: 'a-1', current_batch_id: 'batch-1' }), 'SOLD', '2026-06-01', 'tenant-123', { userId: 'user-1' });
+      expect(batchService.recordAnimalExit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          animal_id: 'a-1',
+          current_batch_id: 'batch-1',
+        }),
+        'SOLD',
+        '2026-06-01',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
     });
 
     it('values a sale at what her batch gave up for her, ledgers it against that batch and journals it', async () => {
-      const sow = { animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1', is_active: true, book_value: '300.00', animal_code: 'PIG-2026-0001', current_batch_id: 'batch-1', current_stage_id: 'st', current_location_id: 'pen' };
-      mockDbSelect.mockReturnValueOnce(found(sow)).mockReturnValueOnce(found({ ...sow, is_active: false }));
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      const sow = {
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        nob_id: 'nob-1',
+        lob_id: 'lob-1',
+        is_active: true,
+        book_value: '300.00',
+        animal_code: 'PIG-2026-0001',
+        current_batch_id: 'batch-1',
+        current_stage_id: 'st',
+        current_location_id: 'pen',
+      };
+      mockDbSelect
+        .mockReturnValueOnce(found(sow))
+        .mockReturnValueOnce(found({ ...sow, is_active: false }));
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
       jest.spyOn(service as any, 'exitStageId').mockResolvedValue(null);
-      batchService.recordAnimalExit.mockResolvedValueOnce({ valueRelieved: 425.2, batch: { batch_id: 'batch-1', batch_no: 'BATCH-000140', stage_id: 'st-g' } });
+      batchService.recordAnimalExit.mockResolvedValueOnce({
+        valueRelieved: 425.2,
+        batch: {
+          batch_id: 'batch-1',
+          batch_no: 'BATCH-000140',
+          stage_id: 'st-g',
+        },
+      });
 
-      await service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-10-17', disposal_value: 500 }, 'tenant-123', { userId: 'user-1' });
+      await service.dispose(
+        'a-1',
+        {
+          disposal_type: 'SOLD',
+          disposal_date: '2026-10-17',
+          disposal_value: 500,
+        },
+        'tenant-123',
+        { userId: 'user-1' },
+      );
 
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(Number(setArg.gain_loss_on_disposal)).toBeCloseTo(74.8, 4);
-      const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
-      expect(ledger).toMatchObject({ batch_id: 'batch-1', batch_no: 'BATCH-000140', cost_amount: '-425.2' });
-      expect(batchService.postAnimalDisposalJournal).toHaveBeenCalledWith(expect.objectContaining({
-        documentNo: 'PIG-2026-0001', postingDate: '2026-10-17', bookValue: 425.2, proceeds: 500, stageId: 'st-g', label: 'Sale',
-      }));
+      const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock)
+        .mock.calls[0][0];
+      expect(ledger).toMatchObject({
+        batch_id: 'batch-1',
+        batch_no: 'BATCH-000140',
+        cost_amount: '-425.2',
+      });
+      expect(batchService.postAnimalDisposalJournal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentNo: 'PIG-2026-0001',
+          postingDate: '2026-10-17',
+          bookValue: 425.2,
+          proceeds: 500,
+          stageId: 'st-g',
+          label: 'Sale',
+        }),
+      );
     });
 
     it('journals no sale for a slaughter', async () => {
-      const pig = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '300.00', animal_code: 'PIG-1', current_batch_id: null };
-      mockDbSelect.mockReturnValueOnce(found(pig)).mockReturnValueOnce(found({ ...pig, is_active: false }));
-      jest.spyOn(service as any, 'assertWithdrawalPeriodsElapsed').mockResolvedValue(undefined);
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      const pig = {
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        is_active: true,
+        book_value: '300.00',
+        animal_code: 'PIG-1',
+        current_batch_id: null,
+      };
+      mockDbSelect
+        .mockReturnValueOnce(found(pig))
+        .mockReturnValueOnce(found({ ...pig, is_active: false }));
+      jest
+        .spyOn(service as any, 'assertWithdrawalPeriodsElapsed')
+        .mockResolvedValue(undefined);
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
-      await service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-10-17' } as any, 'tenant-123');
+      await service.dispose(
+        'a-1',
+        { disposal_type: 'SLAUGHTERED', disposal_date: '2026-10-17' } as any,
+        'tenant-123',
+      );
 
       expect(batchService.postAnimalDisposalJournal).not.toHaveBeenCalled();
     });
 
     // E5, to BBP-1: out-of-production date, then a cull date not before it, a CULL reason, the weight and destination.
     describe('culling', () => {
-      const sow = { animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '28000', animal_code: 'PIG-0024', current_batch_id: 'batch-1', out_of_production_date: '2026-09-20' };
+      const sow = {
+        animal_id: 'a-1',
+        company_id: 'comp-1',
+        is_active: true,
+        book_value: '28000',
+        animal_code: 'PIG-0024',
+        current_batch_id: 'batch-1',
+        out_of_production_date: '2026-09-20',
+      };
       const cull = (over: object = {}) =>
-        service.dispose('a-1', { disposal_type: 'CULLED', disposal_date: '2026-10-01', disposal_reason_id: 'r-cull', exit_weight_kg: 210, disposal_destination: 'Abattoir', ...over } as any, 'tenant-123', { userId: 'user-1' });
-      const arrange = (animal: object, reason: object | null = { reason_id: 'r-cull', category: 'CULL' }) => {
+        service.dispose(
+          'a-1',
+          {
+            disposal_type: 'CULLED',
+            disposal_date: '2026-10-01',
+            disposal_reason_id: 'r-cull',
+            exit_weight_kg: 210,
+            disposal_destination: 'Abattoir',
+            ...over,
+          } as any,
+          'tenant-123',
+          { userId: 'user-1' },
+        );
+      const arrange = (
+        animal: object,
+        reason: object | null = { reason_id: 'r-cull', category: 'CULL' },
+      ) => {
         mockDbSelect.mockReset(); // a refused cull leaves the reads it never made queued
         mockDbSelect.mockReturnValueOnce(found(animal));
         if (reason) mockDbSelect.mockReturnValueOnce(found(reason));
-        mockDbSelect.mockReturnValueOnce(found({ ...animal, is_active: false, status: 'CULLED' }));
-        mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
-        mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+        mockDbSelect.mockReturnValueOnce(
+          found({ ...animal, is_active: false, status: 'CULLED' }),
+        );
+        mockDbUpdate.mockReturnValue({
+          set: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+        });
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockResolvedValue({}),
+        });
       };
 
       it('closes the record with both dates, the weight and destination, writes her value off and tells the batch', async () => {
         arrange(sow);
         await cull();
-        const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
-        expect(setArg).toMatchObject({ is_active: false, status: 'CULLED', disposal_type: 'CULLED', out_of_production_date: '2026-09-20', cull_date: '2026-10-01', exit_weight_kg: '210', disposal_destination: 'Abattoir' });
-        const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock).mock.calls[0][0];
-        expect(ledger).toMatchObject({ animal_id: 'a-1', quantity: '-1.0000', cost_amount: '-28000', status: 'CULLED' });
-        expect(batchService.recordAnimalExit).toHaveBeenCalledWith(expect.objectContaining({ animal_id: 'a-1' }), 'CULLED', '2026-10-01', 'tenant-123', { userId: 'user-1' });
+        const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock)
+          .mock.calls[0][0];
+        expect(setArg).toMatchObject({
+          is_active: false,
+          status: 'CULLED',
+          disposal_type: 'CULLED',
+          out_of_production_date: '2026-09-20',
+          cull_date: '2026-10-01',
+          exit_weight_kg: '210',
+          disposal_destination: 'Abattoir',
+        });
+        const ledger = (mockDbInsert.mock.results[0].value.values as jest.Mock)
+          .mock.calls[0][0];
+        expect(ledger).toMatchObject({
+          animal_id: 'a-1',
+          quantity: '-1.0000',
+          cost_amount: '-28000',
+          status: 'CULLED',
+        });
+        expect(batchService.recordAnimalExit).toHaveBeenCalledWith(
+          expect.objectContaining({ animal_id: 'a-1' }),
+          'CULLED',
+          '2026-10-01',
+          'tenant-123',
+          { userId: 'user-1' },
+        );
       });
 
       it('refuses a cull before the out-of-production date, or with none', async () => {
         arrange(sow);
-        await expect(cull({ disposal_date: '2026-09-10' })).rejects.toThrow('before the out-of-production date 2026-09-20');
+        await expect(cull({ disposal_date: '2026-09-10' })).rejects.toThrow(
+          'before the out-of-production date 2026-09-20',
+        );
         arrange({ ...sow, out_of_production_date: null });
         await expect(cull()).rejects.toThrow('taken out of production');
       });
 
       it('needs a CULL reason, the weight and the destination', async () => {
-        arrange(sow, { reason_id: 'r-mrt', category: 'MORTALITY', reason_name: 'Pneumonia' });
+        arrange(sow, {
+          reason_id: 'r-mrt',
+          category: 'MORTALITY',
+          reason_name: 'Pneumonia',
+        });
         await expect(cull()).rejects.toThrow('not CULL');
         arrange(sow, null);
-        await expect(cull({ disposal_reason_id: undefined })).rejects.toThrow('needs its reason');
+        await expect(cull({ disposal_reason_id: undefined })).rejects.toThrow(
+          'needs its reason',
+        );
         arrange(sow);
-        await expect(cull({ exit_weight_kg: undefined })).rejects.toThrow('weight at cull');
+        await expect(cull({ exit_weight_kg: undefined })).rejects.toThrow(
+          'weight at cull',
+        );
         arrange(sow);
-        await expect(cull({ disposal_destination: ' ' })).rejects.toThrow('where the animal went');
+        await expect(cull({ disposal_destination: ' ' })).rejects.toThrow(
+          'where the animal went',
+        );
       });
     });
 
     it('computes gain_loss_on_disposal when book_value is set', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: '3000.00', animal_code: 'PIG-2026-0001' }))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, disposal_type: 'SOLD', status: 'SOLD', gain_loss_on_disposal: '200.00' }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: '3000.00',
+            animal_code: 'PIG-2026-0001',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            is_active: false,
+            disposal_type: 'SOLD',
+            status: 'SOLD',
+            gain_loss_on_disposal: '200.00',
+          }),
+        );
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
 
       const result = await service.dispose(
         'a-1',
-        { disposal_type: 'SOLD', disposal_date: '2026-06-01', disposal_value: 3200 },
+        {
+          disposal_type: 'SOLD',
+          disposal_date: '2026-06-01',
+          disposal_value: 3200,
+        },
         'tenant-123',
         { userId: 'user-1' },
       );
 
-
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setArg.gain_loss_on_disposal).toBe('200');
       expect(setArg.is_active).toBe(false);
       expect(setArg.status).toBe('SOLD');
@@ -1046,14 +1762,31 @@ describe('AnimalService', () => {
     it('leaves gain_loss_on_disposal null when book_value is not set', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0002' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0002',
+          }),
+        )
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false }));
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
-      await service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01' }, 'tenant-123');
+      await service.dispose(
+        'a-1',
+        { disposal_type: 'DIED', disposal_date: '2026-06-01' },
+        'tenant-123',
+      );
 
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setArg.gain_loss_on_disposal).toBeNull();
       expect(setArg.status).toBe('DEAD');
     });
@@ -1061,16 +1794,41 @@ describe('AnimalService', () => {
     it('posts a death inside an ACTIVE batch through the batch mortality path, not a bare register flip', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ current_batch_id: 'batch-1' })) // peek
-        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ for: jest.fn().mockResolvedValue([{ batch_id: 'batch-1' }]) }) }) }) // batch lock
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, current_batch_id: 'batch-1', animal_code: 'PIG-2026-0006' }))
-        .mockReturnValueOnce(found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }))
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              for: jest.fn().mockResolvedValue([{ batch_id: 'batch-1' }]),
+            }),
+          }),
+        }) // batch lock
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            current_batch_id: 'batch-1',
+            animal_code: 'PIG-2026-0006',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }),
+        )
         .mockReturnValueOnce(found({ status: 'ACTIVE' })) // batch status
         .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false })); // findOne
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
       await service.dispose(
         'a-1',
-        { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-mrt-007', notes: 'found dead' },
+        {
+          disposal_type: 'DIED',
+          disposal_date: '2026-06-01',
+          disposal_reason_id: 'r-mrt-007',
+          notes: 'found dead',
+        },
         'tenant-123',
         { userId: 'user-1' },
       );
@@ -1090,10 +1848,20 @@ describe('AnimalService', () => {
     });
 
     it('rejects disposing an already-disposed animal', async () => {
-      mockDbSelect.mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, animal_code: 'PIG-2026-0003' }));
+      mockDbSelect.mockReturnValueOnce(
+        found({
+          animal_id: 'a-1',
+          is_active: false,
+          animal_code: 'PIG-2026-0003',
+        }),
+      );
 
       await expect(
-        service.dispose('a-1', { disposal_type: 'SOLD', disposal_date: '2026-06-01' }, 'tenant-123'),
+        service.dispose(
+          'a-1',
+          { disposal_type: 'SOLD', disposal_date: '2026-06-01' },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -1103,73 +1871,190 @@ describe('AnimalService', () => {
     it('stores disposal_reason_id when the reason is a matching MORTALITY code', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0004' }))
-        .mockReturnValueOnce(found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, disposal_reason_id: 'r-mrt-007' }));
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0004',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({ reason_id: 'r-mrt-007', category: 'MORTALITY' }),
+        )
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            is_active: false,
+            disposal_reason_id: 'r-mrt-007',
+          }),
+        );
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
-      await service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-mrt-007' }, 'tenant-123');
+      await service.dispose(
+        'a-1',
+        {
+          disposal_type: 'DIED',
+          disposal_date: '2026-06-01',
+          disposal_reason_id: 'r-mrt-007',
+        },
+        'tenant-123',
+      );
 
-      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock.calls[0][0];
+      const setArg = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
       expect(setArg.disposal_reason_id).toBe('r-mrt-007');
     });
 
     it('rejects a DIED disposal against a non-MORTALITY reason', async () => {
       mockDbSelect
         .mockReturnValueOnce(found({ current_batch_id: null })) // DIED peeks at the batch to lock it first
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0005' }))
-        .mockReturnValueOnce(found({ reason_id: 'r-cul-005', category: 'CULL', reason_name: 'Leg / Feet / Structural Unsoundness' }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0005',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            reason_id: 'r-cul-005',
+            category: 'CULL',
+            reason_name: 'Leg / Feet / Structural Unsoundness',
+          }),
+        );
 
       await expect(
-        service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', disposal_reason_id: 'r-cul-005' }, 'tenant-123'),
+        service.dispose(
+          'a-1',
+          {
+            disposal_type: 'DIED',
+            disposal_date: '2026-06-01',
+            disposal_reason_id: 'r-cul-005',
+          },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     const joinedMedicationRows = (rows: any[]) => ({
       from: jest.fn().mockReturnValue({
-        innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }),
+        innerJoin: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }),
       }),
     });
 
     it('blocks SLAUGHTERED disposal when a medicine withdrawal period has not elapsed', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0004' }))
-        .mockReturnValueOnce(joinedMedicationRows([
-          { item_id: 'item-med', item_name: 'Amoxicillin', item_type: 'MEDICINE', withdrawal_days: 10, administered_date: '2026-06-05' },
-        ]))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0004',
+          }),
+        )
+        .mockReturnValueOnce(
+          joinedMedicationRows([
+            {
+              item_id: 'item-med',
+              item_name: 'Amoxicillin',
+              item_type: 'MEDICINE',
+              withdrawal_days: 10,
+              administered_date: '2026-06-05',
+            },
+          ]),
+        )
         .mockReturnValueOnce(joinedTreatmentRows([]));
 
       await expect(
-        service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' }, 'tenant-123'),
+        service.dispose(
+          'a-1',
+          { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('allows SLAUGHTERED disposal once the withdrawal period has elapsed', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0005' }))
-        .mockReturnValueOnce(joinedMedicationRows([
-          { item_id: 'item-med', item_name: 'Amoxicillin', item_type: 'MEDICINE', withdrawal_days: 10, administered_date: '2026-05-01' },
-        ]))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0005',
+          }),
+        )
+        .mockReturnValueOnce(
+          joinedMedicationRows([
+            {
+              item_id: 'item-med',
+              item_name: 'Amoxicillin',
+              item_type: 'MEDICINE',
+              withdrawal_days: 10,
+              administered_date: '2026-05-01',
+            },
+          ]),
+        )
         .mockReturnValueOnce(joinedTreatmentRows([]))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }));
+        .mockReturnValueOnce(
+          found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }),
+        );
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
-      const result = await service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' }, 'tenant-123');
+      const result = await service.dispose(
+        'a-1',
+        { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' },
+        'tenant-123',
+      );
 
       expect(result.status).toBe('SLAUGHTERED');
     });
 
     it('allows SLAUGHTERED disposal when no medication has ever been logged', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', company_id: 'comp-1', is_active: true, book_value: null, animal_code: 'PIG-2026-0006' }))
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            is_active: true,
+            book_value: null,
+            animal_code: 'PIG-2026-0006',
+          }),
+        )
         .mockReturnValueOnce(joinedMedicationRows([]))
         .mockReturnValueOnce(joinedTreatmentRows([]))
-        .mockReturnValueOnce(found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }));
+        .mockReturnValueOnce(
+          found({ animal_id: 'a-1', is_active: false, status: 'SLAUGHTERED' }),
+        );
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
-      const result = await service.dispose('a-1', { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' }, 'tenant-123');
+      const result = await service.dispose(
+        'a-1',
+        { disposal_type: 'SLAUGHTERED', disposal_date: '2026-06-10' },
+        'tenant-123',
+      );
 
       expect(result.status).toBe('SLAUGHTERED');
     });
@@ -1178,13 +2063,25 @@ describe('AnimalService', () => {
   describe('getBioAssetLedger', () => {
     it('returns ledger entries ordered by posting_date', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' })) // findOne check
+        .mockReturnValueOnce(
+          found({ animal_id: 'a-1', animal_code: 'PIG-2026-0001' }),
+        ) // findOne check
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
               orderBy: jest.fn().mockResolvedValue([
-                { entry_id: 'e-1', entry_type: 'ACQUISITION', cost_amount: '3000.0000', posting_date: '2026-01-01' },
-                { entry_id: 'e-2', entry_type: 'DISPOSAL', cost_amount: '-3000.0000', posting_date: '2026-06-01' },
+                {
+                  entry_id: 'e-1',
+                  entry_type: 'ACQUISITION',
+                  cost_amount: '3000.0000',
+                  posting_date: '2026-01-01',
+                },
+                {
+                  entry_id: 'e-2',
+                  entry_type: 'DISPOSAL',
+                  cost_amount: '-3000.0000',
+                  posting_date: '2026-06-01',
+                },
               ]),
             }),
           }),
@@ -1242,203 +2139,397 @@ describe('AnimalService', () => {
     });
 
     it('rejects an empty tag string', async () => {
-      await expect(service.lookupByTag('   ', 'tenant-123')).rejects.toThrow(BadRequestException);
+      await expect(service.lookupByTag('   ', 'tenant-123')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
   describe('transitionStage', () => {
     it('refuses an animal with no Batch or physical location before writing', async () => {
-      mockDbSelect.mockReturnValueOnce(found({
-        animal_id: 'a-unplaced', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
-        breed_id: 'breed-1', animal_code: 'PIG-2026-0099', is_active: true,
-        current_stage_id: null, current_batch_id: null, current_location_id: null,
-      }));
+      mockDbSelect.mockReturnValueOnce(
+        found({
+          animal_id: 'a-unplaced',
+          company_id: 'comp-1',
+          nob_id: 'nob-1',
+          lob_id: 'lob-1',
+          breed_id: 'breed-1',
+          animal_code: 'PIG-2026-0099',
+          is_active: true,
+          current_stage_id: null,
+          current_batch_id: null,
+          current_location_id: null,
+        }),
+      );
 
-      await expect(service.transitionStage(
-        'a-unplaced', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
-      )).rejects.toThrow(/Registered Animals Batch/i);
+      await expect(
+        service.transitionStage(
+          'a-unplaced',
+          { to_stage_id: 'stage-2', transition_date: '2026-09-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Registered Animals Batch/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it.each([
       ['location', { to_location_id: 'pen-other-farm' }],
       ['Batch', { to_batch_id: 'batch-other-farm' }],
-    ])('does not let stage transition move an animal to another %s', async (_field, destination) => {
-      mockDbSelect.mockReturnValueOnce(found({
-        animal_id: 'a-1', company_id: 'comp-1', animal_code: 'PIG-2026-0001', is_active: true,
-        current_batch_id: 'batch-1', current_location_id: 'pen-1', current_stage_id: 'stage-1',
-      }));
+    ])(
+      'does not let stage transition move an animal to another %s',
+      async (_field, destination) => {
+        mockDbSelect.mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            current_batch_id: 'batch-1',
+            current_location_id: 'pen-1',
+            current_stage_id: 'stage-1',
+          }),
+        );
 
-      await expect(service.transitionStage('a-1', {
-        to_stage_id: 'stage-2', ...destination, transition_date: '2026-09-15',
-      }, 'tenant-123')).rejects.toThrow(/transfer/i);
-      expect(mockDbUpdate).not.toHaveBeenCalled();
-    });
+        await expect(
+          service.transitionStage(
+            'a-1',
+            {
+              to_stage_id: 'stage-2',
+              ...destination,
+              transition_date: '2026-09-15',
+            },
+            'tenant-123',
+          ),
+        ).rejects.toThrow(/transfer/i);
+        expect(mockDbUpdate).not.toHaveBeenCalled();
+      },
+    );
 
     it('refuses an animal attached to a Count Only Batch', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
-          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
-          current_stage_id: null, current_batch_id: 'batch-count', current_location_id: null,
-        }))
-        .mockReturnValueOnce(found({
-          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', is_active: true,
-        }))
-        .mockReturnValueOnce(found({
-          batch_id: 'batch-count', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
-          animal_tracking: 'COUNT_ONLY',
-        }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            breed_id: 'breed-1',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            current_stage_id: null,
+            current_batch_id: 'batch-count',
+            current_location_id: null,
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'stage-2',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            is_active: true,
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'batch-count',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-1',
+            breed_id: 'breed-1',
+            animal_tracking: 'COUNT_ONLY',
+          }),
+        );
 
-      await expect(service.transitionStage(
-        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
-      )).rejects.toThrow(/Count Only/i);
+      await expect(
+        service.transitionStage(
+          'a-1',
+          { to_stage_id: 'stage-2', transition_date: '2026-09-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Count Only/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses a Batch and location that resolve to different farms', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-1',
-          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
-          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: 'pen-2',
-        }))
-        .mockReturnValueOnce(found({
-          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', is_active: true,
-        }))
-        .mockReturnValueOnce(found({
-          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
-          animal_tracking: 'REGISTERED',
-        }))
-        .mockReturnValueOnce(found({
-          location_id: 'pen-2', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-2', parent_location_id: 'shed-2',
-          location_type: 'PEN',
-        }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            breed_id: 'breed-1',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            current_stage_id: null,
+            current_batch_id: 'batch-1',
+            current_location_id: 'pen-2',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'stage-2',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            is_active: true,
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'batch-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-1',
+            breed_id: 'breed-1',
+            animal_tracking: 'REGISTERED',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            location_id: 'pen-2',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-2',
+            parent_location_id: 'shed-2',
+            location_type: 'PEN',
+          }),
+        );
 
-      await expect(service.transitionStage(
-        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
-      )).rejects.toThrow(/same farm/i);
+      await expect(
+        service.transitionStage(
+          'a-1',
+          { to_stage_id: 'stage-2', transition_date: '2026-09-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/same farm/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('requires the destination Stage to match the animal company, NOB and LOB', async () => {
       let captured: any;
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-pig',
-          breed_id: 'breed-1', animal_code: 'PIG-2026-0001', is_active: true,
-          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: null,
-        }))
-        .mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
-          captured = condition;
-          return { limit: async () => [] };
-        } }) });
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            breed_id: 'breed-1',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            current_stage_id: null,
+            current_batch_id: 'batch-1',
+            current_location_id: null,
+          }),
+        )
+        .mockReturnValueOnce({
+          from: () => ({
+            where: (condition: any) => {
+              captured = condition;
+              return { limit: async () => [] };
+            },
+          }),
+        });
 
-      await expect(service.transitionStage(
-        'a-1', { to_stage_id: 'stage-other-lob', transition_date: '2026-09-15' }, 'tenant-123',
-      )).rejects.toThrow(NotFoundException);
+      await expect(
+        service.transitionStage(
+          'a-1',
+          { to_stage_id: 'stage-other-lob', transition_date: '2026-09-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(NotFoundException);
 
       const rendered = new MySqlDialect().sqlToQuery(captured);
-      expect(rendered.params).toEqual(expect.arrayContaining(['tenant-123', 'comp-1', 'nob-1', 'lob-pig']));
+      expect(rendered.params).toEqual(
+        expect.arrayContaining(['tenant-123', 'comp-1', 'nob-1', 'lob-pig']),
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('requires the Breed profile to match the animal company, NOB and LOB', async () => {
       let captured: any;
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1', company_id: 'comp-1', nob_id: 'nob-1', lob_id: 'lob-pig',
-          breed_id: 'breed-other-lob', animal_code: 'PIG-2026-0001', is_active: true,
-          current_stage_id: null, current_batch_id: 'batch-1', current_location_id: null,
-        }))
-        .mockReturnValueOnce(found({
-          stage_id: 'stage-2', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-pig', is_active: true,
-        }))
-        .mockReturnValueOnce(found({
-          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-pig', farm_id: 'farm-1',
-          breed_id: 'breed-other-lob', animal_tracking: 'REGISTERED',
-        }))
-        .mockReturnValueOnce(found({
-          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-pig', location_type: 'FARM',
-          parent_location_id: null, is_active: true,
-        }))
-        .mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
-          captured = condition;
-          return { limit: async () => [] };
-        } }) });
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            breed_id: 'breed-other-lob',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            current_stage_id: null,
+            current_batch_id: 'batch-1',
+            current_location_id: null,
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'stage-2',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            is_active: true,
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'batch-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            farm_id: 'farm-1',
+            breed_id: 'breed-other-lob',
+            animal_tracking: 'REGISTERED',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            location_id: 'farm-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-pig',
+            location_type: 'FARM',
+            parent_location_id: null,
+            is_active: true,
+          }),
+        )
+        .mockReturnValueOnce({
+          from: () => ({
+            where: (condition: any) => {
+              captured = condition;
+              return { limit: async () => [] };
+            },
+          }),
+        });
 
-      await expect(service.transitionStage(
-        'a-1', { to_stage_id: 'stage-2', transition_date: '2026-09-15' }, 'tenant-123',
-      )).rejects.toThrow(/Breed/);
+      await expect(
+        service.transitionStage(
+          'a-1',
+          { to_stage_id: 'stage-2', transition_date: '2026-09-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Breed/);
 
       const rendered = new MySqlDialect().sqlToQuery(captured);
-      expect(rendered.params).toEqual(expect.arrayContaining([
-        'breed-other-lob', 'tenant-123', 'comp-1', 'nob-1', 'lob-pig',
-      ]));
+      expect(rendered.params).toEqual(
+        expect.arrayContaining([
+          'breed-other-lob',
+          'tenant-123',
+          'comp-1',
+          'nob-1',
+          'lob-pig',
+        ]),
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('advances an animal stage while preserving its validated placement', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1',
-          company_id: 'comp-1',
-          nob_id: 'nob-1',
-          lob_id: 'lob-1',
-          breed_id: 'breed-1',
-          animal_code: 'PIG-2026-0001',
-          is_active: true,
-          gender: 'F',
-          current_stage_id: 'st-gilt',
-          current_location_id: 'loc-1',
-          current_batch_id: 'batch-1',
-          parity_count: 0,
-          entry_date: '2026-01-01',
-        })) // findOne
-        .mockReturnValueOnce(found({
-          stage_id: 'st-flush',
-          stage_code: 'FLUSH_SERVICE',
-          stage_name: 'Flush and Service',
-        })) // destStage check
-        .mockReturnValueOnce(found({
-          stage_id: 'st-gilt',
-          min_days_before_move: 10,
-          stage_name: 'Gilt Grower',
-        })) // currentStage check
-        .mockReturnValueOnce(found({
-          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
-          animal_tracking: 'REGISTERED',
-        })) // effective Batch
-        .mockReturnValueOnce(found({
-          location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
-          location_type: 'PEN',
-        })) // effective location
-        .mockReturnValueOnce(found({
-          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', location_type: 'FARM',
-          parent_location_id: null, is_active: true,
-        })) // active farm
-        .mockReturnValueOnce(found({
-          breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', location_id: 'farm-1', is_active: true,
-        })) // farm-specific breed profile
-        .mockReturnValueOnce(found({
-          animal_id: 'a-1',
-          current_stage_id: 'st-flush',
-          current_location_id: 'loc-1',
-        })); // findOne return
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            breed_id: 'breed-1',
+            animal_code: 'PIG-2026-0001',
+            is_active: true,
+            gender: 'F',
+            current_stage_id: 'st-gilt',
+            current_location_id: 'loc-1',
+            current_batch_id: 'batch-1',
+            parity_count: 0,
+            entry_date: '2026-01-01',
+          }),
+        ) // findOne
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'st-flush',
+            stage_code: 'FLUSH_SERVICE',
+            stage_name: 'Flush and Service',
+          }),
+        ) // destStage check
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'st-gilt',
+            min_days_before_move: 10,
+            stage_name: 'Gilt Grower',
+          }),
+        ) // currentStage check
+        .mockReturnValueOnce(
+          found({
+            batch_id: 'batch-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-1',
+            breed_id: 'breed-1',
+            animal_tracking: 'REGISTERED',
+          }),
+        ) // effective Batch
+        .mockReturnValueOnce(
+          found({
+            location_id: 'loc-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            farm_id: 'farm-1',
+            parent_location_id: 'shed-1',
+            location_type: 'PEN',
+          }),
+        ) // effective location
+        .mockReturnValueOnce(
+          found({
+            location_id: 'farm-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            location_type: 'FARM',
+            parent_location_id: null,
+            is_active: true,
+          }),
+        ) // active farm
+        .mockReturnValueOnce(
+          found({
+            breed_id: 'breed-1',
+            tenant_id: 'tenant-123',
+            company_id: 'comp-1',
+            nob_id: 'nob-1',
+            lob_id: 'lob-1',
+            location_id: 'farm-1',
+            is_active: true,
+          }),
+        ) // farm-specific breed profile
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1',
+            current_stage_id: 'st-flush',
+            current_location_id: 'loc-1',
+          }),
+        ); // findOne return
 
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
 
       const res = await service.transitionStage(
         'a-1',
@@ -1448,7 +2539,7 @@ describe('AnimalService', () => {
           reason: 'Service ready',
         },
         'tenant-123',
-        { userId: 'user-1' }
+        { userId: 'user-1' },
       );
 
       expect(res.current_stage_id).toBe('st-flush');
@@ -1457,109 +2548,202 @@ describe('AnimalService', () => {
 
     it('refuses a stage that is set to the other sex', async () => {
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-10', company_id: 'comp-1', animal_code: 'PIG-0010', is_active: true, gender: 'M',
-          current_stage_id: 'st-boar', current_batch_id: 'batch-1', entry_date: '2026-01-01',
-        }))
-        .mockReturnValueOnce(found({ stage_id: 'st-gest', stage_code: 'GESTATION', stage_name: 'Gestation', applicable_gender: 'F' }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-10',
+            company_id: 'comp-1',
+            animal_code: 'PIG-0010',
+            is_active: true,
+            gender: 'M',
+            current_stage_id: 'st-boar',
+            current_batch_id: 'batch-1',
+            entry_date: '2026-01-01',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'st-gest',
+            stage_code: 'GESTATION',
+            stage_name: 'Gestation',
+            applicable_gender: 'F',
+          }),
+        );
 
       await expect(
-        service.transitionStage('a-10', { to_stage_id: 'st-gest', transition_date: '2026-06-01' }, 'tenant-123'),
-      ).rejects.toThrow("Stage 'Gestation' is for female animals only; PIG-0010 is male.");
+        service.transitionStage(
+          'a-10',
+          { to_stage_id: 'st-gest', transition_date: '2026-06-01' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(
+        "Stage 'Gestation' is for female animals only; PIG-0010 is male.",
+      );
     });
 
     it('counts the minimum days from when the animal entered its current stage, not from joining the farm', async () => {
       const movementLog = module.get(AnimalMovementLogService) as any;
       movementLog.stageEnteredOn.mockResolvedValueOnce('2026-05-30'); // entered 2 days before the move
       mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-2', company_id: 'comp-1', animal_code: 'PIG-2026-0002', is_active: true, gender: 'F',
-          current_stage_id: 'st-lact', current_location_id: 'loc-1', current_batch_id: 'batch-1',
-          parity_count: 2, entry_date: '2025-01-01', // a year on the farm
-        }))
-        .mockReturnValueOnce(found({ stage_id: 'st-dry', stage_code: 'DRY_SOW', stage_name: 'Dry Sow' }))
-        .mockReturnValueOnce(found({ stage_id: 'st-lact', stage_code: 'LACTATION', stage_name: 'Lactation', min_days_before_move: 28 }));
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-2',
+            company_id: 'comp-1',
+            animal_code: 'PIG-2026-0002',
+            is_active: true,
+            gender: 'F',
+            current_stage_id: 'st-lact',
+            current_location_id: 'loc-1',
+            current_batch_id: 'batch-1',
+            parity_count: 2,
+            entry_date: '2025-01-01', // a year on the farm
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'st-dry',
+            stage_code: 'DRY_SOW',
+            stage_name: 'Dry Sow',
+          }),
+        )
+        .mockReturnValueOnce(
+          found({
+            stage_id: 'st-lact',
+            stage_code: 'LACTATION',
+            stage_name: 'Lactation',
+            min_days_before_move: 28,
+          }),
+        );
 
       await expect(
-        service.transitionStage('a-2', { to_stage_id: 'st-dry', transition_date: '2026-06-01' }, 'tenant-123'),
+        service.transitionStage(
+          'a-2',
+          { to_stage_id: 'st-dry', transition_date: '2026-06-01' },
+          'tenant-123',
+        ),
       ).rejects.toThrow('Minimum duration of 28 days');
-      expect(movementLog.stageEnteredOn).toHaveBeenCalledWith('a-2', 'tenant-123');
-    });
-
-    it.each(['WEANING', 'DRY_PERIOD', 'GESTATION', 'FLUSH'])('leaves parity alone when a sow moves out of farrowing to %s (it completes at weaning)', async (destination) => {
-      let captured: any = null;
-      mockDbSelect
-        .mockReturnValueOnce(found({
-          animal_id: 'a-2',
-          company_id: 'comp-1',
-          nob_id: 'nob-1',
-          lob_id: 'lob-1',
-          breed_id: 'breed-1',
-          animal_code: 'PIG-2026-0002',
-          is_active: true,
-          gender: 'F',
-          current_stage_id: 'st-farrow',
-          current_location_id: 'loc-1',
-          current_batch_id: 'batch-1',
-          parity_count: 2,
-          entry_date: '2026-01-01',
-        })) // findOne — no current_stage: animal_register has no such column
-        .mockReturnValueOnce(found({
-          stage_id: 'st-wean',
-          stage_code: destination,
-          stage_name: 'Weaning',
-        })) // destStage
-        .mockReturnValueOnce(found({
-          stage_id: 'st-farrow',
-          stage_code: 'FARROWING',
-          stage_name: 'Farrowing',
-          min_days_before_move: 1,
-        })) // currentStage
-        .mockReturnValueOnce(found({
-          batch_id: 'batch-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', breed_id: 'breed-1',
-          animal_tracking: 'REGISTERED',
-        }))
-        .mockReturnValueOnce(found({
-          location_id: 'loc-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', farm_id: 'farm-1', parent_location_id: 'shed-1',
-          location_type: 'PEN',
-        }))
-        .mockReturnValueOnce(found({
-          location_id: 'farm-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', location_type: 'FARM',
-          parent_location_id: null, is_active: true,
-        }))
-        .mockReturnValueOnce(found({
-          breed_id: 'breed-1', tenant_id: 'tenant-123', company_id: 'comp-1',
-          nob_id: 'nob-1', lob_id: 'lob-1', location_id: 'farm-1', is_active: true,
-        }))
-        .mockReturnValueOnce(found({ animal_id: 'a-2', parity_count: 3 })); // findOne return
-
-      mockDbUpdate.mockReturnValue({
-        set: jest.fn((v: any) => {
-          captured = v;
-          return { where: jest.fn().mockResolvedValue({}) };
-        }),
-      });
-
-      await service.transitionStage(
+      expect(movementLog.stageEnteredOn).toHaveBeenCalledWith(
         'a-2',
-        { to_stage_id: 'st-wean', transition_date: '2026-06-01' },
         'tenant-123',
-        { userId: 'user-1' }
       );
-
-      expect(captured).not.toHaveProperty('parity_count');
     });
+
+    it.each(['WEANING', 'DRY_PERIOD', 'GESTATION', 'FLUSH'])(
+      'leaves parity alone when a sow moves out of farrowing to %s (it completes at weaning)',
+      async (destination) => {
+        let captured: any = null;
+        mockDbSelect
+          .mockReturnValueOnce(
+            found({
+              animal_id: 'a-2',
+              company_id: 'comp-1',
+              nob_id: 'nob-1',
+              lob_id: 'lob-1',
+              breed_id: 'breed-1',
+              animal_code: 'PIG-2026-0002',
+              is_active: true,
+              gender: 'F',
+              current_stage_id: 'st-farrow',
+              current_location_id: 'loc-1',
+              current_batch_id: 'batch-1',
+              parity_count: 2,
+              entry_date: '2026-01-01',
+            }),
+          ) // findOne — no current_stage: animal_register has no such column
+          .mockReturnValueOnce(
+            found({
+              stage_id: 'st-wean',
+              stage_code: destination,
+              stage_name: 'Weaning',
+            }),
+          ) // destStage
+          .mockReturnValueOnce(
+            found({
+              stage_id: 'st-farrow',
+              stage_code: 'FARROWING',
+              stage_name: 'Farrowing',
+              min_days_before_move: 1,
+            }),
+          ) // currentStage
+          .mockReturnValueOnce(
+            found({
+              batch_id: 'batch-1',
+              tenant_id: 'tenant-123',
+              company_id: 'comp-1',
+              nob_id: 'nob-1',
+              lob_id: 'lob-1',
+              farm_id: 'farm-1',
+              breed_id: 'breed-1',
+              animal_tracking: 'REGISTERED',
+            }),
+          )
+          .mockReturnValueOnce(
+            found({
+              location_id: 'loc-1',
+              tenant_id: 'tenant-123',
+              company_id: 'comp-1',
+              nob_id: 'nob-1',
+              lob_id: 'lob-1',
+              farm_id: 'farm-1',
+              parent_location_id: 'shed-1',
+              location_type: 'PEN',
+            }),
+          )
+          .mockReturnValueOnce(
+            found({
+              location_id: 'farm-1',
+              tenant_id: 'tenant-123',
+              company_id: 'comp-1',
+              nob_id: 'nob-1',
+              lob_id: 'lob-1',
+              location_type: 'FARM',
+              parent_location_id: null,
+              is_active: true,
+            }),
+          )
+          .mockReturnValueOnce(
+            found({
+              breed_id: 'breed-1',
+              tenant_id: 'tenant-123',
+              company_id: 'comp-1',
+              nob_id: 'nob-1',
+              lob_id: 'lob-1',
+              location_id: 'farm-1',
+              is_active: true,
+            }),
+          )
+          .mockReturnValueOnce(found({ animal_id: 'a-2', parity_count: 3 })); // findOne return
+
+        mockDbUpdate.mockReturnValue({
+          set: jest.fn((v: any) => {
+            captured = v;
+            return { where: jest.fn().mockResolvedValue({}) };
+          }),
+        });
+
+        await service.transitionStage(
+          'a-2',
+          { to_stage_id: 'st-wean', transition_date: '2026-06-01' },
+          'tenant-123',
+          { userId: 'user-1' },
+        );
+
+        expect(captured).not.toHaveProperty('parity_count');
+      },
+    );
 
     it('moves every selected animal in one bulk call', async () => {
       // Tail-enders left behind by a batch move are a routine group, not a
       // one-off: moving them meant opening the modal once per animal.
-      const single = jest.spyOn(service, 'transitionStage').mockResolvedValue({ animal_id: 'ok' } as any);
+      const single = jest
+        .spyOn(service, 'transitionStage')
+        .mockResolvedValue({ animal_id: 'ok' } as any);
 
       const result = await service.bulkTransitionStage(
-        { animal_ids: ['a-1', 'a-2', 'a-3'], to_stage_id: 'st-flush', transition_date: '2026-09-01' } as any,
+        {
+          animal_ids: ['a-1', 'a-2', 'a-3'],
+          to_stage_id: 'st-flush',
+          transition_date: '2026-09-01',
+        } as any,
         'tenant-123',
         { userId: 'user-1' },
       );
@@ -1571,13 +2755,20 @@ describe('AnimalService', () => {
 
     it('reports the animals it could not move without blocking the rest', async () => {
       // One animal short of its minimum days must not stop the others.
-      jest.spyOn(service, 'transitionStage')
+      jest
+        .spyOn(service, 'transitionStage')
         .mockResolvedValueOnce({ animal_id: 'a-1' } as any)
-        .mockRejectedValueOnce(new BadRequestException('Minimum duration of 90 days required'))
+        .mockRejectedValueOnce(
+          new BadRequestException('Minimum duration of 90 days required'),
+        )
         .mockResolvedValueOnce({ animal_id: 'a-3' } as any);
 
       const result = await service.bulkTransitionStage(
-        { animal_ids: ['a-1', 'a-2', 'a-3'], to_stage_id: 'st-flush', transition_date: '2026-09-01' } as any,
+        {
+          animal_ids: ['a-1', 'a-2', 'a-3'],
+          to_stage_id: 'st-flush',
+          transition_date: '2026-09-01',
+        } as any,
         'tenant-123',
         { userId: 'user-1' },
       );
@@ -1590,20 +2781,33 @@ describe('AnimalService', () => {
 
     it('rejects an empty selection rather than silently doing nothing', async () => {
       await expect(
-        service.bulkTransitionStage({ animal_ids: [], to_stage_id: 'st-flush', transition_date: '2026-09-01' } as any, 'tenant-123'),
+        service.bulkTransitionStage(
+          {
+            animal_ids: [],
+            to_stage_id: 'st-flush',
+            transition_date: '2026-09-01',
+          } as any,
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects transition of disposed animals', async () => {
-      mockDbSelect.mockReturnValueOnce(found({
-        animal_id: 'a-1',
-        animal_code: 'PIG-2026-0001',
-        is_active: false,
-        status: 'SOLD',
-      }));
+      mockDbSelect.mockReturnValueOnce(
+        found({
+          animal_id: 'a-1',
+          animal_code: 'PIG-2026-0001',
+          is_active: false,
+          status: 'SOLD',
+        }),
+      );
 
       await expect(
-        service.transitionStage('a-1', { to_stage_id: 'st-2', transition_date: '2026-03-01' }, 'tenant-123')
+        service.transitionStage(
+          'a-1',
+          { to_stage_id: 'st-2', transition_date: '2026-03-01' },
+          'tenant-123',
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });

@@ -18,11 +18,18 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
  * Anything that is not a kind (MEDICINE, VACCINE, a tenant's own code) keeps
  * the exact match it has always had.
  */
-export function itemKindCondition(itemType: string, tenantId: string, scope: ClsService | string | null, requestedCompany?: string): SQL {
+export function itemKindCondition(
+  itemType: string,
+  tenantId: string,
+  scope: ClsService | string | null,
+  requestedCompany?: string,
+): SQL {
   const asked = itemType.trim().toUpperCase();
   // Accept the retired public filter alias during rollout, but resolve it to
   // the canonical kind so the SQL includes migrated and legacy rows alike.
-  const kind = ITEM_KINDS.find((k) => k === asked) ?? (asked === 'LIVESTOCK' ? 'LIVING_ASSET' : undefined);
+  const kind =
+    ITEM_KINDS.find((k) => k === asked) ??
+    (asked === 'LIVESTOCK' ? 'LIVING_ASSET' : undefined);
   const exact = eq(schema.itemMaster.item_type, itemType);
   if (!kind) return exact;
 
@@ -34,7 +41,9 @@ export function itemKindCondition(itemType: string, tenantId: string, scope: Cls
     // Whole-word-ish: a name containing the fragment. "Feeder trough" would
     // pass this, which is why the API only reaches here for a type someone
     // actually chose for an item — and why itemKindOf is the stricter reader.
-    ...m.nameFragments.map((fragment) => like(sql`LOWER(${T.type_name})`, `%${fragment}%`)),
+    ...m.nameFragments.map((fragment) =>
+      like(sql`LOWER(${T.type_name})`, `%${fragment}%`),
+    ),
   )!;
 
   /**
@@ -47,7 +56,10 @@ export function itemKindCondition(itemType: string, tenantId: string, scope: Cls
    */
   const scopeConditions =
     typeof scope === 'string' || scope === null
-      ? [eq(T.tenant_id, tenantId), scope ? eq(T.company_id, scope) : sql`1 = 1`]
+      ? [
+          eq(T.tenant_id, tenantId),
+          scope ? eq(T.company_id, scope) : sql`1 = 1`,
+        ]
       : masterScopeConditions(scope, T, requestedCompany);
 
   const kindTypes = sql`(

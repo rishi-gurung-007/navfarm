@@ -20,10 +20,17 @@ const num = (v: unknown): number | null => {
 };
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
-export function kpiLimits(row: KpiLimitsInput): { average: number | null; lower: number | null; upper: number | null } {
+export function kpiLimits(row: KpiLimitsInput): {
+  average: number | null;
+  lower: number | null;
+  upper: number | null;
+} {
   const average = num(row.average_value);
   const tol = num(row.tolerance_pct);
-  const side = typeof row.tolerance_type === 'string' ? row.tolerance_type.toUpperCase() : '';
+  const side =
+    typeof row.tolerance_type === 'string'
+      ? row.tolerance_type.toUpperCase()
+      : '';
   let lower = num(row.lower_limit);
   let upper = num(row.upper_limit);
   if (average !== null && tol !== null) {

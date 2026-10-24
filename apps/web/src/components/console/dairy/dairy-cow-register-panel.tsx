@@ -1,29 +1,32 @@
-"use client";
+'use client';
 
-import { NA } from "@/utils/na";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
-import { Dialog } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Toast } from "@/components/ui/toast";
-import { StatRow, StatCard } from "@/components/ui/stat-row";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
-import { useLanguage } from "@/hooks/useLanguage";
-import { getActiveCompanyId, getActiveOperationalAreaId } from "@/hooks/useAuth";
-import { api } from "@/services/api-client";
+import { NA } from '@/utils/na';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, Search } from 'lucide-react';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Toast } from '@/components/ui/toast';
+import { StatRow, StatCard } from '@/components/ui/stat-row';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
+import { useLanguage } from '@/hooks/useLanguage';
+import {
+  getActiveCompanyId,
+  getActiveOperationalAreaId,
+} from '@/hooks/useAuth';
+import { api } from '@/services/api-client';
 
 type Row = Record<string, any>;
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** Animal statuses that mean "currently producing milk". */
-const MILKING_STATUSES = ["LACTATING", "ACTIVE"];
+const MILKING_STATUSES = ['LACTATING', 'ACTIVE'];
 
 /**
  * The dairy herd register.
@@ -46,48 +49,56 @@ export default function DairyCowRegisterPanel() {
   const [breeds, setBreeds] = useState<Row[]>([]);
   const [milkByAnimal, setMilkByAnimal] = useState<Record<string, Row>>({});
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState('');
 
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [breedFilter, setBreedFilter] = useState("ALL");
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [breedFilter, setBreedFilter] = useState('ALL');
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [formError, setFormError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const [form, setForm] = useState({
-    rfid_tag: "",
-    breed_id: "",
-    animal_type: "COW",
-    gender: "F",
-    dob: "",
-    entry_type: "PURCHASED_LOCAL",
+    rfid_tag: '',
+    breed_id: '',
+    animal_type: 'COW',
+    gender: 'F',
+    dob: '',
+    entry_type: 'PURCHASED_LOCAL',
     entry_date: today(),
     parity_count: 0,
-    acquisition_cost: "",
+    acquisition_cost: '',
   });
 
   const load = useCallback(async () => {
     if (!companyId) {
       setLoading(false);
-      setLoadError(t("dyNoCompany"));
+      setLoadError(t('dyNoCompany'));
       return;
     }
     setLoading(true);
-    setLoadError("");
+    setLoadError('');
     try {
-      const params = new URLSearchParams({ companyId, limit: "500" });
+      const params = new URLSearchParams({ companyId, limit: '500' });
       const [animalRes, breedRes, milkRes] = await Promise.all([
         api.get(`/animal?${params.toString()}`),
         api.get(`/breed?companyId=${companyId}&limit=200`).catch(() => []),
-        api.get(`/milk-production?company_id=${companyId}&log_date=${today()}`).catch(() => []),
+        api
+          .get(`/milk-production?company_id=${companyId}&log_date=${today()}`)
+          .catch(() => []),
       ]);
       const allAnimals = unwrap<Row[]>(animalRes) || [];
       // The register is area-scoped when an operational area is active, so a
       // dairy unit never shows another unit's herd.
-      setCows(areaId ? allAnimals.filter((a) => !a.operational_area_id || a.operational_area_id === areaId) : allAnimals);
+      setCows(
+        areaId
+          ? allAnimals.filter(
+              (a) => !a.operational_area_id || a.operational_area_id === areaId,
+            )
+          : allAnimals,
+      );
       setBreeds(unwrap<Row[]>(breedRes) || []);
       const perAnimal: Record<string, Row> = {};
       for (const m of unwrap<Row[]>(milkRes) || []) {
@@ -95,7 +106,7 @@ export default function DairyCowRegisterPanel() {
       }
       setMilkByAnimal(perAnimal);
     } catch (err: any) {
-      setLoadError(err?.message || t("dyFailedToLoadHerd"));
+      setLoadError(err?.message || t('dyFailedToLoadHerd'));
     } finally {
       setLoading(false);
     }
@@ -113,21 +124,27 @@ export default function DairyCowRegisterPanel() {
     return cows.filter((c) => {
       const matchesSearch =
         !q ||
-        (c.animal_code || "").toLowerCase().includes(q) ||
-        (c.rfid_tag || "").toLowerCase().includes(q);
-      const matchesStatus = statusFilter === "ALL" || c.status === statusFilter;
-      const matchesBreed = breedFilter === "ALL" || c.breed_id === breedFilter;
+        (c.animal_code || '').toLowerCase().includes(q) ||
+        (c.rfid_tag || '').toLowerCase().includes(q);
+      const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
+      const matchesBreed = breedFilter === 'ALL' || c.breed_id === breedFilter;
       return matchesSearch && matchesStatus && matchesBreed;
     });
   }, [cows, search, statusFilter, breedFilter]);
 
   const stats = useMemo(() => {
     const total = cows.length;
-    const milking = cows.filter((c) => MILKING_STATUSES.includes(c.status)).length;
-    const dry = cows.filter((c) => c.status === "DRY").length;
-    const pregnant = cows.filter((c) => c.status === "PREGNANT").length;
-    const yields = Object.values(milkByAnimal).map((m) => Number(m.quantity_litres || 0));
-    const avg = yields.length ? yields.reduce((a, b) => a + b, 0) / yields.length : null;
+    const milking = cows.filter((c) =>
+      MILKING_STATUSES.includes(c.status),
+    ).length;
+    const dry = cows.filter((c) => c.status === 'DRY').length;
+    const pregnant = cows.filter((c) => c.status === 'PREGNANT').length;
+    const yields = Object.values(milkByAnimal).map((m) =>
+      Number(m.quantity_litres || 0),
+    );
+    const avg = yields.length
+      ? yields.reduce((a, b) => a + b, 0) / yields.length
+      : null;
     const tagged = cows.filter((c) => c.rfid_tag).length;
     return { total, milking, dry, pregnant, avg, tagged };
   }, [cows, milkByAnimal]);
@@ -147,13 +164,13 @@ export default function DairyCowRegisterPanel() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError("");
-    if (!companyId) return setFormError(t("dyNoCompany"));
-    if (!form.breed_id) return setFormError(t("dyBreedRequired"));
+    setFormError('');
+    if (!companyId) return setFormError(t('dyNoCompany'));
+    if (!form.breed_id) return setFormError(t('dyBreedRequired'));
 
     const breed = breeds.find((b) => b.breed_id === form.breed_id);
     if (!breed?.nob_id || !breed?.lob_id) {
-      return setFormError(t("dyBreedMissingLob"));
+      return setFormError(t('dyBreedMissingLob'));
     }
 
     setSaving(true);
@@ -170,17 +187,27 @@ export default function DairyCowRegisterPanel() {
         ...(form.dob ? { dob: form.dob } : {}),
         ...(form.rfid_tag.trim() ? { rfid_tag: form.rfid_tag.trim() } : {}),
         ...(areaId ? { operational_area_id: areaId } : {}),
-        ...(form.parity_count ? { parity_count: Number(form.parity_count) } : {}),
-        ...(form.acquisition_cost ? { acquisition_cost: Number(form.acquisition_cost) } : {}),
+        ...(form.parity_count
+          ? { parity_count: Number(form.parity_count) }
+          : {}),
+        ...(form.acquisition_cost
+          ? { acquisition_cost: Number(form.acquisition_cost) }
+          : {}),
       });
       const created = unwrap<Row>(res);
       setShowAddModal(false);
-      setForm({ ...form, rfid_tag: "", dob: "", parity_count: 0, acquisition_cost: "" });
+      setForm({
+        ...form,
+        rfid_tag: '',
+        dob: '',
+        parity_count: 0,
+        acquisition_cost: '',
+      });
       await load();
-      setNotice(t("dyCowRegistered", { code: created?.animal_code || "" }));
-      setTimeout(() => setNotice(""), 4000);
+      setNotice(t('dyCowRegistered', { code: created?.animal_code || '' }));
+      setTimeout(() => setNotice(''), 4000);
     } catch (err: any) {
-      setFormError(err?.message || t("dyFailedToRegister"));
+      setFormError(err?.message || t('dyFailedToRegister'));
     } finally {
       setSaving(false);
     }
@@ -188,31 +215,41 @@ export default function DairyCowRegisterPanel() {
 
   return (
     <div className="space-y-6 text-[var(--text-primary)]">
-      <Toast variant="success" message={notice} onClose={() => setNotice("")} />
+      <Toast variant="success" message={notice} onClose={() => setNotice('')} />
 
       <StatRow columns={4}>
         <StatCard
-          label={t("dashTotalDairyHerd")}
+          label={t('dashTotalDairyHerd')}
           value={stats.total}
-          unit={t("btColHead")}
-          sub={stats.total ? t("dyRfidTagged", { pct: String(Math.round((stats.tagged / stats.total) * 100)) }) : undefined}
+          unit={t('btColHead')}
+          sub={
+            stats.total
+              ? t('dyRfidTagged', {
+                  pct: String(Math.round((stats.tagged / stats.total) * 100)),
+                })
+              : undefined
+          }
         />
         <StatCard
-          label={t("dyMilkingCows")}
+          label={t('dyMilkingCows')}
           value={stats.milking}
-          sub={t("dyActiveLactationStages")}
+          sub={t('dyActiveLactationStages')}
         />
         <StatCard
-          label={t("dyAvgYieldPerCow")}
+          label={t('dyAvgYieldPerCow')}
           value={stats.avg === null ? NA : `${stats.avg.toFixed(1)} L`}
-          sub={stats.avg === null ? t("dyNoYieldToday") : t("dyDailyParlorAverage")}
-          
+          sub={
+            stats.avg === null ? t('dyNoYieldToday') : t('dyDailyParlorAverage')
+          }
         />
         <StatCard
-          label={t("dyDryAndHeifers")}
+          label={t('dyDryAndHeifers')}
           value={stats.dry + stats.pregnant}
-          unit={t("btColHead")}
-          sub={t("dyDryPregnantSplit", { dry: String(stats.dry), pregnant: String(stats.pregnant) })}
+          unit={t('btColHead')}
+          sub={t('dyDryPregnantSplit', {
+            dry: String(stats.dry),
+            pregnant: String(stats.pregnant),
+          })}
         />
       </StatRow>
 
@@ -220,12 +257,15 @@ export default function DairyCowRegisterPanel() {
         <div className="flex flex-wrap items-center gap-2">
           <div
             className="flex items-center gap-2 rounded-[var(--radius-sm)] border px-3 py-1.5 text-xs"
-            style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+            style={{
+              backgroundColor: 'var(--surface)',
+              borderColor: 'var(--border)',
+            }}
           >
             <Search className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
             <input
               type="text"
-              placeholder={t("dyPhSearchCow")}
+              placeholder={t('dyPhSearchCow')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-44 bg-transparent text-xs font-medium outline-none"
@@ -237,11 +277,11 @@ export default function DairyCowRegisterPanel() {
             value={statusFilter}
             onChange={(val) => setStatusFilter(String(val))}
             options={[
-              { value: "ALL", label: t("baapAllStatuses") },
-              { value: "LACTATING", label: t("dyMilking") },
-              { value: "DRY", label: t("ctDryStatus") },
-              { value: "PREGNANT", label: t("dyPregnantHeifer") },
-              { value: "QUARANTINE", label: t("anpStatusQuarantine") },
+              { value: 'ALL', label: t('baapAllStatuses') },
+              { value: 'LACTATING', label: t('dyMilking') },
+              { value: 'DRY', label: t('ctDryStatus') },
+              { value: 'PREGNANT', label: t('dyPregnantHeifer') },
+              { value: 'QUARANTINE', label: t('anpStatusQuarantine') },
             ]}
             columnHeaders={false}
             triggerClassName="nf-input-sm min-w-[10rem] h-9"
@@ -255,71 +295,113 @@ export default function DairyCowRegisterPanel() {
             value={breedFilter}
             onChange={(val) => setBreedFilter(String(val))}
             options={[
-              { value: "ALL", label: t("dyAllBreeds") },
-              ...breeds.map((b) => ({ value: b.breed_id, label: b.breed_name })),
+              { value: 'ALL', label: t('dyAllBreeds') },
+              ...breeds.map((b) => ({
+                value: b.breed_id,
+                label: b.breed_name,
+              })),
             ]}
             columnHeaders={false}
             triggerClassName="nf-input-sm min-w-[10rem] h-9"
           />
         </div>
 
-        <Button onClick={() => { setFormError(""); setShowAddModal(true); }} className="gap-1.5">
-          <Plus className="h-4 w-4" />{t("dyRegisterDairyCow")}
+        <Button
+          onClick={() => {
+            setFormError('');
+            setShowAddModal(true);
+          }}
+          className="gap-1.5"
+        >
+          <Plus className="h-4 w-4" />
+          {t('dyRegisterDairyCow')}
         </Button>
       </div>
 
       {loading ? (
-        <LoadingState label={t("dyLoadingHerd")} />
+        <LoadingState label={t('dyLoadingHerd')} />
       ) : loadError ? (
         <ErrorState message={loadError} onRetry={load} />
       ) : filtered.length === 0 ? (
-        <EmptyState title={t("dyNoCows")} description={t("dyNoCowsHint")} />
+        <EmptyState title={t('dyNoCows')} description={t('dyNoCowsHint')} />
       ) : (
         <div
           className="overflow-hidden rounded-[var(--radius-lg)] border"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-xs">
               <thead>
                 <tr
                   className="border-b text-[11px] font-semibold uppercase text-[var(--text-secondary)]"
-                  style={{ backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" }}
+                  style={{
+                    backgroundColor: 'var(--surface-raised)',
+                    borderColor: 'var(--border)',
+                  }}
                 >
-                  <th className="p-3">{t("dyEarTagAndName")}</th>
-                  <th className="p-3">{t("rfmRfidTag")}</th>
-                  <th className="p-3">{t("dashBreedLabel")}</th>
-                  <th className="p-3 text-center">{t("dyLactNo")}</th>
-                  <th className="p-3 text-center">{t("dyDim")}</th>
-                  <th className="p-3 text-right">{t("dyDailyMilkL")}</th>
-                  <th className="p-3 text-right">{t("dyFatSnf")}</th>
-                  <th className="p-3 text-right">{t("btColStatus")}</th>
+                  <th className="p-3">{t('dyEarTagAndName')}</th>
+                  <th className="p-3">{t('rfmRfidTag')}</th>
+                  <th className="p-3">{t('dashBreedLabel')}</th>
+                  <th className="p-3 text-center">{t('dyLactNo')}</th>
+                  <th className="p-3 text-center">{t('dyDim')}</th>
+                  <th className="p-3 text-right">{t('dyDailyMilkL')}</th>
+                  <th className="p-3 text-right">{t('dyFatSnf')}</th>
+                  <th className="p-3 text-right">{t('btColStatus')}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y" style={{ borderColor: "var(--border)" }}>
+              <tbody
+                className="divide-y"
+                style={{ borderColor: 'var(--border)' }}
+              >
                 {filtered.map((cow) => {
                   const milk = milkByAnimal[cow.animal_id];
                   const dim = daysInMilk(cow);
                   return (
-                    <tr key={cow.animal_id} className="transition-colors hover:bg-[var(--surface-raised)]">
+                    <tr
+                      key={cow.animal_id}
+                      className="transition-colors hover:bg-[var(--surface-raised)]"
+                    >
                       <td className="p-3 font-semibold">
-                        <span className="font-mono text-xs font-bold text-[var(--accent)]">{cow.animal_code}</span>
+                        <span className="font-mono text-xs font-bold text-[var(--accent)]">
+                          {cow.animal_code}
+                        </span>
                         {/* The RFID tag is the animal's only tag; show it under the code. */}
                         {cow.rfid_tag && cow.rfid_tag !== cow.animal_code && (
-                          <p className="text-[10px] font-normal text-[var(--text-secondary)]">{cow.rfid_tag}</p>
+                          <p className="text-[10px] font-normal text-[var(--text-secondary)]">
+                            {cow.rfid_tag}
+                          </p>
                         )}
                       </td>
-                      <td className="p-3 font-mono text-[11px] text-[var(--text-secondary)]">{cow.rfid_tag || NA}</td>
-                      <td className="p-3">{cow.breed_name || breedName(cow.breed_id)}</td>
-                      <td className="p-3 text-center font-mono font-bold">{cow.parity_count || NA}</td>
-                      <td className="p-3 text-center font-mono">{dim === null ? NA : t("dyDaysShort", { n: String(dim) })}</td>
+                      <td className="p-3 font-mono text-[11px] text-[var(--text-secondary)]">
+                        {cow.rfid_tag || NA}
+                      </td>
+                      <td className="p-3">
+                        {cow.breed_name || breedName(cow.breed_id)}
+                      </td>
+                      <td className="p-3 text-center font-mono font-bold">
+                        {cow.parity_count || NA}
+                      </td>
+                      <td className="p-3 text-center font-mono">
+                        {dim === null
+                          ? NA
+                          : t('dyDaysShort', { n: String(dim) })}
+                      </td>
                       <td className="p-3 text-right font-mono font-bold text-[var(--accent)]">
-                        {milk ? `${Number(milk.quantity_litres).toFixed(1)} L` : NA}
+                        {milk
+                          ? `${Number(milk.quantity_litres).toFixed(1)} L`
+                          : NA}
                       </td>
                       <td className="p-3 text-right font-mono text-[11px]">
-                        {milk?.fat_pct ? `${Number(milk.fat_pct).toFixed(2)}% / ${Number(milk.snf_pct || 0).toFixed(2)}%` : NA}
+                        {milk?.fat_pct
+                          ? `${Number(milk.fat_pct).toFixed(2)}% / ${Number(milk.snf_pct || 0).toFixed(2)}%`
+                          : NA}
                       </td>
-                      <td className="p-3 text-right"><StatusBadge status={cow.status} /></td>
+                      <td className="p-3 text-right">
+                        <StatusBadge status={cow.status} />
+                      </td>
                     </tr>
                   );
                 })}
@@ -332,23 +414,29 @@ export default function DairyCowRegisterPanel() {
       <Dialog
         open={showAddModal}
         onClose={() => setShowAddModal(false)}
-        title={t("dyRegisterIndividualCow")}
-        description={t("dyRegisterCowDesc")}
+        title={t('dyRegisterIndividualCow')}
+        description={t('dyRegisterCowDesc')}
         maxWidth="md"
         footer={
           <div className="flex justify-end gap-2">
-            <Button onClick={submit as any} disabled={saving}>{saving ? t("asSaving") : t("dySaveDairyCow")}</Button>
+            <Button onClick={submit as any} disabled={saving}>
+              {saving ? t('asSaving') : t('dySaveDairyCow')}
+            </Button>
           </div>
         }
       >
         <form onSubmit={submit} className="space-y-4">
-          <Toast variant="danger" message={formError} onClose={() => setFormError("")} />
+          <Toast
+            variant="danger"
+            message={formError}
+            onClose={() => setFormError('')}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             {/* animal_code is issued by the number series on the server — the
                 old form let the user type one, which would collide. */}
             <label className="block">
-              <span className="nf-text-label">{t("dyRfidTag")}</span>
+              <span className="nf-text-label">{t('dyRfidTag')}</span>
               <input
                 type="text"
                 value={form.rfid_tag}
@@ -357,33 +445,38 @@ export default function DairyCowRegisterPanel() {
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("dashBreedLabel")}</span>
+              <span className="nf-text-label">{t('dashBreedLabel')}</span>
               <SearchableSelect
                 id="dairy-add-breed"
                 value={form.breed_id}
                 onChange={(val) => setForm({ ...form, breed_id: String(val) })}
-                options={breeds.map((b) => ({ value: b.breed_id, label: b.breed_name }))}
-                placeholder={t("dySelectBreed")}
+                options={breeds.map((b) => ({
+                  value: b.breed_id,
+                  label: b.breed_name,
+                }))}
+                placeholder={t('dySelectBreed')}
                 columnHeaders={false}
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("dyAnimalType")}</span>
+              <span className="nf-text-label">{t('dyAnimalType')}</span>
               <SearchableSelect
                 id="dairy-add-animal-type"
                 value={form.animal_type}
-                onChange={(val) => setForm({ ...form, animal_type: String(val) })}
+                onChange={(val) =>
+                  setForm({ ...form, animal_type: String(val) })
+                }
                 options={[
-                  { value: "COW", label: t("dyTypeCow") },
-                  { value: "HEIFER", label: t("dyTypeHeifer") },
-                  { value: "CALF", label: t("dyTypeCalf") },
-                  { value: "BULL", label: t("dyTypeBull") },
+                  { value: 'COW', label: t('dyTypeCow') },
+                  { value: 'HEIFER', label: t('dyTypeHeifer') },
+                  { value: 'CALF', label: t('dyTypeCalf') },
+                  { value: 'BULL', label: t('dyTypeBull') },
                 ]}
                 columnHeaders={false}
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("anpDateOfBirth")}</span>
+              <span className="nf-text-label">{t('anpDateOfBirth')}</span>
               <input
                 type="date"
                 value={form.dob}
@@ -392,37 +485,45 @@ export default function DairyCowRegisterPanel() {
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("dyLactationNo")}</span>
+              <span className="nf-text-label">{t('dyLactationNo')}</span>
               <input
                 type="number"
                 min={0}
                 value={form.parity_count}
-                onChange={(e) => setForm({ ...form, parity_count: Number(e.target.value) })}
+                onChange={(e) =>
+                  setForm({ ...form, parity_count: Number(e.target.value) })
+                }
                 className="nf-input w-full font-mono text-sm"
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("anpEntryDate")}</span>
+              <span className="nf-text-label">{t('anpEntryDate')}</span>
               <input
                 type="date"
                 value={form.entry_date}
-                onChange={(e) => setForm({ ...form, entry_date: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, entry_date: e.target.value })
+                }
                 className="nf-input w-full text-sm"
               />
             </label>
             <label className="block">
-              <span className="nf-text-label">{t("dyAcquisitionCost")}</span>
+              <span className="nf-text-label">{t('dyAcquisitionCost')}</span>
               <input
                 type="number"
                 min={0}
                 step="0.01"
                 value={form.acquisition_cost}
-                onChange={(e) => setForm({ ...form, acquisition_cost: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, acquisition_cost: e.target.value })
+                }
                 className="nf-input w-full font-mono text-sm"
               />
             </label>
           </div>
-          <p className="text-[11px] text-[var(--text-secondary)]">{t("dyCodeAutoAssigned")}</p>
+          <p className="text-[11px] text-[var(--text-secondary)]">
+            {t('dyCodeAutoAssigned')}
+          </p>
         </form>
       </Dialog>
     </div>

@@ -33,7 +33,8 @@
 export const MILL_MANAGER_ROLE = {
   role_code: 'MILL_MANAGER',
   role_name: 'Feed Mill Manager',
-  role_description: 'Feed mill: consolidates approved demand, loading sheets and dispatch, production output, mill capacity and the mill stock take',
+  role_description:
+    'Feed mill: consolidates approved demand, loading sheets and dispatch, production output, mill capacity and the mill stock take',
 } as const;
 
 export interface MillManagerGrant {
@@ -48,13 +49,43 @@ export interface MillManagerGrant {
 
 export const MILL_MANAGER_GRANTS: MillManagerGrant[] = [
   { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, approve: true },
-  { module: 'INVENTORY', resource: 'STOCK_TRANSFER', view: true, create: true, edit: true },
-  { module: 'INVENTORY', resource: 'STOCK_COUNT', view: true, create: true, edit: true, approve: true },
+  {
+    module: 'INVENTORY',
+    resource: 'STOCK_TRANSFER',
+    view: true,
+    create: true,
+    edit: true,
+  },
+  {
+    module: 'INVENTORY',
+    resource: 'STOCK_COUNT',
+    view: true,
+    create: true,
+    edit: true,
+    approve: true,
+  },
   { module: 'INVENTORY', resource: 'MILL_OUTPUT', view: true, create: true },
   { module: 'INVENTORY', resource: 'LEDGER', view: true },
-  { module: 'MASTER_DATA', resource: 'BIN_DIET_ASSIGNMENT', view: true, create: true, edit: true },
-  ...['FARM', 'FEED_FORMULA', 'ITEM', 'ITEM_CATEGORY', 'ITEM_TYPE', 'LOCATION', 'UOM', 'WAREHOUSE'].map(
-    (resource): MillManagerGrant => ({ module: 'MASTER_DATA', resource, view: true }),
-  ),
+  {
+    module: 'MASTER_DATA',
+    resource: 'BIN_DIET_ASSIGNMENT',
+    view: true,
+    create: true,
+    edit: true,
+  },
+  ...[
+    'FARM',
+    'FEED_FORMULA',
+    'ITEM',
+    'ITEM_CATEGORY',
+    'ITEM_TYPE',
+    'LOCATION',
+    'UOM',
+    'WAREHOUSE',
+  ].map((resource): MillManagerGrant => ({
+    module: 'MASTER_DATA',
+    resource,
+    view: true,
+  })),
   { module: 'COMPANY', resource: 'SETTINGS', view: true },
 ];

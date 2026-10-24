@@ -20,7 +20,11 @@ function redact(value: unknown, depth = 0): unknown {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
       if (typeof v === 'function') continue;
-      out[key] = SECRET_KEY.test(key) ? (v === null || v === undefined ? v ?? null : '[redacted]') : redact(v, depth + 1);
+      out[key] = SECRET_KEY.test(key)
+        ? v === null || v === undefined
+          ? (v ?? null)
+          : '[redacted]'
+        : redact(v, depth + 1);
     }
     return out;
   }
@@ -72,24 +76,32 @@ export class AuditLogService {
     const req = this.request();
     const requestUser = req?.user;
     const auditId = randomUUID();
-    const userAgent = params.userAgent || (typeof req?.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : null);
-    await dbClient
-      .insert(schema.auditLog)
-      .values({
-        audit_id: auditId,
-        tenant_id: params.tenantId || requestUser?.tenantId || this.cls.get<string>('tenantId'),
-        // A key passed as undefined means "no company" (a tenant template); only
-        // a caller that never mentions the company inherits the actor's.
-        company_id: params.companyId || ('companyId' in params ? null : requestUser?.companyId || null),
-        user_id: params.userId || requestUser?.userId || null,
-        action: params.action,
-        entity_name: params.entityName,
-        entity_id: params.entityId,
-        old_values: params.oldValues ? redact(params.oldValues) : null,
-        new_values: params.newValues ? redact(params.newValues) : null,
-        ip_address: params.ipAddress || (req?.ip ? String(req.ip).slice(0, 50) : null),
-        user_agent: userAgent,
-      });
+    const userAgent =
+      params.userAgent ||
+      (typeof req?.headers?.['user-agent'] === 'string'
+        ? req.headers['user-agent']
+        : null);
+    await dbClient.insert(schema.auditLog).values({
+      audit_id: auditId,
+      tenant_id:
+        params.tenantId ||
+        requestUser?.tenantId ||
+        this.cls.get<string>('tenantId'),
+      // A key passed as undefined means "no company" (a tenant template); only
+      // a caller that never mentions the company inherits the actor's.
+      company_id:
+        params.companyId ||
+        ('companyId' in params ? null : requestUser?.companyId || null),
+      user_id: params.userId || requestUser?.userId || null,
+      action: params.action,
+      entity_name: params.entityName,
+      entity_id: params.entityId,
+      old_values: params.oldValues ? redact(params.oldValues) : null,
+      new_values: params.newValues ? redact(params.newValues) : null,
+      ip_address:
+        params.ipAddress || (req?.ip ? String(req.ip).slice(0, 50) : null),
+      user_agent: userAgent,
+    });
 
     const [entry] = await dbClient
       .select()
@@ -120,7 +132,10 @@ export class AuditLogService {
     try {
       await this.log({
         tenantId: params.tenantId || (row?.tenant_id as string | undefined),
-        companyId: params.companyId || (row?.company_id as string | undefined) || undefined,
+        companyId:
+          params.companyId ||
+          (row?.company_id as string | undefined) ||
+          undefined,
         userId: params.userId,
         action: params.action,
         entityName: params.entityName,
@@ -129,7 +144,10 @@ export class AuditLogService {
         newValues: params.after ?? undefined,
       });
     } catch (e) {
-      console.error(`Failed to write ${params.action} audit row for ${params.entityName} ${params.entityId}:`, e);
+      console.error(
+        `Failed to write ${params.action} audit row for ${params.entityName} ${params.entityId}:`,
+        e,
+      );
     }
   }
 
@@ -138,8 +156,12 @@ export class AuditLogService {
    * entry already carries — the ledger stores only an id, and an admin reading
    * it should not have to look up which disease `9f3a…` was.
    */
-  private entityLabel(values: unknown): { code: string | null; name: string | null } {
-    if (!values || typeof values !== 'object' || Array.isArray(values)) return { code: null, name: null };
+  private entityLabel(values: unknown): {
+    code: string | null;
+    name: string | null;
+  } {
+    if (!values || typeof values !== 'object' || Array.isArray(values))
+      return { code: null, name: null };
     const row = values as Record<string, unknown>;
     const pick = (suffix: string) => {
       for (const [key, v] of Object.entries(row)) {
@@ -210,24 +232,48 @@ export class AuditLogService {
         user_type: schema.userMaster.user_type,
       })
       .from(schema.auditLog)
-      .leftJoin(schema.userMaster, eq(schema.auditLog.user_id, schema.userMaster.user_id))
-      .leftJoin(schema.companyMaster, eq(schema.auditLog.company_id, schema.companyMaster.company_id))
+      .leftJoin(
+        schema.userMaster,
+        eq(schema.auditLog.user_id, schema.userMaster.user_id),
+      )
+      .leftJoin(
+        schema.companyMaster,
+        eq(schema.auditLog.company_id, schema.companyMaster.company_id),
+      )
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(schema.auditLog.created_at))
       .limit(limit)
       .offset(offset);
 
     // The actor's assigned role names, read once for the page rather than per row.
-    const userIds = [...new Set(rows.map((r) => r.user_id).filter((id): id is string => Boolean(id)))];
+    const userIds = [
+      ...new Set(
+        rows.map((r) => r.user_id).filter((id): id is string => Boolean(id)),
+      ),
+    ];
     const rolesByUser = new Map<string, string[]>();
     if (userIds.length > 0) {
       const assignments = await this.db
-        .select({ user_id: schema.userRoleAssignment.user_id, role_name: schema.roleMaster.role_name })
+        .select({
+          user_id: schema.userRoleAssignment.user_id,
+          role_name: schema.roleMaster.role_name,
+        })
         .from(schema.userRoleAssignment)
-        .innerJoin(schema.roleMaster, eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id))
-        .where(and(inArray(schema.userRoleAssignment.user_id, userIds), eq(schema.userRoleAssignment.is_active, true)));
+        .innerJoin(
+          schema.roleMaster,
+          eq(schema.userRoleAssignment.role_id, schema.roleMaster.role_id),
+        )
+        .where(
+          and(
+            inArray(schema.userRoleAssignment.user_id, userIds),
+            eq(schema.userRoleAssignment.is_active, true),
+          ),
+        );
       for (const a of assignments) {
-        rolesByUser.set(a.user_id, [...(rolesByUser.get(a.user_id) ?? []), a.role_name]);
+        rolesByUser.set(a.user_id, [
+          ...(rolesByUser.get(a.user_id) ?? []),
+          a.role_name,
+        ]);
       }
     }
 
@@ -237,20 +283,40 @@ export class AuditLogService {
       const before = this.entityLabel(r.old_values);
       return {
         ...r,
-        user_roles: r.user_id ? rolesByUser.get(r.user_id) ?? [] : [],
+        user_roles: r.user_id ? (rolesByUser.get(r.user_id) ?? []) : [],
         entity_code: after.code ?? before.code,
         entity_label: after.name ?? before.name,
       };
     });
     // An entry that carries no handle (a POST records only the new status) takes the one another entry for the same
     // record carries — its CREATE names the document number.
-    const missing = [...new Set(mapped.filter((r) => !r.entity_code && !r.entity_label && r.entity_id).map((r) => r.entity_id as string))];
+    const missing = [
+      ...new Set(
+        mapped
+          .filter((r) => !r.entity_code && !r.entity_label && r.entity_id)
+          .map((r) => r.entity_id as string),
+      ),
+    ];
     if (missing.length) {
       const others = await this.db
-        .select({ entity_id: schema.auditLog.entity_id, old_values: schema.auditLog.old_values, new_values: schema.auditLog.new_values })
+        .select({
+          entity_id: schema.auditLog.entity_id,
+          old_values: schema.auditLog.old_values,
+          new_values: schema.auditLog.new_values,
+        })
         .from(schema.auditLog)
-        .where(and(inArray(schema.auditLog.entity_id, missing), ...(filters.tenantId ? [eq(schema.auditLog.tenant_id, filters.tenantId)] : [])));
-      const handle = new Map<string, { code: string | null; name: string | null }>();
+        .where(
+          and(
+            inArray(schema.auditLog.entity_id, missing),
+            ...(filters.tenantId
+              ? [eq(schema.auditLog.tenant_id, filters.tenantId)]
+              : []),
+          ),
+        );
+      const handle = new Map<
+        string,
+        { code: string | null; name: string | null }
+      >();
       for (const o of others) {
         if (!o.entity_id || handle.has(o.entity_id)) continue;
         const a = this.entityLabel(o.new_values);
@@ -260,7 +326,10 @@ export class AuditLogService {
         if (code || name) handle.set(o.entity_id, { code, name });
       }
       for (const r of mapped) {
-        const h = !r.entity_code && !r.entity_label && r.entity_id ? handle.get(r.entity_id) : undefined;
+        const h =
+          !r.entity_code && !r.entity_label && r.entity_id
+            ? handle.get(r.entity_id)
+            : undefined;
         if (h) {
           r.entity_code = h.code;
           r.entity_label = h.name;

@@ -62,11 +62,29 @@ import { FarmController } from '../modules/master-data/farm/farm.controller';
  * @UseGuards list via Nest's own GUARDS_METADATA.
  */
 const SCOPED = {
-  BatchController, BatchDailyDataController, BatchTransferController, SchedulerHeaderController, SystemSchedulerController,
-  ApprovalController, AnimalController, AnimalMedicationLogController, AnimalMovementLogController, BreedingController, PiggeryAnalyticsController, FarrowingReportController,
-  GoodsReceiptController, StockAdjustmentController, StockTransferController, MillOutputController,
-  InventoryLedgerController, FeedForecastController, FeedAlertController,
-  AlertController, MilkController, QcController, QrCodeController,
+  BatchController,
+  BatchDailyDataController,
+  BatchTransferController,
+  SchedulerHeaderController,
+  SystemSchedulerController,
+  ApprovalController,
+  AnimalController,
+  AnimalMedicationLogController,
+  AnimalMovementLogController,
+  BreedingController,
+  PiggeryAnalyticsController,
+  FarrowingReportController,
+  GoodsReceiptController,
+  StockAdjustmentController,
+  StockTransferController,
+  MillOutputController,
+  InventoryLedgerController,
+  FeedForecastController,
+  FeedAlertController,
+  AlertController,
+  MilkController,
+  QcController,
+  QrCodeController,
   BioAssetLedgerController,
   FinancialReportsController,
   BreedController,
@@ -86,63 +104,103 @@ const SCOPED = {
 
 const EXEMPT: Record<string, string> = {
   // production
-  'production/parameter/parameter.controller.ts': 'Master data, not farm-specific.',
-  'production/qc-parameter/qc-parameter.controller.ts': 'Master data, not farm-specific.',
+  'production/parameter/parameter.controller.ts':
+    'Master data, not farm-specific.',
+  'production/qc-parameter/qc-parameter.controller.ts':
+    'Master data, not farm-specific.',
   'production/stage/stage.controller.ts': 'Master data, not farm-specific.',
 
   // piggery / master-data breed family
   'master-data/breed/species.controller.ts': 'Master data, not farm-specific.',
 
   // master-data — not farm-scoped by decision (records are shared across a company's farms)
-  'master-data/activity/activity.controller.ts': 'Master data, not farm-specific.',
-  'master-data/customer/customer.controller.ts': 'Master data, not farm-specific.',
-  'master-data/disease/disease.controller.ts': 'Master data, not farm-specific.',
-  'master-data/feed-formula/feed-formula.controller.ts': 'Master data, not farm-specific.',
-  'master-data/item-attribute/item-attribute.controller.ts': 'Master data, not farm-specific.',
-  'master-data/item-category/item-category.controller.ts': 'Master data, not farm-specific.',
-  'master-data/item-template/item-template.controller.ts': 'Master data, not farm-specific.',
-  'master-data/item-type/item-type.controller.ts': 'Master data, not farm-specific.',
+  'master-data/activity/activity.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/customer/customer.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/disease/disease.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/feed-formula/feed-formula.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/item-attribute/item-attribute.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/item-category/item-category.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/item-template/item-template.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/item-type/item-type.controller.ts':
+    'Master data, not farm-specific.',
   'master-data/item/item.controller.ts': 'Master data, not farm-specific.',
-  'inventory/inventory-setup/inventory-setup.controller.ts': 'Company-level inventory setup, not farm-specific.',
-  'master-data/kpi-metric/kpi-metric.controller.ts': 'Master data, not farm-specific.',
-  'master-data/location-type/location-type.controller.ts': 'Master data, not farm-specific.',
-  'master-data/no-series/no-series.controller.ts': 'Master data, not farm-specific.',
+  'inventory/inventory-setup/inventory-setup.controller.ts':
+    'Company-level inventory setup, not farm-specific.',
+  'master-data/kpi-metric/kpi-metric.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/location-type/location-type.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/no-series/no-series.controller.ts':
+    'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
-  'master-data/reporting-period/reporting-period.controller.ts': 'Company master (Reporting Period Master, D20); periods are company-wide, not a farm\'s.',
-  'master-data/resource/resource.controller.ts': 'Master data, not farm-specific.',
-  'master-data/supplier/supplier.controller.ts': 'Master data, not farm-specific.',
+  'master-data/reporting-period/reporting-period.controller.ts':
+    "Company master (Reporting Period Master, D20); periods are company-wide, not a farm's.",
+  'master-data/resource/resource.controller.ts':
+    'Master data, not farm-specific.',
+  'master-data/supplier/supplier.controller.ts':
+    'Master data, not farm-specific.',
   'master-data/uom/uom.controller.ts': 'Master data, not farm-specific.',
 
   // core — identity and tenant administration
-  'core/auth/auth.controller.ts': 'Authentication flows (login, tokens), not farm records.',
-  'core/company/company.controller.ts': 'Tenant/company administration, not farm records.',
-  'core/operational-area/operational-area.controller.ts': 'Operational area master — a line of business across all of a company\'s farms, never a farm (operational_area_master.farm_id is never read for access).',
-  'core/role/role.controller.ts': 'Identity and tenant administration, not farm records.',
-  'core/tenant/tenant.controller.ts': 'Tenant administration, system-admin only, not farm records.',
-  'core/user-company/user-company.controller.ts': 'Identity and tenant administration (user-company assignment), not farm records.',
-  'core/user/user.controller.ts': 'Identity and tenant administration, not farm records.',
+  'core/auth/auth.controller.ts':
+    'Authentication flows (login, tokens), not farm records.',
+  'core/company/company.controller.ts':
+    'Tenant/company administration, not farm records.',
+  'core/operational-area/operational-area.controller.ts':
+    "Operational area master — a line of business across all of a company's farms, never a farm (operational_area_master.farm_id is never read for access).",
+  'core/role/role.controller.ts':
+    'Identity and tenant administration, not farm records.',
+  'core/tenant/tenant.controller.ts':
+    'Tenant administration, system-admin only, not farm records.',
+  'core/user-company/user-company.controller.ts':
+    'Identity and tenant administration (user-company assignment), not farm records.',
+  'core/user/user.controller.ts':
+    'Identity and tenant administration, not farm records.',
 
   // finance — company-level by decision (2026-09-14): finance is not farm-scoped.
   // financial-reports is the one exception, because it aggregates farm-specific
   // animal/batch data alongside company-level ledgers — it is SCOPED above.
-  'finance/cost-center/cost-center.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
-  'finance/gl-account/gl-account.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
-  'finance/gl-mapping/gl-mapping.controller.ts': 'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
-  'finance/journal/journal.controller.ts': 'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
-  'finance/expense/expense.controller.ts': 'Company-level finance expense documents; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/cost-center/cost-center.controller.ts':
+    'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/gl-account/gl-account.controller.ts':
+    'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/gl-mapping/gl-mapping.controller.ts':
+    'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/journal/journal.controller.ts':
+    'Company-level finance ledger; finance is not farm-scoped (decided 2026-09-14).',
+  'finance/expense/expense.controller.ts':
+    'Company-level finance expense documents; finance is not farm-scoped (decided 2026-09-14).',
 
   // system — tenant/system administration and reference data
-  'inventory/feed-scheduler/feed-scheduler.controller.ts': 'Admin-only test trigger and run log for the feed scheduler; jobs run each farm as system work, like the timer.',
-  'system/audit-log/audit-log.controller.ts': 'Tenant-wide audit trail across every module, not a farm record.',
-  'system/costing-method/costing-method.controller.ts': 'System-admin-only reference master data, not farm records.',
-  'system/country/country.controller.ts': 'System-admin-only reference master data, not farm records.',
-  'system/currency/currency.controller.ts': 'System reference master data, not farm records.',
-  'system/language/language.controller.ts': 'System-admin-only reference master data, not farm records.',
-  'system/notification/notification.controller.ts': 'Per-user notifications, not farm records.',
-  'system/number-series/number-series.controller.ts': 'Tenant-level document numbering configuration, not farm records.',
-  'system/plan/plan.controller.ts': 'System-admin-only subscription plan master data, not farm records.',
-  'system/setup-wizard/setup-wizard.controller.ts': 'Tenant setup/onboarding flow, not farm records.',
-  'system/timezone/timezone.controller.ts': 'System-admin-only reference master data, not farm records.',
+  'inventory/feed-scheduler/feed-scheduler.controller.ts':
+    'Admin-only test trigger and run log for the feed scheduler; jobs run each farm as system work, like the timer.',
+  'system/audit-log/audit-log.controller.ts':
+    'Tenant-wide audit trail across every module, not a farm record.',
+  'system/costing-method/costing-method.controller.ts':
+    'System-admin-only reference master data, not farm records.',
+  'system/country/country.controller.ts':
+    'System-admin-only reference master data, not farm records.',
+  'system/currency/currency.controller.ts':
+    'System reference master data, not farm records.',
+  'system/language/language.controller.ts':
+    'System-admin-only reference master data, not farm records.',
+  'system/notification/notification.controller.ts':
+    'Per-user notifications, not farm records.',
+  'system/number-series/number-series.controller.ts':
+    'Tenant-level document numbering configuration, not farm records.',
+  'system/plan/plan.controller.ts':
+    'System-admin-only subscription plan master data, not farm records.',
+  'system/setup-wizard/setup-wizard.controller.ts':
+    'Tenant setup/onboarding flow, not farm records.',
+  'system/timezone/timezone.controller.ts':
+    'System-admin-only reference master data, not farm records.',
 };
 
 const MODULES = join(__dirname, '../modules');
@@ -153,7 +211,8 @@ function controllerFiles(): string[] {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) walk(full);
-      else if (entry.endsWith('.controller.ts')) found.push(relative(MODULES, full));
+      else if (entry.endsWith('.controller.ts'))
+        found.push(relative(MODULES, full));
     }
   };
   walk(MODULES);
@@ -168,10 +227,14 @@ describe('Farm scope coverage', () => {
   // M9: metadata alone proves nothing if the guard that enforces the scope
   // isn't mounted. A @FarmScoped() controller without RolesGuard would still
   // pass the metadata check while reading every farm's records.
-  it.each(Object.entries(SCOPED))('%s mounts RolesGuard', (_name, controller) => {
-    const guards: unknown[] = Reflect.getMetadata(GUARDS_METADATA, controller) || [];
-    expect(guards).toContain(RolesGuard);
-  });
+  it.each(Object.entries(SCOPED))(
+    '%s mounts RolesGuard',
+    (_name, controller) => {
+      const guards: unknown[] =
+        Reflect.getMetadata(GUARDS_METADATA, controller) || [];
+      expect(guards).toContain(RolesGuard);
+    },
+  );
 
   it('classifies every controller under modules/ as scoped or exempt', () => {
     const scopedClassNames = new Set(Object.keys(SCOPED));

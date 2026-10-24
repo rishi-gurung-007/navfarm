@@ -1,16 +1,16 @@
-import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import MasterDataTable from "@/modules/master-data/MasterDataTable";
-import type { MasterDataConfig } from "@/modules/master-data/types";
-import { getConfig } from "@/modules/master-data/configs";
-import { LanguageProvider } from "@/hooks/useLanguage";
-import { ApiError } from "@/lib/api-client";
-import { api } from "@/services/api-client";
-import { showToast } from "@/components/ui/toast";
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import MasterDataTable from '@/modules/master-data/MasterDataTable';
+import type { MasterDataConfig } from '@/modules/master-data/types';
+import { getConfig } from '@/modules/master-data/configs';
+import { LanguageProvider } from '@/hooks/useLanguage';
+import { ApiError } from '@/lib/api-client';
+import { api } from '@/services/api-client';
+import { showToast } from '@/components/ui/toast';
 
 const mockHasPermission = jest.fn(() => true);
 
-jest.mock("@/services/api-client", () => ({
+jest.mock('@/services/api-client', () => ({
   api: {
     get: jest.fn(),
     post: jest.fn(),
@@ -20,470 +20,730 @@ jest.mock("@/services/api-client", () => ({
   },
 }));
 
-jest.mock("@/hooks/useAuth", () => ({
+jest.mock('@/hooks/useAuth', () => ({
   getActiveCompanyId: () => null,
-  getActiveWorkspaceScope: () => "TENANT",
+  getActiveWorkspaceScope: () => 'TENANT',
   getActiveOperationalAreaId: () => null,
   getActiveOperationalArea: () => null,
-  getStoredUser: () => ({ userType: "TENANT_ADMIN" }),
+  getStoredUser: () => ({ userType: 'TENANT_ADMIN' }),
   hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 
-jest.mock("@/hooks/useMediaQuery", () => ({ useIsDesktop: () => true }));
+jest.mock('@/hooks/useMediaQuery', () => ({ useIsDesktop: () => true }));
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = jest.fn();
 });
-const renderTable = (config: MasterDataConfig) => render(
-  <LanguageProvider>
-    <MasterDataTable config={config} />
-  </LanguageProvider>,
-);
+const renderTable = (config: MasterDataConfig) =>
+  render(
+    <LanguageProvider>
+      <MasterDataTable config={config} />
+    </LanguageProvider>,
+  );
 
 const stageConfig: MasterDataConfig = {
-  key: "stage",
-  label: "Stages",
-  singular: "Stage",
-  apiBase: "/stage",
-  idKey: "stage_id",
-  group: "Production",
-  columns: [{ key: "stage_code", label: "Code" }],
+  key: 'stage',
+  label: 'Stages',
+  singular: 'Stage',
+  apiBase: '/stage',
+  idKey: 'stage_id',
+  group: 'Production',
+  columns: [{ key: 'stage_code', label: 'Code' }],
   fields: [
-    { key: "stage_code", label: "Code", type: "text", createOnly: true, required: true },
     {
-      key: "transition_trigger",
-      label: "Transition Trigger",
-      type: "select",
+      key: 'stage_code',
+      label: 'Code',
+      type: 'text',
+      createOnly: true,
       required: true,
-      options: ["AUTO_BY_DAY", "MANUAL", "EVENT_BASED"].map((value) => ({ value, label: value.replaceAll("_", " ") })),
     },
     {
-      key: "auto_move_on_day",
-      label: "Auto-Move On Day",
-      type: "number",
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
-      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+      key: 'transition_trigger',
+      label: 'Transition Trigger',
+      type: 'select',
+      required: true,
+      options: ['AUTO_BY_DAY', 'MANUAL', 'EVENT_BASED'].map((value) => ({
+        value,
+        label: value.replaceAll('_', ' '),
+      })),
     },
     {
-      key: "next_stage_id",
-      label: "Next Stage",
-      type: "select-entity",
-      entityEndpoint: "/stage",
-      entityValueKey: "stage_id",
-      entityLabelKeys: ["stage_code"],
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "AUTO_BY_DAY" }] },
+      key: 'auto_move_on_day',
+      label: 'Auto-Move On Day',
+      type: 'number',
+      visibleWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'AUTO_BY_DAY' }],
+      },
+      requiredWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'AUTO_BY_DAY' }],
+      },
     },
     {
-      key: "alt_next_stage_id",
-      label: "Alternate Next Stage",
-      type: "select-entity",
-      entityEndpoint: "/stage",
-      entityValueKey: "stage_id",
-      entityLabelKeys: ["stage_code"],
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
-      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      key: 'next_stage_id',
+      label: 'Next Stage',
+      type: 'select-entity',
+      entityEndpoint: '/stage',
+      entityValueKey: 'stage_id',
+      entityLabelKeys: ['stage_code'],
+      visibleWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'AUTO_BY_DAY' }],
+      },
     },
     {
-      key: "alt_trigger_condition",
-      label: "Alternate Trigger Condition",
-      type: "select",
-      options: [{ value: "PREGNANCY_FAILED", label: "PREGNANCY FAILED" }],
-      visibleWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
-      requiredWhen: { anyOf: [{ key: "transition_trigger", equals: "EVENT_BASED" }] },
+      key: 'alt_next_stage_id',
+      label: 'Alternate Next Stage',
+      type: 'select-entity',
+      entityEndpoint: '/stage',
+      entityValueKey: 'stage_id',
+      entityLabelKeys: ['stage_code'],
+      visibleWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'EVENT_BASED' }],
+      },
+      requiredWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'EVENT_BASED' }],
+      },
+    },
+    {
+      key: 'alt_trigger_condition',
+      label: 'Alternate Trigger Condition',
+      type: 'select',
+      options: [{ value: 'PREGNANCY_FAILED', label: 'PREGNANCY FAILED' }],
+      visibleWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'EVENT_BASED' }],
+      },
+      requiredWhen: {
+        anyOf: [{ key: 'transition_trigger', equals: 'EVENT_BASED' }],
+      },
     },
   ],
 };
 
 function chooseStaticOption(field: string, option: string) {
-  fireEvent.click(screen.getByRole("button", { name: field }));
-  fireEvent.click(screen.getByRole("option", { name: option }));
+  fireEvent.click(screen.getByRole('button', { name: field }));
+  fireEvent.click(screen.getByRole('option', { name: option }));
 }
 
 function expectStageTransitionFields(enabled: string[]) {
-  const fields = ["Auto-Move On Day", "Next Stage", "Alternate Next Stage", "Alternate Trigger Condition"];
+  const fields = [
+    'Auto-Move On Day',
+    'Next Stage',
+    'Alternate Next Stage',
+    'Alternate Trigger Condition',
+  ];
   for (const name of fields) {
-    const role = name === "Auto-Move On Day" ? "textbox" : "button";
-    expect((screen.getByRole(role, { name }) as HTMLInputElement | HTMLButtonElement).disabled).toBe(enabled.includes(name) ? false : true);
+    const role = name === 'Auto-Move On Day' ? 'textbox' : 'button';
+    expect(
+      (screen.getByRole(role, { name }) as HTMLInputElement | HTMLButtonElement)
+        .disabled,
+    ).toBe(enabled.includes(name) ? false : true);
   }
 }
 
-describe("master-data edit fields", () => {
+describe('master-data edit fields', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockHasPermission.mockReturnValue(true);
   });
 
-  it("shows create-only fields disabled, keeps mutable fields editable, and never exposes hideInForm fields", async () => {
+  it('shows create-only fields disabled, keeps mutable fields editable, and never exposes hideInForm fields', async () => {
     const config: MasterDataConfig = {
-      key: "test-edit-fields",
-      label: "Test Masters",
-      singular: "Test Master",
-      apiBase: "/test-masters",
-      idKey: "test_id",
-      group: "Test",
-      columns: [{ key: "immutable_code", label: "Code" }],
+      key: 'test-edit-fields',
+      label: 'Test Masters',
+      singular: 'Test Master',
+      apiBase: '/test-masters',
+      idKey: 'test_id',
+      group: 'Test',
+      columns: [{ key: 'immutable_code', label: 'Code' }],
       fields: [
-        { key: "immutable_code", label: "Code", type: "text", createOnly: true, required: true },
-        { key: "mutable_name", label: "Name", type: "text", required: true },
         {
-          key: "conditional_note",
-          label: "Conditional Note",
-          type: "text",
-          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "Editable name" }] },
+          key: 'immutable_code',
+          label: 'Code',
+          type: 'text',
+          createOnly: true,
+          required: true,
+        },
+        { key: 'mutable_name', label: 'Name', type: 'text', required: true },
+        {
+          key: 'conditional_note',
+          label: 'Conditional Note',
+          type: 'text',
+          visibleWhen: {
+            anyOf: [{ key: 'mutable_name', equals: 'Editable name' }],
+          },
         },
         {
-          key: "conditional_note",
-          label: "Conditional Note",
-          type: "text",
-          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "another value" }] },
+          key: 'conditional_note',
+          label: 'Conditional Note',
+          type: 'text',
+          visibleWhen: {
+            anyOf: [{ key: 'mutable_name', equals: 'another value' }],
+          },
         },
         {
-          key: "unmet_field",
-          label: "Unmet Conditional Field",
-          type: "text",
-          visibleWhen: { anyOf: [{ key: "mutable_name", equals: "different" }] },
+          key: 'unmet_field',
+          label: 'Unmet Conditional Field',
+          type: 'text',
+          visibleWhen: {
+            anyOf: [{ key: 'mutable_name', equals: 'different' }],
+          },
         },
-        { key: "internal_value", label: "Internal Value", type: "text", hideInForm: true },
+        {
+          key: 'internal_value',
+          label: 'Internal Value',
+          type: 'text',
+          hideInForm: true,
+        },
       ],
     };
     (api.get as jest.Mock).mockResolvedValue([
       {
-        test_id: "test-1",
-        immutable_code: "LOCKED-001",
-        mutable_name: "Editable name",
-        conditional_note: "Still visible on edit",
-        internal_value: "never show this",
+        test_id: 'test-1',
+        immutable_code: 'LOCKED-001',
+        mutable_name: 'Editable name',
+        conditional_note: 'Still visible on edit',
+        internal_value: 'never show this',
         is_active: true,
       },
     ]);
 
     renderTable(config);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for LOCKED-001" }));
-    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for LOCKED-001' }),
+    );
+    fireEvent.click(await screen.findByText('Edit'));
 
-    const code = await screen.findByRole("textbox", { name: "Code" });
-    expect((code as HTMLInputElement).value).toBe("LOCKED-001");
+    const code = await screen.findByRole('textbox', { name: 'Code' });
+    expect((code as HTMLInputElement).value).toBe('LOCKED-001');
     expect((code as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).disabled).toBe(false);
-    expect((screen.getByRole("textbox", { name: "Conditional Note" }) as HTMLInputElement).disabled).toBe(false);
-    expect(screen.getAllByRole("textbox", { name: "Conditional Note" })).toHaveLength(1);
-    expect(screen.queryByRole("textbox", { name: "Unmet Conditional Field" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Internal Value" })).toBeNull();
+    expect(
+      (screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole('textbox', {
+          name: 'Conditional Note',
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      screen.getAllByRole('textbox', { name: 'Conditional Note' }),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole('textbox', { name: 'Unmet Conditional Field' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Internal Value' }),
+    ).toBeNull();
   });
 
-  it("keeps a reviewed reporting-period draft inactive when its fields are edited", async () => {
+  it('keeps a reviewed reporting-period draft inactive when its fields are edited', async () => {
     const config: MasterDataConfig = {
-      key: "reporting-period",
-      label: "Reporting Periods",
-      singular: "Reporting Period",
-      apiBase: "/reporting-period",
-      idKey: "period_id",
-      group: "Settings",
+      key: 'reporting-period',
+      label: 'Reporting Periods',
+      singular: 'Reporting Period',
+      apiBase: '/reporting-period',
+      idKey: 'period_id',
+      group: 'Settings',
       draftLifecycle: {
-        activatePath: "activate",
-        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+        activatePath: 'activate',
+        approvePermission: {
+          moduleCode: 'MASTER_DATA',
+          resource: 'REPORTING_PERIOD',
+        },
       },
-      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
+      columns: [
+        { key: 'period_code', label: 'Code' },
+        { key: 'status', label: 'Status' },
+      ],
       fields: [
-        { key: "period_code", label: "Code", type: "text", createOnly: true, required: true },
-        { key: "start_date", label: "Start Date", type: "date", required: true },
-        { key: "end_date", label: "End Date", type: "date", required: true },
+        {
+          key: 'period_code',
+          label: 'Code',
+          type: 'text',
+          createOnly: true,
+          required: true,
+        },
+        {
+          key: 'start_date',
+          label: 'Start Date',
+          type: 'date',
+          required: true,
+        },
+        { key: 'end_date', label: 'End Date', type: 'date', required: true },
       ],
     };
-    (api.get as jest.Mock).mockResolvedValue([{
-      period_id: "period-1", period_code: "2026-09", start_date: "2026-08-30", end_date: "2026-09-26",
-      status: "DRAFT", is_active: false,
-    }]);
+    (api.get as jest.Mock).mockResolvedValue([
+      {
+        period_id: 'period-1',
+        period_code: '2026-09',
+        start_date: '2026-08-30',
+        end_date: '2026-09-26',
+        status: 'DRAFT',
+        is_active: false,
+      },
+    ]);
     (api.put as jest.Mock).mockResolvedValue({});
 
     renderTable(config);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
-    fireEvent.click(await screen.findByText("Edit"));
-    fireEvent.change(await screen.findByLabelText("Start Date"), { target: { value: "2026-08-23" } });
-    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for 2026-09' }),
+    );
+    fireEvent.click(await screen.findByText('Edit'));
+    fireEvent.change(await screen.findByLabelText('Start Date'), {
+      target: { value: '2026-08-23' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
 
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
-      "/reporting-period/period-1",
-      expect.not.objectContaining({ status: "ACTIVE", is_active: true }),
-    ));
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith(
+        '/reporting-period/period-1',
+        expect.not.objectContaining({ status: 'ACTIVE', is_active: true }),
+      ),
+    );
   });
 
-  it("activates a reviewed reporting-period draft through the dedicated action", async () => {
+  it('activates a reviewed reporting-period draft through the dedicated action', async () => {
     const config: MasterDataConfig = {
-      key: "reporting-period",
-      label: "Reporting Periods",
-      singular: "Reporting Period",
-      apiBase: "/reporting-period",
-      idKey: "period_id",
-      group: "Settings",
+      key: 'reporting-period',
+      label: 'Reporting Periods',
+      singular: 'Reporting Period',
+      apiBase: '/reporting-period',
+      idKey: 'period_id',
+      group: 'Settings',
       draftLifecycle: {
-        activatePath: "activate",
-        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+        activatePath: 'activate',
+        approvePermission: {
+          moduleCode: 'MASTER_DATA',
+          resource: 'REPORTING_PERIOD',
+        },
       },
-      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
-      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+      columns: [
+        { key: 'period_code', label: 'Code' },
+        { key: 'status', label: 'Status' },
+      ],
+      fields: [
+        {
+          key: 'period_code',
+          label: 'Code',
+          type: 'text',
+          createOnly: true,
+          required: true,
+        },
+      ],
     };
-    (api.get as jest.Mock).mockResolvedValue([{
-      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
-    }]);
+    (api.get as jest.Mock).mockResolvedValue([
+      {
+        period_id: 'period-1',
+        period_code: '2026-09',
+        status: 'DRAFT',
+        is_active: false,
+      },
+    ]);
     (api.patch as jest.Mock).mockResolvedValue({});
 
     renderTable(config);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
-    fireEvent.click(await screen.findByText("Activate"));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for 2026-09' }),
+    );
+    fireEvent.click(await screen.findByText('Activate'));
 
-    await waitFor(() => expect(api.patch).toHaveBeenCalledWith("/reporting-period/period-1/activate"));
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith(
+        '/reporting-period/period-1/activate',
+      ),
+    );
   });
 
-  it("hides Activate from a draft editor without reporting-period approval authority", async () => {
+  it('hides Activate from a draft editor without reporting-period approval authority', async () => {
     const config: MasterDataConfig = {
-      key: "reporting-period",
-      label: "Reporting Periods",
-      singular: "Reporting Period",
-      apiBase: "/reporting-period",
-      idKey: "period_id",
-      group: "Settings",
+      key: 'reporting-period',
+      label: 'Reporting Periods',
+      singular: 'Reporting Period',
+      apiBase: '/reporting-period',
+      idKey: 'period_id',
+      group: 'Settings',
       draftLifecycle: {
-        activatePath: "activate",
-        approvePermission: { moduleCode: "MASTER_DATA", resource: "REPORTING_PERIOD" },
+        activatePath: 'activate',
+        approvePermission: {
+          moduleCode: 'MASTER_DATA',
+          resource: 'REPORTING_PERIOD',
+        },
       },
-      columns: [{ key: "period_code", label: "Code" }, { key: "status", label: "Status" }],
-      fields: [{ key: "period_code", label: "Code", type: "text", createOnly: true, required: true }],
+      columns: [
+        { key: 'period_code', label: 'Code' },
+        { key: 'status', label: 'Status' },
+      ],
+      fields: [
+        {
+          key: 'period_code',
+          label: 'Code',
+          type: 'text',
+          createOnly: true,
+          required: true,
+        },
+      ],
     };
-    mockHasPermission.mockImplementation((_user, _module, _resource, action) => action !== "can_approve");
-    (api.get as jest.Mock).mockResolvedValue([{
-      period_id: "period-1", period_code: "2026-09", status: "DRAFT", is_active: false,
-    }]);
+    mockHasPermission.mockImplementation(
+      (_user, _module, _resource, action) => action !== 'can_approve',
+    );
+    (api.get as jest.Mock).mockResolvedValue([
+      {
+        period_id: 'period-1',
+        period_code: '2026-09',
+        status: 'DRAFT',
+        is_active: false,
+      },
+    ]);
 
     renderTable(config);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for 2026-09" }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for 2026-09' }),
+    );
 
-    expect(await screen.findByText("Edit")).toBeTruthy();
-    expect(screen.queryByText("Activate")).toBeNull();
+    expect(await screen.findByText('Edit')).toBeTruthy();
+    expect(screen.queryByText('Activate')).toBeNull();
   });
 
-  it("shows every Stage transition field on create and only enables fields relevant to the selected trigger", async () => {
+  it('shows every Stage transition field on create and only enables fields relevant to the selected trigger', async () => {
     (api.get as jest.Mock).mockResolvedValue([]);
 
     renderTable(stageConfig);
-    fireEvent.click(await screen.findByRole("button", { name: "Add Stage" }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Stage' }));
 
     expectStageTransitionFields([]);
 
-    chooseStaticOption("Transition Trigger", "AUTO BY DAY");
-    expectStageTransitionFields(["Auto-Move On Day", "Next Stage"]);
+    chooseStaticOption('Transition Trigger', 'AUTO BY DAY');
+    expectStageTransitionFields(['Auto-Move On Day', 'Next Stage']);
 
-    chooseStaticOption("Transition Trigger", "EVENT BASED");
-    expectStageTransitionFields(["Alternate Next Stage", "Alternate Trigger Condition"]);
+    chooseStaticOption('Transition Trigger', 'EVENT BASED');
+    expectStageTransitionFields([
+      'Alternate Next Stage',
+      'Alternate Trigger Condition',
+    ]);
 
-    chooseStaticOption("Transition Trigger", "MANUAL");
+    chooseStaticOption('Transition Trigger', 'MANUAL');
     expectStageTransitionFields([]);
   });
 
-  it("keeps every Stage transition field and its stored value on edit while disabling irrelevant fields", async () => {
+  it('keeps every Stage transition field and its stored value on edit while disabling irrelevant fields', async () => {
     (api.get as jest.Mock).mockResolvedValue([
       {
-        stage_id: "stage-1",
-        stage_code: "WEANER",
-        transition_trigger: "AUTO_BY_DAY",
+        stage_id: 'stage-1',
+        stage_code: 'WEANER',
+        transition_trigger: 'AUTO_BY_DAY',
         auto_move_on_day: 42,
-        next_stage_id: "stage-2",
-        alt_next_stage_id: "stage-3",
-        alt_trigger_condition: "PREGNANCY_FAILED",
+        next_stage_id: 'stage-2',
+        alt_next_stage_id: 'stage-3',
+        alt_trigger_condition: 'PREGNANCY_FAILED',
         is_active: true,
       },
-      { stage_id: "stage-2", stage_code: "GROWER", is_active: true },
-      { stage_id: "stage-3", stage_code: "RECOVERY", is_active: true },
+      { stage_id: 'stage-2', stage_code: 'GROWER', is_active: true },
+      { stage_id: 'stage-3', stage_code: 'RECOVERY', is_active: true },
     ]);
 
     renderTable(stageConfig);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for WEANER" }));
-    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for WEANER' }),
+    );
+    fireEvent.click(await screen.findByText('Edit'));
 
-    expectStageTransitionFields(["Auto-Move On Day", "Next Stage"]);
-    expect((screen.getByRole("textbox", { name: "Auto-Move On Day" }) as HTMLInputElement).value).toBe("42");
+    expectStageTransitionFields(['Auto-Move On Day', 'Next Stage']);
+    expect(
+      (
+        screen.getByRole('textbox', {
+          name: 'Auto-Move On Day',
+        }) as HTMLInputElement
+      ).value,
+    ).toBe('42');
 
-    chooseStaticOption("Transition Trigger", "EVENT BASED");
-    expectStageTransitionFields(["Alternate Next Stage", "Alternate Trigger Condition"]);
-    expect((screen.getByRole("textbox", { name: "Auto-Move On Day" }) as HTMLInputElement).value).toBe("42");
+    chooseStaticOption('Transition Trigger', 'EVENT BASED');
+    expectStageTransitionFields([
+      'Alternate Next Stage',
+      'Alternate Trigger Condition',
+    ]);
+    expect(
+      (
+        screen.getByRole('textbox', {
+          name: 'Auto-Move On Day',
+        }) as HTMLInputElement
+      ).value,
+    ).toBe('42');
   });
 
   it("keeps creation open and shows the API's refusal as a toast when a manually entered code conflicts", async () => {
-    const toastError = jest.spyOn(showToast, "error");
+    const toastError = jest.spyOn(showToast, 'error');
     const config: MasterDataConfig = {
-      key: "breed",
-      label: "Test Breeds",
-      singular: "Test Breed",
-      apiBase: "/test-breeds",
-      idKey: "breed_id",
-      group: "Test",
-      columns: [{ key: "breed_code", label: "Code" }],
+      key: 'breed',
+      label: 'Test Breeds',
+      singular: 'Test Breed',
+      apiBase: '/test-breeds',
+      idKey: 'breed_id',
+      group: 'Test',
+      columns: [{ key: 'breed_code', label: 'Code' }],
       fields: [
-        { key: "breed_code", label: "Code", type: "text", required: true, createOnly: true },
-        { key: "breed_name", label: "Name", type: "text", required: true },
+        {
+          key: 'breed_code',
+          label: 'Code',
+          type: 'text',
+          required: true,
+          createOnly: true,
+        },
+        { key: 'breed_name', label: 'Name', type: 'text', required: true },
       ],
     };
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url.startsWith("/no-series/preview-by-master")) {
-        return Promise.resolve({ data: { generated: true, allowManual: true, preview: "BREED-001" } });
+      if (url.startsWith('/no-series/preview-by-master')) {
+        return Promise.resolve({
+          data: { generated: true, allowManual: true, preview: 'BREED-001' },
+        });
       }
       return Promise.resolve([]);
     });
-    (api.post as jest.Mock).mockRejectedValue(new ApiError(
-      "Breed code 'BREED-EXISTING' already exists for Large White.",
-      409,
-      { error: { message: "Breed code 'BREED-EXISTING' already exists for Large White." } },
-    ));
+    (api.post as jest.Mock).mockRejectedValue(
+      new ApiError(
+        "Breed code 'BREED-EXISTING' already exists for Large White.",
+        409,
+        {
+          error: {
+            message:
+              "Breed code 'BREED-EXISTING' already exists for Large White.",
+          },
+        },
+      ),
+    );
 
     renderTable(config);
-    fireEvent.click(await screen.findByRole("button", { name: "Add Test Breed" }));
-    const code = await screen.findByRole("textbox", { name: "Code" });
-    await waitFor(() => expect((code as HTMLInputElement).value).toBe("BREED-001"));
-    fireEvent.change(code, { target: { value: "BREED-EXISTING" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "New breed" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add Test Breed' }),
+    );
+    const code = await screen.findByRole('textbox', { name: 'Code' });
+    await waitFor(() =>
+      expect((code as HTMLInputElement).value).toBe('BREED-001'),
+    );
+    fireEvent.change(code, { target: { value: 'BREED-EXISTING' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'New breed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     // A toast, like every other refusal, with the API's own words. The dialog this replaced
     // was titled "Code already exists" for any 409, whatever it was about.
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Breed code 'BREED-EXISTING' already exists for Large White."));
-    expect(screen.queryByRole("dialog", { name: "Code already exists" })).toBeNull();
-    expect((screen.getByRole("textbox", { name: "Code" }) as HTMLInputElement).value).toBe("BREED-EXISTING");
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Breed code 'BREED-EXISTING' already exists for Large White.",
+      ),
+    );
+    expect(
+      screen.queryByRole('dialog', { name: 'Code already exists' }),
+    ).toBeNull();
+    expect(
+      (screen.getByRole('textbox', { name: 'Code' }) as HTMLInputElement).value,
+    ).toBe('BREED-EXISTING');
   });
 
-  it("shows only type-relevant fields when editing a location (e.g. FARM hides MILL, BIN, and SILO fields)", async () => {
-    const locationConfig = getConfig("location")!;
+  it('shows only type-relevant fields when editing a location (e.g. FARM hides MILL, BIN, and SILO fields)', async () => {
+    const locationConfig = getConfig('location')!;
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url.startsWith("/location-type")) {
+      if (url.startsWith('/location-type')) {
         return Promise.resolve([
-          { type_code: "FARM", type_name: "Farm" },
-          { type_code: "MILL", type_name: "Feed Mill" },
-          { type_code: "SILO", type_name: "Silo" },
-          { type_code: "BIN", type_name: "Bin" },
+          { type_code: 'FARM', type_name: 'Farm' },
+          { type_code: 'MILL', type_name: 'Feed Mill' },
+          { type_code: 'SILO', type_name: 'Silo' },
+          { type_code: 'BIN', type_name: 'Bin' },
         ]);
       }
       return Promise.resolve([
         {
-          location_id: "loc-farm-1",
-          location_code: "LEA100",
-          location_name: "LEARIG FARM",
-          location_type: "FARM",
-          location_address: "Learig Farm, Arcturus",
-          gps_latitude: "-17.82722000",
-          gps_longitude: "30.99755000",
+          location_id: 'loc-farm-1',
+          location_code: 'LEA100',
+          location_name: 'LEARIG FARM',
+          location_type: 'FARM',
+          location_address: 'Learig Farm, Arcturus',
+          gps_latitude: '-17.82722000',
+          gps_longitude: '30.99755000',
           is_active: true,
         },
       ]);
     });
 
     renderTable(locationConfig);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for LEA100" }));
-    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Actions for LEA100' }),
+    );
+    fireEvent.click(await screen.findByText('Edit'));
 
     // Farm fields are visible
-    expect(await screen.findByRole("textbox", { name: "Location Address" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Latitude" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Longitude" })).toBeTruthy();
+    expect(
+      await screen.findByRole('textbox', { name: 'Location Address' }),
+    ).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Latitude' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Longitude' })).toBeTruthy();
 
     // MILL, BIN, and SILO fields are NOT visible on a Farm edit
-    expect(screen.queryByRole("textbox", { name: "Daily Capacity TON" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Hourly Capacity TON" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Bulk Daily Allocation TON" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Bagged Daily Allocation TON" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Bin Capacity TON" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Feed Type" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Silo Capacity" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Silo Capacity UOM" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Below Feed Level KG" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Above Threshold KG" })).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Daily Capacity TON' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Hourly Capacity TON' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Bulk Daily Allocation TON' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Bagged Daily Allocation TON' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Bin Capacity TON' }),
+    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Feed Type' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Silo Capacity' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Silo Capacity UOM' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Below Feed Level KG' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Above Threshold KG' }),
+    ).toBeNull();
   });
 
-  it("does not show SILO computed fields in the edit form when creation does not ask for them", async () => {
-    const locationConfig = getConfig("location")!;
+  it('does not show SILO computed fields in the edit form when creation does not ask for them', async () => {
+    const locationConfig = getConfig('location')!;
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url.startsWith("/location-type")) {
+      if (url.startsWith('/location-type')) {
         return Promise.resolve([
-          { type_code: "FARM", type_name: "Farm" },
-          { type_code: "SILO", type_name: "Silo" },
+          { type_code: 'FARM', type_name: 'Farm' },
+          { type_code: 'SILO', type_name: 'Silo' },
         ]);
       }
       return Promise.resolve([
         {
-          location_id: "loc-silo-1",
-          location_code: "LEA100/SILO-001",
-          location_name: "Feed Silo 1",
-          location_type: "SILO",
-          storage_type: "SILO",
-          parent_location_id: "farm-1",
+          location_id: 'loc-silo-1',
+          location_code: 'LEA100/SILO-001',
+          location_name: 'Feed Silo 1',
+          location_type: 'SILO',
+          storage_type: 'SILO',
+          parent_location_id: 'farm-1',
           silo_capacity_kg: 30000,
-          silo_capacity_uom: "KG",
+          silo_capacity_uom: 'KG',
           silo_reorder_days: 2,
           low_level_kg: 6000,
           high_level_kg: 27000,
-          silo_feed_type: "BULK",
+          silo_feed_type: 'BULK',
           attached_sheds: [],
-          silo_feed_item: "FEED-001",
+          silo_feed_item: 'FEED-001',
           available_stock_kg: 12000,
           system_balance_kg: 12000,
           last_approved_count_kg: 12000,
-          last_approved_count_at: "2026-10-01",
-          last_feed_receipt_date: "2026-10-02",
-          first_shortage_date: "2026-10-20",
-          next_diet_change_date: "2026-10-15",
+          last_approved_count_at: '2026-10-01',
+          last_feed_receipt_date: '2026-10-02',
+          first_shortage_date: '2026-10-20',
+          next_diet_change_date: '2026-10-15',
           is_active: true,
         },
       ]);
     });
 
     renderTable(locationConfig);
-    fireEvent.click(await screen.findByRole("button", { name: "Actions for LEA100/SILO-001" }));
-    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Actions for LEA100/SILO-001',
+      }),
+    );
+    fireEvent.click(await screen.findByText('Edit'));
 
-    expect(await screen.findByRole("textbox", { name: "Silo Capacity" })).toBeTruthy();
-    expect(screen.getByRole("spinbutton", { name: "Below Feed Level KG" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Feed in Silo" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Available Stock KG" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "System Balance KG" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Last Approved Physical Count KG" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Last Approved Physical Count Date" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Last Feed Receipt Date" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "First Shortage Date" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Next Diet Change Date" })).toBeNull();
+    expect(
+      await screen.findByRole('textbox', { name: 'Silo Capacity' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('spinbutton', { name: 'Below Feed Level KG' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'Feed in Silo' })).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Available Stock KG' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'System Balance KG' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', {
+        name: 'Last Approved Physical Count KG',
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', {
+        name: 'Last Approved Physical Count Date',
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Last Feed Receipt Date' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'First Shortage Date' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('textbox', { name: 'Next Diet Change Date' }),
+    ).toBeNull();
   });
 
-  it("shows active mills in Parent Mill options when creating a BIN", async () => {
-    const locationConfig = getConfig("location")!;
+  it('shows active mills in Parent Mill options when creating a BIN', async () => {
+    const locationConfig = getConfig('location')!;
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url.startsWith("/location-type")) {
+      if (url.startsWith('/location-type')) {
         return Promise.resolve([
-          { type_code: "FARM", type_name: "Farm", allowed_parent_types: [] },
-          { type_code: "MILL", type_name: "Feed Mill", allowed_parent_types: [] },
-          { type_code: "BIN", type_name: "Bin", allowed_parent_types: ["MILL"] },
+          { type_code: 'FARM', type_name: 'Farm', allowed_parent_types: [] },
+          {
+            type_code: 'MILL',
+            type_name: 'Feed Mill',
+            allowed_parent_types: [],
+          },
+          {
+            type_code: 'BIN',
+            type_name: 'Bin',
+            allowed_parent_types: ['MILL'],
+          },
         ]);
       }
-      if (url.includes("parentForType=BIN")) {
+      if (url.includes('parentForType=BIN')) {
         return Promise.resolve([
-          { location_id: "mill-1", location_code: "MILL-001", location_name: "Kara Mill", location_type: "MILL", is_active: true },
+          {
+            location_id: 'mill-1',
+            location_code: 'MILL-001',
+            location_name: 'Kara Mill',
+            location_type: 'MILL',
+            is_active: true,
+          },
         ]);
       }
-      if (url.startsWith("/no-series/preview-by-master")) {
-        return Promise.resolve({ data: { generated: true, allowManual: true, preview: "BIN-001" } });
+      if (url.startsWith('/no-series/preview-by-master')) {
+        return Promise.resolve({
+          data: { generated: true, allowManual: true, preview: 'BIN-001' },
+        });
       }
       return Promise.resolve([]);
     });
 
     renderTable(locationConfig);
-    fireEvent.click(await screen.findByRole("button", { name: "Add Location" }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add Location' }),
+    );
 
     // Select Location Type BIN
-    const typeSelect = await screen.findByRole("button", { name: "Location Type" });
+    const typeSelect = await screen.findByRole('button', {
+      name: 'Location Type',
+    });
     fireEvent.click(typeSelect);
-    fireEvent.click(await screen.findByRole("option", { name: "BIN — Bin" }));
+    fireEvent.click(await screen.findByRole('option', { name: 'BIN — Bin' }));
 
     // Check Parent Mill button
-    const parentMillBtn = await screen.findByRole("button", { name: "Parent Mill" });
+    const parentMillBtn = await screen.findByRole('button', {
+      name: 'Parent Mill',
+    });
     fireEvent.click(parentMillBtn);
 
     // Kara Mill should be offered
-    expect(await screen.findByText("Kara Mill")).toBeTruthy();
+    expect(await screen.findByText('Kara Mill')).toBeTruthy();
   });
 });

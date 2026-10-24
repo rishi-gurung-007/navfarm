@@ -1,45 +1,88 @@
-"use client";
+'use client';
 
-import { NA } from "@/utils/na";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { entityDisplayText } from "@/utils/code-name";
-import { ageBetween, formatAge } from "./utils/age";
+import { NA } from '@/utils/na';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { entityDisplayText } from '@/utils/code-name';
+import { ageBetween, formatAge } from './utils/age';
 import {
-  Plus, Pencil, Trash2, Search, Loader2, Inbox, Eye, SlidersHorizontal,
-  ArrowUpDown, X, FileText, Info, Users, Boxes, Activity, Layers, MapPin,
-  Scale, QrCode, Landmark, Clock, ArrowRight, Edit3, Building2, Coins, MoreHorizontal,
-  CheckCircle2, Power, Wrench, Download, Upload
-} from "lucide-react";
-import { api } from "@/services/api-client";
-import { API_ORIGIN } from "@/lib/api-client";
-import { Dialog, DialogHeaderActions } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Drawer } from "@/components/ui/drawer";
-import { Popover } from "@/components/ui/popover";
-import { Menu, MenuItem } from "@/components/ui/menu";
-import { Field, FieldGroup } from "@/components/ui/field";
-import { InlineAlert } from "@/components/ui/alert";
-import { showToast } from "@/components/ui/toast";
-import { Pagination } from "@/components/ui/pagination";
-import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { getActiveCompanyId, getActiveWorkspaceScope, getActiveOperationalArea, getStoredUser, hasPermission } from "@/hooks/useAuth";
-import { useLanguage } from "@/hooks/useLanguage";
-import { singularLabel } from "./labels";
-import { formatColumnValue } from "./column-format";
-import { cn, formatDecimal, toInputNumber } from "@/lib/utils";
-import type { MasterDataConfig, MasterDataField, RequiredCondition } from "./types";
-import AnimalDetailPanel from "./AnimalDetailPanel";
-import { MASTER_DATA_CONFIGS } from "./configs";
-import { codeFieldOf } from "./useCodeSeries";
-import { useCodeSeries } from "./useCodeSeries";
-import { MasterRecordView } from "./MasterRecordView";
-import { BcOwnershipNotice } from "./BcOwnershipNotice";
-import { EntityLookupDialog, EntityLookupField } from "./EntityLookupField";
-import { SearchableEntitySelect } from "./SearchableEntitySelect";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ItemTemplateSelectModal } from "./ItemTemplateSelectModal";
-import { exportMasterRowsToCsv } from "./utils/master-csv";
-import MasterDataImportModal from "./MasterDataImportModal";
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  Loader2,
+  Inbox,
+  Eye,
+  SlidersHorizontal,
+  ArrowUpDown,
+  X,
+  FileText,
+  Info,
+  Users,
+  Boxes,
+  Activity,
+  Layers,
+  MapPin,
+  Scale,
+  QrCode,
+  Landmark,
+  Clock,
+  ArrowRight,
+  Edit3,
+  Building2,
+  Coins,
+  MoreHorizontal,
+  CheckCircle2,
+  Power,
+  Wrench,
+  Download,
+  Upload,
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import { API_ORIGIN } from '@/lib/api-client';
+import { Dialog, DialogHeaderActions } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Drawer } from '@/components/ui/drawer';
+import { Popover } from '@/components/ui/popover';
+import { Menu, MenuItem } from '@/components/ui/menu';
+import { Field, FieldGroup } from '@/components/ui/field';
+import { InlineAlert } from '@/components/ui/alert';
+import { showToast } from '@/components/ui/toast';
+import { Pagination } from '@/components/ui/pagination';
+import {
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import {
+  getActiveCompanyId,
+  getActiveWorkspaceScope,
+  getActiveOperationalArea,
+  getStoredUser,
+  hasPermission,
+} from '@/hooks/useAuth';
+import { useLanguage } from '@/hooks/useLanguage';
+import { singularLabel } from './labels';
+import { formatColumnValue } from './column-format';
+import { cn, formatDecimal, toInputNumber } from '@/lib/utils';
+import type {
+  MasterDataConfig,
+  MasterDataField,
+  RequiredCondition,
+} from './types';
+import AnimalDetailPanel from './AnimalDetailPanel';
+import { MASTER_DATA_CONFIGS } from './configs';
+import { codeFieldOf } from './useCodeSeries';
+import { useCodeSeries } from './useCodeSeries';
+import { MasterRecordView } from './MasterRecordView';
+import { BcOwnershipNotice } from './BcOwnershipNotice';
+import { EntityLookupDialog, EntityLookupField } from './EntityLookupField';
+import { SearchableEntitySelect } from './SearchableEntitySelect';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
+import { exportMasterRowsToCsv } from './utils/master-csv';
+import MasterDataImportModal from './MasterDataImportModal';
 
 const PAGE_SIZE = 25;
 
@@ -66,19 +109,26 @@ type RelatedCreator = {
 };
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  raised: { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  accent: { color: "var(--accent)" },
-  input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  raised: {
+    backgroundColor: 'var(--surface-raised)',
+    borderColor: 'var(--border)',
+  },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
+  accent: { color: 'var(--accent)' },
+  input: {
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--input-text)',
+    borderColor: 'var(--input-border)',
+  },
 };
 
-const inputCls = "nf-input";
+const inputCls = 'nf-input';
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 /**
@@ -90,9 +140,17 @@ function unwrap<T = any>(res: any): T {
  */
 function entityLabel(row: Row, field: MasterDataField): string {
   const keys = field.entityLabelKeys || [];
-  const text = keys.map((k) => row[k]).filter(Boolean).join(" — ");
-  const fallback = String(row[field.entityValueKey || "id"] ?? "");
-  return text || (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(fallback) ? "Reference unavailable" : fallback);
+  const text = keys
+    .map((k) => row[k])
+    .filter(Boolean)
+    .join(' — ');
+  const fallback = String(row[field.entityValueKey || 'id'] ?? '');
+  return (
+    text ||
+    (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(fallback)
+      ? 'Reference unavailable'
+      : fallback)
+  );
 }
 
 /**
@@ -106,8 +164,12 @@ function entityLabel(row: Row, field: MasterDataField): string {
  */
 function entityLabelPartsOf(row: Row, field: MasterDataField): string[] {
   const keys = field.entityLabelKeys || [];
-  const parts = keys.map((k) => (row[k] === null || row[k] === undefined ? "" : String(row[k])));
-  return parts.some((p) => p !== "") ? parts : [String(entityLabel(row, field) ?? "")];
+  const parts = keys.map((k) =>
+    row[k] === null || row[k] === undefined ? '' : String(row[k]),
+  );
+  return parts.some((p) => p !== '')
+    ? parts
+    : [String(entityLabel(row, field) ?? '')];
 }
 
 function parentKeys(f: MasterDataField): string[] {
@@ -119,49 +181,64 @@ function parentKeys(f: MasterDataField): string[] {
  * value (Tracking No. Series becomes "Lot No. Series" or "Serial No. Series"). */
 function currentLabel(f: MasterDataField, values: Row): string {
   if (!f.labelWhen) return f.label;
-  return f.labelWhen.labels[String(values[f.labelWhen.key] ?? "")] || f.label;
+  return f.labelWhen.labels[String(values[f.labelWhen.key] ?? '')] || f.label;
 }
 
 /** What opening a row may do: a deactivated record opens read-only — view, no edit —
  * and a read-only table offers no edit at all. Exported for the spec that pins the
  * DEACTIVATED-opens-read-only rule (Resource, UOM). MySQL tinyint reaches here as
  * 0 as readily as false, and both mean deactivated. */
-export function rowOpenAction(row: Row, readOnly: boolean, editableDraft = false): "edit" | "view" | "none" {
-  if (readOnly) return "none";
-  if (editableDraft && row.status === "DRAFT") return "edit";
-  if (row.is_active === false || row.is_active === 0) return "view";
-  return "edit";
+export function rowOpenAction(
+  row: Row,
+  readOnly: boolean,
+  editableDraft = false,
+): 'edit' | 'view' | 'none' {
+  if (readOnly) return 'none';
+  if (editableDraft && row.status === 'DRAFT') return 'edit';
+  if (row.is_active === false || row.is_active === 0) return 'view';
+  return 'edit';
 }
 
 function matchesCondition(cond: RequiredCondition, form: Row): boolean {
   const raw = form[cond.key];
-  const depValue = raw === undefined || raw === null ? "" : raw;
-  if (cond.startsWith !== undefined) return String(depValue).toUpperCase().startsWith(cond.startsWith.toUpperCase());
+  const depValue = raw === undefined || raw === null ? '' : raw;
+  if (cond.startsWith !== undefined)
+    return String(depValue)
+      .toUpperCase()
+      .startsWith(cond.startsWith.toUpperCase());
   if (cond.equals !== undefined) {
     const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
     return list.some((item: any) => {
-      const target = item === undefined || item === null ? "" : item;
+      const target = item === undefined || item === null ? '' : item;
       return target === depValue;
     });
   }
   if (cond.notEquals !== undefined) {
-    const list = Array.isArray(cond.notEquals) ? cond.notEquals : [cond.notEquals];
+    const list = Array.isArray(cond.notEquals)
+      ? cond.notEquals
+      : [cond.notEquals];
     return !list.some((item: any) => {
-      const target = item === undefined || item === null ? "" : item;
+      const target = item === undefined || item === null ? '' : item;
       return target === depValue;
     });
   }
-  return depValue !== "" && depValue !== false;
+  return depValue !== '' && depValue !== false;
 }
 
 /** Whether `f` is required right now — statically, or via `requiredWhen` against the live form values. */
 function isFieldRequired(f: MasterDataField, form: Row): boolean {
   if (f.required) return true;
   if (!f.requiredWhen) return false;
-  if (f.requiredWhen.anyOf && f.requiredWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
+  if (
+    f.requiredWhen.anyOf &&
+    f.requiredWhen.anyOf.some((cond) => matchesCondition(cond, form))
+  ) {
     return true;
   }
-  if (f.requiredWhen.allOf && f.requiredWhen.allOf.every((cond) => matchesCondition(cond, form))) {
+  if (
+    f.requiredWhen.allOf &&
+    f.requiredWhen.allOf.every((cond) => matchesCondition(cond, form))
+  ) {
     return true;
   }
   return false;
@@ -170,10 +247,16 @@ function isFieldRequired(f: MasterDataField, form: Row): boolean {
 /** Whether `f` is visible right now via `visibleWhen` against the live form values. */
 export function isFieldVisible(f: MasterDataField, form: Row): boolean {
   if (!f.visibleWhen) return true;
-  if (f.visibleWhen.anyOf && !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))) {
+  if (
+    f.visibleWhen.anyOf &&
+    !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))
+  ) {
     return false;
   }
-  if (f.visibleWhen.allOf && !f.visibleWhen.allOf.every((cond) => matchesCondition(cond, form))) {
+  if (
+    f.visibleWhen.allOf &&
+    !f.visibleWhen.allOf.every((cond) => matchesCondition(cond, form))
+  ) {
     return false;
   }
   return true;
@@ -191,7 +274,7 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   const parents = parentKeys(f);
   if (parents.length === 0) return f.entityEndpoint;
 
-  if (f.dependsOnMode === "query") {
+  if (f.dependsOnMode === 'query') {
     const params = new URLSearchParams();
     for (const key of parents) {
       const raw = form[key];
@@ -208,44 +291,71 @@ function resolveEndpoint(f: MasterDataField, form: Row): string | null {
     // "/item-category?rootOnly=true"), so append rather than assume — the same
     // rule the option-fetch effects use. Hardcoding "?" here would produce
     // "...?rootOnly=true?itemType=X" and the first value would swallow the rest.
-    return qs ? `${f.entityEndpoint}${f.entityEndpoint.includes("?") ? "&" : "?"}${qs}` : f.entityEndpoint;
+    return qs
+      ? `${f.entityEndpoint}${f.entityEndpoint.includes('?') ? '&' : '?'}${qs}`
+      : f.entityEndpoint;
   }
 
   const parentVal = form[parents[0]];
   if (!parentVal) return null;
-  return f.entityEndpoint.replace("{value}", parentVal);
+  return f.entityEndpoint.replace('{value}', parentVal);
 }
 
-function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, col?: { decimals?: number; decimalsFromKey?: string; format?: "date" | "codes"; labels?: Record<string, string> }): string {
-  if ((key === "stage" || key === "stage_id") && (row.stage || row.stage_name || row.stage_code)) {
+function displayValue(
+  row: Row,
+  key: string,
+  yesLabel: string,
+  noLabel: string,
+  col?: {
+    decimals?: number;
+    decimalsFromKey?: string;
+    format?: 'date' | 'codes';
+    labels?: Record<string, string>;
+  },
+): string {
+  if (
+    (key === 'stage' || key === 'stage_id') &&
+    (row.stage || row.stage_name || row.stage_code)
+  ) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
   const v = row[key];
-  if (v === null || v === undefined || v === "") {
-    if (key === "stage" || key === "stage_id") {
+  if (v === null || v === undefined || v === '') {
+    if (key === 'stage' || key === 'stage_id') {
       return row.stage || row.stage_name || row.stage_code || NA;
     }
     return NA;
   }
   const formatted = formatColumnValue(v, col);
   if (formatted !== undefined) return formatted;
-  if (typeof v === "boolean") return v ? yesLabel : noLabel;
+  if (typeof v === 'boolean') return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
   // read `["DE","FR","NL"]` in the Countries column, brackets and quotes and
   // all, because every object fell through to JSON.stringify.
-  if (Array.isArray(v)) return v.length ? v.map((entry) => String(entry)).join(", ") : NA;
-  if (typeof v === "object") return JSON.stringify(v);
+  if (Array.isArray(v))
+    return v.length ? v.map((entry) => String(entry)).join(', ') : NA;
+  if (typeof v === 'object') return JSON.stringify(v);
   // Opt-in only (col.decimals set) — a plain numeric column still prints
   // whatever the API returned, same as always. The stored precision (e.g.
   // UOM Conversion's conversion_factor, decimal(18,8)) is real and stays
   // exact in the form and the API; this only trims the list's display.
-  if (col?.decimals !== undefined && !isNaN(Number(v)) && String(v).trim() !== "") {
-    const fromSibling = col.decimalsFromKey ? Number(row[col.decimalsFromKey]) : undefined;
-    const places = fromSibling !== undefined && !isNaN(fromSibling) && fromSibling > 0 ? fromSibling : col.decimals;
+  if (
+    col?.decimals !== undefined &&
+    !isNaN(Number(v)) &&
+    String(v).trim() !== ''
+  ) {
+    const fromSibling = col.decimalsFromKey
+      ? Number(row[col.decimalsFromKey])
+      : undefined;
+    const places =
+      fromSibling !== undefined && !isNaN(fromSibling) && fromSibling > 0
+        ? fromSibling
+        : col.decimals;
     return Number(v).toFixed(places);
   }
   // A DECIMAL column arrives as "150.000000": show the number, not the stored padding.
-  if (typeof v === "string" && /^-?\d+\.\d+$/.test(v.trim())) return formatDecimal(v);
+  if (typeof v === 'string' && /^-?\d+\.\d+$/.test(v.trim()))
+    return formatDecimal(v);
   return String(v);
 }
 
@@ -257,7 +367,7 @@ function displayValue(row: Row, key: string, yesLabel: string, noLabel: string, 
  */
 function parseStringList(v: any): string[] {
   if (Array.isArray(v)) return v.map((x) => String(x));
-  if (typeof v === "string" && v.trim() !== "") {
+  if (typeof v === 'string' && v.trim() !== '') {
     try {
       const parsed = JSON.parse(v);
       return Array.isArray(parsed) ? parsed.map((x) => String(x)) : [];
@@ -272,16 +382,25 @@ export function entityRestrictionState(
   field: MasterDataField,
   values: Record<string, any>,
   allOptions: Record<string, Record<string, any>[]>,
-): { selected: boolean; resolved: boolean; allowedCodes: string[]; hidden: boolean } | undefined {
+):
+  | {
+      selected: boolean;
+      resolved: boolean;
+      allowedCodes: string[];
+      hidden: boolean;
+    }
+  | undefined {
   const restriction = field.restrictOptionsBy;
   if (!restriction) return undefined;
 
-  const selectedCode = String(values[restriction.selectorKey] ?? "");
+  const selectedCode = String(values[restriction.selectorKey] ?? '');
   const selectorRows = allOptions[restriction.selectorEntityEndpoint];
   const selectorRow = selectorRows?.find(
-    (row) => String(row[restriction.selectorCodeKey] ?? "") === selectedCode,
+    (row) => String(row[restriction.selectorCodeKey] ?? '') === selectedCode,
   );
-  const allowedCodes = selectorRow ? parseStringList(selectorRow[restriction.allowListKey]) : [];
+  const allowedCodes = selectorRow
+    ? parseStringList(selectorRow[restriction.allowListKey])
+    : [];
   const selected = selectedCode.length > 0;
   const resolved = selectorRows !== undefined;
 
@@ -289,7 +408,9 @@ export function entityRestrictionState(
     selected,
     resolved,
     allowedCodes,
-    hidden: !!restriction.hideWhenEmpty && (!selected || (resolved && allowedCodes.length === 0)),
+    hidden:
+      !!restriction.hideWhenEmpty &&
+      (!selected || (resolved && allowedCodes.length === 0)),
   };
 }
 
@@ -319,7 +440,8 @@ export function parentFilterState(
 ): { hidden: boolean; empty: boolean } {
   if (!field.requiresParent) return { hidden: false, empty: false };
   const parents = parentKeys(field);
-  if (!parents.every((key) => !!values[key])) return { hidden: true, empty: false };
+  if (!parents.every((key) => !!values[key]))
+    return { hidden: true, empty: false };
   const endpoint = resolveEndpoint(field, values);
   const loaded = endpoint ? allOptions[endpoint] : undefined;
   if (loaded === undefined) return { hidden: false, empty: false };
@@ -332,7 +454,7 @@ export function parentFilterState(
  * become "/item-category" and "/setup/wizard/lobs".
  */
 function endpointPath(endpoint: string): string {
-  return endpoint.split("?")[0].split("/{")[0].replace(/\/+$/, "");
+  return endpoint.split('?')[0].split('/{')[0].replace(/\/+$/, '');
 }
 
 /**
@@ -364,7 +486,7 @@ export function lookupMastersFor(
 ): MasterDataConfig[] {
   const endpoints = config.fields
     .flatMap((f) => [f, ...(f.jsonRow || [])])
-    .filter((f) => f.type === "select-entity" && f.entityEndpoint)
+    .filter((f) => f.type === 'select-entity' && f.entityEndpoint)
     .map((f) => endpointPath(f.entityEndpoint!));
   // Ordered by where the field sits on the form, not by where the master
   // happens to sit in the registry. Registry order listed Item Categories
@@ -379,7 +501,7 @@ export function lookupMastersFor(
   const ordered: MasterDataConfig[] = [];
   for (const path of endpoints) {
     const owner = all
-      .filter((c) => path === c.apiBase || path.startsWith(c.apiBase + "/"))
+      .filter((c) => path === c.apiBase || path.startsWith(c.apiBase + '/'))
       .sort((a, b) => b.apiBase.length - a.apiBase.length)[0];
     if (!owner || seen.has(owner.key)) continue;
     seen.add(owner.key);
@@ -420,13 +542,13 @@ function DescriptionTooltip({
       setOpen(false);
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
 
@@ -453,9 +575,9 @@ function DescriptionTooltip({
           role="tooltip"
           className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-3rem)] rounded-xl p-3.5 shadow-2xl border z-50 text-xs leading-relaxed pointer-events-auto transition-all animate-in fade-in zoom-in-95"
           style={{
-            backgroundColor: "var(--surface-raised)",
-            borderColor: "var(--border)",
-            color: "var(--text-primary)",
+            backgroundColor: 'var(--surface-raised)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-primary)',
           }}
         >
           <div className="flex items-center gap-2 mb-1.5 font-semibold text-[var(--text-primary)]">
@@ -471,21 +593,61 @@ function DescriptionTooltip({
 
 function getSectionIcon(section: string) {
   const s = section.toLowerCase();
-  if (s.includes("identif")) return FileText;
-  if (s.includes("lineage") || s.includes("parent") || s.includes("pedigree")) return Users;
-  if (s.includes("acqui") || s.includes("purchas") || s.includes("source") || s.includes("receipt")) return Boxes;
-  if (s.includes("product") || s.includes("perform") || s.includes("operat")) return Activity;
-  if (s.includes("bio") || s.includes("asset") || s.includes("health")) return Layers;
-  if (s.includes("position") || s.includes("locat") || s.includes("place")) return MapPin;
-  if (s.includes("unit") || s.includes("valuat") || s.includes("uom") || s.includes("weight")) return Scale;
-  if (s.includes("track") || s.includes("code") || s.includes("qr") || s.includes("rfid") || s.includes("lot")) return QrCode;
-  if (s.includes("gl") || s.includes("account") || s.includes("ledger")) return Landmark;
-  if (s.includes("duration") || s.includes("time") || s.includes("schedul")) return Clock;
-  if (s.includes("transit") || s.includes("move") || s.includes("flow")) return ArrowRight;
-  if (s.includes("data") || s.includes("entry") || s.includes("kpi")) return Edit3;
-  if (s.includes("address") || s.includes("contact") || s.includes("supplier") || s.includes("customer")) return Building2;
-  if (s.includes("financ") || s.includes("cost") || s.includes("price") || s.includes("curr")) return Coins;
-  if (s.includes("setting") || s.includes("config") || s.includes("setup")) return SlidersHorizontal;
+  if (s.includes('identif')) return FileText;
+  if (s.includes('lineage') || s.includes('parent') || s.includes('pedigree'))
+    return Users;
+  if (
+    s.includes('acqui') ||
+    s.includes('purchas') ||
+    s.includes('source') ||
+    s.includes('receipt')
+  )
+    return Boxes;
+  if (s.includes('product') || s.includes('perform') || s.includes('operat'))
+    return Activity;
+  if (s.includes('bio') || s.includes('asset') || s.includes('health'))
+    return Layers;
+  if (s.includes('position') || s.includes('locat') || s.includes('place'))
+    return MapPin;
+  if (
+    s.includes('unit') ||
+    s.includes('valuat') ||
+    s.includes('uom') ||
+    s.includes('weight')
+  )
+    return Scale;
+  if (
+    s.includes('track') ||
+    s.includes('code') ||
+    s.includes('qr') ||
+    s.includes('rfid') ||
+    s.includes('lot')
+  )
+    return QrCode;
+  if (s.includes('gl') || s.includes('account') || s.includes('ledger'))
+    return Landmark;
+  if (s.includes('duration') || s.includes('time') || s.includes('schedul'))
+    return Clock;
+  if (s.includes('transit') || s.includes('move') || s.includes('flow'))
+    return ArrowRight;
+  if (s.includes('data') || s.includes('entry') || s.includes('kpi'))
+    return Edit3;
+  if (
+    s.includes('address') ||
+    s.includes('contact') ||
+    s.includes('supplier') ||
+    s.includes('customer')
+  )
+    return Building2;
+  if (
+    s.includes('financ') ||
+    s.includes('cost') ||
+    s.includes('price') ||
+    s.includes('curr')
+  )
+    return Coins;
+  if (s.includes('setting') || s.includes('config') || s.includes('setup'))
+    return SlidersHorizontal;
   return FileText;
 }
 
@@ -509,7 +671,7 @@ export function MasterDataTable({
   const { t, tLabel } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState('');
   const [entityOptions, setEntityOptions] = useState<Record<string, Row[]>>({});
   /**
    * A real record of the master a "field-list" field is configuring, so the
@@ -517,16 +679,21 @@ export function MasterDataTable({
    * of the shape. UUID references are resolved to the code they point at, which
    * is what the generator writes.
    */
-  const [sampleRecord, setSampleRecord] = useState<{ master: string; values: Record<string, string> }>();
+  const [sampleRecord, setSampleRecord] = useState<{
+    master: string;
+    values: Record<string, string>;
+  }>();
   // Per derived field: "found" when the source master already holds the value
   // (so it is filled and locked), "missing" when it does not (so it is asked
   // for here and recorded), undefined while the parents are incomplete.
-  const [derived, setDerived] = useState<Record<string, "found" | "missing">>({});
+  const [derived, setDerived] = useState<Record<string, 'found' | 'missing'>>(
+    {},
+  );
 
   const [nobFilterOptions, setNobFilterOptions] = useState<Row[]>([]);
   const [lobFilterOptions, setLobFilterOptions] = useState<Row[]>([]);
-  const [nobFilter, setNobFilter] = useState("");
-  const [lobFilter, setLobFilter] = useState("");
+  const [nobFilter, setNobFilter] = useState('');
+  const [lobFilter, setLobFilter] = useState('');
   // Location-only cascading filter: pick a Farm, then a Shed narrows to that
   // farm's sheds — both resolve to the real `parent_location_id` column at
   // request time (see `load()`), not a filter key of their own.
@@ -537,24 +704,36 @@ export function MasterDataTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   // A row command that asks for a reason is answered in a dialog (never a browser prompt).
-  const [reasonCommand, setReasonCommand] = useState<{ row: Row; command: NonNullable<MasterDataConfig["rowCommands"]>[number]; reason: string } | null>(null);
+  const [reasonCommand, setReasonCommand] = useState<{
+    row: Row;
+    command: NonNullable<MasterDataConfig['rowCommands']>[number];
+    reason: string;
+  } | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [actionMenuRowId, setActionMenuRowId] = useState<string | null>(null);
   const [form, setForm] = useState<Row>({});
   // Pending, not-yet-added input text for each "string-list" field's chip editor, keyed by field key.
   const [chipDrafts, setChipDrafts] = useState<Record<string, string>>({});
   // Which "image" field is mid-upload, keyed by field key — disables its control and shows a spinner.
-  const [imageUploading, setImageUploading] = useState<Record<string, boolean>>({});
+  const [imageUploading, setImageUploading] = useState<Record<string, boolean>>(
+    {},
+  );
   const [saving, setSaving] = useState(false);
-  const [activeFormTab, setActiveFormTab] = useState<string>("");
+  const [activeFormTab, setActiveFormTab] = useState<string>('');
   // Drives the API query param for filterTabs (e.g. resource_type: MANPOWER | EQUIPMENT).
   const [activeFilterTab, setActiveFilterTab] = useState<string>(
-    config.filterTabs?.defaultTab ?? ""
+    config.filterTabs?.defaultTab ?? '',
   );
   const [entityReloadKey, setEntityReloadKey] = useState(0);
-  const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(null);
-  const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(null);
-  const [relatedCreator, setRelatedCreator] = useState<RelatedCreator | null>(null);
+  const [lookupManager, setLookupManager] = useState<MasterDataConfig | null>(
+    null,
+  );
+  const [relatedPicker, setRelatedPicker] = useState<RelatedPicker | null>(
+    null,
+  );
+  const [relatedCreator, setRelatedCreator] = useState<RelatedCreator | null>(
+    null,
+  );
   const lastEntityReloadKeyRef = useRef(entityReloadKey);
   const createOnlyOpenedRef = useRef(false);
   const codeFieldTouchedRef = useRef(false);
@@ -576,8 +755,8 @@ export function MasterDataTable({
    * master having to change on the same day.
    */
   const [serverTotal, setServerTotal] = useState<number | null>(null);
-  const [sortKey, setSortKey] = useState<string>("");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<string>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   /**
    * Two copies deliberately. `colFilters` is what the list is filtered by;
    * `filterDraft` is what the drawer is editing. They diverge while the drawer
@@ -598,7 +777,8 @@ export function MasterDataTable({
   }, [page, search, colFilters, activeFilterTab]);
 
   const allPageIds = rows.map((r) => String(r[config.idKey]));
-  const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedIds.has(id));
+  const allPageSelected =
+    allPageIds.length > 0 && allPageIds.every((id) => selectedIds.has(id));
   const somePageSelected = allPageIds.some((id) => selectedIds.has(id));
 
   const toggleSelectAll = () => {
@@ -628,59 +808,89 @@ export function MasterDataTable({
    * and remain freely editable.
    * Cleared when the modal closes or when a normal (non-template) create is opened.
    */
-  const [templateLockedFields, setTemplateLockedFields] = useState<Set<string>>(new Set());
+  const [templateLockedFields, setTemplateLockedFields] = useState<Set<string>>(
+    new Set(),
+  );
 
   const currentUser = getStoredUser();
-  const canCreateItem = typeof hasPermission === "function"
-    ? hasPermission(currentUser, "MASTER_DATA", "ITEM", "can_create")
-    : ["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
+  const canCreateItem =
+    typeof hasPermission === 'function'
+      ? hasPermission(currentUser, 'MASTER_DATA', 'ITEM', 'can_create')
+      : ['TENANT_ADMIN', 'COMPANY_ADMIN'].includes(currentUser?.userType || '');
 
   const workspaceScope = getActiveWorkspaceScope();
-  const companyId = workspaceScope === "TENANT" ? null : getActiveCompanyId();
+  const companyId = workspaceScope === 'TENANT' ? null : getActiveCompanyId();
   // BBP-1 §1.5 and §1.6 put Items and the Chart of Accounts in Business Central:
   // "NAVFarm cannot create items independently", "NAVFarm does NOT maintain its own
   // Chart of Accounts". That integration is not built, so until it is, these stay
   // locally editable and the notice states the blueprint's position rather than
   // the screen pretending a BC connection exists. Rishi's call, 2026-09-06.
-  const bcOwned = config.owner === "BC";
-  const administrationRestricted = !!config.businessAdminOnly && !["TENANT_ADMIN", "COMPANY_ADMIN"].includes(currentUser?.userType || "");
+  const bcOwned = config.owner === 'BC';
+  const administrationRestricted =
+    !!config.businessAdminOnly &&
+    !['TENANT_ADMIN', 'COMPANY_ADMIN'].includes(currentUser?.userType || '');
   const readOnly = administrationRestricted;
-  const canApproveDraft = !config.draftLifecycle || hasPermission(
-    currentUser,
-    config.draftLifecycle.approvePermission.moduleCode,
-    config.draftLifecycle.approvePermission.resource,
-    "can_approve",
-  );
+  const canApproveDraft =
+    !config.draftLifecycle ||
+    hasPermission(
+      currentUser,
+      config.draftLifecycle.approvePermission.moduleCode,
+      config.draftLifecycle.approvePermission.resource,
+      'can_approve',
+    );
   const numbering = useCodeSeries(config.key, form, modalOpen && !editing);
   // A failed code preview used to disable Create outright. For a master whose
   // code is optional — UOM Conversion says "leave blank until the numbering
   // convention is agreed" — that made an unrelated preview problem block the
   // whole record. Only a mandatory code can stop a save; otherwise the message
   // stands as a warning and the row saves without a code.
-  const codeIsMandatory = !!config.fields.find((f) => f.key === numbering.codeKey)?.required;
+  const codeIsMandatory = !!config.fields.find(
+    (f) => f.key === numbering.codeKey,
+  )?.required;
   const numberingBlocks = !!numbering.error && codeIsMandatory;
   // A derived field is read-only once its source master supplies the value, and
   // required while it does not — that is the moment the number is captured.
   const applyDerived = (f: MasterDataField): MasterDataField => {
     if (!f.derivedFrom) return f;
     const state = derived[f.key];
-    if (state === "found") return { ...f, readOnly: true, required: false, helpText: `From ${f.derivedFrom.endpoint.replace(/^\//, "")} — the stored factor for these units.` };
-    if (state === "missing") return { ...f, readOnly: false, required: true, helpText: f.derivedFrom.missingHelpText || f.helpText };
+    if (state === 'found')
+      return {
+        ...f,
+        readOnly: true,
+        required: false,
+        helpText: `From ${f.derivedFrom.endpoint.replace(/^\//, '')} — the stored factor for these units.`,
+      };
+    if (state === 'missing')
+      return {
+        ...f,
+        readOnly: false,
+        required: true,
+        helpText: f.derivedFrom.missingHelpText || f.helpText,
+      };
     return { ...f, readOnly: true, helpText: f.helpText };
   };
-  const [inventorySetupNumbering, setInventorySetupNumbering] = useState<Record<string, { enabled?: boolean }> | null>(null);
+  const [inventorySetupNumbering, setInventorySetupNumbering] = useState<Record<
+    string,
+    { enabled?: boolean }
+  > | null>(null);
 
   useEffect(() => {
-    if ((config.key === "number-series" || config.key === "no-series") && (modalOpen || !inventorySetupNumbering)) {
+    if (
+      (config.key === 'number-series' || config.key === 'no-series') &&
+      (modalOpen || !inventorySetupNumbering)
+    ) {
       const compId = getActiveCompanyId();
-      api.get(`/inventory-setup${compId ? `?companyId=${compId}` : ""}`)
+      api
+        .get(`/inventory-setup${compId ? `?companyId=${compId}` : ''}`)
         .then((res: any) => {
           const data = res?.data ?? res;
           if (data?.numbering_config) {
             setInventorySetupNumbering(data.numbering_config);
           }
         })
-        .catch(() => { /* ignore */ });
+        .catch(() => {
+          /* ignore */
+        });
     }
   }, [config.key, companyId, modalOpen, inventorySetupNumbering]);
 
@@ -688,7 +898,11 @@ export function MasterDataTable({
     .map(numbering.field)
     .map(applyDerived)
     .map((f) => {
-      if ((config.key === "number-series" || config.key === "no-series") && f.key === "document_type" && inventorySetupNumbering) {
+      if (
+        (config.key === 'number-series' || config.key === 'no-series') &&
+        f.key === 'document_type' &&
+        inventorySetupNumbering
+      ) {
         const filteredOptions = (f.options || []).filter((opt) => {
           const cfg = inventorySetupNumbering[opt.value];
           return cfg !== undefined ? cfg.enabled === true : true;
@@ -697,12 +911,25 @@ export function MasterDataTable({
       }
       return f;
     })
-    .filter((f) => !f.hideInForm && !(workspaceScope === "OPERATIONAL" && ["nob_id", "lob_id"].includes(f.key)));
+    .filter(
+      (f) =>
+        !f.hideInForm &&
+        !(
+          workspaceScope === 'OPERATIONAL' &&
+          ['nob_id', 'lob_id'].includes(f.key)
+        ),
+    );
   // A master can be exhausted: Number Series takes exactly one row per master,
   // so once every master has one there is nothing left to add and the button
   // should go rather than open a form whose only required picker is empty.
   // Driven by the same endpoint the picker uses, so the two cannot disagree.
-  const exhaustingField = config.fields.find((f) => f.required && f.createOnly && f.type === "select-entity" && f.entityEndpoint);
+  const exhaustingField = config.fields.find(
+    (f) =>
+      f.required &&
+      f.createOnly &&
+      f.type === 'select-entity' &&
+      f.entityEndpoint,
+  );
   const exhausted = (() => {
     if (!exhaustingField?.entityEndpoint) return false;
     const loaded = entityOptions[exhaustingField.entityEndpoint];
@@ -712,25 +939,42 @@ export function MasterDataTable({
   // The stacked dialog open over the record dialog, by name ("KPIs & Alerts", "Feed Consumption"), or null.
   const [openSubDialog, setOpenSubDialog] = useState<string | null>(null);
   const visibleFields = (
-      editing
+    editing
       ? formFields
-          .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index)
+          .filter(
+            (field, index, fields) =>
+              fields.findIndex((candidate) => candidate.key === field.key) ===
+              index,
+          )
           // Location edit forms must stay aligned with their create forms. The
           // SILO feed facts are computed read-only values for the record view,
           // not fields the user is asked to enter when creating or editing a
           // silo. Keep editOnly for other masters whose update API exposes
           // fields that are intentionally absent at creation time.
-          .filter((f) => !(config.key === "location" && form.location_type === "SILO" && f.editOnly))
+          .filter(
+            (f) =>
+              !(
+                config.key === 'location' &&
+                form.location_type === 'SILO' &&
+                f.editOnly
+              ),
+          )
           .filter((f) => {
-            if (config.key === "stage") return true;
+            if (config.key === 'stage') return true;
             if (isFieldVisible(f, form)) return true;
-            if (f.filterOnly || f.booleanColumns || f.hideStoredWhenHidden) return false;
+            if (f.filterOnly || f.booleanColumns || f.hideStoredWhenHidden)
+              return false;
             const stored = editing[f.key];
-            return stored !== undefined && stored !== null && stored !== "" && stored !== false;
+            return (
+              stored !== undefined &&
+              stored !== null &&
+              stored !== '' &&
+              stored !== false
+            );
           })
       : formFields
           .filter((f) => !f.editOnly)
-          .filter((f) => config.key === "stage" || isFieldVisible(f, form))
+          .filter((f) => config.key === 'stage' || isFieldVisible(f, form))
   )
     .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
     // Only the "no parent chosen yet" half hides the field; an empty filtered
@@ -738,14 +982,23 @@ export function MasterDataTable({
     .filter((f) => !parentFilterState(f, form, entityOptions).hidden);
   const subDialogFields = visibleFields.filter((f) => f.subDialog);
   // One header button and one stacked dialog per name; `subDialog: true` is the original "KPIs & Alerts".
-  const subDialogName = (f: { subDialog?: boolean | string }) => (typeof f.subDialog === "string" ? f.subDialog : "KPIs & Alerts");
+  const subDialogName = (f: { subDialog?: boolean | string }) =>
+    typeof f.subDialog === 'string' ? f.subDialog : 'KPIs & Alerts';
   const subDialogNames = [...new Set(subDialogFields.map(subDialogName))];
   const subDialogCount = (name: string) => {
-    const listField = subDialogFields.find((f) => subDialogName(f) === name && f.type === "json");
+    const listField = subDialogFields.find(
+      (f) => subDialogName(f) === name && f.type === 'json',
+    );
     if (!listField) return 0;
-    try { const parsed = JSON.parse(String(form[listField.key] || "[]")); return Array.isArray(parsed) ? parsed.length : 0; } catch { return 0; }
+    try {
+      const parsed = JSON.parse(String(form[listField.key] || '[]'));
+      return Array.isArray(parsed) ? parsed.length : 0;
+    } catch {
+      return 0;
+    }
   };
-  const columns = config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
+  const columns =
+    config.columns || config.fields.filter((f) => !f.hideInTable).slice(0, 5);
   // Status and Active are different facts — Status is the master's domain
   // state, Active is whether the record is live at all — but a master that
   // cannot toggle Active here has nothing to put in that column except a word
@@ -756,24 +1009,33 @@ export function MasterDataTable({
   // because an animal is not deactivated, it is disposed — and dispose() blocks
   // on medicine withdrawal periods and posts the gain or loss. So the column
   // could only ever be a dead badge there. Rishi's call: drop it.
-  const ownsStatusColumn = columns.some((c) => c.key === "status");
+  const ownsStatusColumn = columns.some((c) => c.key === 'status');
   // A DRAFT row is still an existing record when it comes from a lifecycle
   // master (for example Reporting Period). Only the item-template flow uses
   // an editing-shaped modal to create a new draft; treating every DRAFT as a
   // template made Edit reopen as Add and could create duplicates.
-  const isDraftFromTemplate = Boolean(editing && config.key === "item" && templateLockedFields.size > 0);
+  const isDraftFromTemplate = Boolean(
+    editing && config.key === 'item' && templateLockedFields.size > 0,
+  );
   // Master-detail: clicking a row narrows the list and opens a panel beside it,
   // for masters where one record has enough behind it to be worth reading on
   // its own. Only Animal Register qualifies today.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailFor = config.detailPanel;
-  const selectedRow = detailFor ? rows.find((r) => String(r[config.idKey]) === selectedId) : undefined;
+  const selectedRow = detailFor
+    ? rows.find((r) => String(r[config.idKey]) === selectedId)
+    : undefined;
   const statusActiveValues = config.statusActiveValues;
   const lookupConfigs = lookupMastersFor(config);
-  const relatedConfigFor = (field: MasterDataField, resolvedEndpoint: string | null) => {
+  const relatedConfigFor = (
+    field: MasterDataField,
+    resolvedEndpoint: string | null,
+  ) => {
     if (!resolvedEndpoint || readOnly) return undefined;
-    return lookupConfigs.find((candidate) =>
-      endpointPath(candidate.apiBase) === endpointPath(resolvedEndpoint) && candidate.key !== config.key,
+    return lookupConfigs.find(
+      (candidate) =>
+        endpointPath(candidate.apiBase) === endpointPath(resolvedEndpoint) &&
+        candidate.key !== config.key,
     );
   };
   /**
@@ -796,31 +1058,42 @@ export function MasterDataTable({
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (companyId) params.set("companyId", companyId);
-      if (search) params.set("search", search);
-      if (config.fixedFilter) params.set(config.fixedFilter.queryParam, config.fixedFilter.value);
-      for (const [key, value] of Object.entries(config.listParams ?? {})) params.set(key, value);
-      if (config.supportsNobLobFilter && nobFilter) params.set("nobId", nobFilter);
-      if (config.supportsNobLobFilter && lobFilter) params.set("lobId", lobFilter);
+      if (companyId) params.set('companyId', companyId);
+      if (search) params.set('search', search);
+      if (config.fixedFilter)
+        params.set(config.fixedFilter.queryParam, config.fixedFilter.value);
+      for (const [key, value] of Object.entries(config.listParams ?? {}))
+        params.set(key, value);
+      if (config.supportsNobLobFilter && nobFilter)
+        params.set('nobId', nobFilter);
+      if (config.supportsNobLobFilter && lobFilter)
+        params.set('lobId', lobFilter);
       // Send the active filter-tab value as its configured query param.
       if (config.filterTabs && activeFilterTab) {
-        params.set(config.filterTabs.queryParam ?? config.filterTabs.key, activeFilterTab);
+        params.set(
+          config.filterTabs.queryParam ?? config.filterTabs.key,
+          activeFilterTab,
+        );
       }
       // Ask for exactly the page being shown. The previous request was always
       // limit=200 with no offset, sliced in the browser — which silently capped
       // every master at 200 rows. MULTIPLIER's locations alone are 508.
-      params.set("limit", String(pageSize));
-      params.set("offset", String((page - 1) * pageSize));
-      if (sortKey) { params.set("sort", sortKey); params.set("dir", sortDir); }
+      params.set('limit', String(pageSize));
+      params.set('offset', String((page - 1) * pageSize));
+      if (sortKey) {
+        params.set('sort', sortKey);
+        params.set('dir', sortDir);
+      }
       for (const [key, value] of Object.entries(colFilters)) {
-        if (key === "__farm" || key === "__shed" || key === "__pen") continue;
-        if (value !== "") params.set(`filter[${key}]`, value);
+        if (key === '__farm' || key === '__shed' || key === '__pen') continue;
+        if (value !== '') params.set(`filter[${key}]`, value);
       }
       // Farm/Shed/Pen are UI-only synthetic filters (see the location-only
       // state above) — whichever is most specific resolves to the real column.
-      if (config.key === "location") {
-        const parent = colFilters.__pen || colFilters.__shed || colFilters.__farm;
-        if (parent) params.set("filter[parent_location_id]", parent);
+      if (config.key === 'location') {
+        const parent =
+          colFilters.__pen || colFilters.__shed || colFilters.__farm;
+        if (parent) params.set('filter[parent_location_id]', parent);
       }
       const res = await api.get(`${config.apiBase}?${params.toString()}`);
       const list = unwrap<Row[]>(res);
@@ -829,9 +1102,9 @@ export function MasterDataTable({
       // before. One that reports a total has already sorted, filtered and paged
       // in SQL, so the rows in hand are the page.
       const total = (res as { total?: unknown })?.total;
-      setServerTotal(typeof total === "number" ? total : null);
+      setServerTotal(typeof total === 'number' ? total : null);
     } catch (err: any) {
-      showToast.error(err?.message || t("mdFailedToLoad"));
+      showToast.error(err?.message || t('mdFailedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -840,10 +1113,24 @@ export function MasterDataTable({
   useEffect(() => {
     if (createOnly) return;
     load();
-  }, [config.key, search, nobFilter, lobFilter, page, pageSize, sortKey, sortDir, colFilters, activeFilterTab, createOnly]);
+  }, [
+    config.key,
+    search,
+    nobFilter,
+    lobFilter,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    colFilters,
+    activeFilterTab,
+    createOnly,
+  ]);
 
   // Reset to page 1 whenever the filter tab changes.
-  useEffect(() => { setPage(1); }, [activeFilterTab]);
+  useEffect(() => {
+    setPage(1);
+  }, [activeFilterTab]);
 
   // Some of this form's pickers list this master's own rows — Location's
   // Parent Location and Attached Sheds are both /location — and every picker's
@@ -856,19 +1143,28 @@ export function MasterDataTable({
   // non-dependent ones, which that effect alone would otherwise leave missing.
   const forgetOwnOptions = () => {
     const own = endpointPath(config.apiBase);
-    setEntityOptions((prev) => Object.fromEntries(Object.entries(prev).filter(([ep]) => endpointPath(ep) !== own)));
+    setEntityOptions((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).filter(([ep]) => endpointPath(ep) !== own),
+      ),
+    );
     setEntityReloadKey((key) => key + 1);
   };
 
   // Anything that changes which rows match sends you back to the first page —
   // page 7 of a filtered list that now has two pages is not a page.
-  useEffect(() => { setPage(1); }, [config.key, search, nobFilter, lobFilter, pageSize, colFilters]);
+  useEffect(() => {
+    setPage(1);
+  }, [config.key, search, nobFilter, lobFilter, pageSize, colFilters]);
 
   // A different master has different columns, so neither the sort nor the
   // column filters carry over to it.
   useEffect(() => {
-    setSortKey(""); setSortDir("asc");
-    setColFilters({}); setFilterDraft({}); setFilterOpen(false);
+    setSortKey('');
+    setSortDir('asc');
+    setColFilters({});
+    setFilterDraft({});
+    setFilterOpen(false);
   }, [config.key]);
 
   // The server returns the page, so these are the rows. Slicing here is what
@@ -887,13 +1183,24 @@ export function MasterDataTable({
    * the field's entityValueKey — the same distinction the form makes between a
    * stored uom_code and a stored UUID.
    */
-  const filterChoicesFor = (key: string): { value: string; label: string }[] | undefined => {
+  const filterChoicesFor = (
+    key: string,
+  ): { value: string; label: string }[] | undefined => {
     const field = config.fields.find((f) => f.key === key);
     if (!field) return undefined;
-    if (field.type === "boolean") return [{ value: "true", label: t("mdYes") }, { value: "false", label: t("mdNo") }];
-    if (field.type === "select") {
+    if (field.type === 'boolean')
+      return [
+        { value: 'true', label: t('mdYes') },
+        { value: 'false', label: t('mdNo') },
+      ];
+    if (field.type === 'select') {
       let opts = field.options?.length ? field.options : undefined;
-      if ((config.key === "number-series" || config.key === "no-series") && key === "document_type" && inventorySetupNumbering && opts) {
+      if (
+        (config.key === 'number-series' || config.key === 'no-series') &&
+        key === 'document_type' &&
+        inventorySetupNumbering &&
+        opts
+      ) {
         opts = opts.filter((opt) => {
           const cfg = inventorySetupNumbering[opt.value];
           return cfg !== undefined ? cfg.enabled === true : true;
@@ -901,17 +1208,24 @@ export function MasterDataTable({
       }
       return opts;
     }
-    if (field.type !== "select-entity" || field.dependsOn || !field.entityEndpoint) return undefined;
+    if (
+      field.type !== 'select-entity' ||
+      field.dependsOn ||
+      !field.entityEndpoint
+    )
+      return undefined;
     const loaded = entityOptions[field.entityEndpoint];
     if (!loaded?.length) return undefined;
-    const valueKey = field.entityValueKey || "id";
+    const valueKey = field.entityValueKey || 'id';
     const labelKeys = field.entityLabelKeys || [];
     return loaded
       .map((row) => ({
-        value: String(row[valueKey] ?? ""),
-        label: entityDisplayText(row, labelKeys, valueKey) || String(row[valueKey] ?? ""),
+        value: String(row[valueKey] ?? ''),
+        label:
+          entityDisplayText(row, labelKeys, valueKey) ||
+          String(row[valueKey] ?? ''),
       }))
-      .filter((o) => o.value !== "");
+      .filter((o) => o.value !== '');
   };
 
   /**
@@ -924,7 +1238,10 @@ export function MasterDataTable({
    */
   const filterLabelFor = (key: string, columnLabel: string) => {
     const field = config.fields.find((f) => f.key === key);
-    const label = field && field.label.length > columnLabel.length ? field.label : columnLabel;
+    const label =
+      field && field.label.length > columnLabel.length
+        ? field.label
+        : columnLabel;
     return tLabel(label);
   };
 
@@ -937,11 +1254,11 @@ export function MasterDataTable({
    */
   const filterFields = (
     <div className="flex flex-col gap-4">
-      {config.key === "location" && (
+      {config.key === 'location' && (
         <FieldGroup
           title={
             <span className="flex items-center gap-1.5">
-              <span>{t("mdFilterLocationHierarchy")}</span>
+              <span>{t('mdFilterLocationHierarchy')}</span>
               <span
                 title="Filter locations hierarchically by Farm, Shed, and Pen"
                 className="cursor-help text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
@@ -952,25 +1269,32 @@ export function MasterDataTable({
           }
           className="gap-y-4"
         >
-          <Field label={t("mdFilterFarm")} htmlFor={`master-${config.key}-filter-farm`} className="sm:col-span-6">
+          <Field
+            label={t('mdFilterFarm')}
+            htmlFor={`master-${config.key}-filter-farm`}
+            className="sm:col-span-6"
+          >
             <div className="relative flex items-center">
               <div className="relative w-full">
                 <SearchableSelect
-                  value={filterDraft.__farm ?? ""}
+                  value={filterDraft.__farm ?? ''}
                   onChange={(val) => {
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (!val) delete out.__farm; else out.__farm = val;
+                      if (!val) delete out.__farm;
+                      else out.__farm = val;
                       delete out.__shed;
                       delete out.__pen;
                       return out;
                     });
                   }}
                   options={[
-                    { value: "", label: t("mdFilterAll") },
+                    { value: '', label: t('mdFilterAll') },
                     ...locationFarmOptions.map((f) => ({
                       value: String(f.location_id),
-                      label: String(f.location_code ?? f.location_name ?? f.location_id),
+                      label: String(
+                        f.location_code ?? f.location_name ?? f.location_id,
+                      ),
                     })),
                   ]}
                   columnHeaders={false}
@@ -980,22 +1304,28 @@ export function MasterDataTable({
                   id={`master-${config.key}-filter-farm`}
                   className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
                   tabIndex={-1}
-                  value={filterDraft.__farm ?? ""}
+                  value={filterDraft.__farm ?? ''}
                   onChange={(e) => {
                     const nextFarm = e.target.value;
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (nextFarm === "") delete out.__farm; else out.__farm = nextFarm;
+                      if (nextFarm === '') delete out.__farm;
+                      else out.__farm = nextFarm;
                       delete out.__shed;
                       delete out.__pen;
                       return out;
                     });
                   }}
                 >
-                  <option value="">{t("mdFilterAll")}</option>
+                  <option value="">{t('mdFilterAll')}</option>
                   {locationFarmOptions.map((f) => (
-                    <option key={String(f.location_id)} value={String(f.location_id)}>
-                      {String(f.location_code ?? f.location_name ?? f.location_id)}
+                    <option
+                      key={String(f.location_id)}
+                      value={String(f.location_id)}
+                    >
+                      {String(
+                        f.location_code ?? f.location_name ?? f.location_id,
+                      )}
                     </option>
                   ))}
                 </select>
@@ -1004,11 +1334,15 @@ export function MasterDataTable({
                 <button
                   type="button"
                   aria-label="Clear Farm filter"
-                  onClick={() => setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    delete out.__farm; delete out.__shed; delete out.__pen;
-                    return out;
-                  })}
+                  onClick={() =>
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      delete out.__farm;
+                      delete out.__shed;
+                      delete out.__pen;
+                      return out;
+                    })
+                  }
                   className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X className="h-3 w-3" />
@@ -1016,25 +1350,32 @@ export function MasterDataTable({
               )}
             </div>
           </Field>
-          <Field label={t("mdFilterShed")} htmlFor={`master-${config.key}-filter-shed`} className="sm:col-span-6">
+          <Field
+            label={t('mdFilterShed')}
+            htmlFor={`master-${config.key}-filter-shed`}
+            className="sm:col-span-6"
+          >
             <div className="relative flex items-center">
               <div className="relative w-full">
                 <SearchableSelect
-                  value={filterDraft.__shed ?? ""}
+                  value={filterDraft.__shed ?? ''}
                   disabled={!filterDraft.__farm}
                   onChange={(val) => {
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (!val) delete out.__shed; else out.__shed = val;
+                      if (!val) delete out.__shed;
+                      else out.__shed = val;
                       delete out.__pen;
                       return out;
                     });
                   }}
                   options={[
-                    { value: "", label: t("mdFilterAll") },
+                    { value: '', label: t('mdFilterAll') },
                     ...locationShedOptions.map((s) => ({
                       value: String(s.location_id),
-                      label: String(s.location_code ?? s.location_name ?? s.location_id),
+                      label: String(
+                        s.location_code ?? s.location_name ?? s.location_id,
+                      ),
                     })),
                   ]}
                   columnHeaders={false}
@@ -1044,22 +1385,28 @@ export function MasterDataTable({
                   id={`master-${config.key}-filter-shed`}
                   className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
                   tabIndex={-1}
-                  value={filterDraft.__shed ?? ""}
+                  value={filterDraft.__shed ?? ''}
                   disabled={!filterDraft.__farm}
                   onChange={(e) => {
                     const next = e.target.value;
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (next === "") delete out.__shed; else out.__shed = next;
+                      if (next === '') delete out.__shed;
+                      else out.__shed = next;
                       delete out.__pen;
                       return out;
                     });
                   }}
                 >
-                  <option value="">{t("mdFilterAll")}</option>
+                  <option value="">{t('mdFilterAll')}</option>
                   {locationShedOptions.map((s) => (
-                    <option key={String(s.location_id)} value={String(s.location_id)}>
-                      {String(s.location_code ?? s.location_name ?? s.location_id)}
+                    <option
+                      key={String(s.location_id)}
+                      value={String(s.location_id)}
+                    >
+                      {String(
+                        s.location_code ?? s.location_name ?? s.location_id,
+                      )}
                     </option>
                   ))}
                 </select>
@@ -1068,11 +1415,14 @@ export function MasterDataTable({
                 <button
                   type="button"
                   aria-label="Clear Shed filter"
-                  onClick={() => setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    delete out.__shed; delete out.__pen;
-                    return out;
-                  })}
+                  onClick={() =>
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      delete out.__shed;
+                      delete out.__pen;
+                      return out;
+                    })
+                  }
                   className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X className="h-3 w-3" />
@@ -1080,24 +1430,31 @@ export function MasterDataTable({
               )}
             </div>
           </Field>
-          <Field label={t("mdFilterPen")} htmlFor={`master-${config.key}-filter-pen`} className="sm:col-span-6">
+          <Field
+            label={t('mdFilterPen')}
+            htmlFor={`master-${config.key}-filter-pen`}
+            className="sm:col-span-6"
+          >
             <div className="relative flex items-center">
               <div className="relative w-full">
                 <SearchableSelect
-                  value={filterDraft.__pen ?? ""}
+                  value={filterDraft.__pen ?? ''}
                   disabled={!filterDraft.__shed}
                   onChange={(val) => {
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (!val) delete out.__pen; else out.__pen = val;
+                      if (!val) delete out.__pen;
+                      else out.__pen = val;
                       return out;
                     });
                   }}
                   options={[
-                    { value: "", label: t("mdFilterAll") },
+                    { value: '', label: t('mdFilterAll') },
                     ...locationPenOptions.map((p) => ({
                       value: String(p.location_id),
-                      label: String(p.location_code ?? p.location_name ?? p.location_id),
+                      label: String(
+                        p.location_code ?? p.location_name ?? p.location_id,
+                      ),
                     })),
                   ]}
                   columnHeaders={false}
@@ -1107,21 +1464,27 @@ export function MasterDataTable({
                   id={`master-${config.key}-filter-pen`}
                   className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
                   tabIndex={-1}
-                  value={filterDraft.__pen ?? ""}
+                  value={filterDraft.__pen ?? ''}
                   disabled={!filterDraft.__shed}
                   onChange={(e) => {
                     const next = e.target.value;
                     setFilterDraft((prev) => {
                       const out = { ...prev };
-                      if (next === "") delete out.__pen; else out.__pen = next;
+                      if (next === '') delete out.__pen;
+                      else out.__pen = next;
                       return out;
                     });
                   }}
                 >
-                  <option value="">{t("mdFilterAll")}</option>
+                  <option value="">{t('mdFilterAll')}</option>
                   {locationPenOptions.map((p) => (
-                    <option key={String(p.location_id)} value={String(p.location_id)}>
-                      {String(p.location_code ?? p.location_name ?? p.location_id)}
+                    <option
+                      key={String(p.location_id)}
+                      value={String(p.location_id)}
+                    >
+                      {String(
+                        p.location_code ?? p.location_name ?? p.location_id,
+                      )}
                     </option>
                   ))}
                 </select>
@@ -1130,11 +1493,13 @@ export function MasterDataTable({
                 <button
                   type="button"
                   aria-label="Clear Pen filter"
-                  onClick={() => setFilterDraft((prev) => {
-                    const out = { ...prev };
-                    delete out.__pen;
-                    return out;
-                  })}
+                  onClick={() =>
+                    setFilterDraft((prev) => {
+                      const out = { ...prev };
+                      delete out.__pen;
+                      return out;
+                    })
+                  }
                   className="absolute right-7 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X className="h-3 w-3" />
@@ -1144,69 +1509,94 @@ export function MasterDataTable({
           </Field>
         </FieldGroup>
       )}
-      {columns.filter((c) => !c.noFilter).map((c) => {
-        const choices = filterChoicesFor(c.key);
-        const value = filterDraft[c.key] ?? "";
-        const fieldId = `master-${config.key}-filter-${c.key}`;
-        const set = (next: string) =>
-          setFilterDraft((prev) => {
-            const out = { ...prev };
-            if (next === "") delete out[c.key];
-            else out[c.key] = next;
-            return out;
-          });
-        return (
-          <Field key={c.key} label={filterLabelFor(c.key, c.label)} htmlFor={fieldId}>
-            {choices ? (
-              <div className="relative flex items-center">
-                <div className="relative w-full">
-                  <SearchableSelect
-                    value={value}
-                    onChange={(val) => set(val)}
-                    options={[
-                      { value: "", label: t("mdFilterAll") },
-                      ...choices.map((o) => ({ value: o.value, label: o.label })),
-                    ]}
-                    columnHeaders={false}
-                    triggerClassName={`${inputCls} h-9 w-full pr-8`}
-                  />
-                  <select id={fieldId} className="absolute inset-0 h-full w-full opacity-0 pointer-events-none" tabIndex={-1}
-                    value={value} onChange={(e) => set(e.target.value)}>
-                    <option value="">{t("mdFilterAll")}</option>
-                    {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+      {columns
+        .filter((c) => !c.noFilter)
+        .map((c) => {
+          const choices = filterChoicesFor(c.key);
+          const value = filterDraft[c.key] ?? '';
+          const fieldId = `master-${config.key}-filter-${c.key}`;
+          const set = (next: string) =>
+            setFilterDraft((prev) => {
+              const out = { ...prev };
+              if (next === '') delete out[c.key];
+              else out[c.key] = next;
+              return out;
+            });
+          return (
+            <Field
+              key={c.key}
+              label={filterLabelFor(c.key, c.label)}
+              htmlFor={fieldId}
+            >
+              {choices ? (
+                <div className="relative flex items-center">
+                  <div className="relative w-full">
+                    <SearchableSelect
+                      value={value}
+                      onChange={(val) => set(val)}
+                      options={[
+                        { value: '', label: t('mdFilterAll') },
+                        ...choices.map((o) => ({
+                          value: o.value,
+                          label: o.label,
+                        })),
+                      ]}
+                      columnHeaders={false}
+                      triggerClassName={`${inputCls} h-9 w-full pr-8`}
+                    />
+                    <select
+                      id={fieldId}
+                      className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                      tabIndex={-1}
+                      value={value}
+                      onChange={(e) => set(e.target.value)}
+                    >
+                      <option value="">{t('mdFilterAll')}</option>
+                      {choices.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {value && (
+                    <button
+                      type="button"
+                      aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
+                      onClick={() => set('')}
+                      className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
-                {value && (
-                  <button
-                    type="button"
-                    aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
-                    onClick={() => set("")}
-                    className="absolute right-7 z-10 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="relative flex items-center">
-                <input id={fieldId} className={`${inputCls} pr-8`} style={S.input}
-                  value={value.replace(/^\*|\*$/g, "")} placeholder={t("mdFilterAny")}
-                  onChange={(e) => set(e.target.value ? `*${e.target.value}*` : "")} />
-                {value && (
-                  <button
-                    type="button"
-                    aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
-                    onClick={() => set("")}
-                    className="absolute right-2.5 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
-          </Field>
-        );
-      })}
+              ) : (
+                <div className="relative flex items-center">
+                  <input
+                    id={fieldId}
+                    className={`${inputCls} pr-8`}
+                    style={S.input}
+                    value={value.replace(/^\*|\*$/g, '')}
+                    placeholder={t('mdFilterAny')}
+                    onChange={(e) =>
+                      set(e.target.value ? `*${e.target.value}*` : '')
+                    }
+                  />
+                  {value && (
+                    <button
+                      type="button"
+                      aria-label={`Clear ${filterLabelFor(c.key, c.label)} filter`}
+                      onClick={() => set('')}
+                      className="absolute right-2.5 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </Field>
+          );
+        })}
     </div>
   );
 
@@ -1214,20 +1604,35 @@ export function MasterDataTable({
   // filtered rows rather than leaving it open over them.
   const filterActions = (
     <>
-      <button type="button" onClick={() => { setFilterDraft({}); setColFilters({}); }}
-        className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={S.surface}>
-        {t("mdFiltersReset")}
+      <button
+        type="button"
+        onClick={() => {
+          setFilterDraft({});
+          setColFilters({});
+        }}
+        className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+        style={S.surface}
+      >
+        {t('mdFiltersReset')}
       </button>
-      <button type="button" onClick={() => { setColFilters(filterDraft); setFilterOpen(false); }}
+      <button
+        type="button"
+        onClick={() => {
+          setColFilters(filterDraft);
+          setFilterOpen(false);
+        }}
         className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-        style={{ backgroundColor: "var(--accent)" }}>
-        {t("mdFiltersApply")}
+        style={{ backgroundColor: 'var(--accent)' }}
+      >
+        {t('mdFiltersApply')}
       </button>
     </>
   );
 
   /** How many column filters are actually in force, for the button's badge. */
-  const appliedFilterCount = Object.values(colFilters).filter((v) => v !== "").length;
+  const appliedFilterCount = Object.values(colFilters).filter(
+    (v) => v !== '',
+  ).length;
 
   const pagedRows = rows;
   /**
@@ -1237,38 +1642,68 @@ export function MasterDataTable({
    * here, plus more if this page came back full", which keeps Next reachable
    * without inventing a total.
    */
-  const pagerTotal = serverTotal ?? (page - 1) * pageSize + rows.length + (rows.length === pageSize ? 1 : 0);
+  const pagerTotal =
+    serverTotal ??
+    (page - 1) * pageSize + rows.length + (rows.length === pageSize ? 1 : 0);
 
   useEffect(() => {
-    if (!config.supportsNobLobFilter || workspaceScope === "OPERATIONAL") return;
-    setNobFilter("");
-    setLobFilter("");
+    if (!config.supportsNobLobFilter || workspaceScope === 'OPERATIONAL')
+      return;
+    setNobFilter('');
+    setLobFilter('');
     const params = new URLSearchParams();
-    if (companyId) params.set("companyId", companyId);
-    params.set("limit", "500");
-    api.get(`/setup/wizard/nobs?${params.toString()}`).then((r) => setNobFilterOptions(unwrap<Row[]>(r) || [])).catch(() => setNobFilterOptions([]));
+    if (companyId) params.set('companyId', companyId);
+    params.set('limit', '500');
+    api
+      .get(`/setup/wizard/nobs?${params.toString()}`)
+      .then((r) => setNobFilterOptions(unwrap<Row[]>(r) || []))
+      .catch(() => setNobFilterOptions([]));
   }, [config.key]);
 
   useEffect(() => {
-    if (!config.supportsNobLobFilter || !nobFilter) { setLobFilterOptions([]); return; }
-    api.get(`/setup/wizard/lobs/${nobFilter}`).then((r) => setLobFilterOptions(unwrap<Row[]>(r) || [])).catch(() => setLobFilterOptions([]));
+    if (!config.supportsNobLobFilter || !nobFilter) {
+      setLobFilterOptions([]);
+      return;
+    }
+    api
+      .get(`/setup/wizard/lobs/${nobFilter}`)
+      .then((r) => setLobFilterOptions(unwrap<Row[]>(r) || []))
+      .catch(() => setLobFilterOptions([]));
   }, [config.supportsNobLobFilter, nobFilter]);
 
   useEffect(() => {
-    if (config.key !== "location") { setLocationFarmOptions([]); return; }
-    api.get(`/location?filter[location_type]=FARM&limit=500`).then((r) => setLocationFarmOptions(unwrap<Row[]>(r) || [])).catch(() => setLocationFarmOptions([]));
+    if (config.key !== 'location') {
+      setLocationFarmOptions([]);
+      return;
+    }
+    api
+      .get(`/location?filter[location_type]=FARM&limit=500`)
+      .then((r) => setLocationFarmOptions(unwrap<Row[]>(r) || []))
+      .catch(() => setLocationFarmOptions([]));
   }, [config.key]);
 
   useEffect(() => {
-    if (config.key !== "location" || !filterDraft.__farm) { setLocationShedOptions([]); return; }
-    api.get(`/location?filter[parent_location_id]=${filterDraft.__farm}&filter[location_type]=SHED&limit=500`)
+    if (config.key !== 'location' || !filterDraft.__farm) {
+      setLocationShedOptions([]);
+      return;
+    }
+    api
+      .get(
+        `/location?filter[parent_location_id]=${filterDraft.__farm}&filter[location_type]=SHED&limit=500`,
+      )
       .then((r) => setLocationShedOptions(unwrap<Row[]>(r) || []))
       .catch(() => setLocationShedOptions([]));
   }, [config.key, filterDraft.__farm]);
 
   useEffect(() => {
-    if (config.key !== "location" || !filterDraft.__shed) { setLocationPenOptions([]); return; }
-    api.get(`/location?filter[parent_location_id]=${filterDraft.__shed}&filter[location_type]=PEN&limit=500`)
+    if (config.key !== 'location' || !filterDraft.__shed) {
+      setLocationPenOptions([]);
+      return;
+    }
+    api
+      .get(
+        `/location?filter[parent_location_id]=${filterDraft.__shed}&filter[location_type]=PEN&limit=500`,
+      )
       .then((r) => setLocationPenOptions(unwrap<Row[]>(r) || []))
       .catch(() => setLocationPenOptions([]));
   }, [config.key, filterDraft.__shed]);
@@ -1278,27 +1713,35 @@ export function MasterDataTable({
     // dropdowns are otherwise never populated because they are not top-level
     // fields.
     const endpoints = Array.from(
-      new Set([...config.fields, ...config.fields.flatMap((f) => f.jsonRow || [])]
-        .filter((f) => f.type === "select-entity" && f.entityEndpoint && !f.dependsOn)
-        .map((f) => f.entityEndpoint!))
+      new Set(
+        [...config.fields, ...config.fields.flatMap((f) => f.jsonRow || [])]
+          .filter(
+            (f) =>
+              f.type === 'select-entity' && f.entityEndpoint && !f.dependsOn,
+          )
+          .map((f) => f.entityEndpoint!),
+      ),
     );
     endpoints.forEach(async (ep) => {
       try {
-        const [basePath, search] = ep.split("?");
-        const params = new URLSearchParams(search || "");
-        if (companyId && !params.has("companyId")) params.set("companyId", companyId);
-        if (!params.has("limit")) params.set("limit", "500");
+        const [basePath, search] = ep.split('?');
+        const params = new URLSearchParams(search || '');
+        if (companyId && !params.has('companyId'))
+          params.set('companyId', companyId);
+        if (!params.has('limit')) params.set('limit', '500');
         // A picker must only offer rows the API will actually accept — unlike
         // the list page, which deliberately shows Active/Inactive rows so a
         // blocked one can be found and restored. isActive=true is a no-op on
         // endpoints that already always filter to active (e.g. NOB/LOB,
         // costing-method) and is honored by every findAll that carries the
         // isActive query param.
-        if (!params.has("isActive")) params.set("isActive", "true");
+        if (!params.has('isActive')) params.set('isActive', 'true');
         const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
-        const unblocked = Array.isArray(list) ? list.filter((r) => !r.is_blocked && r.is_active !== false) : [];
+        const unblocked = Array.isArray(list)
+          ? list.filter((r) => !r.is_blocked && r.is_active !== false)
+          : [];
         setEntityOptions((prev) => ({ ...prev, [ep]: unblocked }));
       } catch {
         setEntityOptions((prev) => ({ ...prev, [ep]: prev[ep] || [] }));
@@ -1314,10 +1757,15 @@ export function MasterDataTable({
 
   useEffect(() => {
     if (!modalOpen) return;
-    const listField = config.fields.find((f) => f.type === "field-list" && f.fieldsOf);
+    const listField = config.fields.find(
+      (f) => f.type === 'field-list' && f.fieldsOf,
+    );
     if (!listField) return;
-    const masterKey = String(form[listField.fieldsOf!] || editing?.[listField.fieldsOf!] || "")
-      .toLowerCase().replaceAll("_", "-");
+    const masterKey = String(
+      form[listField.fieldsOf!] || editing?.[listField.fieldsOf!] || '',
+    )
+      .toLowerCase()
+      .replaceAll('_', '-');
     const target = MASTER_DATA_CONFIGS.find((c) => c.key === masterKey);
     if (!target || sampleRecord?.master === masterKey) return;
     let cancelled = false;
@@ -1325,27 +1773,45 @@ export function MasterDataTable({
       try {
         const res = await api.get(`${target.apiBase}?limit=1`);
         const row = (unwrap<Row[]>(res) || [])[0];
-        if (!row) { if (!cancelled) setSampleRecord({ master: masterKey, values: {} }); return; }
+        if (!row) {
+          if (!cancelled) setSampleRecord({ master: masterKey, values: {} });
+          return;
+        }
         const values: Record<string, string> = {};
-        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const uuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         for (const col of target.fields) {
           const raw = row[col.key];
-          if (raw === null || raw === undefined || raw === "") continue;
-          if (col.type === "select-entity" && col.entityEndpoint && uuid.test(String(raw))) {
+          if (raw === null || raw === undefined || raw === '') continue;
+          if (
+            col.type === 'select-entity' &&
+            col.entityEndpoint &&
+            uuid.test(String(raw))
+          ) {
             // The generator writes the referenced row's code, not its id.
             try {
-              const ref = await api.get(`${col.entityEndpoint.split("?")[0]}/${encodeURIComponent(String(raw))}`);
+              const ref = await api.get(
+                `${col.entityEndpoint.split('?')[0]}/${encodeURIComponent(String(raw))}`,
+              );
               const data: any = (ref as any)?.data ?? ref;
-              values[col.key] = String(data?.[col.entityLabelKeys?.[0] || ""] ?? "");
-            } catch { /* leave it out rather than show an id */ }
+              values[col.key] = String(
+                data?.[col.entityLabelKeys?.[0] || ''] ?? '',
+              );
+            } catch {
+              /* leave it out rather than show an id */
+            }
           } else {
             values[col.key] = String(raw);
           }
         }
         if (!cancelled) setSampleRecord({ master: masterKey, values });
-      } catch { if (!cancelled) setSampleRecord({ master: masterKey, values: {} }); }
+      } catch {
+        if (!cancelled) setSampleRecord({ master: masterKey, values: {} });
+      }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [modalOpen, config.fields, form, editing, sampleRecord?.master]);
 
   // Put a row in place for every mandatory entry of a `requiredRows` list, and
@@ -1359,14 +1825,30 @@ export function MasterDataTable({
       const r = f.requiredRows!;
       const options = entityOptions[r.endpoint];
       if (!options) continue;
-      const required = options.filter((o) => o[r.flag] === true || o[r.flag] === 1);
+      const required = options.filter(
+        (o) => o[r.flag] === true || o[r.flag] === 1,
+      );
       if (!required.length) continue;
       setForm((prev) => {
         let rows: Row[] = [];
-        try { const parsed = prev[f.key] ? JSON.parse(prev[f.key]) : []; if (Array.isArray(parsed)) rows = parsed; } catch { return prev; }
-        const missing = required.filter((o) => !rows.some((row) => String(row[r.key] ?? "") === String(o[r.key])));
+        try {
+          const parsed = prev[f.key] ? JSON.parse(prev[f.key]) : [];
+          if (Array.isArray(parsed)) rows = parsed;
+        } catch {
+          return prev;
+        }
+        const missing = required.filter(
+          (o) =>
+            !rows.some((row) => String(row[r.key] ?? '') === String(o[r.key])),
+        );
         if (!missing.length) return prev;
-        return { ...prev, [f.key]: JSON.stringify([...missing.map((o) => ({ [r.key]: o[r.key] })), ...rows]) };
+        return {
+          ...prev,
+          [f.key]: JSON.stringify([
+            ...missing.map((o) => ({ [r.key]: o[r.key] })),
+            ...rows,
+          ]),
+        };
       });
     }
   }, [modalOpen, config.key, entityOptions, form]);
@@ -1385,35 +1867,58 @@ export function MasterDataTable({
       let complete = true;
       for (const [fieldKey, paramName] of Object.entries(d.params)) {
         const v = form[fieldKey];
-        if (!v) { complete = false; break; }
+        if (!v) {
+          complete = false;
+          break;
+        }
         params.set(paramName, String(v));
       }
       if (!complete) {
-        setDerived((prev) => (prev[f.key] === undefined ? prev : { ...prev, [f.key]: undefined as any }));
+        setDerived((prev) =>
+          prev[f.key] === undefined
+            ? prev
+            : { ...prev, [f.key]: undefined as any },
+        );
         continue;
       }
-      if (companyId) params.set("companyId", companyId);
-      api.get(`${d.endpoint}${d.endpoint.includes("?") ? "&" : "?"}${params}`).then((res: any) => {
-        if (cancelled) return;
-        const rows = unwrap<Row[]>(res) || [];
-        const hit = Array.isArray(rows) ? rows[0] : undefined;
-        if (hit && hit[d.valueKey] != null) {
-          setDerived((prev) => ({ ...prev, [f.key]: "found" }));
-          setForm((prev) => ({ ...prev, [f.key]: String(hit[d.valueKey]) }));
-        } else {
-          setDerived((prev) => ({ ...prev, [f.key]: "missing" }));
-        }
-      }).catch(() => { if (!cancelled) setDerived((prev) => ({ ...prev, [f.key]: "missing" })); });
+      if (companyId) params.set('companyId', companyId);
+      api
+        .get(`${d.endpoint}${d.endpoint.includes('?') ? '&' : '?'}${params}`)
+        .then((res: any) => {
+          if (cancelled) return;
+          const rows = unwrap<Row[]>(res) || [];
+          const hit = Array.isArray(rows) ? rows[0] : undefined;
+          if (hit && hit[d.valueKey] != null) {
+            setDerived((prev) => ({ ...prev, [f.key]: 'found' }));
+            setForm((prev) => ({ ...prev, [f.key]: String(hit[d.valueKey]) }));
+          } else {
+            setDerived((prev) => ({ ...prev, [f.key]: 'missing' }));
+          }
+        })
+        .catch(() => {
+          if (!cancelled)
+            setDerived((prev) => ({ ...prev, [f.key]: 'missing' }));
+        });
     }
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // Re-runs when a parent value changes: the fields named in every
     // derivedFrom's params are the real dependency.
-  }, [modalOpen, companyId, config.key,
-      ...config.fields.filter((x) => x.derivedFrom).flatMap((x) => Object.keys(x.derivedFrom!.params).map((k) => form[k]))]);
+  }, [
+    modalOpen,
+    companyId,
+    config.key,
+    ...config.fields
+      .filter((x) => x.derivedFrom)
+      .flatMap((x) => Object.keys(x.derivedFrom!.params).map((k) => form[k])),
+  ]);
 
   useEffect(() => {
     if (!modalOpen) return;
-    const dependentFields = config.fields.filter((f) => f.type === "select-entity" && f.dependsOn);
+    const dependentFields = config.fields.filter(
+      (f) => f.type === 'select-entity' && f.dependsOn,
+    );
     // entityReloadKey changing means a related selector just created a row that a
     // dependent dropdown here may need to see. The early return below skips
     // endpoints already cached in entityOptions, which would otherwise make
@@ -1422,11 +1927,17 @@ export function MasterDataTable({
     const reloadKeyChanged = lastEntityReloadKeyRef.current !== entityReloadKey;
     lastEntityReloadKeyRef.current = entityReloadKey;
     if (reloadKeyChanged) {
-      const eps = new Set(dependentFields.map((f) => resolveEndpoint(f, form)).filter((ep): ep is string => !!ep));
+      const eps = new Set(
+        dependentFields
+          .map((f) => resolveEndpoint(f, form))
+          .filter((ep): ep is string => !!ep),
+      );
       if (eps.size) {
         setEntityOptions((prev) => {
           const next = { ...prev };
-          eps.forEach((ep) => { delete next[ep]; });
+          eps.forEach((ep) => {
+            delete next[ep];
+          });
           return next;
         });
       }
@@ -1439,14 +1950,16 @@ export function MasterDataTable({
         // must not offer a row the API will reject. ep may already carry a
         // query string (dependsOnMode "query"), so preserve any existing params
         // and do not duplicate isActive or limit.
-        const [basePath, search] = ep.split("?");
-        const params = new URLSearchParams(search || "");
-        if (!params.has("isActive")) params.set("isActive", "true");
-        if (!params.has("limit")) params.set("limit", "500");
+        const [basePath, search] = ep.split('?');
+        const params = new URLSearchParams(search || '');
+        if (!params.has('isActive')) params.set('isActive', 'true');
+        if (!params.has('limit')) params.set('limit', '500');
         const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
-        const unblocked = Array.isArray(list) ? list.filter((r) => !r.is_blocked && r.is_active !== false) : [];
+        const unblocked = Array.isArray(list)
+          ? list.filter((r) => !r.is_blocked && r.is_active !== false)
+          : [];
         setEntityOptions((prev) => ({ ...prev, [ep]: unblocked }));
       } catch {
         setEntityOptions((prev) => ({ ...prev, [ep]: [] }));
@@ -1463,27 +1976,37 @@ export function MasterDataTable({
     formFields.forEach((f) => {
       if (f.defaultValue !== undefined) {
         initial[f.key] = f.defaultValue;
-      } else if (f.multiple && f.allOption && config.key !== "reason") {
-        initial[f.key] = [String(f.allOption[f.entityValueKey || "id"])];
+      } else if (f.multiple && f.allOption && config.key !== 'reason') {
+        initial[f.key] = [String(f.allOption[f.entityValueKey || 'id'])];
       } else {
-        initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
+        initial[f.key] =
+          f.type === 'boolean'
+            ? false
+            : f.type === 'string-list' || f.type === 'field-list' || f.multiple
+              ? []
+              : '';
       }
     });
     codeFieldTouchedRef.current = false;
     if (numbering.codeKey) {
-      const currentPreview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
+      const currentPreview =
+        numbering.preview ||
+        (numbering.value(numbering.codeKey, undefined) as string);
       if (currentPreview) initial[numbering.codeKey] = currentPreview;
     }
     // Pre-fill the active filter tab's defaultFormValues (e.g. resource_type: "MANPOWER").
     if (config.filterTabs && activeFilterTab) {
-      const tabOpt = config.filterTabs.options.find((o) => o.value === activeFilterTab);
-      if (tabOpt?.defaultFormValues) Object.assign(initial, tabOpt.defaultFormValues);
+      const tabOpt = config.filterTabs.options.find(
+        (o) => o.value === activeFilterTab,
+      );
+      if (tabOpt?.defaultFormValues)
+        Object.assign(initial, tabOpt.defaultFormValues);
     }
     if (initialValues) {
       Object.assign(initial, initialValues);
     }
     setForm(initial);
-    setActiveFormTab("");
+    setActiveFormTab('');
     setChipDrafts({});
     setModalOpen(true);
   };
@@ -1491,9 +2014,17 @@ export function MasterDataTable({
   // When a number series code preview arrives or updates, populate it into the form
   // only if the user has not manually touched/cleared the field.
   useEffect(() => {
-    if (!modalOpen || editing || !numbering.codeKey || templateLockedFields.has(numbering.codeKey)) return;
+    if (
+      !modalOpen ||
+      editing ||
+      !numbering.codeKey ||
+      templateLockedFields.has(numbering.codeKey)
+    )
+      return;
     if (codeFieldTouchedRef.current) return;
-    const preview = numbering.preview || (numbering.value(numbering.codeKey, undefined) as string);
+    const preview =
+      numbering.preview ||
+      (numbering.value(numbering.codeKey, undefined) as string);
     if (preview && (!form[numbering.codeKey] || !codeFieldTouchedRef.current)) {
       setForm((prev) => {
         if (codeFieldTouchedRef.current) return prev;
@@ -1501,80 +2032,94 @@ export function MasterDataTable({
         return { ...prev, [numbering.codeKey!]: preview };
       });
     }
-  }, [modalOpen, editing, numbering.codeKey, numbering.preview, templateLockedFields]);
+  }, [
+    modalOpen,
+    editing,
+    numbering.codeKey,
+    numbering.preview,
+    templateLockedFields,
+  ]);
 
   const onConfirmTemplate = (generatedItem: any) => {
     setEditing(generatedItem);
     const initial: Row = {};
     formFields.forEach((f) => {
-      initial[f.key] = f.type === "boolean" ? false : f.type === "string-list" || f.type === "field-list" || f.multiple ? [] : "";
+      initial[f.key] =
+        f.type === 'boolean'
+          ? false
+          : f.type === 'string-list' || f.type === 'field-list' || f.multiple
+            ? []
+            : '';
     });
 
-    initial.item_code = generatedItem.item_no || generatedItem.item_code || "";
-    initial.item_type = generatedItem.item_type || "";
-    initial.category_id = generatedItem.category || "";
-    initial.sub_category = generatedItem.sub_category || "";
-    initial.valuation_method = generatedItem.valuation_method || "";
+    initial.item_code = generatedItem.item_no || generatedItem.item_code || '';
+    initial.item_type = generatedItem.item_type || '';
+    initial.category_id = generatedItem.category || '';
+    initial.sub_category = generatedItem.sub_category || '';
+    initial.valuation_method = generatedItem.valuation_method || '';
 
-    if (generatedItem.item_tracking === "LOT") {
+    if (generatedItem.item_tracking === 'LOT') {
       initial.is_tracked = true;
-      initial.tracking_type = "LOT";
-      initial.tracking_series_id = generatedItem.item_tracking_no_series_id || "";
+      initial.tracking_type = 'LOT';
+      initial.tracking_series_id =
+        generatedItem.item_tracking_no_series_id || '';
       initial.is_lot_tracked = true;
       initial.is_serial_tracked = false;
-    } else if (generatedItem.item_tracking === "SERIAL") {
+    } else if (generatedItem.item_tracking === 'SERIAL') {
       initial.is_tracked = true;
-      initial.tracking_type = "SERIAL";
-      initial.tracking_series_id = generatedItem.item_tracking_no_series_id || "";
+      initial.tracking_type = 'SERIAL';
+      initial.tracking_series_id =
+        generatedItem.item_tracking_no_series_id || '';
       initial.is_lot_tracked = false;
       initial.is_serial_tracked = true;
     } else {
       initial.is_tracked = false;
-      initial.tracking_type = "LOT";
-      initial.tracking_series_id = "";
+      initial.tracking_type = 'LOT';
+      initial.tracking_series_id = '';
       initial.is_lot_tracked = false;
       initial.is_serial_tracked = false;
     }
 
-    initial.is_inventoriable = generatedItem.inventory_type !== "NON_INVENTORY";
+    initial.is_inventoriable = generatedItem.inventory_type !== 'NON_INVENTORY';
     initial.is_qr_enabled = generatedItem.qr_code_enabled ?? false;
-    initial.inventory_gl_account = generatedItem.inventory_gl_account || "";
-    initial.cogs_gl_account = generatedItem.cogs_gl_account || "";
-    initial.item_template_id = generatedItem.item_template_id || generatedItem.id || "";
+    initial.inventory_gl_account = generatedItem.inventory_gl_account || '';
+    initial.cogs_gl_account = generatedItem.cogs_gl_account || '';
+    initial.item_template_id =
+      generatedItem.item_template_id || generatedItem.id || '';
 
     // Fields not provided by the template remain empty
-    initial.item_name = "";
-    initial.uom_primary = "";
-    initial.withdrawal_days = "";
+    initial.item_name = '';
+    initial.uom_primary = '';
+    initial.withdrawal_days = '';
 
     // Build the locked-field set: any key that received a non-empty, non-false
     // value from the template is locked so the user cannot override it.
     // item_code is always locked (auto-generated); all other locks are data-driven.
     const locked = new Set<string>();
     // item_code is always locked when coming from template
-    if (initial.item_code) locked.add("item_code");
-    if (initial.item_type) locked.add("item_type");
-    if (initial.category_id) locked.add("category_id");
-    if (initial.sub_category) locked.add("sub_category");
-    if (initial.valuation_method) locked.add("valuation_method");
+    if (initial.item_code) locked.add('item_code');
+    if (initial.item_type) locked.add('item_type');
+    if (initial.category_id) locked.add('category_id');
+    if (initial.sub_category) locked.add('sub_category');
+    if (initial.valuation_method) locked.add('valuation_method');
     // Tracking: lock the gate switch and its children when tracking is configured
-    if (generatedItem.item_tracking && generatedItem.item_tracking !== "NONE") {
-      locked.add("is_tracked");
-      locked.add("tracking_type");
-      if (initial.tracking_series_id) locked.add("tracking_series_id");
+    if (generatedItem.item_tracking && generatedItem.item_tracking !== 'NONE') {
+      locked.add('is_tracked');
+      locked.add('tracking_type');
+      if (initial.tracking_series_id) locked.add('tracking_series_id');
     }
     // Inventory type switch
-    locked.add("is_inventoriable");
+    locked.add('is_inventoriable');
     // QR is always supplied by template (true or false)
-    locked.add("is_qr_enabled");
+    locked.add('is_qr_enabled');
     // GL accounts — only lock if the template actually set them
-    if (initial.inventory_gl_account) locked.add("inventory_gl_account");
-    if (initial.cogs_gl_account) locked.add("cogs_gl_account");
+    if (initial.inventory_gl_account) locked.add('inventory_gl_account');
+    if (initial.cogs_gl_account) locked.add('cogs_gl_account');
 
     setTemplateLockedFields(locked);
     setIsManualNoAllowed(!!generatedItem.manual_nos);
     setForm(initial);
-    setActiveFormTab("");
+    setActiveFormTab('');
     setChipDrafts({});
     setModalOpen(true);
   };
@@ -1590,21 +2135,30 @@ export function MasterDataTable({
     // A deactivated record opens read-only — view, no edit. Editing (or
     // reactivating) is a deliberate action through the row's own toggle, not a
     // side effect of opening it.
-    if (action === "view") {
+    if (action === 'view') {
       setViewingId(String(row[config.idKey]));
       return;
     }
-    if (action === "none") return;
+    if (action === 'none') return;
     setEditing(row);
     setIsManualNoAllowed(false);
     const initial: Row = {};
     // MySQL tinyint reaches here as 1 as readily as true, and both mean set.
     const columnIsOn = (key: string) => row[key] === true || row[key] === 1;
-    if (config.key === "location" && Array.isArray(row.attached_shed_details)) {
-      initial.attached_shed_dates = Object.fromEntries((row.attached_shed_details as Row[]).map((d) => [
-        String(d.location_id),
-        { effective_from: d.effective_from ? String(d.effective_from).slice(0, 10) : null, effective_to: d.effective_to ? String(d.effective_to).slice(0, 10) : null },
-      ]));
+    if (config.key === 'location' && Array.isArray(row.attached_shed_details)) {
+      initial.attached_shed_dates = Object.fromEntries(
+        (row.attached_shed_details as Row[]).map((d) => [
+          String(d.location_id),
+          {
+            effective_from: d.effective_from
+              ? String(d.effective_from).slice(0, 10)
+              : null,
+            effective_to: d.effective_to
+              ? String(d.effective_to).slice(0, 10)
+              : null,
+          },
+        ]),
+      );
     }
     formFields.forEach((f) => {
       // A form-only control has no column of its own, so its state has to be
@@ -1612,7 +2166,10 @@ export function MasterDataTable({
       // already lot-tracked opens with the tracking gate off and its own
       // tracking fields hidden.
       if (f.booleanColumns) {
-        initial[f.key] = Object.entries(f.booleanColumns).find(([, column]) => columnIsOn(column))?.[0] ?? "";
+        initial[f.key] =
+          Object.entries(f.booleanColumns).find(([, column]) =>
+            columnIsOn(column),
+          )?.[0] ?? '';
         return;
       }
       if (f.seedFromAnyTrue) {
@@ -1621,22 +2178,29 @@ export function MasterDataTable({
       }
       if (f.seedFromValueOf) {
         const stored = row[f.seedFromValueOf];
-        initial[f.key] = stored !== null && stored !== undefined && stored !== "" && Number(stored) !== 0;
+        initial[f.key] =
+          stored !== null &&
+          stored !== undefined &&
+          stored !== '' &&
+          Number(stored) !== 0;
         return;
       }
       let v = row[f.key];
-      if (f.type === "string-list" || f.type === "field-list" || f.multiple) {
+      if (f.type === 'string-list' || f.type === 'field-list' || f.multiple) {
         const parsed = parseStringList(v);
-        initial[f.key] = f.multiple && f.allOption && parsed.length === 0
-          ? [String(f.allOption[f.entityValueKey || "id"])]
-          : parsed;
+        initial[f.key] =
+          f.multiple && f.allOption && parsed.length === 0
+            ? [String(f.allOption[f.entityValueKey || 'id'])]
+            : parsed;
         return;
       }
-      if (f.type === "json" && v && typeof v !== "string") {
+      if (f.type === 'json' && v && typeof v !== 'string') {
         if (f.jsonListKeys && Array.isArray(v)) {
           v = v.map((entry: Row) => {
             const picked: Row = {};
-            f.jsonListKeys!.forEach((k) => { if (entry[k] !== undefined) picked[k] = entry[k]; });
+            f.jsonListKeys!.forEach((k) => {
+              if (entry[k] !== undefined) picked[k] = entry[k];
+            });
             return picked;
           });
         }
@@ -1644,27 +2208,33 @@ export function MasterDataTable({
       }
       // A number box starts with the stored number without its padding zeros ("150.000000" -> 150); never rounded,
       // so saving the form leaves the value as it was.
-      if (f.type === "number" && v !== null && v !== undefined && v !== "") v = toInputNumber(v);
-      initial[f.key] = v ?? (f.type === "boolean" ? false : "");
+      if (f.type === 'number' && v !== null && v !== undefined && v !== '')
+        v = toInputNumber(v);
+      initial[f.key] = v ?? (f.type === 'boolean' ? false : '');
     });
     // storage_type is hidden from the form (see configs.ts) and derived from
     // location_type — but it's hidden from formFields too, so the loop above
     // never seeded it from the row at all. Derive it fresh here rather than
     // trust row.storage_type, since older STORE rows predate this field ever
     // being auto-set for anything but SILO and may still carry it as null.
-    if (config.key === "location") {
-      initial.storage_type = row.location_type === "SILO" || row.location_type === "STORE" ? row.location_type : "";
+    if (config.key === 'location') {
+      initial.storage_type =
+        row.location_type === 'SILO' || row.location_type === 'STORE'
+          ? row.location_type
+          : '';
     }
     setForm(initial);
     codeFieldTouchedRef.current = false;
-    setActiveFormTab("");
+    setActiveFormTab('');
     setChipDrafts({});
     setModalOpen(true);
   };
 
   useEffect(() => {
-    if (deepLinkOpenedRef.current || typeof window === "undefined") return;
-    const recordId = new URLSearchParams(window.location.search).get("recordId");
+    if (deepLinkOpenedRef.current || typeof window === 'undefined') return;
+    const recordId = new URLSearchParams(window.location.search).get(
+      'recordId',
+    );
     if (!recordId) return;
     deepLinkOpenedRef.current = true;
     const listed = rows.find((row) => String(row[config.idKey]) === recordId);
@@ -1672,11 +2242,17 @@ export function MasterDataTable({
       openEdit(listed);
       return;
     }
-    api.get(`${config.apiBase}/${encodeURIComponent(recordId)}`)
+    api
+      .get(`${config.apiBase}/${encodeURIComponent(recordId)}`)
       .then((response) => {
         const row = unwrap<Row>(response);
         // A lifecycle link to a later feed line's row comes back as its stage's first row (14 Oct): open that.
-        if (row && (String(row[config.idKey]) === recordId || config.key === "breed-lifecycle-stage")) openEdit(row);
+        if (
+          row &&
+          (String(row[config.idKey]) === recordId ||
+            config.key === 'breed-lifecycle-stage')
+        )
+          openEdit(row);
       })
       .catch(() => {
         deepLinkOpenedRef.current = false;
@@ -1689,7 +2265,8 @@ export function MasterDataTable({
   /** The message a field's own `validate` gives for its current value, shown under the field as soon as the value is chosen. */
   const fieldRuleError = (f: MasterDataField): string | undefined => {
     const v = form[f.key];
-    if (!f.validate || v === "" || v === undefined || v === null) return undefined;
+    if (!f.validate || v === '' || v === undefined || v === null)
+      return undefined;
     return f.validate(v, form) ?? undefined;
   };
 
@@ -1698,96 +2275,126 @@ export function MasterDataTable({
       codeFieldTouchedRef.current = true;
     }
     setForm((prev) => {
-    const next = { ...prev, [key]: value };
-    // A jsonRow column with defaultFromField (KPI Period on a lifecycle KPI line) follows its header field: a
-    // line still on the previous header value, or empty, moves to the new one; a line set by hand keeps its own.
-    for (const jf of config.fields) {
-      const followers = (jf.jsonRow || []).filter((c) => c.defaultFromField === key);
-      if (!followers.length || typeof next[jf.key] !== "string" || !next[jf.key]) continue;
-      try {
-        const parsed = JSON.parse(next[jf.key]);
-        if (!Array.isArray(parsed)) continue;
-        const before = String(prev[key] ?? "");
-        next[jf.key] = JSON.stringify(parsed.map((r: Row) => {
-          const out = { ...r };
-          for (const c of followers) if (c.readOnlyFollow) out[c.key] = value || ""; else if (!out[c.key] || String(out[c.key]) === before) out[c.key] = value ?? "";
-          return out;
-        }));
-      } catch { /* not a row list: nothing to follow with */ }
-    }
-    // Storage Location duplicated Location Type (STORE/SILO were already
-    // choices there) and confused users into thinking they were two separate
-    // decisions, so the field itself is hidden (configs.ts) and its value is
-    // now derived entirely from location_type instead of asked for again.
-    if (config.key === "location" && key === "location_type") {
-      next.storage_type = value === "SILO" || value === "STORE" ? value : "";
-      if (value !== "SILO") {
-        next.silo_capacity_kg = "";
-        next.silo_reorder_days = "";
+      const next = { ...prev, [key]: value };
+      // A jsonRow column with defaultFromField (KPI Period on a lifecycle KPI line) follows its header field: a
+      // line still on the previous header value, or empty, moves to the new one; a line set by hand keeps its own.
+      for (const jf of config.fields) {
+        const followers = (jf.jsonRow || []).filter(
+          (c) => c.defaultFromField === key,
+        );
+        if (
+          !followers.length ||
+          typeof next[jf.key] !== 'string' ||
+          !next[jf.key]
+        )
+          continue;
+        try {
+          const parsed = JSON.parse(next[jf.key]);
+          if (!Array.isArray(parsed)) continue;
+          const before = String(prev[key] ?? '');
+          next[jf.key] = JSON.stringify(
+            parsed.map((r: Row) => {
+              const out = { ...r };
+              for (const c of followers)
+                if (c.readOnlyFollow) out[c.key] = value || '';
+                else if (!out[c.key] || String(out[c.key]) === before)
+                  out[c.key] = value ?? '';
+              return out;
+            }),
+          );
+        } catch {
+          /* not a row list: nothing to follow with */
+        }
       }
-    }
-    if (config.key === "resource" && key === "resource_type") {
-      const allowed = value === "MANPOWER"
-        ? ["PERMANENT", "CONTRACT", "DAILY"]
-        : value === "EQUIPMENT"
-        ? ["OWNED", "LEASED", "RENTED"]
-        : [];
-      if (next.resource_sub_type && !allowed.includes(next.resource_sub_type)) {
-        next.resource_sub_type = "";
+      // Storage Location duplicated Location Type (STORE/SILO were already
+      // choices there) and confused users into thinking they were two separate
+      // decisions, so the field itself is hidden (configs.ts) and its value is
+      // now derived entirely from location_type instead of asked for again.
+      if (config.key === 'location' && key === 'location_type') {
+        next.storage_type = value === 'SILO' || value === 'STORE' ? value : '';
+        if (value !== 'SILO') {
+          next.silo_capacity_kg = '';
+          next.silo_reorder_days = '';
+        }
       }
-    }
-    config.fields.forEach((f) => {
-      if (parentKeys(f).includes(key) && next[f.key]) next[f.key] = "";
+      if (config.key === 'resource' && key === 'resource_type') {
+        const allowed =
+          value === 'MANPOWER'
+            ? ['PERMANENT', 'CONTRACT', 'DAILY']
+            : value === 'EQUIPMENT'
+              ? ['OWNED', 'LEASED', 'RENTED']
+              : [];
+        if (
+          next.resource_sub_type &&
+          !allowed.includes(next.resource_sub_type)
+        ) {
+          next.resource_sub_type = '';
+        }
+      }
+      config.fields.forEach((f) => {
+        if (parentKeys(f).includes(key) && next[f.key]) next[f.key] = '';
+      });
+      // A switch that gates real columns has to clear them, not just hide them —
+      // a hidden prefix still ends up in the code.
+      const toggled = config.fields.find((f) => f.key === key);
+      if (toggled?.clearsWhenOff && value === false) {
+        for (const [k, v] of Object.entries(toggled.clearsWhenOff)) next[k] = v;
+      }
+      if (value) {
+        const changedField = config.fields.find((f) => f.key === key);
+        (changedField?.exclusiveWith || []).forEach((otherKey) => {
+          next[otherKey] = '';
+        });
+      }
+      // allOption ("All Stages" etc.) is exclusive with every real option in the
+      // same multi-select: picking a specific one while All was checked drops
+      // All, and picking All drops whatever specific ones were checked.
+      if (toggled?.multiple && toggled.allOption && Array.isArray(value)) {
+        const allVal = String(
+          toggled.allOption[toggled.entityValueKey || 'id'],
+        );
+        if (value.includes(allVal) && value.length > 1) {
+          const hadAll = parseStringList(prev[key]).includes(allVal);
+          next[key] = hadAll
+            ? value.filter((v: string) => v !== allVal)
+            : [allVal];
+        }
+      }
+      // A control that appears part-way through the form starts on its stated
+      // default rather than on nothing. Tracked By is a choice between two, not
+      // three: "neither" is what the switch above it already says, so turning
+      // tracking on lands on Lot until someone says otherwise.
+      //
+      // Excludes the field the user is actually editing (f.key === key): this
+      // ran on every keystroke of every field carrying a defaultValue, so
+      // clearing e.g. Increment By (default "1") to type a different number
+      // snapped it straight back to "1" the instant it went empty — the field
+      // fought its own edit instead of only defaulting a *different* field that
+      // just became visible as a side effect of this change.
+      config.fields.forEach((f) => {
+        if (f.defaultValue === undefined || f.key === key) return;
+        const shown = isFieldVisible(f, next);
+        if (shown && (next[f.key] === '' || next[f.key] === undefined))
+          next[f.key] = f.defaultValue;
+      });
+      return next;
     });
-    // A switch that gates real columns has to clear them, not just hide them —
-    // a hidden prefix still ends up in the code.
-    const toggled = config.fields.find((f) => f.key === key);
-    if (toggled?.clearsWhenOff && value === false) {
-      for (const [k, v] of Object.entries(toggled.clearsWhenOff)) next[k] = v;
-    }
-    if (value) {
-      const changedField = config.fields.find((f) => f.key === key);
-      (changedField?.exclusiveWith || []).forEach((otherKey) => { next[otherKey] = ""; });
-    }
-    // allOption ("All Stages" etc.) is exclusive with every real option in the
-    // same multi-select: picking a specific one while All was checked drops
-    // All, and picking All drops whatever specific ones were checked.
-    if (toggled?.multiple && toggled.allOption && Array.isArray(value)) {
-      const allVal = String(toggled.allOption[toggled.entityValueKey || "id"]);
-      if (value.includes(allVal) && value.length > 1) {
-        const hadAll = parseStringList(prev[key]).includes(allVal);
-        next[key] = hadAll ? value.filter((v: string) => v !== allVal) : [allVal];
-      }
-    }
-    // A control that appears part-way through the form starts on its stated
-    // default rather than on nothing. Tracked By is a choice between two, not
-    // three: "neither" is what the switch above it already says, so turning
-    // tracking on lands on Lot until someone says otherwise.
-    //
-    // Excludes the field the user is actually editing (f.key === key): this
-    // ran on every keystroke of every field carrying a defaultValue, so
-    // clearing e.g. Increment By (default "1") to type a different number
-    // snapped it straight back to "1" the instant it went empty — the field
-    // fought its own edit instead of only defaulting a *different* field that
-    // just became visible as a side effect of this change.
-    config.fields.forEach((f) => {
-      if (f.defaultValue === undefined || f.key === key) return;
-      const shown = isFieldVisible(f, next);
-      if (shown && (next[f.key] === "" || next[f.key] === undefined)) next[f.key] = f.defaultValue;
-    });
-    return next;
-  });
-};
+  };
 
   const handleSave = async () => {
     if (readOnly) return;
     setSaving(true);
     try {
-      const isNumberSeriesForm = config.key === "number-series" || config.key === "no-series";
+      const isNumberSeriesForm =
+        config.key === 'number-series' || config.key === 'no-series';
       // Everything that is missing is reported together, in form order. Stopping at
       // the first one made a blank Code (listed first, but built from the Location
       // Type and Parent chosen further down) the thing the user was told about.
-      const missing: Array<{ label: string; section: string; isCode: boolean }> = [];
+      const missing: Array<{
+        label: string;
+        section: string;
+        isCode: boolean;
+      }> = [];
       for (const f of visibleFields) {
         if (editing && f.createOnly) continue;
         // filterOnly normally means "not saved, so nothing to check". A control
@@ -1796,46 +2403,79 @@ export function MasterDataTable({
         if (f.filterOnly && !f.booleanColumns) continue;
         let v = form[f.key];
         const isManagedCode = f.key === numbering.codeKey && numbering.managed;
-        if ((v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current && !editing && !templateLockedFields.has(f.key)) {
-          const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
+        if (
+          (v === '' || v === undefined || v === null) &&
+          f.key === numbering.codeKey &&
+          !codeFieldTouchedRef.current &&
+          !editing &&
+          !templateLockedFields.has(f.key)
+        ) {
+          const fallbackVal =
+            numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) {
             v = fallbackVal;
             form[f.key] = fallbackVal;
           }
         }
-        const isEmpty = v === "" || v === undefined || v === null || (Array.isArray(v) && !v.length);
+        const isEmpty =
+          v === '' ||
+          v === undefined ||
+          v === null ||
+          (Array.isArray(v) && !v.length);
         if (isEmpty && isFieldRequired(f, form) && !isManagedCode) {
-          missing.push({ label: tLabel(currentLabel(f, form)), section: f.section || "Identification", isCode: f.key === numbering.codeKey });
+          missing.push({
+            label: tLabel(currentLabel(f, form)),
+            section: f.section || 'Identification',
+            isCode: f.key === numbering.codeKey,
+          });
           continue;
         }
         const ruleMessage = !isEmpty && f.validate ? f.validate(v, form) : null;
         if (ruleMessage) {
-          setActiveFormTab(f.section || "Identification");
+          setActiveFormTab(f.section || 'Identification');
           throw new Error(ruleMessage);
         }
         // A field with a character-format whitelist (f.pattern) is tested over
         // its whole value at save — the HTML pattern attribute alone only
         // validates on native form submit, which this dialog does not use.
-        if (!isEmpty && f.pattern && typeof v === "string" && !new RegExp(`^${f.pattern}$`).test(v)) {
-          setActiveFormTab(f.section || "Identification");
-          throw new Error(`${tLabel(currentLabel(f, form))} contains characters that are not allowed.`);
+        if (
+          !isEmpty &&
+          f.pattern &&
+          typeof v === 'string' &&
+          !new RegExp(`^${f.pattern}$`).test(v)
+        ) {
+          setActiveFormTab(f.section || 'Identification');
+          throw new Error(
+            `${tLabel(currentLabel(f, form))} contains characters that are not allowed.`,
+          );
         }
         if (isNumberSeriesForm && !isEmpty) {
-          if (f.maxLength && typeof v === "string" && v.length > f.maxLength) {
-            setActiveFormTab(f.section || "Identification");
-            throw new Error(`${tLabel(currentLabel(f, form))} can have at most ${f.maxLength} characters.`);
+          if (f.maxLength && typeof v === 'string' && v.length > f.maxLength) {
+            setActiveFormTab(f.section || 'Identification');
+            throw new Error(
+              `${tLabel(currentLabel(f, form))} can have at most ${f.maxLength} characters.`,
+            );
           }
-          if (f.type === "number") {
+          if (f.type === 'number') {
             const num = Number(v);
             if (!isNaN(num)) {
-              if ((f.key === "seq_length" || f.key === "increment_by") && !Number.isInteger(num)) {
-                throw new Error(`${tLabel(currentLabel(f, form))} must be a whole number.`);
+              if (
+                (f.key === 'seq_length' || f.key === 'increment_by') &&
+                !Number.isInteger(num)
+              ) {
+                throw new Error(
+                  `${tLabel(currentLabel(f, form))} must be a whole number.`,
+                );
               }
               if (f.min !== undefined && num < f.min) {
-                throw new Error(`${tLabel(currentLabel(f, form))} must be ${f.min} or more.`);
+                throw new Error(
+                  `${tLabel(currentLabel(f, form))} must be ${f.min} or more.`,
+                );
               }
               if (f.max !== undefined && num > f.max) {
-                throw new Error(`${tLabel(currentLabel(f, form))} must be ${f.max} or less.`);
+                throw new Error(
+                  `${tLabel(currentLabel(f, form))} must be ${f.max} or less.`,
+                );
               }
             }
           }
@@ -1854,7 +2494,9 @@ export function MasterDataTable({
               : `${shown[0].label} is required.`,
           );
         }
-        throw new Error(`Complete the required fields: ${shown.map((m) => m.label).join(", ")}.`);
+        throw new Error(
+          `Complete the required fields: ${shown.map((m) => m.label).join(', ')}.`,
+        );
       }
 
       const payload: Row = {};
@@ -1870,14 +2512,15 @@ export function MasterDataTable({
           for (const [k, v] of Object.entries(f.clearsWhenOff)) {
             const targetField = formFields.find((ff) => ff.key === k);
             if (targetField?.filterOnly) continue;
-            payload[k] = v === "" ? null : v;
+            payload[k] = v === '' ? null : v;
           }
         }
       }
       for (const f of visibleFields) {
         if (editing && f.createOnly) continue;
         const isCodeField = f.key === numbering.codeKey;
-        const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
+        const codeAllowsManual =
+          isCodeField && (numbering.allowManual || isManualNoAllowed);
         if (f.filterOnly || (f.readOnly && !codeAllowsManual)) continue;
         // A managed, manual-allowed code field is pre-filled with the series'
         // own next-number preview so the user always sees a value, but that is
@@ -1886,40 +2529,71 @@ export function MasterDataTable({
         // generateNext()), so the series' current_seq never advanced no matter
         // how many records were created — only a genuinely edited code should
         // take the manual path.
-        if (!editing && f.key === numbering.codeKey && numbering.managed && numbering.allowManual && (!codeFieldTouchedRef.current || !form[f.key])) {
+        if (
+          !editing &&
+          f.key === numbering.codeKey &&
+          numbering.managed &&
+          numbering.allowManual &&
+          (!codeFieldTouchedRef.current || !form[f.key])
+        ) {
           continue;
         }
         let v = form[f.key];
-        if (!editing && !templateLockedFields.has(f.key) && (v === "" || v === undefined || v === null) && f.key === numbering.codeKey && !codeFieldTouchedRef.current) {
-          const fallbackVal = numbering.preview || (numbering.value(f.key, undefined) as string);
+        if (
+          !editing &&
+          !templateLockedFields.has(f.key) &&
+          (v === '' || v === undefined || v === null) &&
+          f.key === numbering.codeKey &&
+          !codeFieldTouchedRef.current
+        ) {
+          const fallbackVal =
+            numbering.preview || (numbering.value(f.key, undefined) as string);
           if (fallbackVal) v = fallbackVal;
         }
         // allOption is a display-only sentinel — "All Stages" selected alone
         // means the same as nothing selected (the API's own convention for
         // "no restriction"), so it is never actually sent.
-        if (f.multiple && f.allOption && Array.isArray(v) && v.length === 1 && v[0] === String(f.allOption[f.entityValueKey || "id"])) {
+        if (
+          f.multiple &&
+          f.allOption &&
+          Array.isArray(v) &&
+          v.length === 1 &&
+          v[0] === String(f.allOption[f.entityValueKey || 'id'])
+        ) {
           v = [];
         }
         // A cleared Prefix / "Same as separator" has to reach the API as a
         // clear: skipping an empty value would leave the old one in every code.
-        if (isNumberSeriesForm && editing && (f.key === "prefix" || f.key === "seq_separator") && (v === "" || v === undefined || v === null)) {
-          payload[f.key] = "";
+        if (
+          isNumberSeriesForm &&
+          editing &&
+          (f.key === 'prefix' || f.key === 'seq_separator') &&
+          (v === '' || v === undefined || v === null)
+        ) {
+          payload[f.key] = '';
           continue;
         }
-        if (v === "" || v === undefined || v === null) continue;
-        if (f.type === "number") v = Number(v);
-        if (f.type === "json") {
+        if (v === '' || v === undefined || v === null) continue;
+        if (f.type === 'number') v = Number(v);
+        if (f.type === 'json') {
           try {
             v = JSON.parse(v);
           } catch {
             throw new Error(`"${f.label}" must be valid JSON.`);
           }
           // A line still showing its header's value (older rows saved empty) is saved with that value explicitly.
-          const inheriting = (f.jsonRow || []).filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow));
+          const inheriting = (f.jsonRow || []).filter(
+            (c) =>
+              c.defaultFromField &&
+              (form[c.defaultFromField] || c.readOnlyFollow),
+          );
           if (inheriting.length && Array.isArray(v)) {
             v = v.map((r: Row) => {
               const out = { ...r };
-              for (const c of inheriting) if (c.readOnlyFollow) out[c.key] = form[c.defaultFromField!] || ""; else if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
+              for (const c of inheriting)
+                if (c.readOnlyFollow)
+                  out[c.key] = form[c.defaultFromField!] || '';
+                else if (!out[c.key]) out[c.key] = form[c.defaultFromField!];
               return out;
             });
           }
@@ -1932,8 +2606,11 @@ export function MasterDataTable({
       // or turning tracking off would leave the previous flag set.
       for (const f of formFields) {
         if (!f.booleanColumns) continue;
-        const chosen = visibleFields.some((v) => v.key === f.key) ? String(form[f.key] ?? "") : "";
-        for (const [option, column] of Object.entries(f.booleanColumns)) payload[column] = chosen === option;
+        const chosen = visibleFields.some((v) => v.key === f.key)
+          ? String(form[f.key] ?? '')
+          : '';
+        for (const [option, column] of Object.entries(f.booleanColumns))
+          payload[column] = chosen === option;
       }
 
       // Remove any filter-only virtual fields that should never be sent to the API
@@ -1943,7 +2620,7 @@ export function MasterDataTable({
         }
       }
 
-      if (config.key === "item") {
+      if (config.key === 'item') {
         if (!form.is_tracked) {
           payload.is_lot_tracked = false;
           payload.is_serial_tracked = false;
@@ -1952,14 +2629,15 @@ export function MasterDataTable({
           } else {
             delete payload.tracking_series_id;
           }
-        } else if (payload.tracking_series_id === "") {
+        } else if (payload.tracking_series_id === '') {
           delete payload.tracking_series_id;
         }
         delete payload.tracking_type;
       }
 
       if (form.item_template_id || editing?.item_template_id) {
-        payload.item_template_id = form.item_template_id || editing?.item_template_id;
+        payload.item_template_id =
+          form.item_template_id || editing?.item_template_id;
       }
       if (form.inventory_gl_account) {
         payload.inventory_gl_account = form.inventory_gl_account;
@@ -1967,21 +2645,29 @@ export function MasterDataTable({
       if (form.cogs_gl_account) {
         payload.cogs_gl_account = form.cogs_gl_account;
       }
-      if (editing?.status === "DRAFT" && !config.draftLifecycle) {
-        payload.status = "ACTIVE";
+      if (editing?.status === 'DRAFT' && !config.draftLifecycle) {
+        payload.status = 'ACTIVE';
       }
 
-      const hasCompanyField = config.fields.some((f) => f.key === "company_id");
-      if (!editing && companyId && hasCompanyField) payload.company_id = companyId;
-      if (config.fixedFilter) payload[config.fixedFilter.payloadKey] = config.fixedFilter.value;
+      const hasCompanyField = config.fields.some((f) => f.key === 'company_id');
+      if (!editing && companyId && hasCompanyField)
+        payload.company_id = companyId;
+      if (config.fixedFilter)
+        payload[config.fixedFilter.payloadKey] = config.fixedFilter.value;
 
-      if (!editing && workspaceScope === "OPERATIONAL") {
+      if (!editing && workspaceScope === 'OPERATIONAL') {
         const activeArea = getActiveOperationalArea();
         if (activeArea) {
-          if (config.fields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
+          if (
+            config.fields.some((f) => f.key === 'nob_id') &&
+            activeArea.nob_id
+          ) {
             payload.nob_id = activeArea.nob_id;
           }
-          if (config.fields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
+          if (
+            config.fields.some((f) => f.key === 'lob_id') &&
+            activeArea.lob_id
+          ) {
             payload.lob_id = activeArea.lob_id;
           }
         }
@@ -1995,16 +2681,24 @@ export function MasterDataTable({
       // whatever it's given with no null-normalization of its own, so sending
       // "" here for every other location type would overwrite a correct null
       // with a stored empty string on the next unrelated edit.
-      if (config.key === "location" && form.storage_type) payload.storage_type = form.storage_type;
+      if (config.key === 'location' && form.storage_type)
+        payload.storage_type = form.storage_type;
       // Master r8: the dates travel with the attached sheds they belong to, for a SILO only.
-      if (config.key === "location" && form.location_type === "SILO" && Array.isArray(payload.attached_sheds) && form.attached_shed_dates) {
+      if (
+        config.key === 'location' &&
+        form.location_type === 'SILO' &&
+        Array.isArray(payload.attached_sheds) &&
+        form.attached_shed_dates
+      ) {
         payload.attached_shed_dates = Object.fromEntries(
-          (payload.attached_sheds as string[]).filter((id) => form.attached_shed_dates[id]).map((id) => [id, form.attached_shed_dates[id]]),
+          (payload.attached_sheds as string[])
+            .filter((id) => form.attached_shed_dates[id])
+            .map((id) => [id, form.attached_shed_dates[id]]),
         );
       }
 
       if (editing) {
-        if (config.key === "animal") {
+        if (config.key === 'animal') {
           delete payload.animal_type;
           delete payload.gender;
           delete payload.entry_type;
@@ -2024,14 +2718,16 @@ export function MasterDataTable({
         await api.put(`${config.apiBase}/${editing[config.idKey]}`, payload);
         forgetOwnOptions();
         setModalOpen(false);
-        showToast.success(isDraftFromTemplate ? "Created successfully" : "Updated successfully");
+        showToast.success(
+          isDraftFromTemplate ? 'Created successfully' : 'Updated successfully',
+        );
         load();
       } else {
         const response = await api.post(config.apiBase, payload);
         const created = unwrap<Row>(response);
         forgetOwnOptions();
         setModalOpen(false);
-        showToast.success("Created successfully");
+        showToast.success('Created successfully');
         onCreated?.(created);
         // The Farm/Shed/Pen filter narrows the list to one parent's children.
         // A location just created under a different parent — most visibly a
@@ -2040,19 +2736,24 @@ export function MasterDataTable({
         // from view. Clearing it here, instead of reloading under the stale
         // filter, is what lets the record the user just created actually show
         // up; the colFilters-watching effect above reloads once it's cleared.
-        const activeParentFilter = config.key === "location"
-          ? colFilters.__pen || colFilters.__shed || colFilters.__farm
-          : undefined;
-        const createdParentId = (created as any)?.parent_location_id || "";
+        const activeParentFilter =
+          config.key === 'location'
+            ? colFilters.__pen || colFilters.__shed || colFilters.__farm
+            : undefined;
+        const createdParentId = (created as any)?.parent_location_id || '';
         if (activeParentFilter && activeParentFilter !== createdParentId) {
           setColFilters((prev) => {
             const next = { ...prev };
-            delete next.__farm; delete next.__shed; delete next.__pen;
+            delete next.__farm;
+            delete next.__shed;
+            delete next.__pen;
             return next;
           });
           setFilterDraft((prev) => {
             const next = { ...prev };
-            delete next.__farm; delete next.__shed; delete next.__pen;
+            delete next.__farm;
+            delete next.__shed;
+            delete next.__pen;
             return next;
           });
         } else if (!createOnly) {
@@ -2063,7 +2764,7 @@ export function MasterDataTable({
       // Every refusal is a toast carrying the API's own message. A 409 on a typed code
       // used to open a "Code already exists" dialog whatever the 409 was about — a
       // location refused for exceeding its parent's area was announced as a duplicate code.
-      showToast.error(err?.message || t("mdFailedToSave"));
+      showToast.error(err?.message || t('mdFailedToSave'));
       if (!editing) numbering.refresh();
     } finally {
       setSaving(false);
@@ -2078,10 +2779,10 @@ export function MasterDataTable({
       await api.delete(`${config.apiBase}/${confirmDelete[config.idKey]}`);
       forgetOwnOptions();
       setConfirmDelete(null);
-      showToast.success("Deleted successfully");
+      showToast.success('Deleted successfully');
       load();
     } catch (err: any) {
-      const msg = err?.message || t("mdFailedToDelete");
+      const msg = err?.message || t('mdFailedToDelete');
       showToast.error(msg);
     } finally {
       setDeleting(false);
@@ -2093,41 +2794,52 @@ export function MasterDataTable({
    * flow), since it's trivially reversible by clicking again. */
   const handleToggleActive = async (row: Row) => {
     if (readOnly) return;
-    if (row.is_active === false && config.draftLifecycle && !canApproveDraft) return;
+    if (row.is_active === false && config.draftLifecycle && !canApproveDraft)
+      return;
     const id = row[config.idKey];
     setTogglingId(id);
     try {
       if (row.is_active === false) {
-        const activationPath = config.draftLifecycle?.activatePath ?? "restore";
+        const activationPath = config.draftLifecycle?.activatePath ?? 'restore';
         await api.patch(`${config.apiBase}/${id}/${activationPath}`);
-        showToast.success("Activated successfully");
+        showToast.success('Activated successfully');
       } else {
         await api.delete(`${config.apiBase}/${id}`);
-        showToast.success("Deactivated successfully");
+        showToast.success('Deactivated successfully');
       }
       forgetOwnOptions();
       load();
     } catch (err: any) {
-      const msg = err?.message || t("mdFailedToSave");
+      const msg = err?.message || t('mdFailedToSave');
       showToast.error(msg);
     } finally {
       setTogglingId(null);
     }
   };
 
-  const runRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number], body?: Record<string, string>) => {
+  const runRowCommand = async (
+    row: Row,
+    command: NonNullable<MasterDataConfig['rowCommands']>[number],
+    body?: Record<string, string>,
+  ) => {
     try {
-      await api.post(`${config.apiBase}/${row[config.idKey]}/${command.path}`, body ?? {});
+      await api.post(
+        `${config.apiBase}/${row[config.idKey]}/${command.path}`,
+        body ?? {},
+      );
       showToast.success(command.successMessage);
       load();
     } catch (err: any) {
-      showToast.error(err?.message || t("mdFailedToSave"));
+      showToast.error(err?.message || t('mdFailedToSave'));
     }
   };
 
-  const handleRowCommand = async (row: Row, command: NonNullable<MasterDataConfig["rowCommands"]>[number]) => {
+  const handleRowCommand = async (
+    row: Row,
+    command: NonNullable<MasterDataConfig['rowCommands']>[number],
+  ) => {
     if (command.reasonPrompt) {
-      setReasonCommand({ row, command, reason: "" });
+      setReasonCommand({ row, command, reason: '' });
       return;
     }
     await runRowCommand(row, command);
@@ -2135,7 +2847,13 @@ export function MasterDataTable({
 
   /** Why a locked field is locked, when its config says (`lockReason`). */
   const lockHint = (f: MasterDataField): string | undefined => {
-    if (!editing || !f.lockWhenRowFlag || !f.lockReason || !(editing as Row)[f.lockWhenRowFlag]) return undefined;
+    if (
+      !editing ||
+      !f.lockWhenRowFlag ||
+      !f.lockReason ||
+      !(editing as Row)[f.lockWhenRowFlag]
+    )
+      return undefined;
     const reason = f.lockReason(editing as Row);
     return reason ? `🔒 ${reason}` : undefined;
   };
@@ -2143,42 +2861,79 @@ export function MasterDataTable({
   const renderField = (f: MasterDataField) => {
     const isLockedByTemplate = templateLockedFields.has(f.key);
     const immutableOnEdit = !!editing && !!f.createOnly;
-    const disabledByStageTrigger = config.key === "stage" && !!f.visibleWhen
-      && !isFieldRequired({ ...f, required: false, requiredWhen: f.visibleWhen }, form);
-    const lockedByIssuedNumbers = !!editing && !!f.lockWhenIssued
-      && (!!(editing as Row).last_no_used || Number((editing as Row).current_seq ?? 0) > 0);
-    const lockedByRowFlag = !!editing && !!f.lockWhenRowFlag && !!(editing as Row)[f.lockWhenRowFlag];
+    const disabledByStageTrigger =
+      config.key === 'stage' &&
+      !!f.visibleWhen &&
+      !isFieldRequired(
+        { ...f, required: false, requiredWhen: f.visibleWhen },
+        form,
+      );
+    const lockedByIssuedNumbers =
+      !!editing &&
+      !!f.lockWhenIssued &&
+      (!!(editing as Row).last_no_used ||
+        Number((editing as Row).current_seq ?? 0) > 0);
+    const lockedByRowFlag =
+      !!editing && !!f.lockWhenRowFlag && !!(editing as Row)[f.lockWhenRowFlag];
     const lockedByOtherField = !!f.readOnlyWhenSet && !!form[f.readOnlyWhenSet];
-    const lockedByRule = lockedByIssuedNumbers || lockedByRowFlag || lockedByOtherField;
-    const fieldDisabled = readOnly || immutableOnEdit || lockedByRule || !!f.readOnly || isLockedByTemplate || disabledByStageTrigger;
+    const lockedByRule =
+      lockedByIssuedNumbers || lockedByRowFlag || lockedByOtherField;
+    const fieldDisabled =
+      readOnly ||
+      immutableOnEdit ||
+      lockedByRule ||
+      !!f.readOnly ||
+      isLockedByTemplate ||
+      disabledByStageTrigger;
     const isCodeField = f.key === numbering.codeKey;
     // An age worked out live from two dates on the form. An entry date that is create-only is not on the
     // form while editing, so the row being edited supplies it.
     const ageValue = (() => {
       if (!f.ageFromDates) return undefined;
       const { from, to, unit } = f.ageFromDates;
-      const age = ageBetween(form[from] ?? editing?.[from], form[to] ?? editing?.[to]);
+      const age = ageBetween(
+        form[from] ?? editing?.[from],
+        form[to] ?? editing?.[to],
+      );
       // No date of birth: the weeks an animal was entered with stay on show, since only the farm knows them.
       if (!age) {
-        if (unit !== "weeks" && unit !== "weeksAndDays") return "";
+        if (unit !== 'weeks' && unit !== 'weeksAndDays') return '';
         const stored = form[f.key] ?? editing?.[f.key];
-        if (stored === undefined || stored === null || stored === "") return "";
-        return unit === "weeks" ? String(stored) : `${stored} ${Number(stored) === 1 ? "week" : "weeks"}`;
+        if (stored === undefined || stored === null || stored === '') return '';
+        return unit === 'weeks'
+          ? String(stored)
+          : `${stored} ${Number(stored) === 1 ? 'week' : 'weeks'}`;
       }
-      if (unit === "weeksAndDays") return formatAge(age);
-      return String(unit === "weeks" ? age.weeks : unit === "days" ? age.days : age.totalDays);
+      if (unit === 'weeksAndDays') return formatAge(age);
+      return String(
+        unit === 'weeks'
+          ? age.weeks
+          : unit === 'days'
+            ? age.days
+            : age.totalDays,
+      );
     })();
     const value = f.ageFromDates
       ? ageValue
-      : isCodeField && (codeFieldTouchedRef.current || isLockedByTemplate || !!editing)
-      ? (form[f.key] ?? "")
-      : (numbering.value(f.key, form[f.key] !== undefined && form[f.key] !== "" ? form[f.key] : undefined) as any);
-    const accessibility = { id: `master-${config.key}-${f.key}`, "aria-label": tLabel(currentLabel(f, form)), "aria-required": isFieldRequired(f, form) };
+      : isCodeField &&
+          (codeFieldTouchedRef.current || isLockedByTemplate || !!editing)
+        ? (form[f.key] ?? '')
+        : (numbering.value(
+            f.key,
+            form[f.key] !== undefined && form[f.key] !== ''
+              ? form[f.key]
+              : undefined,
+          ) as any);
+    const accessibility = {
+      id: `master-${config.key}-${f.key}`,
+      'aria-label': tLabel(currentLabel(f, form)),
+      'aria-required': isFieldRequired(f, form),
+    };
     // No caption beside the box: every field in this form already carries its
     // label above the control, and repeating it here printed "Item Tracking"
     // twice in the same cell. The input keeps its aria-label, so nothing is
     // lost to a screen reader.
-    if (f.type === "boolean") {
+    if (f.type === 'boolean') {
       return (
         <div className="flex h-11 items-center">
           <input
@@ -2196,14 +2951,17 @@ export function MasterDataTable({
     // to say what a generated code is built from: pick ITEM as the master and
     // the options become item_type, category_id, sub_category — the actual
     // fields of the actual master, not a list anyone has to keep in step.
-    if (f.type === "field-list" || (f.type === "select" && f.fieldsOf)) {
+    if (f.type === 'field-list' || (f.type === 'select' && f.fieldsOf)) {
       // "Applies To" is createOnly, so on an edit it is not among formFields and
       // never reaches `form` — which left this picker permanently showing its
       // "choose what this series applies to first" placeholder on the one screen
       // where you actually configure an existing series. The row being edited
       // still knows its master, so fall back to it.
-      const masterKey = String(form[f.fieldsOf || ""] || editing?.[f.fieldsOf || ""] || "")
-        .toLowerCase().replaceAll("_", "-");
+      const masterKey = String(
+        form[f.fieldsOf || ''] || editing?.[f.fieldsOf || ''] || '',
+      )
+        .toLowerCase()
+        .replaceAll('_', '-');
       const target = MASTER_DATA_CONFIGS.find((c) => c.key === masterKey);
       // The series' own Prefix is offered beside the master's fields, so where
       // it sits in the code is part of the same ordered choice rather than a
@@ -2229,31 +2987,51 @@ export function MasterDataTable({
       // Prefix is not an entry here either — it has its own First/Last control,
       // because those are the only two places it belongs.
       const ownCodeField = codeFieldOf(masterKey);
-      const usable = (target?.fields || [])
-        .filter((c) => !c.hideInForm && !c.filterOnly && c.key !== "company_id" && c.key !== ownCodeField);
-      const firstTextField = usable.find((c) => c.type === "text")?.key;
-      const dateFields = new Set(usable.filter((c) => c.type === "date").map((c) => c.key));
+      const usable = (target?.fields || []).filter(
+        (c) =>
+          !c.hideInForm &&
+          !c.filterOnly &&
+          c.key !== 'company_id' &&
+          c.key !== ownCodeField,
+      );
+      const firstTextField = usable.find((c) => c.type === 'text')?.key;
+      const dateFields = new Set(
+        usable.filter((c) => c.type === 'date').map((c) => c.key),
+      );
       const choices = usable
-        .filter((c) => c.type === "select" || c.type === "select-entity" || c.type === "date" || c.key === firstTextField)
+        .filter(
+          (c) =>
+            c.type === 'select' ||
+            c.type === 'select-entity' ||
+            c.type === 'date' ||
+            c.key === firstTextField,
+        )
         .map((c) => ({ value: c.key, label: `${tLabel(c.label)} (${c.key})` }));
       if (!target) {
-        return <p className="py-2 text-xs" style={S.sub}>{masterKey
-          ? "This master has no fields a code can be built from — it uses the prefix and number only."
-          : "Choose what this series applies to first — the fields offered here are that master's own."}</p>;
+        return (
+          <p className="py-2 text-xs" style={S.sub}>
+            {masterKey
+              ? 'This master has no fields a code can be built from — it uses the prefix and number only.'
+              : "Choose what this series applies to first — the fields offered here are that master's own."}
+          </p>
+        );
       }
-      if (f.type === "select") {
+      if (f.type === 'select') {
         return (
           <SearchableSelect
             id={accessibility.id}
-            ariaLabel={accessibility["aria-label"]}
-            value={String(value ?? "")}
+            ariaLabel={accessibility['aria-label']}
+            value={String(value ?? '')}
             onChange={(next) => setField(f.key, next)}
-            options={[{ value: "", label: f.placeholder || "None — use the prefix" }, ...choices]}
+            options={[
+              { value: '', label: f.placeholder || 'None — use the prefix' },
+              ...choices,
+            ]}
             valueKey="value"
             labelKey="label"
-            placeholder={f.placeholder || "None — use the prefix"}
-            searchPlaceholder={t("searchPlaceholder")}
-            noMatchesLabel={t("mdNoMatches")}
+            placeholder={f.placeholder || 'None — use the prefix'}
+            searchPlaceholder={t('searchPlaceholder')}
+            noMatchesLabel={t('mdNoMatches')}
             disabled={fieldDisabled}
           />
         );
@@ -2268,8 +3046,10 @@ export function MasterDataTable({
       };
       // A stored date entry is `date_of_birth:YEAR`; match on the field alone so
       // it still counts as used and its row still finds its label.
-      const fieldOf = (entry: string) => entry.split(":")[0];
-      const remaining = choices.filter((c) => !list.some((entry) => fieldOf(entry) === c.value));
+      const fieldOf = (entry: string) => entry.split(':')[0];
+      const remaining = choices.filter(
+        (c) => !list.some((entry) => fieldOf(entry) === c.value),
+      );
       // What the configuration above actually produces. Built from the same
       // order the generator uses — prefix at its chosen end, segments between,
       // sequence last — with each field standing in for itself, because the real
@@ -2278,16 +3058,21 @@ export function MasterDataTable({
       // and a referenced code keeps its own separators, so FARM-001 stays
       // FARM-001. Stripping them here made the example disagree with the code
       // the series actually issues, which is worse than showing none.
-      const norm = (v: unknown) => String(v ?? "").toUpperCase()
-        .replace(/\s+/g, "_").replace(/[^A-Z0-9_/-]/g, "")
-        .replace(/_*([/-])_*/g, "$1").replace(/_+/g, "_").replace(/^[_/-]+|[_/-]+$/g, "");
-      const sep = String(form.separator || "-");
+      const norm = (v: unknown) =>
+        String(v ?? '')
+          .toUpperCase()
+          .replace(/\s+/g, '_')
+          .replace(/[^A-Z0-9_/-]/g, '')
+          .replace(/_*([/-])_*/g, '$1')
+          .replace(/_+/g, '_')
+          .replace(/^[_/-]+|[_/-]+$/g, '');
+      const sep = String(form.separator || '-');
       // Blank means "same as the separator", the same fallback the generator uses.
-      const seqSep = String(form.seq_separator || "") || sep;
+      const seqSep = String(form.seq_separator || '') || sep;
       const seqDigitsRaw = Number(form.seq_length);
       const seqDigits = Number.isFinite(seqDigitsRaw) ? seqDigitsRaw : 3;
       const prefixText = norm(form.prefix);
-      const atStart = String(form.prefix_position || "END") === "START";
+      const atStart = String(form.prefix_position || 'END') === 'START';
       const sample = [
         ...(prefixText && atStart ? [prefixText] : []),
         // The codes this tenant actually uses, read off a real record of the
@@ -2295,15 +3080,18 @@ export function MasterDataTable({
         // only the real values tell you what the code will look like.
         ...list.map((entry) => {
           const k = fieldOf(entry);
-          const part = entry.split(":")[1];
+          const part = entry.split(':')[1];
           const raw = sampleRecord?.values?.[k];
-          if (part === "YEAR") return raw ? String(raw).slice(0, 4) : "2026";
-          if (part === "DATE") return raw ? String(raw).slice(0, 10).replace(/-/g, "") : "20260908";
+          if (part === 'YEAR') return raw ? String(raw).slice(0, 4) : '2026';
+          if (part === 'DATE')
+            return raw
+              ? String(raw).slice(0, 10).replace(/-/g, '')
+              : '20260908';
           const normalised = norm(raw);
           // A real value when the sample record has one, and an angle-bracketed
           // name when it does not — SUB-CATEGORY read like a code the system had
           // produced, when in fact no item in the tenant has a sub-category yet.
-          return normalised || `<${k.replace(/_id$/, "").replace(/_/g, "-")}>`;
+          return normalised || `<${k.replace(/_id$/, '').replace(/_/g, '-')}>`;
         }),
         ...(prefixText && !atStart ? [prefixText] : []),
       ].filter(Boolean);
@@ -2312,33 +3100,70 @@ export function MasterDataTable({
       // name. The example showed one anyway, so it promised a code the series
       // would never issue.
       const stem = sample.join(sep);
-      const shown = seqDigits <= 0 && stem
-        ? stem
-        : `${stem}${stem ? seqSep : ""}${"1".padStart(Math.max(seqDigits, 1), "0")}`;
+      const shown =
+        seqDigits <= 0 && stem
+          ? stem
+          : `${stem}${stem ? seqSep : ''}${'1'.padStart(Math.max(seqDigits, 1), '0')}`;
 
       return (
         <div className="flex flex-col gap-2">
           <div className="rounded-lg border px-2.5 py-2" style={S.raised}>
-            <span className="text-[11px]" style={S.sub}>Example</span>
-            <div className="mt-0.5 font-mono text-xs" style={S.primary}>{shown}</div>
+            <span className="text-[11px]" style={S.sub}>
+              Example
+            </span>
+            <div className="mt-0.5 font-mono text-xs" style={S.primary}>
+              {shown}
+            </div>
           </div>
-          <SearchableSelect triggerClassName={`${inputCls} nf-select`} disabled={fieldDisabled || !remaining.length}
-            value="" onChange={(next) => {
+          <SearchableSelect
+            triggerClassName={`${inputCls} nf-select`}
+            disabled={fieldDisabled || !remaining.length}
+            value=""
+            onChange={(next) => {
               // A date joins the list already carrying its part, so the row has
               // something to show and the stored value is complete from the start.
-              if (next) setField(f.key, [...list, dateFields.has(next) ? `${next}:YEAR` : next]);
+              if (next)
+                setField(f.key, [
+                  ...list,
+                  dateFields.has(next) ? `${next}:YEAR` : next,
+                ]);
             }}
-            options={[{ value: "", label: remaining.length ? "Add a field…" : "Every field is already used" }, ...remaining]}
-            valueKey="value" labelKey="label" placeholder={remaining.length ? "Add a field…" : "Every field is already used"}
-            searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} />
+            options={[
+              {
+                value: '',
+                label: remaining.length
+                  ? 'Add a field…'
+                  : 'Every field is already used',
+              },
+              ...remaining,
+            ]}
+            valueKey="value"
+            labelKey="label"
+            placeholder={
+              remaining.length ? 'Add a field…' : 'Every field is already used'
+            }
+            searchPlaceholder={t('searchPlaceholder')}
+            noMatchesLabel={t('mdNoMatches')}
+          />
           {list.map((entry, idx) => {
             const key = fieldOf(entry);
             const label = choices.find((c) => c.value === key)?.label ?? key;
-            const datePart = entry.split(":")[1] || "YEAR";
+            const datePart = entry.split(':')[1] || 'YEAR';
             return (
-              <div key={`${entry}-${idx}`} className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs" style={S.surface}>
-                <span className="w-5 shrink-0 text-center font-semibold" style={S.sub}>{idx + 1}</span>
-                <span className="min-w-0 flex-1 truncate" style={S.primary}>{label}</span>
+              <div
+                key={`${entry}-${idx}`}
+                className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
+                style={S.surface}
+              >
+                <span
+                  className="w-5 shrink-0 text-center font-semibold"
+                  style={S.sub}
+                >
+                  {idx + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate" style={S.primary}>
+                  {label}
+                </span>
                 {/* A date can go into a code two ways, and the answer differs per
                     series: the animal code wants the year of birth, a daily
                     document wants the whole date. Asked here, on the row. */}
@@ -2347,36 +3172,81 @@ export function MasterDataTable({
                     triggerClassName="rounded border px-1.5 py-0.5 text-[11px]"
                     triggerStyle={S.input}
                     value={datePart}
-                    onChange={(next) => setField(f.key, list.map((v, i) => i === idx ? `${key}:${next}` : v))}
-                    options={[{ value: "YEAR", label: "Year only" }, { value: "DATE", label: "Full date" }]}
+                    onChange={(next) =>
+                      setField(
+                        f.key,
+                        list.map((v, i) => (i === idx ? `${key}:${next}` : v)),
+                      )
+                    }
+                    options={[
+                      { value: 'YEAR', label: 'Year only' },
+                      { value: 'DATE', label: 'Full date' },
+                    ]}
                     valueKey="value"
                     labelKey="label"
                     placeholder="Year only"
-                    searchPlaceholder={t("searchPlaceholder")}
-                    noMatchesLabel={t("mdNoMatches")}
+                    searchPlaceholder={t('searchPlaceholder')}
+                    noMatchesLabel={t('mdNoMatches')}
                   />
                 )}
-                {!fieldDisabled && <>
-                  <button type="button" onClick={() => move(idx, -1)} disabled={idx === 0} aria-label="Move earlier" className="rounded px-1.5 disabled:opacity-30" style={S.sub}>↑</button>
-                  <button type="button" onClick={() => move(idx, 1)} disabled={idx === list.length - 1} aria-label="Move later" className="rounded px-1.5 disabled:opacity-30" style={S.sub}>↓</button>
-                  <button type="button" onClick={() => setField(f.key, list.filter((_, i) => i !== idx))} aria-label="Remove" className="rounded px-1.5" style={{ color: "var(--danger)" }}>×</button>
-                </>}
+                {!fieldDisabled && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => move(idx, -1)}
+                      disabled={idx === 0}
+                      aria-label="Move earlier"
+                      className="rounded px-1.5 disabled:opacity-30"
+                      style={S.sub}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => move(idx, 1)}
+                      disabled={idx === list.length - 1}
+                      aria-label="Move later"
+                      className="rounded px-1.5 disabled:opacity-30"
+                      style={S.sub}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setField(
+                          f.key,
+                          list.filter((_, i) => i !== idx),
+                        )
+                      }
+                      aria-label="Remove"
+                      className="rounded px-1.5"
+                      style={{ color: 'var(--danger)' }}
+                    >
+                      ×
+                    </button>
+                  </>
+                )}
               </div>
             );
           })}
         </div>
       );
     }
-    if (f.type === "string-list") {
+    if (f.type === 'string-list') {
       const list: string[] = Array.isArray(value) ? value : [];
-      const draft = chipDrafts[f.key] ?? "";
+      const draft = chipDrafts[f.key] ?? '';
       const addChip = () => {
         const trimmed = draft.trim();
         if (!trimmed) return;
         if (!list.includes(trimmed)) setField(f.key, [...list, trimmed]);
-        setChipDrafts((prev) => ({ ...prev, [f.key]: "" }));
+        setChipDrafts((prev) => ({ ...prev, [f.key]: '' }));
       };
-      const removeChip = (idx: number) => setField(f.key, list.filter((_, i) => i !== idx));
+      const removeChip = (idx: number) =>
+        setField(
+          f.key,
+          list.filter((_, i) => i !== idx),
+        );
       return (
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
@@ -2384,9 +3254,14 @@ export function MasterDataTable({
               {...accessibility}
               type="text"
               value={draft}
-              onChange={(e) => setChipDrafts((prev) => ({ ...prev, [f.key]: e.target.value }))}
+              onChange={(e) =>
+                setChipDrafts((prev) => ({ ...prev, [f.key]: e.target.value }))
+              }
               onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); addChip(); }
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addChip();
+                }
               }}
               placeholder={f.placeholder}
               disabled={fieldDisabled}
@@ -2400,7 +3275,7 @@ export function MasterDataTable({
               className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold"
               style={S.surface}
             >
-              {t("mdAdd")}
+              {t('mdAdd')}
             </button>
           </div>
           {list.length > 0 && (
@@ -2433,10 +3308,19 @@ export function MasterDataTable({
     // The stored value stays JSON, so nothing about the API changes — only the
     // way it is produced. Typing JSON by hand is how a trailing comma becomes a
     // rejected save with nothing useful to say about it.
-    if (f.type === "json" && f.jsonRow?.length) {
+    if (f.type === 'json' && f.jsonRow?.length) {
       let rows: Row[] = [];
-      try { const parsed = value ? JSON.parse(value) : []; if (Array.isArray(parsed)) rows = parsed; } catch { rows = []; }
-      const broken = !!value && rows.length === 0 && value.trim() !== "[]" && value.trim() !== "";
+      try {
+        const parsed = value ? JSON.parse(value) : [];
+        if (Array.isArray(parsed)) rows = parsed;
+      } catch {
+        rows = [];
+      }
+      const broken =
+        !!value &&
+        rows.length === 0 &&
+        value.trim() !== '[]' &&
+        value.trim() !== '';
       const write = (next: Row[]) => setField(f.key, JSON.stringify(next));
       // Rows the list is required to carry: the entry stays and keeps pointing
       // at what it points at. Its value is still editable.
@@ -2444,70 +3328,168 @@ export function MasterDataTable({
       const lockedKeys = new Set(
         (req ? entityOptions[req.endpoint] || [] : [])
           .filter((o) => o[req!.flag] === true || o[req!.flag] === 1)
-          .map((o) => String(o[req!.key]))
+          .map((o) => String(o[req!.key])),
       );
-      const isLocked = (row: Row) => !!req && lockedKeys.has(String(row[req.key] ?? ""));
+      const isLocked = (row: Row) =>
+        !!req && lockedKeys.has(String(row[req.key] ?? ''));
       return (
         <div className="flex flex-col gap-2">
-          {broken && <InlineAlert>This entry is not a JSON array, so it cannot be shown as rows. Clear it to start again.</InlineAlert>}
+          {broken && (
+            <InlineAlert>
+              This entry is not a JSON array, so it cannot be shown as rows.
+              Clear it to start again.
+            </InlineAlert>
+          )}
           {rows.map((row, idx) => (
-            <div key={idx} data-testid={f.singleRow ? "json-row-single" : undefined}
-              className={f.singleRow ? "flex flex-nowrap items-end gap-2 overflow-x-auto rounded-lg border p-2" : "flex flex-wrap items-end gap-2 rounded-lg border p-2"} style={S.raised}>
+            <div
+              key={idx}
+              data-testid={f.singleRow ? 'json-row-single' : undefined}
+              className={
+                f.singleRow
+                  ? 'flex flex-nowrap items-end gap-2 overflow-x-auto rounded-lg border p-2'
+                  : 'flex flex-wrap items-end gap-2 rounded-lg border p-2'
+              }
+              style={S.raised}
+            >
               {f.jsonRow!.map((col) => {
                 const rowFieldId = `master-${config.key}-${f.key}-${idx}-${col.key}`;
                 return (
-                  <Field key={col.key} label={tLabel(col.label)} htmlFor={rowFieldId} className={f.singleRow ? (col.type === "select-entity" ? "w-[13rem] shrink-0" : "w-[7.5rem] shrink-0") : "min-w-[8rem] flex-1"}>
+                  <Field
+                    key={col.key}
+                    label={tLabel(col.label)}
+                    htmlFor={rowFieldId}
+                    className={
+                      f.singleRow
+                        ? col.type === 'select-entity'
+                          ? 'w-[13rem] shrink-0'
+                          : 'w-[7.5rem] shrink-0'
+                        : 'min-w-[8rem] flex-1'
+                    }
+                  >
                     {col.readOnlyFollow && col.defaultFromField ? (
-                      <input id={rowFieldId} readOnly tabIndex={-1} className={inputCls} style={S.input} aria-readonly="true"
+                      <input
+                        id={rowFieldId}
+                        readOnly
+                        tabIndex={-1}
+                        className={inputCls}
+                        style={S.input}
+                        aria-readonly="true"
                         value={(() => {
                           // Empty until the header KPI period is chosen (Rishi, 12 Oct) — no Daily fallback on screen.
-                          const v = String(form[col.defaultFromField] || "");
-                          if (!v) return "";
-                          const label = (col.options || []).find((o) => o.value === v)?.label;
+                          const v = String(form[col.defaultFromField] || '');
+                          if (!v) return '';
+                          const label = (col.options || []).find(
+                            (o) => o.value === v,
+                          )?.label;
                           return label ? tLabel(label) : v;
-                        })()} />
-                    ) : col.type === "select-entity" ? (
+                        })()}
+                      />
+                    ) : col.type === 'select-entity' ? (
                       col.multiple ? (
                         <EntityLookupField
                           id={rowFieldId}
                           label={tLabel(col.label)}
-                          options={entityOptions[col.entityEndpoint || ""] || []}
+                          options={
+                            entityOptions[col.entityEndpoint || ''] || []
+                          }
                           value={parseStringList(row[col.key])}
-                          valueKey={col.entityValueKey || "id"}
+                          valueKey={col.entityValueKey || 'id'}
                           labelKeys={col.entityLabelKeys || []}
-                          onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
+                          onChange={(next) =>
+                            write(
+                              rows.map((r, i) =>
+                                i === idx ? { ...r, [col.key]: next } : r,
+                              ),
+                            )
+                          }
                           multiple
-                          disabled={fieldDisabled || (isLocked(row) && col.key === req?.key)}
-                          loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
-                          placeholder={t("selectPlaceholder")}
+                          disabled={
+                            fieldDisabled ||
+                            (isLocked(row) && col.key === req?.key)
+                          }
+                          loading={
+                            !!col.entityEndpoint &&
+                            entityOptions[col.entityEndpoint] === undefined
+                          }
+                          placeholder={t('selectPlaceholder')}
                         />
                       ) : (
                         (() => {
-                          const rowRelatedConfig = relatedConfigFor(col, resolveEndpoint(col, row) || col.entityEndpoint || null);
-                          const applyToRow = (value: string) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: value } : r));
+                          const rowRelatedConfig = relatedConfigFor(
+                            col,
+                            resolveEndpoint(col, row) ||
+                              col.entityEndpoint ||
+                              null,
+                          );
+                          const applyToRow = (value: string) =>
+                            write(
+                              rows.map((r, i) =>
+                                i === idx ? { ...r, [col.key]: value } : r,
+                              ),
+                            );
                           return (
                             <SearchableEntitySelect
                               id={rowFieldId}
                               ariaLabel={tLabel(col.label)}
-                              value={String(row[col.key] ?? "")}
+                              value={String(row[col.key] ?? '')}
                               onChange={applyToRow}
-                              options={entityOptions[col.entityEndpoint || ""] || []}
-                              valueKey={col.entityValueKey || "id"}
+                              options={
+                                entityOptions[col.entityEndpoint || ''] || []
+                              }
+                              valueKey={col.entityValueKey || 'id'}
                               getLabel={(option) => entityLabel(option, col)}
-                              getLabelParts={(option) => entityLabelPartsOf(option, col)}
-                              columnHeaders={col.entityLabelKeys && col.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined}
-                              disabled={fieldDisabled || (isLocked(row) && col.key === req?.key)}
-                              loading={!!col.entityEndpoint && entityOptions[col.entityEndpoint] === undefined}
-                              placeholder={t("selectPlaceholder")}
-                              searchPlaceholder={t("searchPlaceholder")}
-                              noMatchesLabel={t("mdNoMatches")}
-                              onCreate={rowRelatedConfig ? () => setRelatedCreator({ field: col, config: rowRelatedConfig, onApply: applyToRow }) : undefined}
-                              onViewAll={rowRelatedConfig ? () => setRelatedPicker({ field: col, config: rowRelatedConfig, options: entityOptions[col.entityEndpoint || ""] || [], currentValue: String(row[col.key] ?? ""), onApply: applyToRow }) : undefined}
+                              getLabelParts={(option) =>
+                                entityLabelPartsOf(option, col)
+                              }
+                              columnHeaders={
+                                col.entityLabelKeys &&
+                                col.entityLabelKeys.length > 1
+                                  ? ['Code', 'Name']
+                                  : undefined
+                              }
+                              disabled={
+                                fieldDisabled ||
+                                (isLocked(row) && col.key === req?.key)
+                              }
+                              loading={
+                                !!col.entityEndpoint &&
+                                entityOptions[col.entityEndpoint] === undefined
+                              }
+                              placeholder={t('selectPlaceholder')}
+                              searchPlaceholder={t('searchPlaceholder')}
+                              noMatchesLabel={t('mdNoMatches')}
+                              onCreate={
+                                rowRelatedConfig
+                                  ? () =>
+                                      setRelatedCreator({
+                                        field: col,
+                                        config: rowRelatedConfig,
+                                        onApply: applyToRow,
+                                      })
+                                  : undefined
+                              }
+                              onViewAll={
+                                rowRelatedConfig
+                                  ? () =>
+                                      setRelatedPicker({
+                                        field: col,
+                                        config: rowRelatedConfig,
+                                        options:
+                                          entityOptions[
+                                            col.entityEndpoint || ''
+                                          ] || [],
+                                        currentValue: String(
+                                          row[col.key] ?? '',
+                                        ),
+                                        onApply: applyToRow,
+                                      })
+                                  : undefined
+                              }
                             />
                           );
                         })()
                       )
-                    ) : col.type === "select" ? (
+                    ) : col.type === 'select' ? (
                       // A closed set of values inside a row is a dropdown, not
                       // a free-text box. Without this branch a column declared
                       // `type: "select"` fell through to the input below and
@@ -2515,42 +3497,141 @@ export function MasterDataTable({
                       // accepted "IM", "im" and "intramuscular" as three
                       // different answers, and its Triggered by — which decides
                       // what the scheduler counts from — could be nonsense.
-                      <SearchableSelect id={rowFieldId} triggerClassName={`${inputCls} nf-select`} disabled={fieldDisabled}
-                        value={String(row[col.key] || (col.defaultFromField ? form[col.defaultFromField] ?? "" : ""))}
-                        onChange={(next) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: next } : r))}
-                        options={[{ value: "", label: (() => {
-                          const inherited = col.defaultFromField ? String(form[col.defaultFromField] ?? "") : "";
-                          const inheritedLabel = (col.options || []).find((o) => o.value === inherited)?.label;
-                          return inheritedLabel ? tLabel(inheritedLabel) : (col.placeholder || t("selectPlaceholder"));
-                        })() }, ...(col.options || []).map((o) => ({ value: o.value, label: tLabel(o.label) }))]}
-                        valueKey="value" labelKey="label" placeholder={col.placeholder || t("selectPlaceholder")}
-                        searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} />
+                      <SearchableSelect
+                        id={rowFieldId}
+                        triggerClassName={`${inputCls} nf-select`}
+                        disabled={fieldDisabled}
+                        value={String(
+                          row[col.key] ||
+                            (col.defaultFromField
+                              ? (form[col.defaultFromField] ?? '')
+                              : ''),
+                        )}
+                        onChange={(next) =>
+                          write(
+                            rows.map((r, i) =>
+                              i === idx ? { ...r, [col.key]: next } : r,
+                            ),
+                          )
+                        }
+                        options={[
+                          {
+                            value: '',
+                            label: (() => {
+                              const inherited = col.defaultFromField
+                                ? String(form[col.defaultFromField] ?? '')
+                                : '';
+                              const inheritedLabel = (col.options || []).find(
+                                (o) => o.value === inherited,
+                              )?.label;
+                              return inheritedLabel
+                                ? tLabel(inheritedLabel)
+                                : col.placeholder || t('selectPlaceholder');
+                            })(),
+                          },
+                          ...(col.options || []).map((o) => ({
+                            value: o.value,
+                            label: tLabel(o.label),
+                          })),
+                        ]}
+                        valueKey="value"
+                        labelKey="label"
+                        placeholder={col.placeholder || t('selectPlaceholder')}
+                        searchPlaceholder={t('searchPlaceholder')}
+                        noMatchesLabel={t('mdNoMatches')}
+                      />
                     ) : (
-                      <input id={rowFieldId} className={inputCls} style={S.input} disabled={fieldDisabled}
-                        type={col.type === "number" ? "number" : "text"} step={col.step} min={col.min} max={col.max} placeholder={col.placeholder}
-                        value={String(row[col.key] ?? "")}
+                      <input
+                        id={rowFieldId}
+                        className={inputCls}
+                        style={S.input}
+                        disabled={fieldDisabled}
+                        type={col.type === 'number' ? 'number' : 'text'}
+                        step={col.step}
+                        min={col.min}
+                        max={col.max}
+                        placeholder={col.placeholder}
+                        value={String(row[col.key] ?? '')}
                         onKeyDown={(e) => {
-                          if (col.type !== "number") return;
-                          if (e.key === "e" || e.key === "E") e.preventDefault();
-                          if ((e.key === "+" || e.key === "-") && col.min !== undefined && col.min >= 0) e.preventDefault();
+                          if (col.type !== 'number') return;
+                          if (e.key === 'e' || e.key === 'E')
+                            e.preventDefault();
+                          if (
+                            (e.key === '+' || e.key === '-') &&
+                            col.min !== undefined &&
+                            col.min >= 0
+                          )
+                            e.preventDefault();
                         }}
-                        onChange={(e) => write(rows.map((r, i) => i === idx ? { ...r, [col.key]: col.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value } : r))} />
+                        onChange={(e) =>
+                          write(
+                            rows.map((r, i) =>
+                              i === idx
+                                ? {
+                                    ...r,
+                                    [col.key]:
+                                      col.type === 'number'
+                                        ? e.target.value === ''
+                                          ? ''
+                                          : Number(e.target.value)
+                                        : e.target.value,
+                                  }
+                                : r,
+                            ),
+                          )
+                        }
+                      />
                     )}
                   </Field>
                 );
               })}
-              {!fieldDisabled && (isLocked(row)
-                ? <span className="rounded-lg border px-2 py-1.5 text-xs font-medium" style={{ ...S.raised, color: "var(--text-muted)" }}>Mandatory</span>
-                : <button type="button" onClick={() => write(rows.filter((_, i) => i !== idx))}
-                    className={`rounded-lg border px-2 py-1.5 text-xs font-medium${f.singleRow ? " shrink-0" : ""}`} style={{ ...S.surface, color: "var(--danger)" }}>
-                    {t("mdRemoveRow")}
-                  </button>)}
+              {!fieldDisabled &&
+                (isLocked(row) ? (
+                  <span
+                    className="rounded-lg border px-2 py-1.5 text-xs font-medium"
+                    style={{ ...S.raised, color: 'var(--text-muted)' }}
+                  >
+                    Mandatory
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => write(rows.filter((_, i) => i !== idx))}
+                    className={`rounded-lg border px-2 py-1.5 text-xs font-medium${f.singleRow ? ' shrink-0' : ''}`}
+                    style={{ ...S.surface, color: 'var(--danger)' }}
+                  >
+                    {t('mdRemoveRow')}
+                  </button>
+                ))}
             </div>
           ))}
-          {!fieldDisabled && <button type="button" onClick={() => write([...rows, Object.fromEntries(f.jsonRow!.filter((c) => c.defaultFromField && (form[c.defaultFromField] || c.readOnlyFollow)).map((c) => [c.key, String(form[c.defaultFromField!] || "")]))])}
-            className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold" style={S.surface}>
-            <Plus className="mr-1 inline h-3 w-3" />{rows.length ? t("mdAddMore") : t("mdAdd")}
-          </button>}
+          {!fieldDisabled && (
+            <button
+              type="button"
+              onClick={() =>
+                write([
+                  ...rows,
+                  Object.fromEntries(
+                    f
+                      .jsonRow!.filter(
+                        (c) =>
+                          c.defaultFromField &&
+                          (form[c.defaultFromField] || c.readOnlyFollow),
+                      )
+                      .map((c) => [
+                        c.key,
+                        String(form[c.defaultFromField!] || ''),
+                      ]),
+                  ),
+                ])
+              }
+              className="self-start rounded-lg border px-3 py-1.5 text-xs font-semibold"
+              style={S.surface}
+            >
+              <Plus className="mr-1 inline h-3 w-3" />
+              {rows.length ? t('mdAddMore') : t('mdAdd')}
+            </button>
+          )}
         </div>
       );
     }
@@ -2558,24 +3639,28 @@ export function MasterDataTable({
     // stores a plain string (the served /uploads/... path), so every consumer
     // of this value (list view, detail view, DTO) is unchanged; only how the
     // value gets populated differs.
-    if (f.type === "image") {
+    if (f.type === 'image') {
       const uploading = !!imageUploading[f.key];
-      const url = String(value || "");
+      const url = String(value || '');
       const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        e.target.value = "";
+        e.target.value = '';
         if (!file) return;
         setImageUploading((prev) => ({ ...prev, [f.key]: true }));
         try {
           const body = new FormData();
-          body.append("file", file);
-          const endpoint = f.uploadEndpoint || (config.apiBase ? `${config.apiBase}/upload-image` : "/item/upload-image");
+          body.append('file', file);
+          const endpoint =
+            f.uploadEndpoint ||
+            (config.apiBase
+              ? `${config.apiBase}/upload-image`
+              : '/item/upload-image');
           let res: any;
           try {
             res = await api.post(endpoint, body);
           } catch (uploadErr) {
-            if (endpoint !== "/item/upload-image") {
-              res = await api.post("/item/upload-image", body);
+            if (endpoint !== '/item/upload-image') {
+              res = await api.post('/item/upload-image', body);
             } else {
               throw uploadErr;
             }
@@ -2583,7 +3668,7 @@ export function MasterDataTable({
           const uploadedUrl = res?.data?.url || res?.url;
           if (uploadedUrl) setField(f.key, uploadedUrl);
         } catch (err: any) {
-          showToast.error(err?.message || "Failed to upload image.");
+          showToast.error(err?.message || 'Failed to upload image.');
         } finally {
           setImageUploading((prev) => ({ ...prev, [f.key]: false }));
         }
@@ -2592,49 +3677,68 @@ export function MasterDataTable({
         <div className="flex items-center gap-3">
           {url ? (
             <img
-              src={url.startsWith("http") ? url : `${API_ORIGIN}${url}`}
+              src={url.startsWith('http') ? url : `${API_ORIGIN}${url}`}
               alt=""
               className="h-16 w-16 rounded-[var(--radius-sm)] border object-cover"
               style={S.raised}
             />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-[var(--radius-sm)] border text-[10px]" style={{ ...S.surface, color: "var(--text-muted)" }}>
+            <div
+              className="flex h-16 w-16 items-center justify-center rounded-[var(--radius-sm)] border text-[10px]"
+              style={{ ...S.surface, color: 'var(--text-muted)' }}
+            >
               No photo
             </div>
           )}
           <label
             className="cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold"
-            style={{ ...S.surface, opacity: fieldDisabled || uploading ? 0.6 : 1, pointerEvents: fieldDisabled || uploading ? "none" : "auto" }}
+            style={{
+              ...S.surface,
+              opacity: fieldDisabled || uploading ? 0.6 : 1,
+              pointerEvents: fieldDisabled || uploading ? 'none' : 'auto',
+            }}
           >
-            {uploading ? "Uploading…" : url ? "Replace Photo" : "Upload Image"}
-            <input {...accessibility} type="file" accept="image/png,image/jpeg,image/webp,image/heic" className="hidden" onChange={onPick} disabled={fieldDisabled || uploading} />
+            {uploading ? 'Uploading…' : url ? 'Replace Photo' : 'Upload Image'}
+            <input
+              {...accessibility}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/heic"
+              className="hidden"
+              onChange={onPick}
+              disabled={fieldDisabled || uploading}
+            />
           </label>
           {url && !fieldDisabled && (
-            <button type="button" onClick={() => setField(f.key, "")} className="text-xs font-medium underline" style={{ color: "var(--danger)" }}>
+            <button
+              type="button"
+              onClick={() => setField(f.key, '')}
+              className="text-xs font-medium underline"
+              style={{ color: 'var(--danger)' }}
+            >
               Remove
             </button>
           )}
         </div>
       );
     }
-    if (f.type === "textarea" || f.type === "json") {
+    if (f.type === 'textarea' || f.type === 'json') {
       return (
         <textarea
           {...accessibility}
-          value={value ?? ""}
+          value={value ?? ''}
           onChange={(e) => setField(f.key, e.target.value)}
           placeholder={f.placeholder}
-          rows={f.type === "json" ? 5 : 3}
+          rows={f.type === 'json' ? 5 : 3}
           disabled={fieldDisabled}
           className={`${inputCls} font-mono text-xs`}
           style={S.input}
         />
       );
     }
-    if (f.type === "select" && f.control === "toggle") {
+    if (f.type === 'select' && f.control === 'toggle') {
       const options = f.options || [
-        { value: "LOT", label: "Lot" },
-        { value: "SERIAL", label: "Serial" },
+        { value: 'LOT', label: 'Lot' },
+        { value: 'SERIAL', label: 'Serial' },
       ];
       const optLeft = options[0];
       const optRight = options[1] || options[0];
@@ -2649,7 +3753,7 @@ export function MasterDataTable({
             onClick={() => setField(f.key, optLeft.value)}
             className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
             style={{
-              color: isLeft ? "var(--accent)" : "var(--text-muted)",
+              color: isLeft ? 'var(--accent)' : 'var(--text-muted)',
               opacity: isLeft ? 1 : 0.65,
             }}
           >
@@ -2666,18 +3770,26 @@ export function MasterDataTable({
             }}
             onKeyDown={(e) => {
               if (f.readOnly || isLockedByTemplate) return;
-              if (e.key === "ArrowLeft") { e.preventDefault(); setField(f.key, optLeft.value); }
-              if (e.key === "ArrowRight") { e.preventDefault(); setField(f.key, optRight.value); }
+              if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                setField(f.key, optLeft.value);
+              }
+              if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                setField(f.key, optRight.value);
+              }
             }}
             className="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
             style={{
-              backgroundColor: isRight ? "var(--accent)" : "var(--border)",
+              backgroundColor: isRight ? 'var(--accent)' : 'var(--border)',
             }}
           >
             <span
               className="pointer-events-none inline-block h-4.5 w-4.5 rounded-full bg-white shadow-md transform transition-transform duration-200 ease-in-out"
               style={{
-                transform: isRight ? "translateX(1.375rem)" : "translateX(0.15rem)",
+                transform: isRight
+                  ? 'translateX(1.375rem)'
+                  : 'translateX(0.15rem)',
               }}
             />
           </button>
@@ -2687,7 +3799,7 @@ export function MasterDataTable({
             onClick={() => setField(f.key, optRight.value)}
             className="text-sm font-semibold tracking-wide transition-colors duration-150 cursor-pointer disabled:cursor-not-allowed"
             style={{
-              color: isRight ? "var(--accent)" : "var(--text-muted)",
+              color: isRight ? 'var(--accent)' : 'var(--text-muted)',
               opacity: isRight ? 1 : 0.65,
             }}
           >
@@ -2696,7 +3808,7 @@ export function MasterDataTable({
         </div>
       );
     }
-    if (f.type === "select" && f.control === "checkbox") {
+    if (f.type === 'select' && f.control === 'checkbox') {
       const options = f.options || [];
       return (
         <div className="flex h-11 items-center gap-4">
@@ -2708,11 +3820,15 @@ export function MasterDataTable({
                 className="flex items-center gap-2.5 px-3.5 py-2 rounded-lg border cursor-pointer select-none transition-all duration-150"
                 style={{
                   ...S.surface,
-                  borderColor: checked ? "var(--accent)" : "var(--border)",
-                  backgroundColor: checked ? "rgba(var(--accent-rgb, 239, 107, 74), 0.08)" : "transparent",
-                  color: checked ? "var(--text-primary)" : "var(--text-secondary)",
+                  borderColor: checked ? 'var(--accent)' : 'var(--border)',
+                  backgroundColor: checked
+                    ? 'rgba(var(--accent-rgb, 239, 107, 74), 0.08)'
+                    : 'transparent',
+                  color: checked
+                    ? 'var(--text-primary)'
+                    : 'var(--text-secondary)',
                   opacity: fieldDisabled ? 0.6 : 1,
-                  pointerEvents: fieldDisabled ? "none" : "auto",
+                  pointerEvents: fieldDisabled ? 'none' : 'auto',
                 }}
               >
                 <input
@@ -2720,10 +3836,10 @@ export function MasterDataTable({
                   checked={checked}
                   disabled={fieldDisabled}
                   onChange={() => {
-                    setField(f.key, checked ? "" : o.value);
+                    setField(f.key, checked ? '' : o.value);
                   }}
                   className="h-4 w-4 rounded-[var(--radius-xs)] accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                  style={{ accentColor: "var(--accent)" }}
+                  style={{ accentColor: 'var(--accent)' }}
                 />
                 <span className="text-sm font-semibold">{o.label}</span>
               </label>
@@ -2737,14 +3853,17 @@ export function MasterDataTable({
     // that a closed select shows before it is opened. Lot vs Serial is that
     // choice — the pair it writes to are mutually exclusive, and a plain switch
     // could not label its own "off".
-    if (f.type === "select" && f.control === "segmented") {
+    if (f.type === 'select' && f.control === 'segmented') {
       const segments = f.options || [];
       const current = segments.findIndex((o) => o.value === String(value));
       // Arrow keys move between segments, as a radiogroup is expected to.
       const step = (delta: number) => {
         if (!segments.length) return;
         const from = current < 0 ? 0 : current;
-        setField(f.key, segments[(from + delta + segments.length) % segments.length].value);
+        setField(
+          f.key,
+          segments[(from + delta + segments.length) % segments.length].value,
+        );
       };
       return (
         // nf-input carries the one control height (44px) and radius the console
@@ -2757,8 +3876,14 @@ export function MasterDataTable({
           style={S.input}
           onKeyDown={(e) => {
             if (fieldDisabled) return;
-            if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); step(1); }
-            if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+              e.preventDefault();
+              step(1);
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              step(-1);
+            }
           }}
         >
           {segments.map((o) => {
@@ -2774,8 +3899,8 @@ export function MasterDataTable({
                 onClick={() => setField(f.key, o.value)}
                 className="nf-press h-full flex-1 rounded-[var(--radius-xs)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 style={{
-                  backgroundColor: active ? "var(--accent)" : "transparent",
-                  color: active ? "#fff" : "var(--text-secondary)",
+                  backgroundColor: active ? 'var(--accent)' : 'transparent',
+                  color: active ? '#fff' : 'var(--text-secondary)',
                 }}
               >
                 {o.label}
@@ -2793,67 +3918,101 @@ export function MasterDataTable({
     // No New / View All here: a static enum has no master behind it to create a
     // row in. The value written is still the option's own string, exactly as the
     // native control produced, so nothing downstream of this field changes.
-    if (f.type === "select") {
+    if (f.type === 'select') {
       let options = f.options || [];
-      if ((config.key === "number-series" || config.key === "no-series") && f.key === "document_type" && inventorySetupNumbering) {
+      if (
+        (config.key === 'number-series' || config.key === 'no-series') &&
+        f.key === 'document_type' &&
+        inventorySetupNumbering
+      ) {
         options = options.filter((opt) => {
           const cfg = inventorySetupNumbering[opt.value];
           return cfg !== undefined ? cfg.enabled === true : true;
         });
       }
-      if (config.key === "resource" && f.key === "resource_sub_type") {
+      if (config.key === 'resource' && f.key === 'resource_sub_type') {
         const resType = form.resource_type;
-        if (resType === "MANPOWER") {
-          options = options.filter((opt) => ["PERMANENT", "CONTRACT", "DAILY"].includes(opt.value));
-        } else if (resType === "EQUIPMENT") {
-          options = options.filter((opt) => ["OWNED", "LEASED", "RENTED"].includes(opt.value));
+        if (resType === 'MANPOWER') {
+          options = options.filter((opt) =>
+            ['PERMANENT', 'CONTRACT', 'DAILY'].includes(opt.value),
+          );
+        } else if (resType === 'EQUIPMENT') {
+          options = options.filter((opt) =>
+            ['OWNED', 'LEASED', 'RENTED'].includes(opt.value),
+          );
         }
       }
       return (
         <SearchableEntitySelect
           id={accessibility.id}
-          ariaLabel={accessibility["aria-label"]}
-          ariaRequired={accessibility["aria-required"]}
-          value={String(value ?? "")}
+          ariaLabel={accessibility['aria-label']}
+          ariaRequired={accessibility['aria-required']}
+          value={String(value ?? '')}
           onChange={(next) => setField(f.key, next)}
           options={options}
           valueKey="value"
-          getLabel={(o) => String(o.label ?? "")}
-          placeholder={t("selectPlaceholder")}
-          searchPlaceholder={t("searchPlaceholder")}
-          noMatchesLabel={t("mdNoMatches")}
+          getLabel={(o) => String(o.label ?? '')}
+          placeholder={t('selectPlaceholder')}
+          searchPlaceholder={t('searchPlaceholder')}
+          noMatchesLabel={t('mdNoMatches')}
           disabled={fieldDisabled}
-          onClear={!isFieldRequired(f, form) && value && !fieldDisabled ? () => setField(f.key, "") : undefined}
+          onClear={
+            !isFieldRequired(f, form) && value && !fieldDisabled
+              ? () => setField(f.key, '')
+              : undefined
+          }
         />
       );
     }
-    if (f.type === "select-entity") {
+    if (f.type === 'select-entity') {
       const resolvedEp = resolveEndpoint(f, form);
       const loadedOptions = resolvedEp ? entityOptions[resolvedEp] : undefined;
       let options = loadedOptions || [];
       const parents = parentKeys(f);
       // "query" mode never blocks — an unset parent just narrows the results less, it
       // doesn't prevent fetching (mirrors the backend treating an absent filter as "show all").
-      let disabled = f.dependsOnMode !== "query" && parents.length > 0 && !resolvedEp;
-      const parentLabel = parents.map((k) => tLabel(config.fields.find((pf) => pf.key === k)?.label || k)).join(" & ");
-      let restrictedReason = "";
+      let disabled =
+        f.dependsOnMode !== 'query' && parents.length > 0 && !resolvedEp;
+      const parentLabel = parents
+        .map((k) =>
+          tLabel(config.fields.find((pf) => pf.key === k)?.label || k),
+        )
+        .join(' & ');
+      let restrictedReason = '';
       const relatedConfig = relatedConfigFor(f, resolvedEp);
 
       const openRelatedCreator = () => {
         if (!relatedConfig) return;
         const initVals: Record<string, unknown> = {};
-        const firstParent = typeof f.dependsOn === "string" ? f.dependsOn : Array.isArray(f.dependsOn) ? f.dependsOn[0] : undefined;
+        const firstParent =
+          typeof f.dependsOn === 'string'
+            ? f.dependsOn
+            : Array.isArray(f.dependsOn)
+              ? f.dependsOn[0]
+              : undefined;
         if (firstParent && form[firstParent]) {
           const parentVal = form[firstParent];
-          if (f.key === "category_id" && relatedConfig.key === "item-category") {
+          if (
+            f.key === 'category_id' &&
+            relatedConfig.key === 'item-category'
+          ) {
             initVals.item_type = parentVal;
-          } else if (f.key === "sub_category" && relatedConfig.key === "item-category") {
+          } else if (
+            f.key === 'sub_category' &&
+            relatedConfig.key === 'item-category'
+          ) {
             initVals.parent_category_id = parentVal;
-          } else if (relatedConfig.fields.some((rf) => rf.key === firstParent)) {
+          } else if (
+            relatedConfig.fields.some((rf) => rf.key === firstParent)
+          ) {
             initVals[firstParent] = parentVal;
           }
         }
-        setRelatedCreator({ field: f, config: relatedConfig, initialValues: initVals });
+        setRelatedCreator({
+          field: f,
+          config: relatedConfig,
+          initialValues: initVals,
+        });
       };
 
       // The parent is chosen but nothing in the referenced master matches it.
@@ -2862,7 +4021,7 @@ export function MasterDataTable({
         if (!relatedConfig) {
           disabled = true;
         }
-        restrictedReason = t("mdNoOptionsForParent", { name: parentLabel });
+        restrictedReason = t('mdNoOptionsForParent', { name: parentLabel });
         options = [];
       }
       if (f.restrictOptionsBy && !disabled) {
@@ -2873,10 +4032,12 @@ export function MasterDataTable({
           if (!relatedConfig) {
             disabled = true;
           }
-          restrictedReason = t("mdNoParentForType");
+          restrictedReason = t('mdNoParentForType');
           options = [];
         } else if (allowList.length) {
-          options = options.filter((o) => allowList.includes(o[r.optionCodeKey]));
+          options = options.filter((o) =>
+            allowList.includes(o[r.optionCodeKey]),
+          );
         }
       }
       // Two pickers over one catalog that must not land on the same row: a
@@ -2884,8 +4045,13 @@ export function MasterDataTable({
       // meaningless. Matched on the value the form stores (uom_code here, a
       // UUID elsewhere), not on the displayed label.
       if (f.excludeValuesOf?.length) {
-        const taken = f.excludeValuesOf.map((k) => String(form[k] ?? "")).filter(Boolean);
-        if (taken.length) options = options.filter((o) => !taken.includes(String(o[f.entityValueKey || "id"])));
+        const taken = f.excludeValuesOf
+          .map((k) => String(form[k] ?? ''))
+          .filter(Boolean);
+        if (taken.length)
+          options = options.filter(
+            (o) => !taken.includes(String(o[f.entityValueKey || 'id'])),
+          );
       }
       if (f.multiple) {
         if (f.allOption) options = [f.allOption, ...options];
@@ -2893,37 +4059,93 @@ export function MasterDataTable({
         const picker = (
           <EntityLookupField
             id={accessibility.id}
-            label={accessibility["aria-label"]}
+            label={accessibility['aria-label']}
             options={options}
             value={selected}
-            valueKey={f.entityValueKey || "id"}
+            valueKey={f.entityValueKey || 'id'}
             labelKeys={f.entityLabelKeys || []}
             onChange={(next) => setField(f.key, next)}
             multiple
             disabled={disabled || fieldDisabled}
             loading={!!resolvedEp && loadedOptions === undefined}
-            placeholder={restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"))}
+            placeholder={
+              restrictedReason ||
+              (disabled
+                ? t('selectXFirst', { name: parentLabel })
+                : t('selectPlaceholder'))
+            }
             onCreate={relatedConfig ? openRelatedCreator : undefined}
           />
         );
-        if (!(config.key === "location" && f.key === "attached_sheds" && selected.length)) return picker;
+        if (!(
+          config.key === 'location' &&
+          f.key === 'attached_sheds' &&
+          selected.length
+        ))
+          return picker;
         // Master r8: each attached shed carries the dates this silo serves it; no dates means always.
-        const dates = (form.attached_shed_dates ?? {}) as Record<string, { effective_from?: string | null; effective_to?: string | null }>;
-        const setDate = (shedId: string, key: "effective_from" | "effective_to", value: string) =>
-          setField("attached_shed_dates", { ...dates, [shedId]: { ...dates[shedId], [key]: value || null } });
+        const dates = (form.attached_shed_dates ?? {}) as Record<
+          string,
+          { effective_from?: string | null; effective_to?: string | null }
+        >;
+        const setDate = (
+          shedId: string,
+          key: 'effective_from' | 'effective_to',
+          value: string,
+        ) =>
+          setField('attached_shed_dates', {
+            ...dates,
+            [shedId]: { ...dates[shedId], [key]: value || null },
+          });
         return (
           <div className="flex flex-col gap-2">
             {picker}
             {selected.map((shedId) => {
-              const shed = options.find((o) => String(o[f.entityValueKey || "id"]) === shedId);
+              const shed = options.find(
+                (o) => String(o[f.entityValueKey || 'id']) === shedId,
+              );
               return (
-                <div key={shedId} className="flex flex-wrap items-end gap-2 rounded-lg border p-2" style={S.raised}>
-                  <span className="min-w-[8rem] flex-1 text-sm">{shed ? entityDisplayText(shed, f.entityLabelKeys, f.entityValueKey) || shedId : shedId}</span>
-                  <Field label={t("mdShedEffectiveFrom")} htmlFor={`attached-shed-from-${shedId}`}>
-                    <input id={`attached-shed-from-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_from ?? ""} onChange={(e) => setDate(shedId, "effective_from", e.target.value)} />
+                <div
+                  key={shedId}
+                  className="flex flex-wrap items-end gap-2 rounded-lg border p-2"
+                  style={S.raised}
+                >
+                  <span className="min-w-[8rem] flex-1 text-sm">
+                    {shed
+                      ? entityDisplayText(
+                          shed,
+                          f.entityLabelKeys,
+                          f.entityValueKey,
+                        ) || shedId
+                      : shedId}
+                  </span>
+                  <Field
+                    label={t('mdShedEffectiveFrom')}
+                    htmlFor={`attached-shed-from-${shedId}`}
+                  >
+                    <input
+                      id={`attached-shed-from-${shedId}`}
+                      type="date"
+                      className="nf-input-sm"
+                      value={dates[shedId]?.effective_from ?? ''}
+                      onChange={(e) =>
+                        setDate(shedId, 'effective_from', e.target.value)
+                      }
+                    />
                   </Field>
-                  <Field label={t("mdShedEffectiveTo")} htmlFor={`attached-shed-to-${shedId}`}>
-                    <input id={`attached-shed-to-${shedId}`} type="date" className="nf-input-sm" value={dates[shedId]?.effective_to ?? ""} onChange={(e) => setDate(shedId, "effective_to", e.target.value)} />
+                  <Field
+                    label={t('mdShedEffectiveTo')}
+                    htmlFor={`attached-shed-to-${shedId}`}
+                  >
+                    <input
+                      id={`attached-shed-to-${shedId}`}
+                      type="date"
+                      className="nf-input-sm"
+                      value={dates[shedId]?.effective_to ?? ''}
+                      onChange={(e) =>
+                        setDate(shedId, 'effective_to', e.target.value)
+                      }
+                    />
                   </Field>
                 </div>
               );
@@ -2931,46 +4153,88 @@ export function MasterDataTable({
           </div>
         );
       }
-      const placeholderText = restrictedReason || (disabled ? t("selectXFirst", { name: parentLabel }) : t("selectPlaceholder"));
+      const placeholderText =
+        restrictedReason ||
+        (disabled
+          ? t('selectXFirst', { name: parentLabel })
+          : t('selectPlaceholder'));
       return (
         <SearchableEntitySelect
           id={accessibility.id}
-          ariaLabel={accessibility["aria-label"]}
-          ariaRequired={accessibility["aria-required"]}
-          value={String(value ?? "")}
+          ariaLabel={accessibility['aria-label']}
+          ariaRequired={accessibility['aria-required']}
+          value={String(value ?? '')}
           onChange={(next) => {
             setField(f.key, next);
             // A picked row can supply other fields (a Sire fills Sire Serial No.).
             // Clearing the pick clears what it supplied.
             for (const fill of f.fills || []) {
-              const picked = next ? options.find((o) => String(o[f.entityValueKey || "id"]) === String(next)) : undefined;
-              const supplied = picked ? fill.rowKeys.map((k) => picked[k]).find((v) => v !== null && v !== undefined && String(v) !== "") : "";
-              setField(fill.key, supplied === undefined ? "" : String(supplied));
+              const picked = next
+                ? options.find(
+                    (o) => String(o[f.entityValueKey || 'id']) === String(next),
+                  )
+                : undefined;
+              const supplied = picked
+                ? fill.rowKeys
+                    .map((k) => picked[k])
+                    .find(
+                      (v) => v !== null && v !== undefined && String(v) !== '',
+                    )
+                : '';
+              setField(
+                fill.key,
+                supplied === undefined ? '' : String(supplied),
+              );
             }
           }}
           options={options}
-          valueKey={f.entityValueKey || "id"}
+          valueKey={f.entityValueKey || 'id'}
           getLabel={(o) => entityLabel(o, f)}
           getLabelParts={(o) => entityLabelPartsOf(o, f)}
-          getSelectedLabel={f.selectedLabelKey ? (o) => String(o[f.selectedLabelKey!] ?? "") || entityLabel(o, f) : undefined}
-          columnHeaders={f.entityColumnHeaders ?? (f.entityLabelKeys && f.entityLabelKeys.length > 1 ? ["Code", "Name"] : undefined)}
+          getSelectedLabel={
+            f.selectedLabelKey
+              ? (o) => String(o[f.selectedLabelKey!] ?? '') || entityLabel(o, f)
+              : undefined
+          }
+          columnHeaders={
+            f.entityColumnHeaders ??
+            (f.entityLabelKeys && f.entityLabelKeys.length > 1
+              ? ['Code', 'Name']
+              : undefined)
+          }
           disabled={disabled || fieldDisabled}
           loading={!!resolvedEp && loadedOptions === undefined}
           placeholder={placeholderText}
-          searchPlaceholder={t("searchPlaceholder")}
-          noMatchesLabel={restrictedReason || t("mdNoMatches")}
-          onClear={!isFieldRequired(f, form) && value && !fieldDisabled ? () => setField(f.key, "") : undefined}
+          searchPlaceholder={t('searchPlaceholder')}
+          noMatchesLabel={restrictedReason || t('mdNoMatches')}
+          onClear={
+            !isFieldRequired(f, form) && value && !fieldDisabled
+              ? () => setField(f.key, '')
+              : undefined
+          }
           onCreate={relatedConfig ? openRelatedCreator : undefined}
-          onViewAll={relatedConfig ? () => setRelatedPicker({ field: f, config: relatedConfig, options }) : undefined}
+          onViewAll={
+            relatedConfig
+              ? () =>
+                  setRelatedPicker({ field: f, config: relatedConfig, options })
+              : undefined
+          }
         />
       );
     }
-    const codeAllowsManual = isCodeField && (numbering.allowManual || isManualNoAllowed);
-    const isDisabled = immutableOnEdit || lockedByRule || isLockedByTemplate || disabledByStageTrigger || (f.readOnly && !codeAllowsManual);
-    const isInteger = f.type === "number" && (f.step === "1" || !f.step);
+    const codeAllowsManual =
+      isCodeField && (numbering.allowManual || isManualNoAllowed);
+    const isDisabled =
+      immutableOnEdit ||
+      lockedByRule ||
+      isLockedByTemplate ||
+      disabledByStageTrigger ||
+      (f.readOnly && !codeAllowsManual);
+    const isInteger = f.type === 'number' && (f.step === '1' || !f.step);
     // A field like GPS Latitude/Longitude allows a negative sign only when its
     // floor is unset or itself negative — same rule the keydown guard below uses.
-    const allowNegative = f.type === "number" && (f.min === undefined || f.min < 0);
+    const allowNegative =
+      f.type === 'number' && (f.min === undefined || f.min < 0);
     // native <input type="number"> reformats a very small magnitude (e.g. a
     // longitude near the equator, 0.00000099) into scientific notation the
     // moment it loses focus — a browser-level quirk with no attribute to turn
@@ -2978,42 +4242,72 @@ export function MasterDataTable({
     // the field only ever holds exactly what was typed. A field marked
     // nativeNumber (a small bounded integer, e.g. sequence digits) never gets
     // near that quirk, so it keeps the native input — spinner included.
-    const useNativeNumber = f.type === "number" && !!f.nativeNumber;
-    const maxDecimals = typeof f.step === "string" && f.step.includes(".")
-      ? f.step.split(".")[1].length
-      : (typeof f.step === "number" && String(f.step).includes(".")
-          ? String(f.step).split(".")[1].length
-          : (f.decimals !== undefined ? f.decimals : (isInteger ? 0 : 2)));
-    const numberPattern = f.type === "number" && !useNativeNumber
-      ? new RegExp(`^${allowNegative ? "-?" : ""}\\d*${maxDecimals > 0 ? `(\\.\\d{0,${maxDecimals}})?` : ""}$`)
-      : undefined;
+    const useNativeNumber = f.type === 'number' && !!f.nativeNumber;
+    const maxDecimals =
+      typeof f.step === 'string' && f.step.includes('.')
+        ? f.step.split('.')[1].length
+        : typeof f.step === 'number' && String(f.step).includes('.')
+          ? String(f.step).split('.')[1].length
+          : f.decimals !== undefined
+            ? f.decimals
+            : isInteger
+              ? 0
+              : 2;
+    const numberPattern =
+      f.type === 'number' && !useNativeNumber
+        ? new RegExp(
+            `^${allowNegative ? '-?' : ''}\\d*${maxDecimals > 0 ? `(\\.\\d{0,${maxDecimals}})?` : ''}$`,
+          )
+        : undefined;
 
     return (
       <input
         {...accessibility}
-        type={f.type === "number" ? (useNativeNumber ? "number" : "text") : f.type === "email" ? "email" : f.type === "date" ? "date" : f.type === "time" ? "time" : "text"}
-        inputMode={f.type === "number" && !useNativeNumber ? (isInteger ? "numeric" : "decimal") : undefined}
+        type={
+          f.type === 'number'
+            ? useNativeNumber
+              ? 'number'
+              : 'text'
+            : f.type === 'email'
+              ? 'email'
+              : f.type === 'date'
+                ? 'date'
+                : f.type === 'time'
+                  ? 'time'
+                  : 'text'
+        }
+        inputMode={
+          f.type === 'number' && !useNativeNumber
+            ? isInteger
+              ? 'numeric'
+              : 'decimal'
+            : undefined
+        }
         step={f.step}
         min={f.min}
         max={f.max}
         maxLength={f.maxLength}
         pattern={f.pattern}
-        value={value ?? ""}
+        value={value ?? ''}
         onKeyDown={(e) => {
-          if (f.type === "number") {
+          if (f.type === 'number') {
             // Block scientific notation 'e'/'E' always. '+' and '-' only when
             // this field has a non-negative floor — min unset (or negative)
             // means the field is one of the few that genuinely needs a
             // negative value (e.g. Storage Temp Min/Max, a temperature-based
             // KPI threshold), so the sign key stays live for those.
-            if (e.key === "e" || e.key === "E") {
+            if (e.key === 'e' || e.key === 'E') {
               e.preventDefault();
             }
-            if ((e.key === "+" || e.key === "-") && f.min !== undefined && f.min >= 0) {
+            if (
+              (e.key === '+' || e.key === '-') &&
+              f.min !== undefined &&
+              f.min >= 0
+            ) {
               e.preventDefault();
             }
             // Block decimal point on integer-only fields
-            if (isInteger && e.key === ".") {
+            if (isInteger && e.key === '.') {
               e.preventDefault();
             }
           }
@@ -3027,10 +4321,14 @@ export function MasterDataTable({
             return;
           }
           // Guard for max length if input type is number (browser ignores maxLength on type=number)
-          if (f.type === "number" && f.maxLength && val.length > f.maxLength) {
+          if (f.type === 'number' && f.maxLength && val.length > f.maxLength) {
             return;
           }
-          if (f.type === "number" && f.max !== undefined && val.replace("-", "").split(".")[0].length > String(f.max).length) {
+          if (
+            f.type === 'number' &&
+            f.max !== undefined &&
+            val.replace('-', '').split('.')[0].length > String(f.max).length
+          ) {
             return;
           }
           // No max-value rejection here on purpose. Editing "4" into "10" by
@@ -3045,7 +4343,11 @@ export function MasterDataTable({
         placeholder={f.placeholder}
         disabled={isDisabled}
         className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-70`}
-        style={isDisabled ? { ...S.input, backgroundColor: "var(--surface-raised)" } : S.input}
+        style={
+          isDisabled
+            ? { ...S.input, backgroundColor: 'var(--surface-raised)' }
+            : S.input
+        }
       />
     );
   };
@@ -3070,9 +4372,9 @@ export function MasterDataTable({
                 </span>
               )}
 
-              {typeof serverTotal === "number" && serverTotal >= 0 && (
+              {typeof serverTotal === 'number' && serverTotal >= 0 && (
                 <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold bg-[var(--surface)] border border-[var(--border)] text-[var(--text-muted)]">
-                  {serverTotal} {serverTotal === 1 ? "record" : "records"}
+                  {serverTotal} {serverTotal === 1 ? 'record' : 'records'}
                 </span>
               )}
 
@@ -3092,25 +4394,35 @@ export function MasterDataTable({
                 disabled={loading || rows.length === 0}
                 className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer disabled:opacity-50"
                 style={S.surface}
-                title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected rows to CSV` : "Export all current rows to CSV"}
+                title={
+                  selectedIds.size > 0
+                    ? `Export ${selectedIds.size} selected rows to CSV`
+                    : 'Export all current rows to CSV'
+                }
               >
                 <Download className="h-3.5 w-3.5" />
-                <span>{selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export CSV"}</span>
+                <span>
+                  {selectedIds.size > 0
+                    ? `Export Selected (${selectedIds.size})`
+                    : 'Export CSV'}
+                </span>
               </button>
 
-              {!readOnly && (config.key === "breed" || config.key === "breed-lifecycle-stage") && (
-                <button
-                  type="button"
-                  onClick={() => setImportModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer"
-                  style={S.surface}
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>Import CSV</span>
-                </button>
-              )}
+              {!readOnly &&
+                (config.key === 'breed' ||
+                  config.key === 'breed-lifecycle-stage') && (
+                  <button
+                    type="button"
+                    onClick={() => setImportModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-xs transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] active:scale-95 cursor-pointer"
+                    style={S.surface}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>Import CSV</span>
+                  </button>
+                )}
 
-              {config.key === "item" && !readOnly && canCreateItem && (
+              {config.key === 'item' && !readOnly && canCreateItem && (
                 <button
                   type="button"
                   onClick={() => setTemplateModalOpen(true)}
@@ -3128,99 +4440,146 @@ export function MasterDataTable({
                   type="button"
                   onClick={openCreate}
                   className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 cursor-pointer"
-                  style={{ backgroundColor: "var(--accent)" }}
+                  style={{ backgroundColor: 'var(--accent)' }}
                 >
                   <Plus className="h-4 w-4" />
-                  <span>{t("addItem", { name: tLabel(singularLabel(config)) })}</span>
+                  <span>
+                    {t('addItem', { name: tLabel(singularLabel(config)) })}
+                  </span>
                 </button>
               )}
             </div>
           </div>
 
           {/* Sub-navigation tabs (if any) pinned directly below the title and action row */}
-          {tabs && (
-            <div className="pt-0.5">
-              {tabs}
-            </div>
-          )}
+          {tabs && <div className="pt-0.5">{tabs}</div>}
 
           {/* Filter tabs — pill-style in-page type switcher (e.g. Manpower / Equipment) */}
-          {config.filterTabs && (() => {
-            // Map well-known values to icons; anything unrecognised falls back to FileText.
-            const iconMap: Record<string, React.ElementType> = {
-              MANPOWER: Users, LABOR: Users,
-              EQUIPMENT: Wrench,
-            };
-            return (
-              <div className="flex items-center gap-2 py-2.5">
-                {config.filterTabs.options.map((opt) => {
-                  const isActive = activeFilterTab === opt.value;
-                  const Icon = iconMap[opt.value] ?? FileText;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      aria-controls="master-data-filter-tab-panel"
-                      onClick={() => { setActiveFilterTab(opt.value); setPage(1); }}
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer select-none",
-                        isActive
-                          ? "text-white shadow-sm"
-                          : "hover:text-[var(--text-primary)]"
-                      )}
-                      style={isActive
-                        ? { backgroundColor: "var(--accent)", color: "#fff" }
-                        : { backgroundColor: "var(--surface-2)", color: "var(--text-secondary)" }
-                      }
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })()}
+          {config.filterTabs &&
+            (() => {
+              // Map well-known values to icons; anything unrecognised falls back to FileText.
+              const iconMap: Record<string, React.ElementType> = {
+                MANPOWER: Users,
+                LABOR: Users,
+                EQUIPMENT: Wrench,
+              };
+              return (
+                <div className="flex items-center gap-2 py-2.5">
+                  {config.filterTabs.options.map((opt) => {
+                    const isActive = activeFilterTab === opt.value;
+                    const Icon = iconMap[opt.value] ?? FileText;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        aria-controls="master-data-filter-tab-panel"
+                        onClick={() => {
+                          setActiveFilterTab(opt.value);
+                          setPage(1);
+                        }}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer select-none',
+                          isActive
+                            ? 'text-white shadow-sm'
+                            : 'hover:text-[var(--text-primary)]',
+                        )}
+                        style={
+                          isActive
+                            ? {
+                                backgroundColor: 'var(--accent)',
+                                color: '#fff',
+                              }
+                            : {
+                                backgroundColor: 'var(--surface-2)',
+                                color: 'var(--text-secondary)',
+                              }
+                        }
+                      >
+                        <Icon className="h-3.5 w-3.5 shrink-0" />
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
           {/* Controls toolbar: Search, Filters, NOB/LOB */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
             <div className="flex flex-wrap items-center gap-2">
-              {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
-                <>
-                  <SearchableSelect
-                    ariaLabel="Filter by nature of business"
-                    value={nobFilter}
-                    onChange={(next) => { setNobFilter(next); setLobFilter(""); }}
-                    options={[{ value: "", label: t("allNob") }, ...nobFilterOptions.map((n) => ({ value: n.nob_id, label: `${n.nob_code} — ${n.nob_name || n.nob_code}` }))]}
-                    valueKey="value" labelKey="label" placeholder={t("allNob")}
-                    searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} triggerClassName="nf-input-sm"
-                  />
-                  <SearchableSelect
-                    ariaLabel="Filter by line of business"
-                    value={lobFilter}
-                    onChange={setLobFilter}
-                    options={[{ value: "", label: nobFilter ? t("allLob") : t("selectNobFirst") }, ...lobFilterOptions.map((l) => ({ value: l.lob_id, label: `${l.lob_code} — ${l.lob_name || l.lob_code}` }))]}
-                    valueKey="value" labelKey="label" placeholder={nobFilter ? t("allLob") : t("selectNobFirst")}
-                    searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} disabled={!nobFilter} triggerClassName="nf-input-sm"
-                  />
-                </>
-              )}
+              {config.supportsNobLobFilter &&
+                workspaceScope !== 'OPERATIONAL' && (
+                  <>
+                    <SearchableSelect
+                      ariaLabel="Filter by nature of business"
+                      value={nobFilter}
+                      onChange={(next) => {
+                        setNobFilter(next);
+                        setLobFilter('');
+                      }}
+                      options={[
+                        { value: '', label: t('allNob') },
+                        ...nobFilterOptions.map((n) => ({
+                          value: n.nob_id,
+                          label: `${n.nob_code} — ${n.nob_name || n.nob_code}`,
+                        })),
+                      ]}
+                      valueKey="value"
+                      labelKey="label"
+                      placeholder={t('allNob')}
+                      searchPlaceholder={t('searchPlaceholder')}
+                      noMatchesLabel={t('mdNoMatches')}
+                      triggerClassName="nf-input-sm"
+                    />
+                    <SearchableSelect
+                      ariaLabel="Filter by line of business"
+                      value={lobFilter}
+                      onChange={setLobFilter}
+                      options={[
+                        {
+                          value: '',
+                          label: nobFilter ? t('allLob') : t('selectNobFirst'),
+                        },
+                        ...lobFilterOptions.map((l) => ({
+                          value: l.lob_id,
+                          label: `${l.lob_code} — ${l.lob_name || l.lob_code}`,
+                        })),
+                      ]}
+                      valueKey="value"
+                      labelKey="label"
+                      placeholder={
+                        nobFilter ? t('allLob') : t('selectNobFirst')
+                      }
+                      searchPlaceholder={t('searchPlaceholder')}
+                      noMatchesLabel={t('mdNoMatches')}
+                      disabled={!nobFilter}
+                      triggerClassName="nf-input-sm"
+                    />
+                  </>
+                )}
 
               <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
+                <Search
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                  style={S.muted}
+                />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t("searchPlaceholder")}
+                  placeholder={t('searchPlaceholder')}
                   className="nf-input-sm w-44 sm:w-60"
-                  style={{ ...S.input, paddingLeft: "1.75rem", paddingRight: search ? "1.75rem" : undefined }}
+                  style={{
+                    ...S.input,
+                    paddingLeft: '1.75rem',
+                    paddingRight: search ? '1.75rem' : undefined,
+                  }}
                 />
                 {search && (
                   <button
                     type="button"
-                    onClick={() => setSearch("")}
+                    onClick={() => setSearch('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                     title="Clear search"
                   >
@@ -3232,16 +4591,27 @@ export function MasterDataTable({
               {columns.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
+                  onClick={() => {
+                    setFilterDraft(colFilters);
+                    setFilterOpen(true);
+                  }}
                   className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent) cursor-pointer"
-                  style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
+                  style={
+                    appliedFilterCount
+                      ? {
+                          ...S.surface,
+                          borderColor: 'var(--accent)',
+                          color: 'var(--accent)',
+                        }
+                      : S.surface
+                  }
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
-                  <span>{t("mdFilters")}</span>
+                  <span>{t('mdFilters')}</span>
                   {appliedFilterCount > 0 && (
                     <span
                       className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
-                      style={{ backgroundColor: "var(--accent)" }}
+                      style={{ backgroundColor: 'var(--accent)' }}
                     >
                       {appliedFilterCount}
                     </span>
@@ -3258,226 +4628,348 @@ export function MasterDataTable({
           alone — the toolbar, chips, table and pager below would put a second
           master page inside the form the user is already filling in. */}
       {!createOnly && (
-      <>
-      {!showHeader && (
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-            {config.supportsNobLobFilter && workspaceScope !== "OPERATIONAL" && (
-              <>
-                <SearchableSelect
-                  ariaLabel="Filter by nature of business"
-                  value={nobFilter}
-                  onChange={(next) => { setNobFilter(next); setLobFilter(""); }}
-                  options={[{ value: "", label: t("allNob") }, ...nobFilterOptions.map((n) => ({ value: n.nob_id, label: `${n.nob_code} — ${n.nob_name || n.nob_code}` }))]}
-                  valueKey="value" labelKey="label" placeholder={t("allNob")}
-                  searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} triggerClassName="nf-input-sm"
-                />
-                <SearchableSelect
-                  ariaLabel="Filter by line of business"
-                  value={lobFilter}
-                  onChange={setLobFilter}
-                  options={[{ value: "", label: nobFilter ? t("allLob") : t("selectNobFirst") }, ...lobFilterOptions.map((l) => ({ value: l.lob_id, label: `${l.lob_code} — ${l.lob_name || l.lob_code}` }))]}
-                  valueKey="value" labelKey="label" placeholder={nobFilter ? t("allLob") : t("selectNobFirst")}
-                  searchPlaceholder={t("searchPlaceholder")} noMatchesLabel={t("mdNoMatches")} disabled={!nobFilter} triggerClassName="nf-input-sm"
-                />
-              </>
-            )}
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={S.muted} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t("searchPlaceholder")}
-                className="nf-input-sm"
-                style={{ ...S.input, paddingLeft: "1.75rem" }}
-              />
-            </div>
-            {columns.length > 0 && (
-              <button
-                type="button"
-                onClick={() => { setFilterDraft(colFilters); setFilterOpen(true); }}
-                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
-                style={appliedFilterCount ? { ...S.surface, borderColor: "var(--accent)", color: "var(--accent)" } : S.surface}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
-                {t("mdFilters")}
-                {appliedFilterCount > 0 && (
-                  <span
-                    className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
-                    style={{ backgroundColor: "var(--accent)" }}
+        <>
+          {!showHeader && (
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                {config.supportsNobLobFilter &&
+                  workspaceScope !== 'OPERATIONAL' && (
+                    <>
+                      <SearchableSelect
+                        ariaLabel="Filter by nature of business"
+                        value={nobFilter}
+                        onChange={(next) => {
+                          setNobFilter(next);
+                          setLobFilter('');
+                        }}
+                        options={[
+                          { value: '', label: t('allNob') },
+                          ...nobFilterOptions.map((n) => ({
+                            value: n.nob_id,
+                            label: `${n.nob_code} — ${n.nob_name || n.nob_code}`,
+                          })),
+                        ]}
+                        valueKey="value"
+                        labelKey="label"
+                        placeholder={t('allNob')}
+                        searchPlaceholder={t('searchPlaceholder')}
+                        noMatchesLabel={t('mdNoMatches')}
+                        triggerClassName="nf-input-sm"
+                      />
+                      <SearchableSelect
+                        ariaLabel="Filter by line of business"
+                        value={lobFilter}
+                        onChange={setLobFilter}
+                        options={[
+                          {
+                            value: '',
+                            label: nobFilter
+                              ? t('allLob')
+                              : t('selectNobFirst'),
+                          },
+                          ...lobFilterOptions.map((l) => ({
+                            value: l.lob_id,
+                            label: `${l.lob_code} — ${l.lob_name || l.lob_code}`,
+                          })),
+                        ]}
+                        valueKey="value"
+                        labelKey="label"
+                        placeholder={
+                          nobFilter ? t('allLob') : t('selectNobFirst')
+                        }
+                        searchPlaceholder={t('searchPlaceholder')}
+                        noMatchesLabel={t('mdNoMatches')}
+                        disabled={!nobFilter}
+                        triggerClassName="nf-input-sm"
+                      />
+                    </>
+                  )}
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                    style={S.muted}
+                  />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder={t('searchPlaceholder')}
+                    className="nf-input-sm"
+                    style={{ ...S.input, paddingLeft: '1.75rem' }}
+                  />
+                </div>
+                {columns.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterDraft(colFilters);
+                      setFilterOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                    style={
+                      appliedFilterCount
+                        ? {
+                            ...S.surface,
+                            borderColor: 'var(--accent)',
+                            color: 'var(--accent)',
+                          }
+                        : S.surface
+                    }
                   >
-                    {appliedFilterCount}
-                  </span>
+                    <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+                    {t('mdFilters')}
+                    {appliedFilterCount > 0 && (
+                      <span
+                        className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                        style={{ backgroundColor: 'var(--accent)' }}
+                      >
+                        {appliedFilterCount}
+                      </span>
+                    )}
+                  </button>
                 )}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={loading || rows.length === 0}
-              className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent) disabled:opacity-50"
-              style={S.surface}
-              title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected rows to CSV` : "Export all current rows to CSV"}
-            >
-              <Download className="h-3.5 w-3.5" />
-              {selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export CSV"}
-            </button>
-            {!readOnly && (config.key === "breed" || config.key === "breed-lifecycle-stage") && (
-              <button
-                type="button"
-                onClick={() => setImportModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
-                style={S.surface}
-              >
-                <Upload className="h-3.5 w-3.5" /> Import CSV
-              </button>
-            )}
-            {config.key === "item" && !readOnly && canCreateItem && (
-              <button
-                type="button"
-                onClick={() => setTemplateModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
-                style={S.surface}
-              >
-                <FileText className="h-3.5 w-3.5" /> Template
-              </button>
-            )}
-            {!readOnly && !exhausted && <button
-              onClick={openCreate}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-              style={{ backgroundColor: "var(--accent)" }}
-            >
-              <Plus className="h-3.5 w-3.5" /> {t("addItem", { name: tLabel(singularLabel(config)) })}
-            </button>}
-          </div>
-        </div>
-      )}
-
-      {bcOwned && <BcOwnershipNotice config={config} />}
-      {administrationRestricted && <p className="rounded-lg border p-3 text-sm" style={S.raised}>Only a Tenant Admin or Company Admin can add, edit or deactivate reasons. You can view the shared catalog here.</p>}
-
-      {appliedFilterCount > 0 && (
-        <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
-          <span className="text-xs font-medium text-[var(--text-muted)]">Active filters:</span>
-          {Object.entries(colFilters).map(([k, v]) => {
-            if (!v) return null;
-            let displayKey = k;
-            let displayVal = v.replace(/^\*|\*$/g, "");
-            if (k === "__farm") {
-              displayKey = "Farm";
-              const f = locationFarmOptions.find((x) => String(x.location_id) === v);
-              if (f) displayVal = String(f.location_code || f.location_name || v);
-            } else if (k === "__shed") {
-              displayKey = "Shed";
-              const s = locationShedOptions.find((x) => String(x.location_id) === v);
-              if (s) displayVal = String(s.location_code || s.location_name || v);
-            } else if (k === "__pen") {
-              displayKey = "Pen";
-              const p = locationPenOptions.find((x) => String(x.location_id) === v);
-              if (p) displayVal = String(p.location_code || p.location_name || v);
-            } else {
-              const col = columns.find((c) => c.key === k);
-              if (col) displayKey = col.label;
-              const choices = filterChoicesFor(k);
-              const choice = choices?.find((c) => c.value === v);
-              if (choice) displayVal = choice.label;
-            }
-            return (
-              <span
-                key={k}
-                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-primary)] shadow-xs"
-              >
-                <span className="text-[var(--text-muted)]">{displayKey}:</span>
-                <span className="font-semibold">{displayVal}</span>
                 <button
                   type="button"
-                  aria-label={`Remove filter for ${displayKey}`}
-                  onClick={() => {
-                    setColFilters((prev) => {
-                      const next = { ...prev };
-                      delete next[k];
-                      if (k === "__farm") { delete next.__shed; delete next.__pen; }
-                      if (k === "__shed") { delete next.__pen; }
-                      return next;
-                    });
-                    setFilterDraft((prev) => {
-                      const next = { ...prev };
-                      delete next[k];
-                      if (k === "__farm") { delete next.__shed; delete next.__pen; }
-                      if (k === "__shed") { delete next.__pen; }
-                      return next;
-                    });
-                  }}
-                  className="ml-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  onClick={handleExport}
+                  disabled={loading || rows.length === 0}
+                  className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent) disabled:opacity-50"
+                  style={S.surface}
+                  title={
+                    selectedIds.size > 0
+                      ? `Export ${selectedIds.size} selected rows to CSV`
+                      : 'Export all current rows to CSV'
+                  }
                 >
-                  <X className="h-3 w-3" />
+                  <Download className="h-3.5 w-3.5" />
+                  {selectedIds.size > 0
+                    ? `Export Selected (${selectedIds.size})`
+                    : 'Export CSV'}
                 </button>
-              </span>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => {
-              setColFilters({});
-              setFilterDraft({});
-            }}
-            className="text-xs font-semibold text-[var(--accent)] hover:underline ml-1 cursor-pointer"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
+                {!readOnly &&
+                  (config.key === 'breed' ||
+                    config.key === 'breed-lifecycle-stage') && (
+                    <button
+                      type="button"
+                      onClick={() => setImportModalOpen(true)}
+                      className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                      style={S.surface}
+                    >
+                      <Upload className="h-3.5 w-3.5" /> Import CSV
+                    </button>
+                  )}
+                {config.key === 'item' && !readOnly && canCreateItem && (
+                  <button
+                    type="button"
+                    onClick={() => setTemplateModalOpen(true)}
+                    className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-(--accent) hover:text-(--accent)"
+                    style={S.surface}
+                  >
+                    <FileText className="h-3.5 w-3.5" /> Template
+                  </button>
+                )}
+                {!readOnly && !exhausted && (
+                  <button
+                    onClick={openCreate}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+                    style={{ backgroundColor: 'var(--accent)' }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />{' '}
+                    {t('addItem', { name: tLabel(singularLabel(config)) })}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
-      {/* The filter panel is a second column of this grid, not a layer over
+          {bcOwned && <BcOwnershipNotice config={config} />}
+          {administrationRestricted && (
+            <p className="rounded-lg border p-3 text-sm" style={S.raised}>
+              Only a Tenant Admin or Company Admin can add, edit or deactivate
+              reasons. You can view the shared catalog here.
+            </p>
+          )}
+
+          {appliedFilterCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+              <span className="text-xs font-medium text-[var(--text-muted)]">
+                Active filters:
+              </span>
+              {Object.entries(colFilters).map(([k, v]) => {
+                if (!v) return null;
+                let displayKey = k;
+                let displayVal = v.replace(/^\*|\*$/g, '');
+                if (k === '__farm') {
+                  displayKey = 'Farm';
+                  const f = locationFarmOptions.find(
+                    (x) => String(x.location_id) === v,
+                  );
+                  if (f)
+                    displayVal = String(
+                      f.location_code || f.location_name || v,
+                    );
+                } else if (k === '__shed') {
+                  displayKey = 'Shed';
+                  const s = locationShedOptions.find(
+                    (x) => String(x.location_id) === v,
+                  );
+                  if (s)
+                    displayVal = String(
+                      s.location_code || s.location_name || v,
+                    );
+                } else if (k === '__pen') {
+                  displayKey = 'Pen';
+                  const p = locationPenOptions.find(
+                    (x) => String(x.location_id) === v,
+                  );
+                  if (p)
+                    displayVal = String(
+                      p.location_code || p.location_name || v,
+                    );
+                } else {
+                  const col = columns.find((c) => c.key === k);
+                  if (col) displayKey = col.label;
+                  const choices = filterChoicesFor(k);
+                  const choice = choices?.find((c) => c.value === v);
+                  if (choice) displayVal = choice.label;
+                }
+                return (
+                  <span
+                    key={k}
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-primary)] shadow-xs"
+                  >
+                    <span className="text-[var(--text-muted)]">
+                      {displayKey}:
+                    </span>
+                    <span className="font-semibold">{displayVal}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove filter for ${displayKey}`}
+                      onClick={() => {
+                        setColFilters((prev) => {
+                          const next = { ...prev };
+                          delete next[k];
+                          if (k === '__farm') {
+                            delete next.__shed;
+                            delete next.__pen;
+                          }
+                          if (k === '__shed') {
+                            delete next.__pen;
+                          }
+                          return next;
+                        });
+                        setFilterDraft((prev) => {
+                          const next = { ...prev };
+                          delete next[k];
+                          if (k === '__farm') {
+                            delete next.__shed;
+                            delete next.__pen;
+                          }
+                          if (k === '__shed') {
+                            delete next.__pen;
+                          }
+                          return next;
+                        });
+                      }}
+                      className="ml-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => {
+                  setColFilters({});
+                  setFilterDraft({});
+                }}
+                className="text-xs font-semibold text-[var(--accent)] hover:underline ml-1 cursor-pointer"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
+          {/* The filter panel is a second column of this grid, not a layer over
           it: the table narrows and the panel takes the space, so the rows
           being filtered stay visible and nothing is buried behind a scrim. */}
-      <div className={selectedRow ? "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]" : undefined}>
-      <div className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border flex flex-col" style={S.surface}>
-        <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <TableHeader className="sticky top-0 z-10 bg-[var(--surface-raised)] shadow-xs">
-              <tr className="border-b" style={{ borderColor: "var(--row-border)" }}>
-                <TableHead className="w-10 px-3">
-                  <input
-                    type="checkbox"
-                    checked={allPageSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = somePageSelected && !allPageSelected;
-                    }}
-                    onChange={toggleSelectAll}
-                    aria-label="Select all rows"
-                    className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
-                  />
-                </TableHead>
-                {columns.map((c, idx) => {
-                  const active = sortKey === c.key;
-                  return (
-                    <Fragment key={c.key}>
-                      <TableHead className="whitespace-nowrap">
-                        {/* Sorting is done in SQL over the whole table, so it
-                            reorders every page, not the page in view. */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (active) { setSortDir(sortDir === "asc" ? "desc" : "asc"); return; }
-                            setSortKey(c.key);
-                            setSortDir("asc");
+          <div
+            className={
+              selectedRow
+                ? 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]'
+                : undefined
+            }
+          >
+            <div
+              className="min-w-0 overflow-hidden rounded-[var(--radius-md)] border flex flex-col"
+              style={S.surface}
+            >
+              <div className="overflow-x-auto max-h-[calc(100vh-270px)] overflow-y-auto">
+                <table className="w-full border-collapse text-left text-sm">
+                  <TableHeader className="sticky top-0 z-10 bg-[var(--surface-raised)] shadow-xs">
+                    <tr
+                      className="border-b"
+                      style={{ borderColor: 'var(--row-border)' }}
+                    >
+                      <TableHead className="w-10 px-3">
+                        <input
+                          type="checkbox"
+                          checked={allPageSelected}
+                          ref={(el) => {
+                            if (el)
+                              el.indeterminate =
+                                somePageSelected && !allPageSelected;
                           }}
-                          aria-label={t("mdSortBy", { name: tLabel(c.label) })}
-                          className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
-                          style={active ? { color: "var(--accent)" } : undefined}
-                        >
-                          {tLabel(c.label)}
-                          <ArrowUpDown className="h-3 w-3 shrink-0" aria-hidden style={{ opacity: active ? 1 : 0.35 }} />
-                        </button>
+                          onChange={toggleSelectAll}
+                          aria-label="Select all rows"
+                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                        />
                       </TableHead>
-                      {idx === 0 && (
-                        <TableHead className="w-10 px-1 text-center"><span className="sr-only">Actions</span></TableHead>
-                      )}
-                    </Fragment>
-                  );
-                })}
-                {/* The record's own active/deactivated flag — the switch below
+                      {columns.map((c, idx) => {
+                        const active = sortKey === c.key;
+                        return (
+                          <Fragment key={c.key}>
+                            <TableHead className="whitespace-nowrap">
+                              {/* Sorting is done in SQL over the whole table, so it
+                            reorders every page, not the page in view. */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (active) {
+                                    setSortDir(
+                                      sortDir === 'asc' ? 'desc' : 'asc',
+                                    );
+                                    return;
+                                  }
+                                  setSortKey(c.key);
+                                  setSortDir('asc');
+                                }}
+                                aria-label={t('mdSortBy', {
+                                  name: tLabel(c.label),
+                                })}
+                                className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                                style={
+                                  active
+                                    ? { color: 'var(--accent)' }
+                                    : undefined
+                                }
+                              >
+                                {tLabel(c.label)}
+                                <ArrowUpDown
+                                  className="h-3 w-3 shrink-0"
+                                  aria-hidden
+                                  style={{ opacity: active ? 1 : 0.35 }}
+                                />
+                              </button>
+                            </TableHead>
+                            {idx === 0 && (
+                              <TableHead className="w-10 px-1 text-center">
+                                <span className="sr-only">Actions</span>
+                              </TableHead>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                      {/* The record's own active/deactivated flag — the switch below
                     it — headed "Active" rather than "Status", because several
                     masters carry a domain status of their own that the client's
                     templates name "Status".
@@ -3491,212 +4983,386 @@ export function MasterDataTable({
                     is "Never physically deleted; use Dispose to record
                     sale/slaughter/death". An active flag beside that says
                     nothing the Status column has not already said. */}
-                {!ownsStatusColumn && <TableHead className="text-right">{t("activeColumn")}</TableHead>}
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
-                    <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> {t("loadingEllipsis")}
-                  </TableCell>
-                </tr>
-              ) : rows.length === 0 ? (
-                <tr>
-                  <TableCell colSpan={columns.length + (ownsStatusColumn ? 1 : 2)} className="py-10 text-center" style={S.sub}>
-                    <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
-                    {t("noRecordsYet", { name: tLabel(config.label).toLowerCase() })}
-                    {!readOnly && <button onClick={openCreate} className="mt-2 block w-full font-semibold" style={S.accent}>{t("addFirstOne")}</button>}
-                  </TableCell>
-                </tr>
-              ) : (
-                pagedRows.map((row) => {
-                  const inactive = row.is_active === false;
-                  return (
-                    <TableRow
-                      key={row[config.idKey]}
-                      onClick={detailFor ? () => setSelectedId(String(row[config.idKey])) : undefined}
-                      className={detailFor ? "cursor-pointer" : undefined}
-                      style={detailFor && String(row[config.idKey]) === selectedId
-                        ? { backgroundColor: "var(--surface-raised)" }
-                        : undefined}
-                    >
-                      <TableCell className="w-10 px-3" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(String(row[config.idKey]))}
-                          onChange={(e) => {
-                            const rowId = String(row[config.idKey]);
-                            setSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(rowId);
-                              else next.delete(rowId);
-                              return next;
-                            });
-                          }}
-                          aria-label={`Select row ${String(row[config.idKey])}`}
-                          className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
-                        />
-                      </TableCell>
-                      {columns.map((c, idx) => (
-                        <Fragment key={c.key}>
-                          {c.key === "status" && row.status ? (
-                            // A chip, in the same shape as the Active badge below,
-                            // so the two status-shaped things on a row read as one
-                            // family. Colour carries whether the record is still
-                            // in play — for an animal, still in the herd — rather
-                            // than a colour per value, which would turn a
-                            // ten-value column into a paint chart.
-                            <TableCell className="whitespace-nowrap">
-                              <span
-                                className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
-                                style={statusActiveValues && !statusActiveValues.includes(String(row.status))
-                                  ? { color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--surface-raised)" }
-                                  : { color: "var(--success)", borderColor: "var(--success)", backgroundColor: "var(--success-muted)" }}
-                              >
-                                {String(row.status)}
-                              </span>
-                            </TableCell>
-                          ) : (
-                            <TableCell className="whitespace-nowrap" style={S.primary}>
-                              {displayValue(row, c.key, t("mdYes"), t("mdNo"), c)}
-                            </TableCell>
+                      {!ownsStatusColumn && (
+                        <TableHead className="text-right">
+                          {t('activeColumn')}
+                        </TableHead>
+                      )}
+                    </tr>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <tr>
+                        <TableCell
+                          colSpan={columns.length + (ownsStatusColumn ? 1 : 2)}
+                          className="py-10 text-center"
+                          style={S.sub}
+                        >
+                          <Loader2
+                            className="mx-auto mb-2 h-5 w-5 animate-spin"
+                            style={S.accent}
+                          />{' '}
+                          {t('loadingEllipsis')}
+                        </TableCell>
+                      </tr>
+                    ) : rows.length === 0 ? (
+                      <tr>
+                        <TableCell
+                          colSpan={columns.length + (ownsStatusColumn ? 1 : 2)}
+                          className="py-10 text-center"
+                          style={S.sub}
+                        >
+                          <Inbox
+                            className="mx-auto mb-2 h-6 w-6"
+                            style={S.muted}
+                          />
+                          {t('noRecordsYet', {
+                            name: tLabel(config.label).toLowerCase(),
+                          })}
+                          {!readOnly && (
+                            <button
+                              onClick={openCreate}
+                              className="mt-2 block w-full font-semibold"
+                              style={S.accent}
+                            >
+                              {t('addFirstOne')}
+                            </button>
                           )}
-                          {idx === 0 && (
-                            <TableCell className="w-10 px-1 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                              <Popover
-                                open={actionMenuRowId === String(row[config.idKey])}
-                                onOpenChange={(isOpen) => setActionMenuRowId(isOpen ? String(row[config.idKey]) : null)}
-                                align="start"
-                                floating
-                                haspopup="menu"
-                                trigger={(props) => (
-                                  <button
-                                    {...props}
-                                    type="button"
-                                    aria-label={`Actions for ${String(row[columns[0]?.key] ?? "")}`}
-                                    title="Actions"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      props.onClick();
-                                    }}
-                                    className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
-                                  >
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </button>
+                        </TableCell>
+                      </tr>
+                    ) : (
+                      pagedRows.map((row) => {
+                        const inactive = row.is_active === false;
+                        return (
+                          <TableRow
+                            key={row[config.idKey]}
+                            onClick={
+                              detailFor
+                                ? () => setSelectedId(String(row[config.idKey]))
+                                : undefined
+                            }
+                            className={detailFor ? 'cursor-pointer' : undefined}
+                            style={
+                              detailFor &&
+                              String(row[config.idKey]) === selectedId
+                                ? { backgroundColor: 'var(--surface-raised)' }
+                                : undefined
+                            }
+                          >
+                            <TableCell
+                              className="w-10 px-3"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(
+                                  String(row[config.idKey]),
                                 )}
-                              >
-                                <Menu label="Row Actions">
-                                  <MenuItem
-                                    onSelect={() => setViewingId(String(row[config.idKey]))}
-                                    leading={<Eye className="h-4 w-4 text-[var(--text-muted)]" />}
-                                  >
-                                    {t("roleColView") ?? "View Details"}
-                                  </MenuItem>
-                                  {!readOnly && rowOpenAction(row, false, !!config.draftLifecycle) === "edit" && (
-                                    <MenuItem
-                                      onSelect={() => openEdit(row)}
-                                      leading={<Pencil className="h-4 w-4 text-[var(--text-muted)]" />}
-                                    >
-                                      {t("edit")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && (config.supportsRestore ?? true)
-                                    && (!inactive || !config.draftLifecycle || canApproveDraft) && (
-                                    <MenuItem
-                                      onSelect={() => handleToggleActive(row)}
-                                      disabled={togglingId === row[config.idKey]}
-                                      leading={
-                                        inactive ? (
-                                          <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-                                        ) : (
-                                          <Power className="h-4 w-4 text-[var(--warning)]" />
+                                onChange={(e) => {
+                                  const rowId = String(row[config.idKey]);
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(rowId);
+                                    else next.delete(rowId);
+                                    return next;
+                                  });
+                                }}
+                                aria-label={`Select row ${String(row[config.idKey])}`}
+                                className="h-4 w-4 rounded border-gray-300 text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                              />
+                            </TableCell>
+                            {columns.map((c, idx) => (
+                              <Fragment key={c.key}>
+                                {c.key === 'status' && row.status ? (
+                                  // A chip, in the same shape as the Active badge below,
+                                  // so the two status-shaped things on a row read as one
+                                  // family. Colour carries whether the record is still
+                                  // in play — for an animal, still in the herd — rather
+                                  // than a colour per value, which would turn a
+                                  // ten-value column into a paint chart.
+                                  <TableCell className="whitespace-nowrap">
+                                    <span
+                                      className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+                                      style={
+                                        statusActiveValues &&
+                                        !statusActiveValues.includes(
+                                          String(row.status),
                                         )
+                                          ? {
+                                              color: 'var(--text-muted)',
+                                              borderColor: 'var(--border)',
+                                              backgroundColor:
+                                                'var(--surface-raised)',
+                                            }
+                                          : {
+                                              color: 'var(--success)',
+                                              borderColor: 'var(--success)',
+                                              backgroundColor:
+                                                'var(--success-muted)',
+                                            }
                                       }
                                     >
-                                      {inactive && config.draftLifecycle ? t("activate") : inactive ? t("restore") : t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                  {!readOnly && (config.rowCommands ?? []).filter((c) => !c.visibleWhen || c.visibleWhen(row)).map((c) => (
-                                    <MenuItem key={c.key} onSelect={() => handleRowCommand(row, c)}>
-                                      {c.label}
-                                    </MenuItem>
-                                  ))}
-                                  {!readOnly && config.supportsDelete !== false && !(config.supportsRestore ?? true) && (
-                                    <MenuItem
-                                      onSelect={() => setConfirmDelete(row)}
-                                      tone="danger"
-                                      leading={<Trash2 className="h-4 w-4 text-[var(--danger)]" />}
+                                      {String(row.status)}
+                                    </span>
+                                  </TableCell>
+                                ) : (
+                                  <TableCell
+                                    className="whitespace-nowrap"
+                                    style={S.primary}
+                                  >
+                                    {displayValue(
+                                      row,
+                                      c.key,
+                                      t('mdYes'),
+                                      t('mdNo'),
+                                      c,
+                                    )}
+                                  </TableCell>
+                                )}
+                                {idx === 0 && (
+                                  <TableCell
+                                    className="w-10 px-1 text-center whitespace-nowrap"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <Popover
+                                      open={
+                                        actionMenuRowId ===
+                                        String(row[config.idKey])
+                                      }
+                                      onOpenChange={(isOpen) =>
+                                        setActionMenuRowId(
+                                          isOpen
+                                            ? String(row[config.idKey])
+                                            : null,
+                                        )
+                                      }
+                                      align="start"
+                                      floating
+                                      haspopup="menu"
+                                      trigger={(props) => (
+                                        <button
+                                          {...props}
+                                          type="button"
+                                          aria-label={`Actions for ${String(row[columns[0]?.key] ?? '')}`}
+                                          title="Actions"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            props.onClick();
+                                          }}
+                                          className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)] transition cursor-pointer"
+                                        >
+                                          <MoreHorizontal className="h-4 w-4" />
+                                        </button>
+                                      )}
                                     >
-                                      {t("deactivate")}
-                                    </MenuItem>
-                                  )}
-                                </Menu>
-                              </Popover>
-                            </TableCell>
-                          )}
-                        </Fragment>
-                      ))}
-                      {!ownsStatusColumn && <TableCell className="text-right">
-                        {!readOnly && (config.supportsRestore ?? true)
-                          && (!inactive || !config.draftLifecycle || canApproveDraft) ? (
-                          <div className="flex items-center justify-end">
-                            {/* The switch alone. It carried a text label beside
+                                      <Menu label="Row Actions">
+                                        <MenuItem
+                                          onSelect={() =>
+                                            setViewingId(
+                                              String(row[config.idKey]),
+                                            )
+                                          }
+                                          leading={
+                                            <Eye className="h-4 w-4 text-[var(--text-muted)]" />
+                                          }
+                                        >
+                                          {t('roleColView') ?? 'View Details'}
+                                        </MenuItem>
+                                        {!readOnly &&
+                                          rowOpenAction(
+                                            row,
+                                            false,
+                                            !!config.draftLifecycle,
+                                          ) === 'edit' && (
+                                            <MenuItem
+                                              onSelect={() => openEdit(row)}
+                                              leading={
+                                                <Pencil className="h-4 w-4 text-[var(--text-muted)]" />
+                                              }
+                                            >
+                                              {t('edit')}
+                                            </MenuItem>
+                                          )}
+                                        {!readOnly &&
+                                          (config.supportsRestore ?? true) &&
+                                          (!inactive ||
+                                            !config.draftLifecycle ||
+                                            canApproveDraft) && (
+                                            <MenuItem
+                                              onSelect={() =>
+                                                handleToggleActive(row)
+                                              }
+                                              disabled={
+                                                togglingId === row[config.idKey]
+                                              }
+                                              leading={
+                                                inactive ? (
+                                                  <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
+                                                ) : (
+                                                  <Power className="h-4 w-4 text-[var(--warning)]" />
+                                                )
+                                              }
+                                            >
+                                              {inactive && config.draftLifecycle
+                                                ? t('activate')
+                                                : inactive
+                                                  ? t('restore')
+                                                  : t('deactivate')}
+                                            </MenuItem>
+                                          )}
+                                        {!readOnly &&
+                                          (config.rowCommands ?? [])
+                                            .filter(
+                                              (c) =>
+                                                !c.visibleWhen ||
+                                                c.visibleWhen(row),
+                                            )
+                                            .map((c) => (
+                                              <MenuItem
+                                                key={c.key}
+                                                onSelect={() =>
+                                                  handleRowCommand(row, c)
+                                                }
+                                              >
+                                                {c.label}
+                                              </MenuItem>
+                                            ))}
+                                        {!readOnly &&
+                                          config.supportsDelete !== false &&
+                                          !(config.supportsRestore ?? true) && (
+                                            <MenuItem
+                                              onSelect={() =>
+                                                setConfirmDelete(row)
+                                              }
+                                              tone="danger"
+                                              leading={
+                                                <Trash2 className="h-4 w-4 text-[var(--danger)]" />
+                                              }
+                                            >
+                                              {t('deactivate')}
+                                            </MenuItem>
+                                          )}
+                                      </Menu>
+                                    </Popover>
+                                  </TableCell>
+                                )}
+                              </Fragment>
+                            ))}
+                            {!ownsStatusColumn && (
+                              <TableCell className="text-right">
+                                {!readOnly &&
+                                (config.supportsRestore ?? true) &&
+                                (!inactive ||
+                                  !config.draftLifecycle ||
+                                  canApproveDraft) ? (
+                                  <div className="flex items-center justify-end">
+                                    {/* The switch alone. It carried a text label beside
                                 it saying Active/Inactive — the same fact the
                                 switch's own position and colour already state,
                                 twice in one cell. Screen readers were the only
                                 audience for that text and they get it from
                                 aria-checked instead. */}
-                            <button
-                              role="switch"
-                              aria-checked={!inactive}
-                              aria-label={String(row[columns[0]?.key] ?? tLabel(config.label))}
-                              onClick={() => handleToggleActive(row)}
-                              disabled={togglingId === row[config.idKey]}
-                              title={inactive ? t("restore") : t("deactivate")}
-                              className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50"
-                              style={{ backgroundColor: inactive ? "var(--border)" : "var(--success)" }}
-                            >
-                              <span
-                                className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform"
-                                style={{ transform: inactive ? "translateX(0.2rem)" : "translateX(1.15rem)" }}
-                              />
-                            </button>
-                          </div>
-                        ) : (
-                          <span
-                            className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
-                            style={inactive
-                              ? { color: "var(--text-muted)", borderColor: "var(--border)", backgroundColor: "var(--surface-raised)" }
-                              : { color: "var(--success)", borderColor: "var(--success)", backgroundColor: "var(--success-muted)" }}
-                          >
-                            {inactive ? t("statusInactive") : t("statusActive")}
-                          </span>
-                        )}
-                      </TableCell>}
-                    </TableRow>
-                  );
-                })
+                                    <button
+                                      role="switch"
+                                      aria-checked={!inactive}
+                                      aria-label={String(
+                                        row[columns[0]?.key] ??
+                                          tLabel(config.label),
+                                      )}
+                                      onClick={() => handleToggleActive(row)}
+                                      disabled={
+                                        togglingId === row[config.idKey]
+                                      }
+                                      title={
+                                        inactive
+                                          ? t('restore')
+                                          : t('deactivate')
+                                      }
+                                      className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50"
+                                      style={{
+                                        backgroundColor: inactive
+                                          ? 'var(--border)'
+                                          : 'var(--success)',
+                                      }}
+                                    >
+                                      <span
+                                        className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform"
+                                        style={{
+                                          transform: inactive
+                                            ? 'translateX(0.2rem)'
+                                            : 'translateX(1.15rem)',
+                                        }}
+                                      />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span
+                                    className="rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+                                    style={
+                                      inactive
+                                        ? {
+                                            color: 'var(--text-muted)',
+                                            borderColor: 'var(--border)',
+                                            backgroundColor:
+                                              'var(--surface-raised)',
+                                          }
+                                        : {
+                                            color: 'var(--success)',
+                                            borderColor: 'var(--success)',
+                                            backgroundColor:
+                                              'var(--success-muted)',
+                                          }
+                                    }
+                                  >
+                                    {inactive
+                                      ? t('statusInactive')
+                                      : t('statusActive')}
+                                  </span>
+                                )}
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </table>
+              </div>
+              {!loading && rows.length > 0 && (
+                <div
+                  className="sticky bottom-0 z-10 bg-[var(--surface)] border-t px-2 shadow-xs"
+                  style={{ borderColor: 'var(--border)' }}
+                >
+                  <Pagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={pagerTotal}
+                    onPageChange={setPage}
+                    onPageSizeChange={setPageSize}
+                    pageSizeOptions={[25, 50, 100]}
+                  />
+                </div>
               )}
-            </TableBody>
-          </table>
-        </div>
-        {!loading && rows.length > 0 && (
-          <div className="sticky bottom-0 z-10 bg-[var(--surface)] border-t px-2 shadow-xs" style={{ borderColor: "var(--border)" }}>
-            <Pagination page={page} pageSize={pageSize} total={pagerTotal} onPageChange={setPage} onPageSizeChange={setPageSize} pageSizeOptions={[25, 50, 100]} />
+            </div>
+            {selectedRow && detailFor === 'animal' && (
+              <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-8rem)]">
+                <AnimalDetailPanel
+                  row={selectedRow}
+                  onClose={() => setSelectedId(null)}
+                />
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {selectedRow && detailFor === "animal" && (
-        <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-8rem)]">
-          <AnimalDetailPanel row={selectedRow} onClose={() => setSelectedId(null)} />
-        </div>
-      )}
-      </div>
-      </>
+        </>
       )}
 
-      {viewingId && <MasterRecordView config={config} id={viewingId} onClose={() => setViewingId(null)} />}
+      {viewingId && (
+        <MasterRecordView
+          config={config}
+          id={viewingId}
+          onClose={() => setViewingId(null)}
+        />
+      )}
 
       {/* Every master form shares the same responsive frame and pinned actions.
           Section count changes its content layout, never the window size. */}
@@ -3704,15 +5370,26 @@ export function MasterDataTable({
         open={modalOpen && !readOnly}
         onClose={() => {
           if (saving) return;
-          if (editing?.status === "DRAFT" && (!form.item_name || !String(form.item_name).trim())) {
-            api.delete(`${config.apiBase}/${editing[config.idKey]}`).catch(() => { /* ignore */ });
+          if (
+            editing?.status === 'DRAFT' &&
+            (!form.item_name || !String(form.item_name).trim())
+          ) {
+            api
+              .delete(`${config.apiBase}/${editing[config.idKey]}`)
+              .catch(() => {
+                /* ignore */
+              });
           }
           setModalOpen(false);
-          setActiveFormTab("");
+          setActiveFormTab('');
           setTemplateLockedFields(new Set());
           if (createOnly) onCreateCancelled?.();
         }}
-        title={editing && !isDraftFromTemplate ? t("editItem", { name: tLabel(singularLabel(config)) }) : t("addItem", { name: tLabel(singularLabel(config)) })}
+        title={
+          editing && !isDraftFromTemplate
+            ? t('editItem', { name: tLabel(singularLabel(config)) })
+            : t('addItem', { name: tLabel(singularLabel(config)) })
+        }
         maxWidth="xl"
         presentation="modal"
         footer={
@@ -3723,12 +5400,17 @@ export function MasterDataTable({
                 saving ||
                 numbering.loading ||
                 numberingBlocks ||
-                (config.key === "item" && (!form.item_name?.trim() || !form.uom_primary?.trim()))
+                (config.key === 'item' &&
+                  (!form.item_name?.trim() || !form.uom_primary?.trim()))
               }
               className="rounded-lg px-5 py-2 text-sm font-semibold text-white shadow-xs transition-all hover:opacity-95 active:scale-95 disabled:opacity-50 cursor-pointer"
-              style={{ backgroundColor: "var(--accent)" }}
+              style={{ backgroundColor: 'var(--accent)' }}
             >
-              {saving ? t("saving") : (editing && !isDraftFromTemplate) ? t("saveChanges") : t("create")}
+              {saving
+                ? t('saving')
+                : editing && !isDraftFromTemplate
+                  ? t('saveChanges')
+                  : t('create')}
             </button>
           </div>
         }
@@ -3737,66 +5419,99 @@ export function MasterDataTable({
           {subDialogNames.length > 0 && (
             <DialogHeaderActions>
               {subDialogNames.map((name) => (
-                <button key={name} type="button" onClick={() => setOpenSubDialog(name)}
-                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer" style={S.surface}>
-                  {tLabel(name)}{subDialogCount(name) > 0 ? ` (${subDialogCount(name)})` : ""}
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => setOpenSubDialog(name)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  style={S.surface}
+                >
+                  {tLabel(name)}
+                  {subDialogCount(name) > 0 ? ` (${subDialogCount(name)})` : ''}
                 </button>
               ))}
             </DialogHeaderActions>
           )}
           {(() => {
-            const DEFAULT = "Identification";
+            const DEFAULT = 'Identification';
             const order: string[] = [];
             const bySection = new Map<string, typeof visibleFields>();
             for (const f of visibleFields) {
               if (f.subDialog) continue;
               const s = f.section || DEFAULT;
-              if (!bySection.has(s)) { bySection.set(s, []); order.push(s); }
+              if (!bySection.has(s)) {
+                bySection.set(s, []);
+                order.push(s);
+              }
               bySection.get(s)!.push(f);
             }
             const identificationIndex = order.indexOf(DEFAULT);
-            if (identificationIndex > 0) order.unshift(...order.splice(identificationIndex, 1));
+            if (identificationIndex > 0)
+              order.unshift(...order.splice(identificationIndex, 1));
 
             // If only one tab/section, show directly without tabs
             if (order.length <= 1) {
               return (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {visibleFields.filter((f) => !f.subDialog).map((f) => (
-                    <Field
-                      key={f.key}
-                      label={tLabel(currentLabel(f, form))}
-                      htmlFor={`master-${config.key}-${f.key}`}
-                      required={isFieldRequired(f, form)}
-                      error={fieldRuleError(f)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
-                      tooltip={f.helpText}
-                      className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
-                    >
-                      {renderField(f)}
-                    </Field>
-                  ))}
+                  {visibleFields
+                    .filter((f) => !f.subDialog)
+                    .map((f) => (
+                      <Field
+                        key={f.key}
+                        label={tLabel(currentLabel(f, form))}
+                        htmlFor={`master-${config.key}-${f.key}`}
+                        required={isFieldRequired(f, form)}
+                        error={fieldRuleError(f)}
+                        hint={
+                          templateLockedFields.has(f.key)
+                            ? '🔒 Set by template'
+                            : lockHint(f)
+                        }
+                        tooltip={f.helpText}
+                        className={
+                          f.type === 'textarea' ||
+                          f.type === 'json' ||
+                          f.type === 'string-list'
+                            ? 'sm:col-span-2'
+                            : undefined
+                        }
+                      >
+                        {renderField(f)}
+                      </Field>
+                    ))}
                 </div>
               );
             }
 
             // Multiple sections -> show horizontal tabs across the top
-            const currentTab = (activeFormTab && order.includes(activeFormTab)) ? activeFormTab : order[0];
+            const currentTab =
+              activeFormTab && order.includes(activeFormTab)
+                ? activeFormTab
+                : order[0];
             const activeFields = bySection.get(currentTab) || [];
 
             return (
               <div className="flex flex-col gap-4">
                 {/* Horizontal Tab Bar */}
-                <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[var(--border)] -mx-5 px-5 sm:-mx-6 sm:px-6 -mt-1 pb-px scrollbar-none" role="tablist">
+                <div
+                  className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-[var(--border)] -mx-5 px-5 sm:-mx-6 sm:px-6 -mt-1 pb-px scrollbar-none"
+                  role="tablist"
+                >
                   {order.map((section) => {
                     const isSelected = currentTab === section;
                     const fieldsInSection = bySection.get(section) || [];
                     const missingRequired = fieldsInSection.some((f) => {
-                      if (f.key === numbering.codeKey && numbering.managed) return false;
+                      if (f.key === numbering.codeKey && numbering.managed)
+                        return false;
                       if (!isFieldRequired(f, form)) return false;
-                      const val = f.key === numbering.codeKey
-                        ? (form[f.key] || (!codeFieldTouchedRef.current ? numbering.preview : ""))
-                        : form[f.key];
-                      return val === "" || val === undefined || val === null;
+                      const val =
+                        f.key === numbering.codeKey
+                          ? form[f.key] ||
+                            (!codeFieldTouchedRef.current
+                              ? numbering.preview
+                              : '')
+                          : form[f.key];
+                      return val === '' || val === undefined || val === null;
                     });
 
                     const Icon = getSectionIcon(section);
@@ -3810,28 +5525,39 @@ export function MasterDataTable({
                         tabIndex={isSelected ? 0 : -1}
                         onKeyDown={(e) => {
                           const idx = order.indexOf(section);
-                          if (e.key === "ArrowRight") {
+                          if (e.key === 'ArrowRight') {
                             e.preventDefault();
                             const next = order[(idx + 1) % order.length];
                             setActiveFormTab(next);
-                          } else if (e.key === "ArrowLeft") {
+                          } else if (e.key === 'ArrowLeft') {
                             e.preventDefault();
-                            const prev = order[(idx - 1 + order.length) % order.length];
+                            const prev =
+                              order[(idx - 1 + order.length) % order.length];
                             setActiveFormTab(prev);
                           }
                         }}
                         onClick={() => setActiveFormTab(section)}
                         className={cn(
-                          "relative shrink-0 whitespace-nowrap px-3.5 py-2.5 text-xs transition-colors cursor-pointer flex items-center gap-2 rounded-t-md",
+                          'relative shrink-0 whitespace-nowrap px-3.5 py-2.5 text-xs transition-colors cursor-pointer flex items-center gap-2 rounded-t-md',
                           isSelected
-                            ? "font-semibold text-[var(--text-primary)]"
-                            : "font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)]/50"
+                            ? 'font-semibold text-[var(--text-primary)]'
+                            : 'font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)]/50',
                         )}
                       >
-                        <Icon className={cn("h-3.5 w-3.5 shrink-0 transition-colors", isSelected ? "text-[var(--accent)]" : "text-[var(--text-muted)]")} />
+                        <Icon
+                          className={cn(
+                            'h-3.5 w-3.5 shrink-0 transition-colors',
+                            isSelected
+                              ? 'text-[var(--accent)]'
+                              : 'text-[var(--text-muted)]',
+                          )}
+                        />
                         <span>{section}</span>
                         {missingRequired && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" title="Contains incomplete required fields" />
+                          <span
+                            className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]"
+                            title="Contains incomplete required fields"
+                          />
                         )}
                         {isSelected && (
                           <span className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" />
@@ -3850,9 +5576,19 @@ export function MasterDataTable({
                       htmlFor={`master-${config.key}-${f.key}`}
                       required={isFieldRequired(f, form)}
                       error={fieldRuleError(f)}
-                      hint={templateLockedFields.has(f.key) ? "🔒 Set by template" : lockHint(f)}
+                      hint={
+                        templateLockedFields.has(f.key)
+                          ? '🔒 Set by template'
+                          : lockHint(f)
+                      }
                       tooltip={f.helpText}
-                      className={f.type === "textarea" || f.type === "json" || f.type === "string-list" ? "sm:col-span-2" : undefined}
+                      className={
+                        f.type === 'textarea' ||
+                        f.type === 'json' ||
+                        f.type === 'string-list'
+                          ? 'sm:col-span-2'
+                          : undefined
+                      }
                     >
                       {renderField(f)}
                     </Field>
@@ -3865,22 +5601,40 @@ export function MasterDataTable({
       </Dialog>
 
       {subDialogNames.map((name) => (
-        <Dialog key={name} open={modalOpen && openSubDialog === name} onClose={() => setOpenSubDialog(null)}
+        <Dialog
+          key={name}
+          open={modalOpen && openSubDialog === name}
+          onClose={() => setOpenSubDialog(null)}
           title={tLabel(name)}
           footer={
             <div className="flex items-center justify-end w-full">
-              <button type="button" onClick={() => setOpenSubDialog(null)}
-                className="rounded-lg px-5 py-2 text-sm font-semibold text-white cursor-pointer" style={{ backgroundColor: "var(--accent)" }}>
+              <button
+                type="button"
+                onClick={() => setOpenSubDialog(null)}
+                className="rounded-lg px-5 py-2 text-sm font-semibold text-white cursor-pointer"
+                style={{ backgroundColor: 'var(--accent)' }}
+              >
                 Done
               </button>
             </div>
-          }>
+          }
+        >
           <div className="flex flex-col gap-4">
-            {subDialogFields.filter((f) => subDialogName(f) === name).sort((a, b) => Number(a.type === "json") - Number(b.type === "json")).map((f) => (
-              <Field key={f.key} label={tLabel(currentLabel(f, form))} htmlFor={`master-${config.key}-${f.key}`} tooltip={f.helpText}>
-                {renderField(f)}
-              </Field>
-            ))}
+            {subDialogFields
+              .filter((f) => subDialogName(f) === name)
+              .sort(
+                (a, b) => Number(a.type === 'json') - Number(b.type === 'json'),
+              )
+              .map((f) => (
+                <Field
+                  key={f.key}
+                  label={tLabel(currentLabel(f, form))}
+                  htmlFor={`master-${config.key}-${f.key}`}
+                  tooltip={f.helpText}
+                >
+                  {renderField(f)}
+                </Field>
+              ))}
           </div>
         </Dialog>
       ))}
@@ -3888,20 +5642,26 @@ export function MasterDataTable({
       <Dialog
         open={!!reasonCommand}
         onClose={() => setReasonCommand(null)}
-        title={reasonCommand?.command.label || ""}
+        title={reasonCommand?.command.label || ''}
         presentation="compact"
         maxWidth="sm"
         footer={
           <>
-            <Button variant="outline" onClick={() => setReasonCommand(null)} className="min-w-[6rem]">
-              {t("cancel")}
+            <Button
+              variant="outline"
+              onClick={() => setReasonCommand(null)}
+              className="min-w-[6rem]"
+            >
+              {t('cancel')}
             </Button>
             <Button
               onClick={() => {
                 const pending = reasonCommand;
                 if (!pending) return;
                 setReasonCommand(null);
-                void runRowCommand(pending.row, pending.command, { reason: pending.reason });
+                void runRowCommand(pending.row, pending.command, {
+                  reason: pending.reason,
+                });
               }}
               className="min-w-[6rem]"
             >
@@ -3911,22 +5671,46 @@ export function MasterDataTable({
         }
       >
         <div className="space-y-2 text-sm">
-          <label className="block" style={S.primary} htmlFor="row-command-reason">{reasonCommand?.command.reasonPrompt}</label>
+          <label
+            className="block"
+            style={S.primary}
+            htmlFor="row-command-reason"
+          >
+            {reasonCommand?.command.reasonPrompt}
+          </label>
           <textarea
             id="row-command-reason"
             autoFocus
             rows={3}
-            value={reasonCommand?.reason ?? ""}
-            onChange={(e) => setReasonCommand((c) => (c ? { ...c, reason: e.target.value } : c))}
+            value={reasonCommand?.reason ?? ''}
+            onChange={(e) =>
+              setReasonCommand((c) =>
+                c ? { ...c, reason: e.target.value } : c,
+              )
+            }
             className="w-full rounded-md border px-3 py-2 text-sm"
             style={S.input}
           />
         </div>
       </Dialog>
 
-      <Dialog open={!!lookupManager} title={`Manage ${lookupManager?.label || ""}`} maxWidth="xl"
-        onClose={() => { setLookupManager(null); setEntityReloadKey((k) => k + 1); numbering.refresh(); }}>
-        {lookupManager && <MasterDataTable key={lookupManager.key} config={lookupManager} showHeader={false} />}
+      <Dialog
+        open={!!lookupManager}
+        title={`Manage ${lookupManager?.label || ''}`}
+        maxWidth="xl"
+        onClose={() => {
+          setLookupManager(null);
+          setEntityReloadKey((k) => k + 1);
+          numbering.refresh();
+        }}
+      >
+        {lookupManager && (
+          <MasterDataTable
+            key={lookupManager.key}
+            config={lookupManager}
+            showHeader={false}
+          />
+        )}
       </Dialog>
 
       {relatedPicker && (
@@ -3935,19 +5719,26 @@ export function MasterDataTable({
           onClose={() => setRelatedPicker(null)}
           label={tLabel(currentLabel(relatedPicker.field, form))}
           options={relatedPicker.options}
-          value={relatedPicker.currentValue ?? String(form[relatedPicker.field.key] ?? "")}
-          valueKey={relatedPicker.field.entityValueKey || "id"}
+          value={
+            relatedPicker.currentValue ??
+            String(form[relatedPicker.field.key] ?? '')
+          }
+          valueKey={relatedPicker.field.entityValueKey || 'id'}
           labelKeys={relatedPicker.field.entityLabelKeys || []}
           onChange={(value) => {
             // This dialog's onChange is typed for its `multiple` mode too, but
             // relatedPicker never sets it — always a single id in practice.
-            const picked = Array.isArray(value) ? value[0] ?? "" : value;
+            const picked = Array.isArray(value) ? (value[0] ?? '') : value;
             if (relatedPicker.onApply) relatedPicker.onApply(picked);
             else setField(relatedPicker.field.key, picked);
             setRelatedPicker(null);
           }}
           onCreate={() => {
-            setRelatedCreator({ field: relatedPicker.field, config: relatedPicker.config, onApply: relatedPicker.onApply });
+            setRelatedCreator({
+              field: relatedPicker.field,
+              config: relatedPicker.config,
+              onApply: relatedPicker.onApply,
+            });
             setRelatedPicker(null);
           }}
         />
@@ -3961,14 +5752,19 @@ export function MasterDataTable({
           initialValues={relatedCreator.initialValues}
           onCreateCancelled={() => setRelatedCreator(null)}
           onCreated={(created) => {
-            const valueKey = relatedCreator.field.entityValueKey || relatedCreator.config.idKey;
-            const id = created?.[valueKey] ?? created?.[relatedCreator.config.idKey];
+            const valueKey =
+              relatedCreator.field.entityValueKey ||
+              relatedCreator.config.idKey;
+            const id =
+              created?.[valueKey] ?? created?.[relatedCreator.config.idKey];
             setEntityReloadKey((key) => key + 1);
             const ep = resolveEndpoint(relatedCreator.field, form);
             if (ep) {
               setEntityOptions((prev) => {
                 const current = prev[ep] || [];
-                const exists = current.some((r) => String(r[valueKey]) === String(id));
+                const exists = current.some(
+                  (r) => String(r[valueKey]) === String(id),
+                );
                 return exists ? prev : { ...prev, [ep]: [created, ...current] };
               });
             }
@@ -3984,17 +5780,32 @@ export function MasterDataTable({
       <Dialog
         open={!!confirmDelete}
         onClose={() => !deleting && setConfirmDelete(null)}
-        title={t("deactivateRecordTitle")}
+        title={t('deactivateRecordTitle')}
         presentation="compact"
-        description={confirmDelete ? t("deactivateRecordDesc", { name: confirmDelete[columns[0]?.key] ?? confirmDelete[config.idKey], label: tLabel(config.label) }) : undefined}
+        description={
+          confirmDelete
+            ? t('deactivateRecordDesc', {
+                name:
+                  confirmDelete[columns[0]?.key] ?? confirmDelete[config.idKey],
+                label: tLabel(config.label),
+              })
+            : undefined
+        }
         maxWidth="sm"
         footer={
-          <button onClick={handleDelete} disabled={deleting} className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer" style={{ backgroundColor: "var(--danger)" }}>
-            {deleting ? t("deactivating") : t("deactivate")}
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
+            style={{ backgroundColor: 'var(--danger)' }}
+          >
+            {deleting ? t('deactivating') : t('deactivate')}
           </button>
         }
       >
-        <p className="text-sm" style={S.sub}>{t("confirmDeactivate")}</p>
+        <p className="text-sm" style={S.sub}>
+          {t('confirmDeactivate')}
+        </p>
       </Dialog>
 
       {/* Filters float over the table as an overlay drawer rather than a
@@ -4006,9 +5817,9 @@ export function MasterDataTable({
         onClose={() => setFilterOpen(false)}
         title={
           <span className="flex items-center gap-1.5">
-            <span>{t("mdFilters")}</span>
+            <span>{t('mdFilters')}</span>
             <span
-              title={t("mdFiltersDesc", { label: tLabel(config.label) })}
+              title={t('mdFiltersDesc', { label: tLabel(config.label) })}
               className="cursor-help text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
             >
               <Info className="inline h-3.5 w-3.5" />
@@ -4020,7 +5831,7 @@ export function MasterDataTable({
         {filterFields}
       </Drawer>
 
-      {config.key === "item" && (
+      {config.key === 'item' && (
         <ItemTemplateSelectModal
           open={templateModalOpen}
           onClose={() => setTemplateModalOpen(false)}
@@ -4037,7 +5848,6 @@ export function MasterDataTable({
           setSelectedIds(new Set());
         }}
       />
-
     </div>
   );
 }
