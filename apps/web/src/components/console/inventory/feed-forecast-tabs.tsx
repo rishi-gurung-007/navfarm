@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
 /**
  * Inventory -> Feed Forecast is one page with eight tabs: Dashboard, Forecast,
- * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Loading Instructions and
+ * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Mill Production, Loading Instructions and
  * Physical Count — all of them work on the same selected farm.
  *
  * The chosen tab lives in `?tab=`, so a bookmark, a refresh and the redirect
@@ -15,37 +15,51 @@
  * Dashboard and Calculation share one provider-owned farm and forecast window,
  * so switching tabs cannot make the two views disagree about their context.
  */
-import { useEffect, useState, type ReactNode } from "react";
-import type { TranslationKeys } from "@/utils/translations";
-import FeedSiloDashboard from "./feed-silo-dashboard";
-import FeedForecastPanel from "./feed-forecast-panel";
-import FeedPlanPanel from "./feed-plan-panel";
-import MillComparePanel from "./mill-compare-panel";
-import { FeedRequisitionPanel } from "./requisitions-panel";
-import FeedStockCountPanel from "./feed-stock-count-panel";
-import { FeedForecastProvider } from "./feed-forecast-context";
-import { FeedConsolidationsPanel } from "./feed-consolidations-panel";
-import { FeedLoadingPanel } from "./feed-loading-panel";
+import { useEffect, useState, type ReactNode } from 'react';
+import type { TranslationKeys } from '@/utils/translations';
+import FeedSiloDashboard from './feed-silo-dashboard';
+import FeedForecastPanel from './feed-forecast-panel';
+import FeedPlanPanel from './feed-plan-panel';
+import MillComparePanel from './mill-compare-panel';
+import { FeedRequisitionPanel } from './requisitions-panel';
+import FeedStockCountPanel from './feed-stock-count-panel';
+import { FeedForecastProvider } from './feed-forecast-context';
+import { FeedConsolidationsPanel } from './feed-consolidations-panel';
+import { FeedLoadingPanel } from './feed-loading-panel';
+import MillProductionPanel from './mill-production-panel';
 
-export const FEED_FORECAST_TABS = ["dashboard", "forecast", "feed-plan", "compare-report", "feed-requisition", "mill-consolidation", "loading-instructions", "physical-count"] as const;
+export const FEED_FORECAST_TABS = [
+  'dashboard',
+  'forecast',
+  'feed-plan',
+  'compare-report',
+  'feed-requisition',
+  'mill-consolidation',
+  'mill-production',
+  'loading-instructions',
+  'physical-count',
+] as const;
 export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 
 export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
-  dashboard: "fftTabDashboard",
-  forecast: "fftTabForecast",
-  "feed-plan": "fftTabFeedPlan",
-  "compare-report": "fftTabCompareReport",
-  "feed-requisition": "fftTabFeedRequisition",
-  "mill-consolidation": "invFeedConsolidations",
-  "loading-instructions": "invFeedLoading",
-  "physical-count": "fftTabPhysicalCount",
+  dashboard: 'fftTabDashboard',
+  forecast: 'fftTabForecast',
+  'feed-plan': 'fftTabFeedPlan',
+  'compare-report': 'fftTabCompareReport',
+  'feed-requisition': 'fftTabFeedRequisition',
+  'mill-consolidation': 'invFeedConsolidations',
+  'mill-production': 'mpoTab',
+  'loading-instructions': 'invFeedLoading',
+  'physical-count': 'fftTabPhysicalCount',
 };
 
 /** Unknown or missing `?tab=` falls back to the forecast rather than to nothing. */
-export function readFeedForecastTab(value: string | null | undefined): FeedForecastTab {
-  return (FEED_FORECAST_TABS as readonly string[]).includes(String(value ?? ""))
+export function readFeedForecastTab(
+  value: string | null | undefined,
+): FeedForecastTab {
+  return (FEED_FORECAST_TABS as readonly string[]).includes(String(value ?? ''))
     ? (value as FeedForecastTab)
-    : "forecast";
+    : 'forecast';
 }
 
 /** The query string that carries a chosen tab through a reload or a redirect. */
@@ -65,12 +79,13 @@ export function FeedForecastSubTabs(_props: FeedForecastTabsProps) {
 const PANELS: Partial<Record<FeedForecastTab, () => ReactNode>> = {
   dashboard: () => <FeedSiloDashboard />,
   forecast: () => <FeedForecastPanel />,
-  "feed-plan": () => <FeedPlanPanel />,
-  "compare-report": () => <MillComparePanel />,
-  "feed-requisition": () => <FeedRequisitionPanel />,
-  "mill-consolidation": () => <FeedConsolidationsPanel />,
-  "loading-instructions": () => <FeedLoadingPanel />,
-  "physical-count": () => <FeedStockCountPanel />,
+  'feed-plan': () => <FeedPlanPanel />,
+  'compare-report': () => <MillComparePanel />,
+  'feed-requisition': () => <FeedRequisitionPanel />,
+  'mill-consolidation': () => <FeedConsolidationsPanel />,
+  'mill-production': () => <MillProductionPanel />,
+  'loading-instructions': () => <FeedLoadingPanel />,
+  'physical-count': () => <FeedStockCountPanel />,
 };
 
 interface FeedForecastTabsProps {
@@ -89,14 +104,16 @@ function FeedForecastTabsContent({ tab, onTabChange }: FeedForecastTabsProps) {
 
   return (
     <div data-fill-body className="w-full min-w-0">
-      {FEED_FORECAST_TABS.filter((key) => visited.includes(key) && PANELS[key]).map((key) => (
+      {FEED_FORECAST_TABS.filter(
+        (key) => visited.includes(key) && PANELS[key],
+      ).map((key) => (
         <div
           key={key}
           data-feed-tab={key}
           className="flex w-full min-w-0 min-h-0 flex-1 flex-col"
           // Inline, not the `hidden` attribute: Tailwind's `.flex` would win
           // over the UA `[hidden]` rule and the inactive panel would show.
-          style={{ display: key === tab ? undefined : "none" }}
+          style={{ display: key === tab ? undefined : 'none' }}
         >
           {PANELS[key]?.()}
         </div>

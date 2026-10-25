@@ -1,12 +1,43 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Optional,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, count, sql, desc, inArray } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  or,
+  like,
+  isNull,
+  count,
+  sql,
+  desc,
+  inArray,
+} from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { assertCompanyInScope, farmScope, locationOnFarm, locationReferenceScopeConditions, assertLocationOnActiveFarm, restrictedScopeConditions } from '../../../common/farm-scope';
-import { CreateStockTransferDto, UpdateStockTransferDto, QueryStockTransferDto, PostShipmentDto, PostReceiptDto, PostDirectTransferDto, ReceiveStockTransferDto, ShipStockTransferDto } from './dto/stock-transfer.dto';
+import {
+  assertCompanyInScope,
+  farmScope,
+  locationOnFarm,
+  locationReferenceScopeConditions,
+  assertLocationOnActiveFarm,
+  restrictedScopeConditions,
+} from '../../../common/farm-scope';
+import {
+  CreateStockTransferDto,
+  UpdateStockTransferDto,
+  QueryStockTransferDto,
+  PostShipmentDto,
+  PostReceiptDto,
+  PostDirectTransferDto,
+  ReceiveStockTransferDto,
+  ShipStockTransferDto,
+} from './dto/stock-transfer.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
@@ -14,7 +45,15 @@ import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
-import { OPEN_TRANSFER_STATUSES, transferStatusFor, assertTrackingForShipment, serialsForReceipt, splitAmount, assertFeedReceiptLine, receiptVariance } from './transfer-execution.rules';
+import {
+  OPEN_TRANSFER_STATUSES,
+  transferStatusFor,
+  assertTrackingForShipment,
+  serialsForReceipt,
+  splitAmount,
+  assertFeedReceiptLine,
+  receiptVariance,
+} from './transfer-execution.rules';
 
 /**
  * W2T: what a feed receipt checks per transfer line (FeedRequisitionService
@@ -29,17 +68,34 @@ export interface SourceLink {
   source_consolidation_no: string | null;
   source_loading_sheet_id: string | null;
   source_loading_sheet_no: string | null;
-  source_loading_sheets: Array<{ loading_sheet_id: string; loading_sheet_no: string; requisition_line_id: string | null }>;
+  source_loading_sheets: Array<{
+    loading_sheet_id: string;
+    loading_sheet_no: string;
+    requisition_line_id: string | null;
+  }>;
 }
 const EMPTY_SOURCE_LINK: SourceLink = {
-  source_requisition_id: null, source_requisition_no: null, source_requisition_kind: null,
-  source_consolidation_id: null, source_consolidation_no: null,
-  source_loading_sheet_id: null, source_loading_sheet_no: null, source_loading_sheets: [],
+  source_requisition_id: null,
+  source_requisition_no: null,
+  source_requisition_kind: null,
+  source_consolidation_id: null,
+  source_consolidation_no: null,
+  source_loading_sheet_id: null,
+  source_loading_sheet_no: null,
+  source_loading_sheets: [],
 };
 
 export interface FeedReceiptControls {
   bagSizeKg: number;
-  lines: Map<string, { label: string; feedType: string | null; loadingSheetId: string | null; loadingSheetNo: string | null }>;
+  lines: Map<
+    string,
+    {
+      label: string;
+      feedType: string | null;
+      loadingSheetId: string | null;
+      loadingSheetNo: string | null;
+    }
+  >;
 }
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 import { assertNoBiologicalAssets } from '../../../common/biological-assets';
@@ -64,7 +120,7 @@ export class StockTransferService {
     private readonly siloFeedService: SiloFeedService,
     // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
-  ) { }
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -78,25 +134,45 @@ export class StockTransferService {
   // `create()`) — `.for('update')` locks the counted rows so a second concurrent
   // call blocks until the first commits its insert, instead of both reading the
   // same count and generating the same transfer number.
-  private async generateTransferNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
+  private async generateTransferNo(
+    tenantId: string,
+    companyId: string,
+    executor: MySql2Database<typeof schema> = this.db,
+  ): Promise<string> {
     const [row] = await executor
       .select({
         maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockTransfer.transfer_no}, 4) AS UNSIGNED)), 0)`,
       })
       .from(schema.stockTransfer)
-      .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.company_id, companyId)))
+      .where(
+        and(
+          eq(schema.stockTransfer.tenant_id, tenantId),
+          eq(schema.stockTransfer.company_id, companyId),
+        ),
+      )
       .for('update');
     const seq = Number(row?.maxSeq || 0) + 1;
     return `TR-${String(seq).padStart(6, '0')}`;
   }
 
-  async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {
+  async create(
+    dto: CreateStockTransferDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     return withTenantTransaction(this.cls, async () => {
       if (dto.from_warehouse_id === dto.to_warehouse_id) {
-        throw new BadRequestException('Source and destination location must be different.');
+        throw new BadRequestException(
+          'Source and destination location must be different.',
+        );
       }
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.from_warehouse_id, 'Source location');
+      await assertLocationOnActiveFarm(
+        this.db,
+        farmScope(this.cls),
+        dto.from_warehouse_id,
+        'Source location',
+      );
       await assertLocationOnActiveFarm(
         this.db,
         { ...farmScope(this.cls), farmId: null },
@@ -120,43 +196,86 @@ export class StockTransferService {
     userPayload?: { userId?: string; userType?: string; email?: string },
   ): Promise<{ transfer_id: string; transfer_no: string }> {
     if (this.cls.get('tenantPostingTransaction') !== true) {
-      throw new Error('Feed release transfers must be created inside the feed requisition transaction.');
+      throw new Error(
+        'Feed release transfers must be created inside the feed requisition transaction.',
+      );
     }
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     if (dto.lines.some((line) => !line.requisition_line_id)) {
-      throw new BadRequestException('Every feed release transfer line must include requisition_line_id.');
+      throw new BadRequestException(
+        'Every feed release transfer line must include requisition_line_id.',
+      );
     }
 
     const context = await this.loadFeedReleaseContext(dto, tenantId);
-    const active = (row: any) => row?.is_active === true && row?.status === 'ACTIVE' && !row?.deleted_at;
-    if (!context.source || context.source.location_type !== 'BIN' || !active(context.source)) {
-      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must be an active BIN.`);
+    const active = (row: any) =>
+      row?.is_active === true && row?.status === 'ACTIVE' && !row?.deleted_at;
+    if (
+      !context.source ||
+      context.source.location_type !== 'BIN' ||
+      !active(context.source)
+    ) {
+      throw new BadRequestException(
+        `Feed transfer source ${dto.from_warehouse_id} must be an active BIN.`,
+      );
     }
-    if (context.source.tenant_id !== tenantId || context.source.company_id !== dto.company_id) {
-      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must belong to company ${dto.company_id}.`);
+    if (
+      context.source.tenant_id !== tenantId ||
+      context.source.company_id !== dto.company_id
+    ) {
+      throw new BadRequestException(
+        `Feed transfer source ${dto.from_warehouse_id} must belong to company ${dto.company_id}.`,
+      );
     }
-    if (!context.mill || context.mill.location_type !== 'MILL' || !active(context.mill)
-      || context.mill.tenant_id !== tenantId || context.mill.company_id !== dto.company_id) {
-      throw new BadRequestException(`Feed transfer source ${dto.from_warehouse_id} must have an active MILL parent.`);
+    if (
+      !context.mill ||
+      context.mill.location_type !== 'MILL' ||
+      !active(context.mill) ||
+      context.mill.tenant_id !== tenantId ||
+      context.mill.company_id !== dto.company_id
+    ) {
+      throw new BadRequestException(
+        `Feed transfer source ${dto.from_warehouse_id} must have an active MILL parent.`,
+      );
     }
-    if (!context.destination || !['SILO', 'STORE'].includes(context.destination.location_type) || !active(context.destination)) {
-      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must be an active SILO or STORE.`);
+    if (
+      !context.destination ||
+      !['SILO', 'STORE'].includes(context.destination.location_type) ||
+      !active(context.destination)
+    ) {
+      throw new BadRequestException(
+        `Feed transfer destination ${dto.to_warehouse_id} must be an active SILO or STORE.`,
+      );
     }
-    if (context.destination.tenant_id !== tenantId || context.destination.company_id !== dto.company_id) {
-      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to company ${dto.company_id}.`);
+    if (
+      context.destination.tenant_id !== tenantId ||
+      context.destination.company_id !== dto.company_id
+    ) {
+      throw new BadRequestException(
+        `Feed transfer destination ${dto.to_warehouse_id} must belong to company ${dto.company_id}.`,
+      );
     }
     // Feed requisitions use farm_id as the canonical farm location. Older
     // drafts may not populate the optional common-requisition field.
-    const requisitionFarmId = context.requisition.main_location_id ?? context.requisition.farm_id;
-    if (!requisitionFarmId
-      || (context.destination.parent_location_id !== requisitionFarmId && context.destination.farm_id !== requisitionFarmId)) {
-      throw new BadRequestException(`Feed transfer destination ${dto.to_warehouse_id} must belong to requisition farm ${requisitionFarmId ?? '(missing)'}.`);
+    const requisitionFarmId =
+      context.requisition.main_location_id ?? context.requisition.farm_id;
+    if (
+      !requisitionFarmId ||
+      (context.destination.parent_location_id !== requisitionFarmId &&
+        context.destination.farm_id !== requisitionFarmId)
+    ) {
+      throw new BadRequestException(
+        `Feed transfer destination ${dto.to_warehouse_id} must belong to requisition farm ${requisitionFarmId ?? '(missing)'}.`,
+      );
     }
 
     return this.createRecord(dto, tenantId, userPayload);
   }
 
-  private async loadFeedReleaseContext(dto: CreateStockTransferDto, tenantId: string) {
+  private async loadFeedReleaseContext(
+    dto: CreateStockTransferDto,
+    tenantId: string,
+  ) {
     const lineIds = dto.lines.map((line) => line.requisition_line_id!);
     const requisitions = await this.db
       .select({
@@ -168,35 +287,63 @@ export class StockTransferService {
         farm_id: schema.requisition.farm_id,
       })
       .from(schema.requisitionLine)
-      .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
-      .where(and(
-        inArray(schema.requisitionLine.line_id, lineIds),
-        eq(schema.requisition.tenant_id, tenantId),
-        eq(schema.requisition.company_id, dto.company_id),
-        isNull(schema.requisition.deleted_at),
-      ));
-    const requisitionIds = new Set(requisitions.map((row) => row.requisition_id));
+      .innerJoin(
+        schema.requisition,
+        eq(
+          schema.requisition.requisition_id,
+          schema.requisitionLine.requisition_id,
+        ),
+      )
+      .where(
+        and(
+          inArray(schema.requisitionLine.line_id, lineIds),
+          eq(schema.requisition.tenant_id, tenantId),
+          eq(schema.requisition.company_id, dto.company_id),
+          isNull(schema.requisition.deleted_at),
+        ),
+      );
+    const requisitionIds = new Set(
+      requisitions.map((row) => row.requisition_id),
+    );
     if (requisitions.length !== lineIds.length || requisitionIds.size !== 1) {
-      throw new BadRequestException('Every feed transfer line must belong to the same active feed requisition.');
+      throw new BadRequestException(
+        'Every feed transfer line must belong to the same active feed requisition.',
+      );
     }
 
     const selectLocation = async (locationId: string) => {
-      const [row] = await this.db.select().from(schema.locationMaster).where(and(
-        eq(schema.locationMaster.location_id, locationId),
-        eq(schema.locationMaster.tenant_id, tenantId),
-        isNull(schema.locationMaster.deleted_at),
-      )).limit(1);
+      const [row] = await this.db
+        .select()
+        .from(schema.locationMaster)
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, locationId),
+            eq(schema.locationMaster.tenant_id, tenantId),
+            isNull(schema.locationMaster.deleted_at),
+          ),
+        )
+        .limit(1);
       return row;
     };
     const source = await selectLocation(dto.from_warehouse_id);
-    const mill = source?.parent_location_id ? await selectLocation(source.parent_location_id) : undefined;
+    const mill = source?.parent_location_id
+      ? await selectLocation(source.parent_location_id)
+      : undefined;
     const destination = await selectLocation(dto.to_warehouse_id);
     return { requisition: requisitions[0], source, mill, destination };
   }
 
-  private async createRecord(dto: CreateStockTransferDto, tenantId: string, userPayload?: { userId?: string }) {
+  private async createRecord(
+    dto: CreateStockTransferDto,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ) {
     const transferId = randomUUID();
-    const transferNo = await this.generateTransferNo(tenantId, dto.company_id, this.db);
+    const transferNo = await this.generateTransferNo(
+      tenantId,
+      dto.company_id,
+      this.db,
+    );
     await this.db.insert(schema.stockTransfer).values({
       transfer_id: transferId,
       tenant_id: tenantId,
@@ -223,8 +370,15 @@ export class StockTransferService {
     return { transfer_id: transferId, transfer_no: transferNo };
   }
 
-  private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
-    await assertNoBiologicalAssets(this.db, lines.map((l) => l.item_id), 'stock transfer');
+  private async insertLines(
+    transferId: string,
+    lines: CreateStockTransferDto['lines'],
+  ) {
+    await assertNoBiologicalAssets(
+      this.db,
+      lines.map((l) => l.item_id),
+      'stock transfer',
+    );
     await this.db.insert(schema.stockTransferLine).values(
       lines.map((line, idx) => {
         const noteParts: string[] = [];
@@ -234,16 +388,25 @@ export class StockTransferService {
         if (line.receipt_date && !line.remarks?.includes(line.receipt_date)) {
           noteParts.push(`Receipt Date: ${line.receipt_date}`);
         }
-        if (line.unit_cost !== undefined && line.unit_cost !== null && !line.remarks?.includes('Unit Cost:')) {
+        if (
+          line.unit_cost !== undefined &&
+          line.unit_cost !== null &&
+          !line.remarks?.includes('Unit Cost:')
+        ) {
           noteParts.push(`Unit Cost: ${line.unit_cost}`);
         }
-        if (line.amount !== undefined && line.amount !== null && !line.remarks?.includes('Amount:')) {
+        if (
+          line.amount !== undefined &&
+          line.amount !== null &&
+          !line.remarks?.includes('Amount:')
+        ) {
           noteParts.push(`Amount: ${line.amount}`);
         }
         if (line.remarks?.trim()) {
           noteParts.push(line.remarks.trim());
         }
-        const finalRemarks = noteParts.length > 0 ? noteParts.join(' | ') : null;
+        const finalRemarks =
+          noteParts.length > 0 ? noteParts.join(' | ') : null;
 
         return {
           line_id: randomUUID(),
@@ -257,7 +420,7 @@ export class StockTransferService {
           remarks: finalRemarks,
           requisition_line_id: line.requisition_line_id ?? null,
         };
-      })
+      }),
     );
   }
 
@@ -268,19 +431,32 @@ export class StockTransferService {
    * draft's quantities and post it, draining the source farm's warehouse. So
    * farm, LOB and company sit on from_warehouse_id only.
    */
-  private async loadForMutation(id: string, tenantId: string, requisitionExecution = false) {
+  private async loadForMutation(
+    id: string,
+    tenantId: string,
+    requisitionExecution = false,
+  ) {
     const scope = farmScope(this.cls);
-    const locationScope = requisitionExecution ? [] : locationReferenceScopeConditions(scope, schema.stockTransfer.from_warehouse_id);
+    const locationScope = requisitionExecution
+      ? []
+      : locationReferenceScopeConditions(
+          scope,
+          schema.stockTransfer.from_warehouse_id,
+        );
     const [transfer] = await this.db
       .select()
       .from(schema.stockTransfer)
-      .where(and(
-        eq(schema.stockTransfer.transfer_id, id),
-        eq(schema.stockTransfer.tenant_id, tenantId),
-        isNull(schema.stockTransfer.deleted_at),
-        ...locationScope,
-        ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
-      ))
+      .where(
+        and(
+          eq(schema.stockTransfer.transfer_id, id),
+          eq(schema.stockTransfer.tenant_id, tenantId),
+          isNull(schema.stockTransfer.deleted_at),
+          ...locationScope,
+          ...restrictedScopeConditions(scope, {
+            companyId: schema.stockTransfer.company_id,
+          }),
+        ),
+      )
       .for('update');
 
     if (!transfer) {
@@ -305,14 +481,18 @@ export class StockTransferService {
       eq(schema.stockTransfer.transfer_id, id),
       eq(schema.stockTransfer.tenant_id, tenantId),
       isNull(schema.stockTransfer.deleted_at),
-      ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
+      ...restrictedScopeConditions(scope, {
+        companyId: schema.stockTransfer.company_id,
+      }),
     ];
     if (scope.farmId) {
-      conditions.push(locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)!);
+      conditions.push(
+        locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)!,
+      );
     }
     if (scope.restricted && scope.lobId) {
       conditions.push(
-        sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`
+        sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
       );
     }
 
@@ -323,7 +503,9 @@ export class StockTransferService {
       .for('update');
 
     if (!transfer) {
-      throw new NotFoundException(`Transfer Order with ID '${id}' not found or not destined for your active location.`);
+      throw new NotFoundException(
+        `Transfer Order with ID '${id}' not found or not destined for your active location.`,
+      );
     }
 
     const lines = await this.db
@@ -344,7 +526,9 @@ export class StockTransferService {
       eq(schema.stockTransfer.transfer_id, id),
       eq(schema.stockTransfer.tenant_id, tenantId),
       isNull(schema.stockTransfer.deleted_at),
-      ...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }),
+      ...restrictedScopeConditions(scope, {
+        companyId: schema.stockTransfer.company_id,
+      }),
     ];
     if (scope.farmId) {
       conditions.push(
@@ -382,11 +566,21 @@ export class StockTransferService {
   }
 
   /** The same two checks create() applies: source on the active farm, destination in the company and LOB. */
-  private async assertWarehouses(fromWarehouseId: string, toWarehouseId: string) {
+  private async assertWarehouses(
+    fromWarehouseId: string,
+    toWarehouseId: string,
+  ) {
     if (fromWarehouseId === toWarehouseId) {
-      throw new BadRequestException('Source and destination location must be different.');
+      throw new BadRequestException(
+        'Source and destination location must be different.',
+      );
     }
-    await assertLocationOnActiveFarm(this.db, farmScope(this.cls), fromWarehouseId, 'Source location');
+    await assertLocationOnActiveFarm(
+      this.db,
+      farmScope(this.cls),
+      fromWarehouseId,
+      'Source location',
+    );
     await assertLocationOnActiveFarm(
       this.db,
       { ...farmScope(this.cls), farmId: null },
@@ -443,7 +637,10 @@ export class StockTransferService {
     // InventoryLedgerService.getStockBalance() is the canonical
     // remaining_quantity sum and is reused rather than recomputed here.
     const balances = await this.ledgerService.getStockBalance(
-      { companyId: transfer.company_id, warehouseId: destination.location_id } as any,
+      {
+        companyId: transfer.company_id,
+        warehouseId: destination.location_id,
+      } as any,
       tenantId,
     );
 
@@ -456,13 +653,23 @@ export class StockTransferService {
     let onHandKg = 0;
     for (const balance of balances) {
       onHandKg += await this.toKilograms(
-        balance.on_hand_qty, balance.uom, balance.item_id, transfer.company_id, tenantId, siloName,
+        balance.on_hand_qty,
+        balance.uom,
+        balance.item_id,
+        transfer.company_id,
+        tenantId,
+        siloName,
       );
     }
     let incomingKg = 0;
     for (const line of lines) {
       incomingKg += await this.toKilograms(
-        Number(line.quantity), line.uom, line.item_id, transfer.company_id, tenantId, siloName,
+        Number(line.quantity),
+        line.uom,
+        line.item_id,
+        transfer.company_id,
+        tenantId,
+        siloName,
       );
     }
 
@@ -493,7 +700,13 @@ export class StockTransferService {
   ): Promise<number> {
     const unit = (uom || '').toUpperCase().trim();
     try {
-      const factor = await this.uomService.resolveConversionFactor(unit, 'KG', itemId, companyId, tenantId);
+      const factor = await this.uomService.resolveConversionFactor(
+        unit,
+        'KG',
+        itemId,
+        companyId,
+        tenantId,
+      );
       return quantity * factor;
     } catch {
       throw new BadRequestException(
@@ -502,8 +715,11 @@ export class StockTransferService {
     }
   }
 
-
-  private async getLedgerHistory(transferNo: string, companyId: string, tenantId: string) {
+  private async getLedgerHistory(
+    transferNo: string,
+    companyId: string,
+    tenantId: string,
+  ) {
     try {
       const rows = await this.db
         .select()
@@ -516,25 +732,31 @@ export class StockTransferService {
           ),
         );
 
-      const userIds = [...new Set(rows.map((r) => r.created_by).filter(Boolean))] as string[];
-      const users = userIds.length > 0
-        ? await this.db
-            .select({
-              user_id: schema.userMaster.user_id,
-              full_name: schema.userMaster.full_name,
-            })
-            .from(schema.userMaster)
-            .where(
-              and(
-                eq(schema.userMaster.tenant_id, tenantId),
-                inArray(schema.userMaster.user_id, userIds),
-              ),
-            )
-        : [];
+      const userIds = [
+        ...new Set(rows.map((r) => r.created_by).filter(Boolean)),
+      ] as string[];
+      const users =
+        userIds.length > 0
+          ? await this.db
+              .select({
+                user_id: schema.userMaster.user_id,
+                full_name: schema.userMaster.full_name,
+              })
+              .from(schema.userMaster)
+              .where(
+                and(
+                  eq(schema.userMaster.tenant_id, tenantId),
+                  inArray(schema.userMaster.user_id, userIds),
+                ),
+              )
+          : [];
       const userMap = new Map(users.map((u) => [u.user_id, u.full_name]));
 
       return rows.map((r) => {
-        const authorName = (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
+        const authorName =
+          (r.created_by && userMap.get(r.created_by)) ||
+          r.created_by ||
+          'System';
         return {
           ...r,
           created_by_name: authorName,
@@ -547,20 +769,29 @@ export class StockTransferService {
     }
   }
 
-  private enrichLinesWithQuantities(lines: any[], ledgerEntries: any[], fallbackStatus?: string) {
+  private enrichLinesWithQuantities(
+    lines: any[],
+    ledgerEntries: any[],
+    fallbackStatus?: string,
+  ) {
     return lines.map((line) => {
       const lineShipments = ledgerEntries.filter(
         (e) =>
-          (e.document_line_id === line.line_id || (!e.document_line_id && e.item_id === line.item_id)) &&
+          (e.document_line_id === line.line_id ||
+            (!e.document_line_id && e.item_id === line.item_id)) &&
           e.transaction_type === 'TRANSFER_SHIPMENT',
       );
       const lineReceipts = ledgerEntries.filter(
         (e) =>
-          (e.document_line_id === line.line_id || (!e.document_line_id && e.item_id === line.item_id)) &&
+          (e.document_line_id === line.line_id ||
+            (!e.document_line_id && e.item_id === line.item_id)) &&
           e.transaction_type === 'TRANSFER_RECEIPT',
       );
 
-      let qty_shipped = lineShipments.reduce((sum, e) => sum + Math.abs(Number(e.quantity) || 0), 0);
+      let qty_shipped = lineShipments.reduce(
+        (sum, e) => sum + Math.abs(Number(e.quantity) || 0),
+        0,
+      );
 
       // A receipt row is gross (good + DOA, DOA written off against it), a legacy good-only row with a
       // `DOA:n` marker, or a legacy DOA-only twin — see receipt-doa.ts.
@@ -587,7 +818,10 @@ export class StockTransferService {
       const ordered = Number(line.quantity) || 0;
 
       // Fallback for mock environments or legacy records where status is IN_TRANSIT or RECEIVED but no ledger rows exist
-      if (lineShipments.length === 0 && (fallbackStatus === 'IN_TRANSIT' || fallbackStatus === 'RECEIVED')) {
+      if (
+        lineShipments.length === 0 &&
+        (fallbackStatus === 'IN_TRANSIT' || fallbackStatus === 'RECEIVED')
+      ) {
         qty_shipped = ordered;
       }
 
@@ -596,10 +830,18 @@ export class StockTransferService {
       const qty_to_ship = Math.max(0, ordered - qty_shipped);
       const qty_to_receive = qty_in_transit;
 
-      const shipDateMatch = (line.remarks || '').match(/(?:Ship Date|Shipment Date|Shipment):\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
-      const receiptDateMatch = (line.remarks || '').match(/(?:Receipt Date|Receipt|Exp\.\s*Delivery|Delivery|Exp\.\s*Arrival):\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
-      const unitCostMatch = (line.remarks || '').match(/(?:Unit Cost|Rate|Cost):\s*([0-9]+(?:\.[0-9]+)?)/i);
-      const amountMatch = (line.remarks || '').match(/(?:Amount|Total|Value):\s*([0-9]+(?:\.[0-9]+)?)/i);
+      const shipDateMatch = (line.remarks || '').match(
+        /(?:Ship Date|Shipment Date|Shipment):\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i,
+      );
+      const receiptDateMatch = (line.remarks || '').match(
+        /(?:Receipt Date|Receipt|Exp\.\s*Delivery|Delivery|Exp\.\s*Arrival):\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i,
+      );
+      const unitCostMatch = (line.remarks || '').match(
+        /(?:Unit Cost|Rate|Cost):\s*([0-9]+(?:\.[0-9]+)?)/i,
+      );
+      const amountMatch = (line.remarks || '').match(
+        /(?:Amount|Total|Value):\s*([0-9]+(?:\.[0-9]+)?)/i,
+      );
 
       const shipment_date = shipDateMatch ? shipDateMatch[1] : null;
       const receipt_date = receiptDateMatch ? receiptDateMatch[1] : null;
@@ -608,14 +850,14 @@ export class StockTransferService {
       const unit_cost = shipmentEntry
         ? Number(shipmentEntry.unit_cost || 0)
         : unitCostMatch
-        ? Number(unitCostMatch[1])
-        : null;
+          ? Number(unitCostMatch[1])
+          : null;
       const amount =
         unit_cost !== null
           ? Math.round(ordered * unit_cost * 100) / 100
           : amountMatch
-          ? Number(amountMatch[1])
-          : null;
+            ? Number(amountMatch[1])
+            : null;
 
       return {
         ...line,
@@ -644,15 +886,22 @@ export class StockTransferService {
       conditions.push(
         or(
           locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId),
-          locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)
-        )!
+          locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId),
+        )!,
       );
     }
-    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }));
-    if (scope.restricted && scope.lobId) conditions.push(or(
-      sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
-      sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
-    )!);
+    conditions.push(
+      ...restrictedScopeConditions(scope, {
+        companyId: schema.stockTransfer.company_id,
+      }),
+    );
+    if (scope.restricted && scope.lobId)
+      conditions.push(
+        or(
+          sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+          sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+        )!,
+      );
 
     const [transfer] = await this.db
       .select()
@@ -669,13 +918,23 @@ export class StockTransferService {
       .from(schema.stockTransferLine)
       .where(eq(schema.stockTransferLine.transfer_id, id));
 
-    const ledgerEntries = await this.getLedgerHistory(transfer.transfer_no, transfer.company_id, transfer.tenant_id);
-    const enrichedLines = this.enrichLinesWithQuantities(lines, ledgerEntries, transfer.status);
+    const ledgerEntries = await this.getLedgerHistory(
+      transfer.transfer_no,
+      transfer.company_id,
+      transfer.tenant_id,
+    );
+    const enrichedLines = this.enrichLinesWithQuantities(
+      lines,
+      ledgerEntries,
+      transfer.status,
+    );
     const [shipped, received] = await Promise.all([
       this.shippedQuantities(id, transfer.tenant_id),
       this.receivedQuantities(id, transfer.tenant_id),
     ]);
-    const source = (await this.sourceLinks([id], transfer.tenant_id)).get(id) ?? EMPTY_SOURCE_LINK;
+    const source =
+      (await this.sourceLinks([id], transfer.tenant_id)).get(id) ??
+      EMPTY_SOURCE_LINK;
     return {
       ...transfer,
       ...source,
@@ -694,7 +953,10 @@ export class StockTransferService {
    * COMMON), and for feed the Mill Consolidation Sheet and loading sheet(s).
    * A hand-made transfer has no requisition line and gets EMPTY_SOURCE_LINK.
    */
-  private async sourceLinks(transferIds: string[], tenantId: string): Promise<Map<string, SourceLink>> {
+  private async sourceLinks(
+    transferIds: string[],
+    tenantId: string,
+  ): Promise<Map<string, SourceLink>> {
     const out = new Map<string, SourceLink>();
     if (!transferIds.length) return out;
     const rows = await this.db
@@ -710,37 +972,89 @@ export class StockTransferService {
         loading_sheet_no: schema.feedLoadingSheet.loading_sheet_no,
       })
       .from(schema.stockTransferLine)
-      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
-      .innerJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
-      .innerJoin(schema.requisition, and(
-        eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id),
-        eq(schema.requisition.tenant_id, tenantId),
-        eq(schema.requisition.company_id, schema.stockTransfer.company_id),
-      ))
-      .leftJoin(schema.feedConsolidation, and(
-        eq(schema.feedConsolidation.consolidation_id, schema.requisition.feed_consolidation_id),
-        eq(schema.feedConsolidation.tenant_id, tenantId),
-        eq(schema.feedConsolidation.company_id, schema.stockTransfer.company_id),
-      ))
-      .leftJoin(schema.feedLoadingSheet, and(
-        eq(schema.feedLoadingSheet.requisition_line_id, schema.stockTransferLine.requisition_line_id),
-        eq(schema.feedLoadingSheet.tenant_id, tenantId),
-        eq(schema.feedLoadingSheet.company_id, schema.stockTransfer.company_id),
-      ))
-      .where(and(inArray(schema.stockTransferLine.transfer_id, transferIds), eq(schema.stockTransfer.tenant_id, tenantId)));
+      .innerJoin(
+        schema.stockTransfer,
+        eq(
+          schema.stockTransfer.transfer_id,
+          schema.stockTransferLine.transfer_id,
+        ),
+      )
+      .innerJoin(
+        schema.requisitionLine,
+        eq(
+          schema.requisitionLine.line_id,
+          schema.stockTransferLine.requisition_line_id,
+        ),
+      )
+      .innerJoin(
+        schema.requisition,
+        and(
+          eq(
+            schema.requisition.requisition_id,
+            schema.requisitionLine.requisition_id,
+          ),
+          eq(schema.requisition.tenant_id, tenantId),
+          eq(schema.requisition.company_id, schema.stockTransfer.company_id),
+        ),
+      )
+      .leftJoin(
+        schema.feedConsolidation,
+        and(
+          eq(
+            schema.feedConsolidation.consolidation_id,
+            schema.requisition.feed_consolidation_id,
+          ),
+          eq(schema.feedConsolidation.tenant_id, tenantId),
+          eq(
+            schema.feedConsolidation.company_id,
+            schema.stockTransfer.company_id,
+          ),
+        ),
+      )
+      .leftJoin(
+        schema.feedLoadingSheet,
+        and(
+          eq(
+            schema.feedLoadingSheet.requisition_line_id,
+            schema.stockTransferLine.requisition_line_id,
+          ),
+          eq(schema.feedLoadingSheet.tenant_id, tenantId),
+          eq(
+            schema.feedLoadingSheet.company_id,
+            schema.stockTransfer.company_id,
+          ),
+        ),
+      )
+      .where(
+        and(
+          inArray(schema.stockTransferLine.transfer_id, transferIds),
+          eq(schema.stockTransfer.tenant_id, tenantId),
+        ),
+      );
     for (const r of rows) {
-      const link = out.get(r.transfer_id) ?? {
-        source_requisition_id: r.requisition_id,
-        source_requisition_no: r.req_no,
-        source_requisition_kind: r.doc_type === 'FEED' ? 'FEED' : 'COMMON',
-        source_consolidation_id: r.consolidation_id ?? null,
-        source_consolidation_no: r.consolidation_no ?? null,
-        source_loading_sheet_id: null,
-        source_loading_sheet_no: null,
-        source_loading_sheets: [],
-      } as SourceLink;
-      if (r.loading_sheet_id && !link.source_loading_sheets.some((ls) => ls.loading_sheet_id === r.loading_sheet_id)) {
-        link.source_loading_sheets.push({ loading_sheet_id: r.loading_sheet_id, loading_sheet_no: r.loading_sheet_no!, requisition_line_id: r.requisition_line_id });
+      const link =
+        out.get(r.transfer_id) ??
+        ({
+          source_requisition_id: r.requisition_id,
+          source_requisition_no: r.req_no,
+          source_requisition_kind: r.doc_type === 'FEED' ? 'FEED' : 'COMMON',
+          source_consolidation_id: r.consolidation_id ?? null,
+          source_consolidation_no: r.consolidation_no ?? null,
+          source_loading_sheet_id: null,
+          source_loading_sheet_no: null,
+          source_loading_sheets: [],
+        } as SourceLink);
+      if (
+        r.loading_sheet_id &&
+        !link.source_loading_sheets.some(
+          (ls) => ls.loading_sheet_id === r.loading_sheet_id,
+        )
+      ) {
+        link.source_loading_sheets.push({
+          loading_sheet_id: r.loading_sheet_id,
+          loading_sheet_no: r.loading_sheet_no!,
+          requisition_line_id: r.requisition_line_id,
+        });
         link.source_loading_sheet_id ??= r.loading_sheet_id;
         link.source_loading_sheet_no ??= r.loading_sheet_no;
       }
@@ -750,46 +1064,73 @@ export class StockTransferService {
   }
 
   async findAll(query: QueryStockTransferDto, tenantId: string) {
-    const conditions: any[] = [eq(schema.stockTransfer.tenant_id, tenantId), isNull(schema.stockTransfer.deleted_at)];
+    const conditions: any[] = [
+      eq(schema.stockTransfer.tenant_id, tenantId),
+      isNull(schema.stockTransfer.deleted_at),
+    ];
 
     const scope = farmScope(this.cls);
     if (scope.farmId) {
       if (query.direction === 'OUTBOUND') {
-        conditions.push(locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId)!);
+        conditions.push(
+          locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId)!,
+        );
       } else if (query.direction === 'INBOUND') {
-        conditions.push(locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)!);
+        conditions.push(
+          locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)!,
+        );
       } else {
         conditions.push(
           or(
-            locationOnFarm(schema.stockTransfer.from_warehouse_id, scope.farmId),
-            locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId)
-          )!
+            locationOnFarm(
+              schema.stockTransfer.from_warehouse_id,
+              scope.farmId,
+            ),
+            locationOnFarm(schema.stockTransfer.to_warehouse_id, scope.farmId),
+          )!,
         );
       }
     }
-    conditions.push(...restrictedScopeConditions(scope, { companyId: schema.stockTransfer.company_id }));
+    conditions.push(
+      ...restrictedScopeConditions(scope, {
+        companyId: schema.stockTransfer.company_id,
+      }),
+    );
     if (scope.restricted && scope.lobId) {
       if (query.direction === 'OUTBOUND') {
         conditions.push(
-          sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`
+          sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
         );
       } else if (query.direction === 'INBOUND') {
         conditions.push(
-          sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`
+          sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
         );
       } else {
-        conditions.push(or(
-          sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
-          sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
-        )!);
+        conditions.push(
+          or(
+            sql`${schema.stockTransfer.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+            sql`${schema.stockTransfer.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+          )!,
+        );
       }
     }
 
-    if (query.companyId) conditions.push(eq(schema.stockTransfer.company_id, query.companyId));
-    if (query.status) conditions.push(eq(schema.stockTransfer.status, query.status));
-    if (query.fromWarehouseId) conditions.push(eq(schema.stockTransfer.from_warehouse_id, query.fromWarehouseId));
-    if (query.toWarehouseId) conditions.push(eq(schema.stockTransfer.to_warehouse_id, query.toWarehouseId));
-    if (query.search) conditions.push(like(schema.stockTransfer.transfer_no, `%${query.search}%`));
+    if (query.companyId)
+      conditions.push(eq(schema.stockTransfer.company_id, query.companyId));
+    if (query.status)
+      conditions.push(eq(schema.stockTransfer.status, query.status));
+    if (query.fromWarehouseId)
+      conditions.push(
+        eq(schema.stockTransfer.from_warehouse_id, query.fromWarehouseId),
+      );
+    if (query.toWarehouseId)
+      conditions.push(
+        eq(schema.stockTransfer.to_warehouse_id, query.toWarehouseId),
+      );
+    if (query.search)
+      conditions.push(
+        like(schema.stockTransfer.transfer_no, `%${query.search}%`),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -800,12 +1141,21 @@ export class StockTransferService {
       .where(and(...conditions))
       .limit(limit)
       .offset(offset);
-    const links = await this.sourceLinks(rows.map((r: any) => r.transfer_id), tenantId);
-    return rows.map((r: any) => ({ ...r, ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK) }));
+    const links = await this.sourceLinks(
+      rows.map((r: any) => r.transfer_id),
+      tenantId,
+    );
+    return rows.map((r: any) => ({
+      ...r,
+      ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK),
+    }));
   }
 
   async getPendingReceipts(query: QueryStockTransferDto, tenantId: string) {
-    return this.findAll({ ...query, status: 'IN_TRANSIT', direction: 'INBOUND' }, tenantId);
+    return this.findAll(
+      { ...query, status: 'IN_TRANSIT', direction: 'INBOUND' },
+      tenantId,
+    );
   }
 
   async getReceiptHistory(query: QueryStockTransferDto, tenantId: string) {
@@ -820,13 +1170,18 @@ export class StockTransferService {
       conditions.push(eq(schema.inventoryLedger.company_id, query.companyId));
     }
     if (scope.farmId) {
-      conditions.push(locationOnFarm(schema.inventoryLedger.warehouse_id, scope.farmId)!);
+      conditions.push(
+        locationOnFarm(schema.inventoryLedger.warehouse_id, scope.farmId)!,
+      );
     }
     if (query.search) {
       conditions.push(
         or(
           like(schema.inventoryLedger.document_no, `%${query.search}%`),
-          like(schema.inventoryLedger.external_reference_no, `%${query.search}%`),
+          like(
+            schema.inventoryLedger.external_reference_no,
+            `%${query.search}%`,
+          ),
           like(schema.inventoryLedger.serial_no, `%${query.search}%`),
           like(schema.inventoryLedger.lot_no, `%${query.search}%`),
           like(schema.inventoryLedger.item_code, `%${query.search}%`),
@@ -860,63 +1215,90 @@ export class StockTransferService {
       .limit(query.limit || 100)
       .offset(query.offset || 0);
 
-    const transferNos = [...new Set(receipts.map((r) => r.transfer_no).filter(Boolean))];
-    const transfers = transferNos.length > 0
-      ? await this.db
-          .select({
-            transfer_id: schema.stockTransfer.transfer_id,
-            transfer_no: schema.stockTransfer.transfer_no,
-            from_warehouse_id: schema.stockTransfer.from_warehouse_id,
-            to_warehouse_id: schema.stockTransfer.to_warehouse_id,
-            transfer_status: schema.stockTransfer.status,
-          })
-          .from(schema.stockTransfer)
-          .where(
-            and(
-              eq(schema.stockTransfer.tenant_id, tenantId),
-              inArray(schema.stockTransfer.transfer_no, transferNos),
-            ),
-          )
-      : [];
+    const transferNos = [
+      ...new Set(receipts.map((r) => r.transfer_no).filter(Boolean)),
+    ];
+    const transfers =
+      transferNos.length > 0
+        ? await this.db
+            .select({
+              transfer_id: schema.stockTransfer.transfer_id,
+              transfer_no: schema.stockTransfer.transfer_no,
+              from_warehouse_id: schema.stockTransfer.from_warehouse_id,
+              to_warehouse_id: schema.stockTransfer.to_warehouse_id,
+              transfer_status: schema.stockTransfer.status,
+            })
+            .from(schema.stockTransfer)
+            .where(
+              and(
+                eq(schema.stockTransfer.tenant_id, tenantId),
+                inArray(schema.stockTransfer.transfer_no, transferNos),
+              ),
+            )
+        : [];
 
     const transferMap = new Map(transfers.map((t) => [t.transfer_no, t]));
 
-    const itemIds = [...new Set(receipts.map((r) => r.item_id).filter(Boolean))] as string[];
-    const items = itemIds.length > 0
-      ? await this.db
-          .select({
-            item_id: schema.itemMaster.item_id,
-            item_code: schema.itemMaster.item_code,
-            item_name: schema.itemMaster.item_name,
-          })
-          .from(schema.itemMaster)
-          .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)))
-      : [];
+    const itemIds = [
+      ...new Set(receipts.map((r) => r.item_id).filter(Boolean)),
+    ] as string[];
+    const items =
+      itemIds.length > 0
+        ? await this.db
+            .select({
+              item_id: schema.itemMaster.item_id,
+              item_code: schema.itemMaster.item_code,
+              item_name: schema.itemMaster.item_name,
+            })
+            .from(schema.itemMaster)
+            .where(
+              and(
+                eq(schema.itemMaster.tenant_id, tenantId),
+                inArray(schema.itemMaster.item_id, itemIds),
+              ),
+            )
+        : [];
 
     const itemMap = new Map(items.map((i) => [i.item_id, i]));
 
-    const userIds = [...new Set(receipts.map((r) => r.created_by).filter(Boolean))] as string[];
-    const users = userIds.length > 0
-      ? await this.db
-          .select({
-            user_id: schema.userMaster.user_id,
-            full_name: schema.userMaster.full_name,
-          })
-          .from(schema.userMaster)
-          .where(and(eq(schema.userMaster.tenant_id, tenantId), inArray(schema.userMaster.user_id, userIds)))
-      : [];
+    const userIds = [
+      ...new Set(receipts.map((r) => r.created_by).filter(Boolean)),
+    ] as string[];
+    const users =
+      userIds.length > 0
+        ? await this.db
+            .select({
+              user_id: schema.userMaster.user_id,
+              full_name: schema.userMaster.full_name,
+            })
+            .from(schema.userMaster)
+            .where(
+              and(
+                eq(schema.userMaster.tenant_id, tenantId),
+                inArray(schema.userMaster.user_id, userIds),
+              ),
+            )
+        : [];
     const userMap = new Map(users.map((u) => [u.user_id, u.full_name]));
 
     // Legacy receipts split the DOA onto a twin row: if a primary `DOA:n` receipt already accounts for it, skip the twin
     const primaryReceiptLineIds = new Set(
       receipts
-        .filter((r) => parseReceiptDoa(r.external_reference_no).kind === 'marker')
+        .filter(
+          (r) => parseReceiptDoa(r.external_reference_no).kind === 'marker',
+        )
         .map((r) => `${r.transfer_no}_${r.document_line_id}_${r.posting_date}`),
     );
 
     const filteredReceipts = receipts.filter((r) => {
-      const isDoaTwin = parseReceiptDoa(r.external_reference_no).kind === 'twin';
-      if (isDoaTwin && primaryReceiptLineIds.has(`${r.transfer_no}_${r.document_line_id}_${r.posting_date}`)) {
+      const isDoaTwin =
+        parseReceiptDoa(r.external_reference_no).kind === 'twin';
+      if (
+        isDoaTwin &&
+        primaryReceiptLineIds.has(
+          `${r.transfer_no}_${r.document_line_id}_${r.posting_date}`,
+        )
+      ) {
         return false;
       }
       return true;
@@ -925,9 +1307,13 @@ export class StockTransferService {
     return filteredReceipts.map((r) => {
       const parentTransfer = transferMap.get(r.transfer_no);
       const it = itemMap.get(r.item_id!);
-      const authorName = (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
+      const authorName =
+        (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
 
-      const { good: good_qty, doa: doa_qty } = receiptSplit(Number(r.quantity || 0), r.external_reference_no);
+      const { good: good_qty, doa: doa_qty } = receiptSplit(
+        Number(r.quantity || 0),
+        r.external_reference_no,
+      );
 
       return {
         ledger_id: r.ledger_id,
@@ -939,7 +1325,8 @@ export class StockTransferService {
         created_by: authorName,
         created_by_name: authorName,
         from_warehouse_id: parentTransfer?.from_warehouse_id || null,
-        to_warehouse_id: r.warehouse_id || parentTransfer?.to_warehouse_id || null,
+        to_warehouse_id:
+          r.warehouse_id || parentTransfer?.to_warehouse_id || null,
         warehouse_id: r.warehouse_id,
         transfer_status: parentTransfer?.transfer_status || 'RECEIVED',
         item_id: r.item_id,
@@ -959,20 +1346,27 @@ export class StockTransferService {
 
   private assertDraft(transfer: { status: string }) {
     if (transfer.status !== 'DRAFT') {
-      throw new BadRequestException(`Transfer Order cannot be modified — it is already ${transfer.status}.`);
+      throw new BadRequestException(
+        `Transfer Order cannot be modified — it is already ${transfer.status}.`,
+      );
     }
   }
 
   /** Shipment numbers already posted against the transfer, oldest first. */
-  private async shipmentNos(transferId: string, tenantId: string): Promise<string[]> {
+  private async shipmentNos(
+    transferId: string,
+    tenantId: string,
+  ): Promise<string[]> {
     const rows = await this.db
       .select({ shipment_no: schema.transferShipment.shipment_no })
       .from(schema.transferShipment)
-      .where(and(
-        eq(schema.transferShipment.transfer_id, transferId),
-        eq(schema.transferShipment.tenant_id, tenantId),
-        isNull(schema.transferShipment.deleted_at),
-      ))
+      .where(
+        and(
+          eq(schema.transferShipment.transfer_id, transferId),
+          eq(schema.transferShipment.tenant_id, tenantId),
+          isNull(schema.transferShipment.deleted_at),
+        ),
+      )
       .orderBy(schema.transferShipment.shipment_no);
     return rows.map((r) => r.shipment_no);
   }
@@ -985,12 +1379,16 @@ export class StockTransferService {
    * status, so a DRAFT row written before statuses followed events is
    * refused too.
    */
-  private async assertNotShipped(transfer: { transfer_id: string; transfer_no: string }, tenantId: string, action: 'edited' | 'cancelled') {
+  private async assertNotShipped(
+    transfer: { transfer_id: string; transfer_no: string },
+    tenantId: string,
+    action: 'edited' | 'cancelled',
+  ) {
     const shipped = await this.shipmentNos(transfer.transfer_id, tenantId);
     if (shipped.length > 0) {
       throw new BadRequestException(
         `Stock Transfer ${transfer.transfer_no} cannot be ${action} — stock has already shipped on ${shipped.join(', ')}. ` +
-        'Receive what was shipped; the order can no longer change.',
+          'Receive what was shipped; the order can no longer change.',
       );
     }
   }
@@ -1001,9 +1399,15 @@ export class StockTransferService {
    * stays for the edits that must stop once stock has moved.
    */
   private assertOpen(transfer: { status: string; transfer_no?: string }) {
-    if (!(OPEN_TRANSFER_STATUSES as readonly string[]).includes(transfer.status)) {
-      const name = transfer.transfer_no ? `Stock Transfer ${transfer.transfer_no}` : 'Stock Transfer';
-      throw new BadRequestException(`${name} cannot take a further shipment or receipt — it is already ${transfer.status}.`);
+    if (
+      !(OPEN_TRANSFER_STATUSES as readonly string[]).includes(transfer.status)
+    ) {
+      const name = transfer.transfer_no
+        ? `Stock Transfer ${transfer.transfer_no}`
+        : 'Stock Transfer';
+      throw new BadRequestException(
+        `${name} cannot take a further shipment or receipt — it is already ${transfer.status}.`,
+      );
     }
   }
 
@@ -1021,11 +1425,13 @@ export class StockTransferService {
     received: Map<string, number>,
     userPayload?: any,
   ) {
-    const status = transferStatusFor(lines.map((l) => ({
-      ordered: Number(l.quantity),
-      shipped: shipped.get(l.line_id) ?? 0,
-      received: received.get(l.line_id) ?? 0,
-    })));
+    const status = transferStatusFor(
+      lines.map((l) => ({
+        ordered: Number(l.quantity),
+        shipped: shipped.get(l.line_id) ?? 0,
+        received: received.get(l.line_id) ?? 0,
+      })),
+    );
     const set: Record<string, unknown> = {
       status,
       updated_by: userPayload?.userId || null,
@@ -1038,21 +1444,34 @@ export class StockTransferService {
     const [claim] = await this.db
       .update(schema.stockTransfer)
       .set(set as any)
-      .where(and(eq(schema.stockTransfer.transfer_id, id), inArray(schema.stockTransfer.status, [...OPEN_TRANSFER_STATUSES])));
+      .where(
+        and(
+          eq(schema.stockTransfer.transfer_id, id),
+          inArray(schema.stockTransfer.status, [...OPEN_TRANSFER_STATUSES]),
+        ),
+      );
     if (claim.affectedRows === 0) {
-      throw new BadRequestException('Stock Transfer cannot take this event — it was already posted or cancelled by another request.');
+      throw new BadRequestException(
+        'Stock Transfer cannot take this event — it was already posted or cancelled by another request.',
+      );
     }
     return status;
   }
 
-  async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateStockTransferDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
 
       // Both warehouses, changed or not, against create()'s rules. The source
       // staying on the editor's farm is also what keeps the edited transfer
       // visible to them whatever to_warehouse_id becomes.
-      const fromWarehouseId = dto.from_warehouse_id ?? transfer.from_warehouse_id;
+      const fromWarehouseId =
+        dto.from_warehouse_id ?? transfer.from_warehouse_id;
       const toWarehouseId = dto.to_warehouse_id ?? transfer.to_warehouse_id;
       // M6 (fix round 1): the cheap, event-based refusal first — if stock has
       // already shipped the edit is refused outright, so there is no reason
@@ -1066,13 +1485,23 @@ export class StockTransferService {
         updated_by: userPayload?.userId || null,
         updated_at: toMysqlTimestamp(),
       };
-      if (dto.from_warehouse_id !== undefined) updates.from_warehouse_id = dto.from_warehouse_id;
-      if (dto.to_warehouse_id !== undefined) updates.to_warehouse_id = dto.to_warehouse_id;
-      if (dto.posting_date !== undefined) updates.posting_date = dto.posting_date;
+      if (dto.from_warehouse_id !== undefined)
+        updates.from_warehouse_id = dto.from_warehouse_id;
+      if (dto.to_warehouse_id !== undefined)
+        updates.to_warehouse_id = dto.to_warehouse_id;
+      if (dto.posting_date !== undefined)
+        updates.posting_date = dto.posting_date;
       if (dto.remarks !== undefined) updates.remarks = dto.remarks;
 
-      await this.db.update(schema.stockTransfer).set(updates)
-        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
+      await this.db
+        .update(schema.stockTransfer)
+        .set(updates)
+        .where(
+          and(
+            eq(schema.stockTransfer.transfer_id, id),
+            eq(schema.stockTransfer.status, 'DRAFT'),
+          ),
+        );
 
       if (dto.lines) {
         // Fix round 2, Important (coordinator, 4 Oct): round 1's position
@@ -1088,16 +1517,25 @@ export class StockTransferService {
         // today, every replacement line must supply its own; an ordinary
         // hand-made transfer (no links anywhere) is unaffected.
         const existingLinks = await this.db
-          .select({ requisition_line_id: schema.stockTransferLine.requisition_line_id })
+          .select({
+            requisition_line_id: schema.stockTransferLine.requisition_line_id,
+          })
           .from(schema.stockTransferLine)
           .where(eq(schema.stockTransferLine.transfer_id, id));
-        const hasExistingLinks = existingLinks.some((l) => l.requisition_line_id);
-        if (hasExistingLinks && dto.lines.some((line) => !line.requisition_line_id)) {
+        const hasExistingLinks = existingLinks.some(
+          (l) => l.requisition_line_id,
+        );
+        if (
+          hasExistingLinks &&
+          dto.lines.some((line) => !line.requisition_line_id)
+        ) {
           throw new BadRequestException(
             `Stock Transfer ${transfer.transfer_no} came from a requisition release; every replacement line must supply its requisition_line_id.`,
           );
         }
-        await this.db.delete(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id));
+        await this.db
+          .delete(schema.stockTransferLine)
+          .where(eq(schema.stockTransferLine.transfer_id, id));
         await this.insertLines(id, dto.lines);
       }
 
@@ -1125,8 +1563,17 @@ export class StockTransferService {
 
       await this.db
         .update(schema.stockTransfer)
-        .set({ status: 'CANCELLED', deleted_at: deletedTime as any, updated_by: userPayload?.userId || null })
-        .where(and(eq(schema.stockTransfer.transfer_id, id), eq(schema.stockTransfer.status, 'DRAFT')));
+        .set({
+          status: 'CANCELLED',
+          deleted_at: deletedTime as any,
+          updated_by: userPayload?.userId || null,
+        })
+        .where(
+          and(
+            eq(schema.stockTransfer.transfer_id, id),
+            eq(schema.stockTransfer.status, 'DRAFT'),
+          ),
+        );
 
       await this.auditService.log({
         tenantId,
@@ -1139,7 +1586,10 @@ export class StockTransferService {
         newValues: { status: 'CANCELLED', deleted_at: deletedTime },
       });
 
-      return { success: true, message: `Transfer Order '${transfer.transfer_no}' has been cancelled.` };
+      return {
+        success: true,
+        message: `Transfer Order '${transfer.transfer_no}' has been cancelled.`,
+      };
     });
   }
 
@@ -1154,7 +1604,10 @@ export class StockTransferService {
    * transfer is linked when any line carries a requisition_line_id, the same
    * test update() applies to replacement lines.
    */
-  async assertNotRequisitionTransfer(id: string, tenantId: string): Promise<void> {
+  async assertNotRequisitionTransfer(
+    id: string,
+    tenantId: string,
+  ): Promise<void> {
     const [linked] = await this.db
       .select({
         requisition_line_id: schema.stockTransferLine.requisition_line_id,
@@ -1162,14 +1615,34 @@ export class StockTransferService {
         req_no: schema.requisition.req_no,
       })
       .from(schema.stockTransferLine)
-      .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
-      .leftJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.stockTransferLine.requisition_line_id))
-      .leftJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
-      .where(and(
-        eq(schema.stockTransferLine.transfer_id, id),
-        eq(schema.stockTransfer.tenant_id, tenantId),
-        sql`${schema.stockTransferLine.requisition_line_id} IS NOT NULL`,
-      ))
+      .innerJoin(
+        schema.stockTransfer,
+        eq(
+          schema.stockTransfer.transfer_id,
+          schema.stockTransferLine.transfer_id,
+        ),
+      )
+      .leftJoin(
+        schema.requisitionLine,
+        eq(
+          schema.requisitionLine.line_id,
+          schema.stockTransferLine.requisition_line_id,
+        ),
+      )
+      .leftJoin(
+        schema.requisition,
+        eq(
+          schema.requisition.requisition_id,
+          schema.requisitionLine.requisition_id,
+        ),
+      )
+      .where(
+        and(
+          eq(schema.stockTransferLine.transfer_id, id),
+          eq(schema.stockTransfer.tenant_id, tenantId),
+          sql`${schema.stockTransferLine.requisition_line_id} IS NOT NULL`,
+        ),
+      )
       .limit(1);
     if (linked) {
       throw new BadRequestException(
@@ -1184,7 +1657,12 @@ export class StockTransferService {
     // receipt, in one transaction — through the same services a partial
     // shipment or receipt uses. The DRAFT claim stays, so the old race
     // protections hold.
-    return this.postDirectTransfer(id, { posting_date: new Date().toISOString().slice(0, 10), lines: [] }, tenantId, userPayload);
+    return this.postDirectTransfer(
+      id,
+      { posting_date: new Date().toISOString().slice(0, 10), lines: [] },
+      tenantId,
+      userPayload,
+    );
   }
 
   /**
@@ -1192,45 +1670,107 @@ export class StockTransferService {
    * the events carry identity, the order line stays the contract. Lines with
    * no event in this call are simply not shipped yet — partial by design.
    */
-  async postShipment(id: string, dto: PostShipmentDto, tenantId: string, userPayload?: any, requisitionExecution = false) {
+  async postShipment(
+    id: string,
+    dto: PostShipmentDto,
+    tenantId: string,
+    userPayload?: any,
+    requisitionExecution = false,
+  ) {
     const result = await withTenantTransaction(this.cls, async () => {
-      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
+      const transfer = await this.loadForMutation(
+        id,
+        tenantId,
+        requisitionExecution,
+      );
       this.assertOpen(transfer);
       if (transfer.from_warehouse_id === transfer.to_warehouse_id) {
-        throw new BadRequestException('A transfer needs two different warehouses.');
+        throw new BadRequestException(
+          'A transfer needs two different warehouses.',
+        );
       }
-      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      if (!requisitionExecution)
+        await this.assertWarehouses(
+          transfer.from_warehouse_id,
+          transfer.to_warehouse_id,
+        );
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
       this.assertDistinctLines(dto.lines, 'shipment');
       // Cumulative shipped quantities per line, from the events so far.
       const shippedByLine = await this.shippedQuantities(id, tenantId);
-      const eventLines: Array<{ line: typeof schema.stockTransferLine.$inferSelect; qty: number; balance: number; lotNo?: string; serialNo?: string }> = [];
+      const eventLines: Array<{
+        line: typeof schema.stockTransferLine.$inferSelect;
+        qty: number;
+        balance: number;
+        lotNo?: string;
+        serialNo?: string;
+      }> = [];
       for (const input of dto.lines) {
         const line = transfer.lines.find((l) => l.line_id === input.line_id);
-        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`);
+        if (!line)
+          throw new BadRequestException(
+            `Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`,
+          );
         const alreadyShipped = shippedByLine.get(line.line_id) ?? 0;
         // Bounds run in the line's own UOM: the ordered quantity is the line,
         // already-shipped comes from the events.
-        this.assertShipment(Number(line.quantity), alreadyShipped, input.quantity, line);
-        eventLines.push({ line, qty: input.quantity, balance: Number(line.quantity) - alreadyShipped, lotNo: line.lot_no ?? undefined, serialNo: line.serial_no ?? undefined });
+        this.assertShipment(
+          Number(line.quantity),
+          alreadyShipped,
+          input.quantity,
+          line,
+        );
+        eventLines.push({
+          line,
+          qty: input.quantity,
+          balance: Number(line.quantity) - alreadyShipped,
+          lotNo: line.lot_no ?? undefined,
+          serialNo: line.serial_no ?? undefined,
+        });
       }
       // WP1c: a tracked item (is_lot_tracked / is_serial_tracked on the
       // Item Master) refuses shipment without its lot/serial assignment. Load
       // the flags once, per distinct item, so a line's assignment and qty
       // cannot disagree (the hole the WP1c ruled was closed).
-      const itemFlags = new Map<string, { isLotTracked: boolean; isSerialTracked: boolean }>();
+      const itemFlags = new Map<
+        string,
+        { isLotTracked: boolean; isSerialTracked: boolean }
+      >();
       if (eventLines.some((e) => e.line.item_id)) {
-        const itemIds = [...new Set(eventLines.map((e) => e.line.item_id).filter((v): v is string => Boolean(v)))];
+        const itemIds = [
+          ...new Set(
+            eventLines
+              .map((e) => e.line.item_id)
+              .filter((v): v is string => Boolean(v)),
+          ),
+        ];
         const flags = await this.db
-          .select({ item_id: schema.itemMaster.item_id, is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked })
+          .select({
+            item_id: schema.itemMaster.item_id,
+            is_lot_tracked: schema.itemMaster.is_lot_tracked,
+            is_serial_tracked: schema.itemMaster.is_serial_tracked,
+          })
           .from(schema.itemMaster)
-          .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)));
-        for (const f of flags) itemFlags.set(f.item_id, { isLotTracked: Boolean(f.is_lot_tracked), isSerialTracked: Boolean(f.is_serial_tracked) });
+          .where(
+            and(
+              eq(schema.itemMaster.tenant_id, tenantId),
+              inArray(schema.itemMaster.item_id, itemIds),
+            ),
+          );
+        for (const f of flags)
+          itemFlags.set(f.item_id, {
+            isLotTracked: Boolean(f.is_lot_tracked),
+            isSerialTracked: Boolean(f.is_serial_tracked),
+          });
       }
 
       const shipmentId = randomUUID();
-      const shipmentNo = await this.nextEventNo(transfer.company_id, tenantId, 'SH');
+      const shipmentNo = await this.nextEventNo(
+        transfer.company_id,
+        tenantId,
+        'SH',
+      );
       await this.db.insert(schema.transferShipment).values({
         shipment_id: shipmentId,
         tenant_id: tenantId,
@@ -1248,7 +1788,12 @@ export class StockTransferService {
       for (const { line, qty, balance, lotNo, serialNo } of eventLines) {
         const flags = itemFlags.get(line.item_id ?? '');
         if (flags?.isLotTracked || flags?.isSerialTracked) {
-          assertTrackingForShipment(flags, { lot_no: lotNo ?? null, serial_no: serialNo ?? null }, qty, balance);
+          assertTrackingForShipment(
+            flags,
+            { lot_no: lotNo ?? null, serial_no: serialNo ?? null },
+            qty,
+            balance,
+          );
         }
       }
 
@@ -1261,21 +1806,53 @@ export class StockTransferService {
         // what left. A lot is FIFO-filtered to the line's lot and recorded from
         // its ledger row the same way.
         const serials = itemFlags.get(line.item_id ?? '')?.isSerialTracked
-          ? String(serialNo ?? '').split(',').map((v) => v.trim()).filter(Boolean)
+          ? String(serialNo ?? '')
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean)
           : [];
-        const draws = serials.length > 0 ? serials.map((sn) => ({ quantity: 1, serialNo: sn as string | undefined })) : [{ quantity: qty, serialNo }];
-        const entries: Array<{ lot_no?: string | null; serial_no?: string | null }> = [];
+        const draws =
+          serials.length > 0
+            ? serials.map((sn) => ({
+                quantity: 1,
+                serialNo: sn as string | undefined,
+              }))
+            : [{ quantity: qty, serialNo }];
+        const entries: Array<{
+          lot_no?: string | null;
+          serial_no?: string | null;
+        }> = [];
         for (const draw of draws) {
           const shipmentEntry = await this.ledgerService.writeTransferShipment({
-            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: shipmentNo, documentLineId: line.line_id,
-            postingDate: dto.posting_date, quantity: draw.quantity, uom: line.uom, fromWarehouseId: transfer.from_warehouse_id,
-            lotNo, serialNo: draw.serialNo, userId: userPayload?.userId,
+            tenantId,
+            companyId: transfer.company_id,
+            itemId: line.item_id,
+            documentNo: shipmentNo,
+            documentLineId: line.line_id,
+            postingDate: dto.posting_date,
+            quantity: draw.quantity,
+            uom: line.uom,
+            fromWarehouseId: transfer.from_warehouse_id,
+            lotNo,
+            serialNo: draw.serialNo,
+            userId: userPayload?.userId,
           });
-          await this.glPostingService.postInventoryLedgerEntry(shipmentEntry, userPayload?.userId);
-          entries.push({ lot_no: shipmentEntry?.lot_no, serial_no: shipmentEntry?.serial_no });
+          await this.glPostingService.postInventoryLedgerEntry(
+            shipmentEntry,
+            userPayload?.userId,
+          );
+          entries.push({
+            lot_no: shipmentEntry?.lot_no,
+            serial_no: shipmentEntry?.serial_no,
+          });
         }
-        const recorded = (key: 'lot_no' | 'serial_no', requested: string | undefined) => {
-          const values = entries.map((e) => (e[key] === undefined ? requested : e[key])).filter((v): v is string => Boolean(v));
+        const recorded = (
+          key: 'lot_no' | 'serial_no',
+          requested: string | undefined,
+        ) => {
+          const values = entries
+            .map((e) => (e[key] === undefined ? requested : e[key]))
+            .filter((v): v is string => Boolean(v));
           return values.length ? [...new Set(values)].join(',') : null;
         };
         await this.db.insert(schema.transferShipmentLine).values({
@@ -1284,15 +1861,28 @@ export class StockTransferService {
           quantity: String(qty),
           uom: line.uom,
           lot_no: recorded('lot_no', lotNo),
-          serial_no: serials.length > 0 ? recorded('serial_no', undefined) ?? serials.join(',') : recorded('serial_no', serialNo),
+          serial_no:
+            serials.length > 0
+              ? (recorded('serial_no', undefined) ?? serials.join(','))
+              : recorded('serial_no', serialNo),
         });
       }
 
       // Status follows the event (Part E Task 4b): shipped so far plus this
       // shipment, against what has been received.
       const shippedAfter = new Map(shippedByLine);
-      for (const { line, qty } of eventLines) shippedAfter.set(line.line_id, (shippedAfter.get(line.line_id) ?? 0) + qty);
-      const status = await this.writeEventStatus(id, transfer.lines, shippedAfter, await this.receivedQuantities(id, tenantId), userPayload);
+      for (const { line, qty } of eventLines)
+        shippedAfter.set(
+          line.line_id,
+          (shippedAfter.get(line.line_id) ?? 0) + qty,
+        );
+      const status = await this.writeEventStatus(
+        id,
+        transfer.lines,
+        shippedAfter,
+        await this.receivedQuantities(id, tenantId),
+        userPayload,
+      );
 
       await this.auditService.log({
         tenantId,
@@ -1301,11 +1891,24 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'transfer_shipment',
         entityId: shipmentId,
-        newValues: { shipment_no: shipmentNo, transfer_no: transfer.transfer_no, lines: eventLines.length, status },
+        newValues: {
+          shipment_no: shipmentNo,
+          transfer_no: transfer.transfer_no,
+          lines: eventLines.length,
+          status,
+        },
       });
       // Part E Task 7: a requisition linked to this transfer follows its events.
       await syncRequisitionFulfilment(this.db, id);
-      return { shipment_id: shipmentId, shipment_no: shipmentNo, transfer_id: id, lines: eventLines.map((e) => ({ line_id: e.line.line_id, qty_shipped: e.qty })) };
+      return {
+        shipment_id: shipmentId,
+        shipment_no: shipmentNo,
+        transfer_id: id,
+        lines: eventLines.map((e) => ({
+          line_id: e.line.line_id,
+          qty_shipped: e.qty,
+        })),
+      };
     });
     return result;
   }
@@ -1319,32 +1922,70 @@ export class StockTransferService {
    * event, never re-typed. The receipt that closes a shipment line takes the
    * line's remaining shipped value, so Inventory in Transit nets to zero.
    */
-  async postReceipt(id: string, dto: PostReceiptDto, tenantId: string, userPayload?: any, requisitionExecution = false, feedControls?: FeedReceiptControls) {
+  async postReceipt(
+    id: string,
+    dto: PostReceiptDto,
+    tenantId: string,
+    userPayload?: any,
+    requisitionExecution = false,
+    feedControls?: FeedReceiptControls,
+  ) {
     return withTenantTransaction(this.cls, async () => {
-      const transfer = await this.loadForMutation(id, tenantId, requisitionExecution);
+      const transfer = await this.loadForMutation(
+        id,
+        tenantId,
+        requisitionExecution,
+      );
       this.assertOpen(transfer);
-      if (!requisitionExecution) await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      if (!requisitionExecution)
+        await this.assertWarehouses(
+          transfer.from_warehouse_id,
+          transfer.to_warehouse_id,
+        );
 
-      const [shipment] = await this.db.select().from(schema.transferShipment)
-        .where(and(
-          eq(schema.transferShipment.shipment_id, dto.shipment_id),
-          eq(schema.transferShipment.transfer_id, id),
-          eq(schema.transferShipment.tenant_id, tenantId),
-          isNull(schema.transferShipment.deleted_at),
-        ))
+      const [shipment] = await this.db
+        .select()
+        .from(schema.transferShipment)
+        .where(
+          and(
+            eq(schema.transferShipment.shipment_id, dto.shipment_id),
+            eq(schema.transferShipment.transfer_id, id),
+            eq(schema.transferShipment.tenant_id, tenantId),
+            isNull(schema.transferShipment.deleted_at),
+          ),
+        )
         .limit(1);
-      if (!shipment) throw new NotFoundException(`Shipment '${dto.shipment_id}' does not belong to ${transfer.transfer_no}.`);
+      if (!shipment)
+        throw new NotFoundException(
+          `Shipment '${dto.shipment_id}' does not belong to ${transfer.transfer_no}.`,
+        );
 
       this.assertDistinctLines(dto.lines, 'receipt');
       const shippedByLine = await this.shippedQuantities(id, tenantId);
       const receivedByLine = await this.receivedQuantities(id, tenantId);
-      const shipmentLines = await this.db.select().from(schema.transferShipmentLine)
+      const shipmentLines = await this.db
+        .select()
+        .from(schema.transferShipmentLine)
         .where(eq(schema.transferShipmentLine.shipment_id, dto.shipment_id));
-      const receivedOnShipment = await this.receivedAgainstShipment(dto.shipment_id, tenantId);
+      const receivedOnShipment = await this.receivedAgainstShipment(
+        dto.shipment_id,
+        tenantId,
+      );
 
       const receiptId = randomUUID();
-      const receiptNo = await this.nextEventNo(transfer.company_id, tenantId, 'RC');
-      const receiptControls = new Map<string, { previouslyReceived: number; shipped: number; varianceQty: number | null }>();
+      const receiptNo = await this.nextEventNo(
+        transfer.company_id,
+        tenantId,
+        'RC',
+      );
+      const receiptControls = new Map<
+        string,
+        {
+          previouslyReceived: number;
+          shipped: number;
+          varianceQty: number | null;
+        }
+      >();
       await this.db.insert(schema.transferReceipt).values({
         receipt_id: receiptId,
         tenant_id: tenantId,
@@ -1356,14 +1997,21 @@ export class StockTransferService {
         created_by: userPayload?.userId || null,
       });
       for (const input of dto.lines) {
-        const shipmentLine = shipmentLines.find((sl) => sl.line_id === input.line_id);
+        const shipmentLine = shipmentLines.find(
+          (sl) => sl.line_id === input.line_id,
+        );
         if (!shipmentLine) {
           // A line the shipment never carried is exactly "receipt before
           // shipment" — whether or not the order happens to hold such a line.
-          throw new BadRequestException(`Line ${input.line_id} was not on shipment ${shipment.shipment_no}; a receipt cannot precede its shipment.`);
+          throw new BadRequestException(
+            `Line ${input.line_id} was not on shipment ${shipment.shipment_no}; a receipt cannot precede its shipment.`,
+          );
         }
         const line = transfer.lines.find((l) => l.line_id === input.line_id);
-        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`);
+        if (!line)
+          throw new BadRequestException(
+            `Transfer line '${input.line_id}' is not part of ${transfer.transfer_no}.`,
+          );
         const alreadyShipped = shippedByLine.get(line.line_id) ?? 0;
         const alreadyReceived = receivedByLine.get(line.line_id) ?? 0;
         // Over-receipt is measured against what has shipped, never the order.
@@ -1372,65 +2020,129 @@ export class StockTransferService {
         // arithmetic, so closing a line shipped as e.g. 0.6 + 0.7 must not
         // read as short of 0.7 remaining (fix round 1, Important 1).
         if (input.quantity > alreadyShipped - alreadyReceived + 1e-9) {
-          throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
+          throw new BadRequestException(
+            'Receipt quantity exceeds the remaining quantity to receive.',
+          );
         }
         // ...and against THIS shipment: a receipt cannot draw on what another
         // shipment carried (Part E Task 4, fix round 1).
-        const prior = receivedOnShipment.get(shipmentLine.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+        const prior = receivedOnShipment.get(shipmentLine.shipment_line_id) ?? {
+          qty: 0,
+          receiptNos: [],
+        };
         const leftOnShipment = Number(shipmentLine.quantity) - prior.qty;
         if (input.quantity > leftOnShipment + 1e-9) {
-          throw new BadRequestException(`Receipt quantity exceeds what shipment ${shipment.shipment_no} has left to receive on this line (${leftOnShipment}).`);
+          throw new BadRequestException(
+            `Receipt quantity exceeds what shipment ${shipment.shipment_no} has left to receive on this line (${leftOnShipment}).`,
+          );
         }
         // W2T: variance = shipped − (previously received + this posting). Over-receipt
         // never gets here (refused above, decisions.md 10 Oct). A feed line must
         // explain a shortfall, count its bags if BAGGED and name its delivery note.
         const control = feedControls?.lines.get(line.line_id);
         if (!control && input.bag_count != null) {
-          throw new BadRequestException('A bag count applies only to a BAGGED feed receipt line; remove it from this line.');
+          throw new BadRequestException(
+            'A bag count applies only to a BAGGED feed receipt line; remove it from this line.',
+          );
         }
         const varianceQty = control
           ? assertFeedReceiptLine({
-            label: control.label, shipped: alreadyShipped, previouslyReceived: alreadyReceived, quantity: input.quantity,
-            feedType: control.feedType, bagSizeKg: feedControls!.bagSizeKg, bagCount: input.bag_count ?? null,
-            varianceReason: input.variance_reason ?? null, deliveryNoteNo: input.delivery_note_no ?? null,
-          })
+              label: control.label,
+              shipped: alreadyShipped,
+              previouslyReceived: alreadyReceived,
+              quantity: input.quantity,
+              feedType: control.feedType,
+              bagSizeKg: feedControls!.bagSizeKg,
+              bagCount: input.bag_count ?? null,
+              varianceReason: input.variance_reason ?? null,
+              deliveryNoteNo: input.delivery_note_no ?? null,
+            })
           : receiptVariance(alreadyShipped, alreadyReceived, input.quantity);
-        receiptControls.set(line.line_id, { previouslyReceived: alreadyReceived, shipped: alreadyShipped, varianceQty });
+        receiptControls.set(line.line_id, {
+          previouslyReceived: alreadyReceived,
+          shipped: alreadyShipped,
+          varianceQty,
+        });
         // Into the destination only, at the rate the shipment carried out (Part E Task 4).
         // The receipt that closes the shipment line takes its remaining value
         // instead, so per-unit rounding never strands a residue in In Transit.
-        const rate = await this.ledgerService.transferShipmentRate({ tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id });
+        const rate = await this.ledgerService.transferShipmentRate({
+          tenantId,
+          shipmentNo: shipment.shipment_no,
+          lineId: line.line_id,
+        });
         const closesShipmentLine = input.quantity >= leftOnShipment - 1e-9;
         const amount = closesShipmentLine
           ? await this.ledgerService.transferShipmentRemainingValue({
-            tenantId, shipmentNo: shipment.shipment_no, lineId: line.line_id, receiptNos: prior.receiptNos,
-          })
+              tenantId,
+              shipmentNo: shipment.shipment_no,
+              lineId: line.line_id,
+              receiptNos: prior.receiptNos,
+            })
           : undefined;
         // WP4a: several serials on one shipment line land as one layer PER
         // SERIAL (qty 1 each, the Goods Receipt's shape) — a single layer named
         // "SN1,SN2" matched no consumer. A partial receipt takes the next
         // serials not yet received on this shipment line.
-        const shippedSerials = String(shipmentLine.serial_no ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+        const shippedSerials = String(shipmentLine.serial_no ?? '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean);
         let receivedSerialNo = shipmentLine.serial_no;
         if (shippedSerials.length > 1) {
-          const serials = serialsForReceipt(shipmentLine.serial_no, prior.qty, input.quantity);
-          const amounts = splitAmount(amount ?? input.quantity * rate, serials.length);
+          const serials = serialsForReceipt(
+            shipmentLine.serial_no,
+            prior.qty,
+            input.quantity,
+          );
+          const amounts = splitAmount(
+            amount ?? input.quantity * rate,
+            serials.length,
+          );
           for (const [i, serialNo] of serials.entries()) {
             const entry = await this.ledgerService.writeTransferReceipt({
-              tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
-              postingDate: dto.posting_date, quantity: 1, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount: amounts[i],
-              lotNo: shipmentLine.lot_no ?? undefined, serialNo, userId: userPayload?.userId,
+              tenantId,
+              companyId: transfer.company_id,
+              itemId: line.item_id,
+              documentNo: receiptNo,
+              documentLineId: line.line_id,
+              postingDate: dto.posting_date,
+              quantity: 1,
+              uom: line.uom,
+              toWarehouseId: transfer.to_warehouse_id,
+              rate,
+              amount: amounts[i],
+              lotNo: shipmentLine.lot_no ?? undefined,
+              serialNo,
+              userId: userPayload?.userId,
             });
-            await this.glPostingService.postInventoryLedgerEntry(entry, userPayload?.userId);
+            await this.glPostingService.postInventoryLedgerEntry(
+              entry,
+              userPayload?.userId,
+            );
           }
           receivedSerialNo = serials.join(',');
         } else {
           const receiptEntry = await this.ledgerService.writeTransferReceipt({
-            tenantId, companyId: transfer.company_id, itemId: line.item_id, documentNo: receiptNo, documentLineId: line.line_id,
-            postingDate: dto.posting_date, quantity: input.quantity, uom: line.uom, toWarehouseId: transfer.to_warehouse_id, rate, amount,
-            lotNo: shipmentLine.lot_no ?? undefined, serialNo: shipmentLine.serial_no ?? undefined, userId: userPayload?.userId,
+            tenantId,
+            companyId: transfer.company_id,
+            itemId: line.item_id,
+            documentNo: receiptNo,
+            documentLineId: line.line_id,
+            postingDate: dto.posting_date,
+            quantity: input.quantity,
+            uom: line.uom,
+            toWarehouseId: transfer.to_warehouse_id,
+            rate,
+            amount,
+            lotNo: shipmentLine.lot_no ?? undefined,
+            serialNo: shipmentLine.serial_no ?? undefined,
+            userId: userPayload?.userId,
           });
-          await this.glPostingService.postInventoryLedgerEntry(receiptEntry, userPayload?.userId);
+          await this.glPostingService.postInventoryLedgerEntry(
+            receiptEntry,
+            userPayload?.userId,
+          );
         }
         await this.db.insert(schema.transferReceiptLine).values({
           receipt_id: receiptId,
@@ -1444,7 +2156,8 @@ export class StockTransferService {
           serial_no: receivedSerialNo,
           variance_qty: String(varianceQty),
           variance_reason: input.variance_reason?.trim() || null,
-          bag_count: control?.feedType === 'BAGGED' ? input.bag_count ?? null : null,
+          bag_count:
+            control?.feedType === 'BAGGED' ? (input.bag_count ?? null) : null,
           delivery_note_no: input.delivery_note_no?.trim() || null,
           loading_sheet_id: control?.loadingSheetId ?? null,
           loading_sheet_no: control?.loadingSheetNo ?? null,
@@ -1454,8 +2167,18 @@ export class StockTransferService {
       // Status follows the event (Part E Task 4b): received so far plus this
       // receipt, against everything shipped.
       const receivedAfter = new Map(receivedByLine);
-      for (const l of dto.lines) receivedAfter.set(l.line_id, (receivedAfter.get(l.line_id) ?? 0) + l.quantity);
-      const status = await this.writeEventStatus(id, transfer.lines, shippedByLine, receivedAfter, userPayload);
+      for (const l of dto.lines)
+        receivedAfter.set(
+          l.line_id,
+          (receivedAfter.get(l.line_id) ?? 0) + l.quantity,
+        );
+      const status = await this.writeEventStatus(
+        id,
+        transfer.lines,
+        shippedByLine,
+        receivedAfter,
+        userPayload,
+      );
 
       await this.auditService.log({
         tenantId,
@@ -1464,7 +2187,12 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'transfer_receipt',
         entityId: receiptId,
-        newValues: { receipt_no: receiptNo, shipment_no: shipment.shipment_no, lines: dto.lines.length, status },
+        newValues: {
+          receipt_no: receiptNo,
+          shipment_no: shipment.shipment_no,
+          lines: dto.lines.length,
+          status,
+        },
       });
       // Part E Task 7: a requisition linked to this transfer follows its events.
       await syncRequisitionFulfilment(this.db, id);
@@ -1474,22 +2202,39 @@ export class StockTransferService {
       if (feedControls) {
         for (const l of dto.lines) {
           const line = transfer.lines.find((tl) => tl.line_id === l.line_id)!;
-          const rows = await this.ledgerService.getStockBalance({ companyId: transfer.company_id, warehouseId: transfer.to_warehouse_id, itemId: line.item_id } as any, tenantId);
-          const onHand = rows.filter((r: any) => r.item_id === line.item_id && r.uom === line.uom).reduce((sum: number, r: any) => sum + Number(r.on_hand_qty), 0);
+          const rows = await this.ledgerService.getStockBalance(
+            {
+              companyId: transfer.company_id,
+              warehouseId: transfer.to_warehouse_id,
+              itemId: line.item_id,
+            } as any,
+            tenantId,
+          );
+          const onHand = rows
+            .filter(
+              (r: any) => r.item_id === line.item_id && r.uom === line.uom,
+            )
+            .reduce((sum: number, r: any) => sum + Number(r.on_hand_qty), 0);
           balanceAfter.set(l.line_id, Math.round(onHand * 10000) / 10000);
         }
       }
       return {
-        receipt_id: receiptId, receipt_no: receiptNo, transfer_id: id,
+        receipt_id: receiptId,
+        receipt_no: receiptNo,
+        transfer_id: id,
         lines: dto.lines.map((l) => ({
           line_id: l.line_id,
           qty_received: l.quantity,
-          ...(feedControls ? {
-            qty_shipped: receiptControls.get(l.line_id)?.shipped ?? null,
-            previously_received: receiptControls.get(l.line_id)?.previouslyReceived ?? null,
-            variance_qty: receiptControls.get(l.line_id)?.varianceQty ?? null,
-            silo_balance_after: balanceAfter.get(l.line_id) ?? null,
-          } : {}),
+          ...(feedControls
+            ? {
+                qty_shipped: receiptControls.get(l.line_id)?.shipped ?? null,
+                previously_received:
+                  receiptControls.get(l.line_id)?.previouslyReceived ?? null,
+                variance_qty:
+                  receiptControls.get(l.line_id)?.varianceQty ?? null,
+                silo_balance_after: balanceAfter.get(l.line_id) ?? null,
+              }
+            : {}),
         })),
       };
     });
@@ -1501,15 +2246,24 @@ export class StockTransferService {
    * it is not a second implementation — and because shipment and receipt
    * happen together, the receipt can never precede its shipment.
    */
-  async postDirectTransfer(id: string, dto: PostDirectTransferDto, tenantId: string, userPayload?: any) {
+  async postDirectTransfer(
+    id: string,
+    dto: PostDirectTransferDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const transfer = await withTenantTransaction(this.cls, async () => {
       const row = await this.loadForMutation(id, tenantId);
       if (dto.lines.length === 0 && row.status !== 'DRAFT') {
-        throw new BadRequestException(`Stock Transfer ${row.transfer_no} cannot be posted in one step — it is already ${row.status}.`);
+        throw new BadRequestException(
+          `Stock Transfer ${row.transfer_no} cannot be posted in one step — it is already ${row.status}.`,
+        );
       }
       this.assertOpen(row);
       if (row.from_warehouse_id === row.to_warehouse_id) {
-        throw new BadRequestException('A transfer needs two different warehouses.');
+        throw new BadRequestException(
+          'A transfer needs two different warehouses.',
+        );
       }
       await this.assertWarehouses(row.from_warehouse_id, row.to_warehouse_id);
       if (dto.lines.length === 0) {
@@ -1521,47 +2275,82 @@ export class StockTransferService {
         if (shipped.length > 0) {
           throw new BadRequestException(
             `Stock Transfer ${row.transfer_no} cannot be posted in one step — it already has shipment ${shipped.join(', ')}. ` +
-            'Receive against the shipment, or post the remaining quantity with Direct Transfer.',
+              'Receive against the shipment, or post the remaining quantity with Direct Transfer.',
           );
         }
       }
       await this.assertSiloDestination(row, row.lines, tenantId);
       if (!row.lines || row.lines.length === 0) {
-        throw new BadRequestException('Cannot post a Stock Transfer with no lines.');
+        throw new BadRequestException(
+          'Cannot post a Stock Transfer with no lines.',
+        );
       }
 
       // Empty lines = every line, full quantity: the legacy atomic post.
-      const inputs = dto.lines.length > 0
-        ? dto.lines
-        : row.lines.map((l) => ({ line_id: l.line_id, quantity: Number(l.quantity) }));
+      const inputs =
+        dto.lines.length > 0
+          ? dto.lines
+          : row.lines.map((l) => ({
+              line_id: l.line_id,
+              quantity: Number(l.quantity),
+            }));
 
       const shippedByLine = await this.shippedQuantities(id, tenantId);
       const receivedByLine = await this.receivedQuantities(id, tenantId);
       for (const input of inputs) {
         const line = row.lines.find((l) => l.line_id === input.line_id);
-        if (!line) throw new BadRequestException(`Transfer line '${input.line_id}' is not part of ${row.transfer_no}.`);
-        this.assertShipment(Number(line.quantity), shippedByLine.get(line.line_id) ?? 0, input.quantity, line);
-        const remainingToReceive = (shippedByLine.get(line.line_id) ?? 0) + input.quantity - (receivedByLine.get(line.line_id) ?? 0);
+        if (!line)
+          throw new BadRequestException(
+            `Transfer line '${input.line_id}' is not part of ${row.transfer_no}.`,
+          );
+        this.assertShipment(
+          Number(line.quantity),
+          shippedByLine.get(line.line_id) ?? 0,
+          input.quantity,
+          line,
+        );
+        const remainingToReceive =
+          (shippedByLine.get(line.line_id) ?? 0) +
+          input.quantity -
+          (receivedByLine.get(line.line_id) ?? 0);
         // Same 1e-9 tolerance as postReceipt's identical bound (fix round 1,
         // Important 1): shippedByLine/receivedByLine sum real event rows in
         // JS float arithmetic.
         if (input.quantity > remainingToReceive + 1e-9) {
-          throw new BadRequestException('Receipt quantity exceeds the remaining quantity to receive.');
+          throw new BadRequestException(
+            'Receipt quantity exceeds the remaining quantity to receive.',
+          );
         }
       }
 
       // Ship, then receive, inside this same transaction.
-      const shipment = await this.postShipment(id, {
-        posting_date: dto.posting_date,
-        lines: inputs.map((l) => ({ line_id: l.line_id, quantity: l.quantity })),
-        remarks: dto.remarks,
-      }, tenantId, userPayload);
-      const receipt = await this.postReceipt(id, {
-        posting_date: dto.posting_date,
-        shipment_id: shipment.shipment_id,
-        lines: inputs.map((l) => ({ line_id: l.line_id, quantity: l.quantity })),
-        remarks: dto.remarks,
-      }, tenantId, userPayload);
+      const shipment = await this.postShipment(
+        id,
+        {
+          posting_date: dto.posting_date,
+          lines: inputs.map((l) => ({
+            line_id: l.line_id,
+            quantity: l.quantity,
+          })),
+          remarks: dto.remarks,
+        },
+        tenantId,
+        userPayload,
+      );
+      const receipt = await this.postReceipt(
+        id,
+        {
+          posting_date: dto.posting_date,
+          shipment_id: shipment.shipment_id,
+          lines: inputs.map((l) => ({
+            line_id: l.line_id,
+            quantity: l.quantity,
+          })),
+          remarks: dto.remarks,
+        },
+        tenantId,
+        userPayload,
+      );
 
       // No claim of its own any more (Part E Task 4b): postShipment and
       // postReceipt each write the status their event implies, so a full
@@ -1576,27 +2365,49 @@ export class StockTransferService {
         action: 'POST',
         entityName: 'stock_transfer',
         entityId: id,
-        newValues: { status: after.status, shipment_no: shipment.shipment_no, receipt_no: receipt.receipt_no },
+        newValues: {
+          status: after.status,
+          shipment_no: shipment.shipment_no,
+          receipt_no: receipt.receipt_no,
+        },
       });
       return after;
     });
-    await this.feedAlerts?.evaluateLevelsSafely([transfer.from_warehouse_id, transfer.to_warehouse_id], tenantId);
+    await this.feedAlerts?.evaluateLevelsSafely(
+      [transfer.from_warehouse_id, transfer.to_warehouse_id],
+      tenantId,
+    );
     return transfer;
   }
 
   /** Cumulative shipped quantity per transfer line, from the event rows. */
-  private async shippedQuantities(transferId: string, tenantId: string): Promise<Map<string, number>> {
+  private async shippedQuantities(
+    transferId: string,
+    tenantId: string,
+  ): Promise<Map<string, number>> {
     const rows = await this.db
-      .select({ line_id: schema.transferShipmentLine.line_id, qty: schema.transferShipmentLine.quantity })
+      .select({
+        line_id: schema.transferShipmentLine.line_id,
+        qty: schema.transferShipmentLine.quantity,
+      })
       .from(schema.transferShipmentLine)
-      .innerJoin(schema.transferShipment, eq(schema.transferShipmentLine.shipment_id, schema.transferShipment.shipment_id))
-      .where(and(
-        eq(schema.transferShipment.transfer_id, transferId),
-        eq(schema.transferShipment.tenant_id, tenantId),
-        isNull(schema.transferShipment.deleted_at),
-      ));
+      .innerJoin(
+        schema.transferShipment,
+        eq(
+          schema.transferShipmentLine.shipment_id,
+          schema.transferShipment.shipment_id,
+        ),
+      )
+      .where(
+        and(
+          eq(schema.transferShipment.transfer_id, transferId),
+          eq(schema.transferShipment.tenant_id, tenantId),
+          isNull(schema.transferShipment.deleted_at),
+        ),
+      );
     const map = new Map<string, number>();
-    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
+    for (const r of rows)
+      map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
     return map;
   }
 
@@ -1605,7 +2416,10 @@ export class StockTransferService {
    * received quantity and the receipt numbers (their ledger rows carry the
    * value already taken out of In Transit).
    */
-  private async receivedAgainstShipment(shipmentId: string, tenantId: string): Promise<Map<string, { qty: number; receiptNos: string[] }>> {
+  private async receivedAgainstShipment(
+    shipmentId: string,
+    tenantId: string,
+  ): Promise<Map<string, { qty: number; receiptNos: string[] }>> {
     const rows = await this.db
       .select({
         shipment_line_id: schema.transferReceiptLine.shipment_line_id,
@@ -1613,12 +2427,20 @@ export class StockTransferService {
         receipt_no: schema.transferReceipt.receipt_no,
       })
       .from(schema.transferReceiptLine)
-      .innerJoin(schema.transferReceipt, eq(schema.transferReceiptLine.receipt_id, schema.transferReceipt.receipt_id))
-      .where(and(
-        eq(schema.transferReceipt.shipment_id, shipmentId),
-        eq(schema.transferReceipt.tenant_id, tenantId),
-        isNull(schema.transferReceipt.deleted_at),
-      ));
+      .innerJoin(
+        schema.transferReceipt,
+        eq(
+          schema.transferReceiptLine.receipt_id,
+          schema.transferReceipt.receipt_id,
+        ),
+      )
+      .where(
+        and(
+          eq(schema.transferReceipt.shipment_id, shipmentId),
+          eq(schema.transferReceipt.tenant_id, tenantId),
+          isNull(schema.transferReceipt.deleted_at),
+        ),
+      );
     const map = new Map<string, { qty: number; receiptNos: string[] }>();
     for (const r of rows) {
       if (!r.shipment_line_id) continue;
@@ -1635,29 +2457,49 @@ export class StockTransferService {
    * once, before the loop, so a repeated line id would pass each check on its
    * own and together exceed them (Part E Task 4, fix round 1).
    */
-  private assertDistinctLines(lines: Array<{ line_id: string }>, event: 'shipment' | 'receipt'): void {
+  private assertDistinctLines(
+    lines: Array<{ line_id: string }>,
+    event: 'shipment' | 'receipt',
+  ): void {
     const seen = new Set<string>();
     for (const l of lines) {
       if (seen.has(l.line_id)) {
-        throw new BadRequestException(`Line ${l.line_id} appears more than once in this ${event}; enter each line once with its total quantity.`);
+        throw new BadRequestException(
+          `Line ${l.line_id} appears more than once in this ${event}; enter each line once with its total quantity.`,
+        );
       }
       seen.add(l.line_id);
     }
   }
 
   /** Cumulative received quantity per transfer line, from the event rows. */
-  private async receivedQuantities(transferId: string, tenantId: string): Promise<Map<string, number>> {
+  private async receivedQuantities(
+    transferId: string,
+    tenantId: string,
+  ): Promise<Map<string, number>> {
     const rows = await this.db
-      .select({ line_id: schema.transferReceiptLine.line_id, qty: schema.transferReceiptLine.quantity })
+      .select({
+        line_id: schema.transferReceiptLine.line_id,
+        qty: schema.transferReceiptLine.quantity,
+      })
       .from(schema.transferReceiptLine)
-      .innerJoin(schema.transferReceipt, eq(schema.transferReceiptLine.receipt_id, schema.transferReceipt.receipt_id))
-      .where(and(
-        eq(schema.transferReceipt.transfer_id, transferId),
-        eq(schema.transferReceipt.tenant_id, tenantId),
-        isNull(schema.transferReceipt.deleted_at),
-      ));
+      .innerJoin(
+        schema.transferReceipt,
+        eq(
+          schema.transferReceiptLine.receipt_id,
+          schema.transferReceipt.receipt_id,
+        ),
+      )
+      .where(
+        and(
+          eq(schema.transferReceipt.transfer_id, transferId),
+          eq(schema.transferReceipt.tenant_id, tenantId),
+          isNull(schema.transferReceipt.deleted_at),
+        ),
+      );
     const map = new Map<string, number>();
-    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
+    for (const r of rows)
+      map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
     return map;
   }
 
@@ -1673,22 +2515,37 @@ export class StockTransferService {
     line: { lot_no: string | null; serial_no: string | null; item_id: string },
   ): void {
     void line;
-    if (!(qty > 0)) throw new BadRequestException('Shipment quantity must be greater than zero.');
+    if (!(qty > 0))
+      throw new BadRequestException(
+        'Shipment quantity must be greater than zero.',
+      );
     if (alreadyShipped + qty > orderedLineQty + 1e-9) {
-      throw new BadRequestException('Shipment quantity exceeds the remaining balance to ship.');
+      throw new BadRequestException(
+        'Shipment quantity exceeds the remaining balance to ship.',
+      );
     }
   }
 
   /** SH-2026-0001 / RC-2026-0001 per tenant — keep the series monotonic even
    * when older rows were inserted out of order. The old lexical `ORDER BY`
    * lookup could reuse an existing number inside a posting transaction. */
-  private async nextEventNo(companyId: string, tenantId: string, kind: 'SH' | 'RC'): Promise<string> {
-    const table = kind === 'SH' ? schema.transferShipment : schema.transferReceipt;
-    const noColumn = kind === 'SH' ? schema.transferShipment.shipment_no : schema.transferReceipt.receipt_no;
+  private async nextEventNo(
+    companyId: string,
+    tenantId: string,
+    kind: 'SH' | 'RC',
+  ): Promise<string> {
+    const table =
+      kind === 'SH' ? schema.transferShipment : schema.transferReceipt;
+    const noColumn =
+      kind === 'SH'
+        ? schema.transferShipment.shipment_no
+        : schema.transferReceipt.receipt_no;
     const year = new Date().getFullYear();
     const prefix = `${kind === 'SH' ? 'SH' : 'RC'}-${year}-`;
     const [last] = await this.db
-      .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${noColumn}, ${prefix.length + 1}) AS UNSIGNED)), 0)` })
+      .select({
+        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${noColumn}, ${prefix.length + 1}) AS UNSIGNED)), 0)`,
+      })
       .from(table)
       .where(and(eq(table.tenant_id, tenantId), like(noColumn, `${prefix}%`)))
       .for('update');
@@ -1727,21 +2584,35 @@ export class StockTransferService {
 
       // Allowed statuses for shipping: DRAFT, IN_TRANSIT (subsequent partial shipment)
       if (['CANCELLED', 'POSTED'].includes(transfer.status)) {
-        throw new BadRequestException(`Transfer Order cannot be shipped — it is ${transfer.status}.`);
+        throw new BadRequestException(
+          `Transfer Order cannot be shipped — it is ${transfer.status}.`,
+        );
       }
-      await this.assertWarehouses(transfer.from_warehouse_id, transfer.to_warehouse_id);
+      await this.assertWarehouses(
+        transfer.from_warehouse_id,
+        transfer.to_warehouse_id,
+      );
 
       if (!transfer.lines || transfer.lines.length === 0) {
-        throw new BadRequestException('Cannot ship a Transfer Order with no lines.');
+        throw new BadRequestException(
+          'Cannot ship a Transfer Order with no lines.',
+        );
       }
 
       // Fetch existing shipment history for this transfer order
-      const existingLedger = await this.getLedgerHistory(transfer.transfer_no, transfer.company_id, tenantId);
-      const enrichedLines = this.enrichLinesWithQuantities(transfer.lines, existingLedger);
+      const existingLedger = await this.getLedgerHistory(
+        transfer.transfer_no,
+        transfer.company_id,
+        tenantId,
+      );
+      const enrichedLines = this.enrichLinesWithQuantities(
+        transfer.lines,
+        existingLedger,
+      );
 
       // Determine lines and quantities to ship in this batch
       const itemsToShip: Array<{
-        line: typeof transfer.lines[0];
+        line: (typeof transfer.lines)[0];
         shipQty: number;
         lotNo?: string;
         serialNo?: string;
@@ -1751,14 +2622,18 @@ export class StockTransferService {
       for (const line of enrichedLines) {
         const remainingToShip = line.qty_to_ship;
         const lineInput = dto.lines?.find(
-          (l) => (l.line_id && l.line_id === line.line_id) || (l.item_id && l.item_id === line.item_id),
+          (l) =>
+            (l.line_id && l.line_id === line.line_id) ||
+            (l.item_id && l.item_id === line.item_id),
         );
 
         let shipQty = 0;
         if (lineInput) {
           shipQty = Number(lineInput.quantity);
           if (isNaN(shipQty) || shipQty < 0) {
-            throw new BadRequestException(`Ship quantity must be non-negative for item '${line.item_id}'.`);
+            throw new BadRequestException(
+              `Ship quantity must be non-negative for item '${line.item_id}'.`,
+            );
           }
           if (shipQty > remainingToShip + 0.0001) {
             throw new BadRequestException(
@@ -1782,14 +2657,24 @@ export class StockTransferService {
       }
 
       if (itemsToShip.length === 0) {
-        throw new BadRequestException('All quantities on this Transfer Order have already been shipped.');
+        throw new BadRequestException(
+          'All quantities on this Transfer Order have already been shipped.',
+        );
       }
 
       // Check on-hand stock for all items being shipped - only receipts posted by the shipment date count
-      const shipmentPostingDate = dto.posting_date || transfer.posting_date || new Date().toISOString().slice(0, 10);
+      const shipmentPostingDate =
+        dto.posting_date ||
+        transfer.posting_date ||
+        new Date().toISOString().slice(0, 10);
       for (const item of itemsToShip) {
         const balances = await this.ledgerService.getStockBalance(
-          { companyId: transfer.company_id, warehouseId: transfer.from_warehouse_id, itemId: item.line.item_id, asOfDate: shipmentPostingDate } as any,
+          {
+            companyId: transfer.company_id,
+            warehouseId: transfer.from_warehouse_id,
+            itemId: item.line.item_id,
+            asOfDate: shipmentPostingDate,
+          } as any,
           tenantId,
         );
         let onHand = 0;
@@ -1807,14 +2692,24 @@ export class StockTransferService {
                 } as any,
                 tenantId,
               );
-              const lotBalance = (lots || []).find((l: any) => l.lot_no === item.lotNo);
-              onHand = lotBalance ? Number(lotBalance.remaining_quantity || 0) : 0;
+              const lotBalance = (lots || []).find(
+                (l: any) => l.lot_no === item.lotNo,
+              );
+              onHand = lotBalance
+                ? Number(lotBalance.remaining_quantity || 0)
+                : 0;
             } catch {
-              onHand = balances.reduce((acc: number, b: any) => acc + Number(b.on_hand_qty || 0), 0);
+              onHand = balances.reduce(
+                (acc: number, b: any) => acc + Number(b.on_hand_qty || 0),
+                0,
+              );
             }
           }
         } else {
-          onHand = balances.reduce((acc: number, b: any) => acc + Number(b.on_hand_qty || 0), 0);
+          onHand = balances.reduce(
+            (acc: number, b: any) => acc + Number(b.on_hand_qty || 0),
+            0,
+          );
         }
         if (item.shipQty > onHand + 0.0001) {
           throw new BadRequestException(
@@ -1832,7 +2727,9 @@ export class StockTransferService {
 
       let formattedRemarks = transfer.remarks;
       if (logisticsParts.length > 0) {
-        formattedRemarks = [transfer.remarks, logisticsParts.join(' | ')].filter(Boolean).join('\n');
+        formattedRemarks = [transfer.remarks, logisticsParts.join(' | ')]
+          .filter(Boolean)
+          .join('\n');
       }
 
       // Update transfer status to IN_TRANSIT
@@ -1840,6 +2737,7 @@ export class StockTransferService {
         .update(schema.stockTransfer)
         .set({
           status: 'IN_TRANSIT',
+          vehicle_no: dto.vehicle_no?.trim() || null,
           posting_date: shipmentPostingDate,
           remarks: formattedRemarks,
           posted_at: toMysqlTimestamp() as any,
@@ -1880,7 +2778,10 @@ export class StockTransferService {
           userId: user?.userId,
         });
 
-        await this.glPostingService.postInventoryLedgerEntry(shipment, user?.userId);
+        await this.glPostingService.postInventoryLedgerEntry(
+          shipment,
+          user?.userId,
+        );
       }
 
       await this.auditService.log({
@@ -1890,13 +2791,20 @@ export class StockTransferService {
         action: 'SHIP',
         entityName: 'stock_transfer',
         entityId: id,
-        newValues: { status: 'IN_TRANSIT', remarks: formattedRemarks, posting_date: shipmentPostingDate },
+        newValues: {
+          status: 'IN_TRANSIT',
+          remarks: formattedRemarks,
+          posting_date: shipmentPostingDate,
+        },
       });
 
       return this.findOne(id);
     });
 
-    await this.feedAlerts?.evaluateLevelsSafely([shipped.from_warehouse_id], tenantId);
+    await this.feedAlerts?.evaluateLevelsSafely(
+      [shipped.from_warehouse_id],
+      tenantId,
+    );
     return shipped;
   }
 
@@ -1906,11 +2814,18 @@ export class StockTransferService {
    * Atomically claims in-transit stock and writes TRANSFER_RECEIPT ledger entries.
    * If partial receipt, remaining balance is tracked accurately.
    */
-  async receive(id: string, dto: ReceiveStockTransferDto, tenantId: string, userPayload?: any) {
+  async receive(
+    id: string,
+    dto: ReceiveStockTransferDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const received = await withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForReceive(id, tenantId);
       if (transfer.status !== 'IN_TRANSIT') {
-        throw new BadRequestException(`Transfer Order cannot be received — it is ${transfer.status}, expected 'IN_TRANSIT'.`);
+        throw new BadRequestException(
+          `Transfer Order cannot be received — it is ${transfer.status}, expected 'IN_TRANSIT'.`,
+        );
       }
 
       await assertLocationOnActiveFarm(
@@ -1924,13 +2839,24 @@ export class StockTransferService {
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
       // Fetch the shipment and receipt entries previously posted for this transfer
-      const existingLedger = await this.getLedgerHistory(transfer.transfer_no, transfer.company_id, tenantId);
-      const enrichedLines = this.enrichLinesWithQuantities(transfer.lines, existingLedger, transfer.status);
+      const existingLedger = await this.getLedgerHistory(
+        transfer.transfer_no,
+        transfer.company_id,
+        tenantId,
+      );
+      const enrichedLines = this.enrichLinesWithQuantities(
+        transfer.lines,
+        existingLedger,
+        transfer.status,
+      );
 
-      const receiptPostingDate = dto.posting_date || transfer.posting_date || new Date().toISOString().slice(0, 10);
+      const receiptPostingDate =
+        dto.posting_date ||
+        transfer.posting_date ||
+        new Date().toISOString().slice(0, 10);
 
       const itemsToReceive: Array<{
-        line: typeof enrichedLines[0];
+        line: (typeof enrichedLines)[0];
         receivedQty: number;
         doaQty: number;
         doaRemarks: string;
@@ -1954,10 +2880,14 @@ export class StockTransferService {
           doaRemarks = lineDto.doa_remarks || '';
 
           if (isNaN(receivedQty) || receivedQty < 0) {
-            throw new BadRequestException(`Received quantity must be non-negative for line ${line.line_no}.`);
+            throw new BadRequestException(
+              `Received quantity must be non-negative for line ${line.line_no}.`,
+            );
           }
           if (isNaN(doaQty) || doaQty < 0) {
-            throw new BadRequestException(`DOA quantity must be non-negative for line ${line.line_no}.`);
+            throw new BadRequestException(
+              `DOA quantity must be non-negative for line ${line.line_no}.`,
+            );
           }
           if (receivedQty + doaQty > inTransit + 0.0001) {
             throw new BadRequestException(
@@ -1973,13 +2903,22 @@ export class StockTransferService {
         const totalAccounted = receivedQty + doaQty;
         if (totalAccounted > 0) {
           const shipmentEntry = existingLedger.find(
-            (s) => (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) && s.transaction_type === 'TRANSFER_SHIPMENT',
+            (s) =>
+              (s.document_line_id === line.line_id ||
+                (!s.document_line_id && s.item_id === line.item_id)) &&
+              s.transaction_type === 'TRANSFER_SHIPMENT',
           );
-          const rate = shipmentEntry?.rate ? Math.abs(Number(shipmentEntry.rate)) : Number((line as any).unit_cost || 0);
+          const rate = shipmentEntry?.rate
+            ? Math.abs(Number(shipmentEntry.rate))
+            : Number((line as any).unit_cost || 0);
 
           let allocatedSerials: string | undefined = undefined;
           let doaSerials: string | undefined = undefined;
-          const rawShipSerials = (shipmentEntry?.serial_no || line.serial_no || '')
+          const rawShipSerials = (
+            shipmentEntry?.serial_no ||
+            line.serial_no ||
+            ''
+          )
             .split(',')
             .map((s: string) => s.trim())
             .filter(Boolean);
@@ -1989,15 +2928,29 @@ export class StockTransferService {
               existingLedger
                 .filter(
                   (s) =>
-                    (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) &&
+                    (s.document_line_id === line.line_id ||
+                      (!s.document_line_id && s.item_id === line.item_id)) &&
                     s.transaction_type === 'TRANSFER_RECEIPT',
                 )
-                .flatMap((s) => (s.serial_no || '').split(',').map((x: string) => x.trim()).filter(Boolean)),
+                .flatMap((s) =>
+                  (s.serial_no || '')
+                    .split(',')
+                    .map((x: string) => x.trim())
+                    .filter(Boolean),
+                ),
             );
 
-            const availableSerials = rawShipSerials.filter((s: string) => !alreadyReceivedSerials.has(s));
-            const takeGoodSerials = availableSerials.slice(0, Math.round(receivedQty));
-            const takeDoaSerials = availableSerials.slice(Math.round(receivedQty), Math.round(receivedQty + doaQty));
+            const availableSerials = rawShipSerials.filter(
+              (s: string) => !alreadyReceivedSerials.has(s),
+            );
+            const takeGoodSerials = availableSerials.slice(
+              0,
+              Math.round(receivedQty),
+            );
+            const takeDoaSerials = availableSerials.slice(
+              Math.round(receivedQty),
+              Math.round(receivedQty + doaQty),
+            );
             if (takeGoodSerials.length > 0) {
               allocatedSerials = takeGoodSerials.join(', ');
             }
@@ -2007,7 +2960,9 @@ export class StockTransferService {
           }
 
           // One receipt carries everything that arrived, so its serials are the good ones and the DOA ones.
-          const receiptSerials = [allocatedSerials, doaSerials].filter(Boolean).join(', ');
+          const receiptSerials = [allocatedSerials, doaSerials]
+            .filter(Boolean)
+            .join(', ');
           itemsToReceive.push({
             line,
             receivedQty,
@@ -2015,14 +2970,20 @@ export class StockTransferService {
             doaRemarks,
             rate,
             lotNo: shipmentEntry?.lot_no || line.lot_no || undefined,
-            serialNo: receiptSerials || shipmentEntry?.serial_no || line.serial_no || undefined,
+            serialNo:
+              receiptSerials ||
+              shipmentEntry?.serial_no ||
+              line.serial_no ||
+              undefined,
             doaSerialNo: doaSerials || undefined,
           });
         }
       }
 
       if (itemsToReceive.length === 0) {
-        throw new BadRequestException('No in-transit quantities available to receive on this Transfer Order.');
+        throw new BadRequestException(
+          'No in-transit quantities available to receive on this Transfer Order.',
+        );
       }
 
       for (const item of itemsToReceive) {
@@ -2047,11 +3008,17 @@ export class StockTransferService {
           serialNo: item.serialNo,
           warehouseId: transfer.to_warehouse_id,
           userId: userPayload?.userId,
-          externalReferenceNo: item.doaQty > 0
-            ? grossDoaRef(item.doaQty)
-            : (dto.remarks ? dto.remarks.slice(0, 50) : undefined),
+          externalReferenceNo:
+            item.doaQty > 0
+              ? grossDoaRef(item.doaQty)
+              : dto.remarks
+                ? dto.remarks.slice(0, 50)
+                : undefined,
         });
-        await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
+        await this.glPostingService.postInventoryLedgerEntry(
+          receipt,
+          userPayload?.userId,
+        );
 
         if (item.doaQty > 0) {
           const doaAdjustment = await this.ledgerService.writeNegativeEntry({
@@ -2073,7 +3040,10 @@ export class StockTransferService {
             externalReferenceNo: 'MRT-017',
             sourceLedgerId: receipt.ledger_id,
           });
-          await this.glPostingService.postInventoryLedgerEntry(doaAdjustment, userPayload?.userId);
+          await this.glPostingService.postInventoryLedgerEntry(
+            doaAdjustment,
+            userPayload?.userId,
+          );
         }
       }
 
@@ -2082,8 +3052,11 @@ export class StockTransferService {
       let totalRemainingInTransit = 0;
 
       for (const line of enrichedLines) {
-        const itemInfo = itemsToReceive.find((i) => i.line.line_id === line.line_id);
-        const accountedNow = (itemInfo?.receivedQty || 0) + (itemInfo?.doaQty || 0);
+        const itemInfo = itemsToReceive.find(
+          (i) => i.line.line_id === line.line_id,
+        );
+        const accountedNow =
+          (itemInfo?.receivedQty || 0) + (itemInfo?.doaQty || 0);
         const newInTransit = Math.max(0, line.qty_in_transit - accountedNow);
         totalRemainingInTransit += newInTransit;
         totalRemainingToShip += line.qty_to_ship;
@@ -2093,8 +3066,8 @@ export class StockTransferService {
         totalRemainingInTransit > 0
           ? 'IN_TRANSIT'
           : totalRemainingToShip > 0
-          ? 'DRAFT'
-          : 'RECEIVED';
+            ? 'DRAFT'
+            : 'RECEIVED';
 
       await this.db
         .update(schema.stockTransfer)
@@ -2119,7 +3092,10 @@ export class StockTransferService {
       return this.findOne(id);
     });
 
-    await this.feedAlerts?.evaluateLevelsSafely([received.to_warehouse_id], tenantId);
+    await this.feedAlerts?.evaluateLevelsSafely(
+      [received.to_warehouse_id],
+      tenantId,
+    );
     return received;
   }
 
@@ -2131,35 +3107,62 @@ export class StockTransferService {
     id: string,
     tenantId: string,
     userPayload?: any,
-    body?: { writeOffInTransit?: boolean; returnToSource?: boolean; reason?: string },
+    body?: {
+      writeOffInTransit?: boolean;
+      returnToSource?: boolean;
+      reason?: string;
+    },
   ) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForClose(id, tenantId);
       if (['CANCELLED', 'POSTED'].includes(transfer.status)) {
-        throw new BadRequestException(`Transfer Order cannot be closed — it is already ${transfer.status}.`);
+        throw new BadRequestException(
+          `Transfer Order cannot be closed — it is already ${transfer.status}.`,
+        );
       }
 
-      const existingLedger = await this.getLedgerHistory(transfer.transfer_no, transfer.company_id, tenantId);
-      const enrichedLines = this.enrichLinesWithQuantities(transfer.lines, existingLedger);
-      const inTransitTotal = enrichedLines.reduce((acc, l) => acc + l.qty_in_transit, 0);
+      const existingLedger = await this.getLedgerHistory(
+        transfer.transfer_no,
+        transfer.company_id,
+        tenantId,
+      );
+      const enrichedLines = this.enrichLinesWithQuantities(
+        transfer.lines,
+        existingLedger,
+      );
+      const inTransitTotal = enrichedLines.reduce(
+        (acc, l) => acc + l.qty_in_transit,
+        0,
+      );
 
-      let closeNote = 'Order short-closed. Remaining un-shipped balance cancelled.';
+      let closeNote =
+        'Order short-closed. Remaining un-shipped balance cancelled.';
 
       if (inTransitTotal > 0) {
         if (body?.writeOffInTransit) {
-          const writeOffReason = body.reason?.trim() || 'Transit Discrepancy / Loss Write-Off';
+          const writeOffReason =
+            body.reason?.trim() || 'Transit Discrepancy / Loss Write-Off';
           closeNote = `Order closed with In-Transit Write-Off (${inTransitTotal} units): ${writeOffReason}`;
           const today = new Date().toISOString().slice(0, 10);
 
           for (const line of enrichedLines) {
             if (line.qty_in_transit > 0) {
               const shipmentEntry = existingLedger.find(
-                (s) => (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) && s.transaction_type === 'TRANSFER_SHIPMENT',
+                (s) =>
+                  (s.document_line_id === line.line_id ||
+                    (!s.document_line_id && s.item_id === line.item_id)) &&
+                  s.transaction_type === 'TRANSFER_SHIPMENT',
               );
-              const rate = shipmentEntry?.rate ? Math.abs(Number(shipmentEntry.rate)) : Number((line as any).unit_cost || 0);
+              const rate = shipmentEntry?.rate
+                ? Math.abs(Number(shipmentEntry.rate))
+                : Number((line as any).unit_cost || 0);
 
               let allocatedSerials: string | undefined = undefined;
-              const rawShipSerials = (shipmentEntry?.serial_no || line.serial_no || '')
+              const rawShipSerials = (
+                shipmentEntry?.serial_no ||
+                line.serial_no ||
+                ''
+              )
                 .split(',')
                 .map((s: string) => s.trim())
                 .filter(Boolean);
@@ -2169,13 +3172,25 @@ export class StockTransferService {
                   existingLedger
                     .filter(
                       (s) =>
-                        (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) &&
+                        (s.document_line_id === line.line_id ||
+                          (!s.document_line_id &&
+                            s.item_id === line.item_id)) &&
                         s.transaction_type === 'TRANSFER_RECEIPT',
                     )
-                    .flatMap((s) => (s.serial_no || '').split(',').map((x: string) => x.trim()).filter(Boolean)),
+                    .flatMap((s) =>
+                      (s.serial_no || '')
+                        .split(',')
+                        .map((x: string) => x.trim())
+                        .filter(Boolean),
+                    ),
                 );
-                const availableSerials = rawShipSerials.filter((s: string) => !alreadyReceivedSerials.has(s));
-                const take = availableSerials.slice(0, Math.round(line.qty_in_transit));
+                const availableSerials = rawShipSerials.filter(
+                  (s: string) => !alreadyReceivedSerials.has(s),
+                );
+                const take = availableSerials.slice(
+                  0,
+                  Math.round(line.qty_in_transit),
+                );
                 if (take.length > 0) {
                   allocatedSerials = take.join(', ');
                 }
@@ -2196,11 +3211,18 @@ export class StockTransferService {
                 uom: line.uom,
                 rate,
                 lotNo: shipmentEntry?.lot_no || line.lot_no || undefined,
-                serialNo: allocatedSerials || shipmentEntry?.serial_no || line.serial_no || undefined,
+                serialNo:
+                  allocatedSerials ||
+                  shipmentEntry?.serial_no ||
+                  line.serial_no ||
+                  undefined,
                 warehouseId: transfer.to_warehouse_id,
                 userId: userPayload?.userId,
               });
-              await this.glPostingService.postInventoryLedgerEntry(receipt, userPayload?.userId);
+              await this.glPostingService.postInventoryLedgerEntry(
+                receipt,
+                userPayload?.userId,
+              );
 
               // 2. Immediately write negative adjustment at destination to write off the loss
               const loss = await this.ledgerService.writeNegativeEntry({
@@ -2221,23 +3243,36 @@ export class StockTransferService {
                 userId: userPayload?.userId,
                 sourceLedgerId: receipt.ledger_id,
               });
-              await this.glPostingService.postInventoryLedgerEntry(loss, userPayload?.userId);
+              await this.glPostingService.postInventoryLedgerEntry(
+                loss,
+                userPayload?.userId,
+              );
             }
           }
         } else if (body?.returnToSource) {
-          const returnReason = body.reason?.trim() || 'Returned In-Transit Stock to Source';
+          const returnReason =
+            body.reason?.trim() || 'Returned In-Transit Stock to Source';
           closeNote = `Order closed with In-Transit Return to Source (${inTransitTotal} units): ${returnReason}`;
           const today = new Date().toISOString().slice(0, 10);
 
           for (const line of enrichedLines) {
             if (line.qty_in_transit > 0) {
               const shipmentEntry = existingLedger.find(
-                (s) => (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) && s.transaction_type === 'TRANSFER_SHIPMENT',
+                (s) =>
+                  (s.document_line_id === line.line_id ||
+                    (!s.document_line_id && s.item_id === line.item_id)) &&
+                  s.transaction_type === 'TRANSFER_SHIPMENT',
               );
-              const rate = shipmentEntry?.rate ? Math.abs(Number(shipmentEntry.rate)) : Number((line as any).unit_cost || 0);
+              const rate = shipmentEntry?.rate
+                ? Math.abs(Number(shipmentEntry.rate))
+                : Number((line as any).unit_cost || 0);
 
               let allocatedSerials: string | undefined = undefined;
-              const rawShipSerials = (shipmentEntry?.serial_no || line.serial_no || '')
+              const rawShipSerials = (
+                shipmentEntry?.serial_no ||
+                line.serial_no ||
+                ''
+              )
                 .split(',')
                 .map((s: string) => s.trim())
                 .filter(Boolean);
@@ -2247,38 +3282,59 @@ export class StockTransferService {
                   existingLedger
                     .filter(
                       (s) =>
-                        (s.document_line_id === line.line_id || (!s.document_line_id && s.item_id === line.item_id)) &&
+                        (s.document_line_id === line.line_id ||
+                          (!s.document_line_id &&
+                            s.item_id === line.item_id)) &&
                         s.transaction_type === 'TRANSFER_RECEIPT',
                     )
-                    .flatMap((s) => (s.serial_no || '').split(',').map((x: string) => x.trim()).filter(Boolean)),
+                    .flatMap((s) =>
+                      (s.serial_no || '')
+                        .split(',')
+                        .map((x: string) => x.trim())
+                        .filter(Boolean),
+                    ),
                 );
-                const availableSerials = rawShipSerials.filter((s: string) => !alreadyReceivedSerials.has(s));
-                const take = availableSerials.slice(0, Math.round(line.qty_in_transit));
+                const availableSerials = rawShipSerials.filter(
+                  (s: string) => !alreadyReceivedSerials.has(s),
+                );
+                const take = availableSerials.slice(
+                  0,
+                  Math.round(line.qty_in_transit),
+                );
                 if (take.length > 0) {
                   allocatedSerials = take.join(', ');
                 }
               }
 
               // Return stock to source warehouse
-              const returnReceipt = await this.ledgerService.writePositiveEntry({
-                tenantId,
-                companyId: transfer.company_id,
-                itemId: line.item_id,
-                documentType: 'STOCK_TRANSFER',
-                documentNo: transfer.transfer_no,
-                documentLineId: line.line_id,
-                postingDate: today,
-                transactionType: 'TRANSFER_RECEIPT',
-                entryType: 'TRANSFER',
-                quantity: line.qty_in_transit,
-                uom: line.uom,
-                rate,
-                lotNo: shipmentEntry?.lot_no || line.lot_no || undefined,
-                serialNo: allocatedSerials || shipmentEntry?.serial_no || line.serial_no || undefined,
-                warehouseId: transfer.from_warehouse_id,
-                userId: userPayload?.userId,
-              });
-              await this.glPostingService.postInventoryLedgerEntry(returnReceipt, userPayload?.userId);
+              const returnReceipt = await this.ledgerService.writePositiveEntry(
+                {
+                  tenantId,
+                  companyId: transfer.company_id,
+                  itemId: line.item_id,
+                  documentType: 'STOCK_TRANSFER',
+                  documentNo: transfer.transfer_no,
+                  documentLineId: line.line_id,
+                  postingDate: today,
+                  transactionType: 'TRANSFER_RECEIPT',
+                  entryType: 'TRANSFER',
+                  quantity: line.qty_in_transit,
+                  uom: line.uom,
+                  rate,
+                  lotNo: shipmentEntry?.lot_no || line.lot_no || undefined,
+                  serialNo:
+                    allocatedSerials ||
+                    shipmentEntry?.serial_no ||
+                    line.serial_no ||
+                    undefined,
+                  warehouseId: transfer.from_warehouse_id,
+                  userId: userPayload?.userId,
+                },
+              );
+              await this.glPostingService.postInventoryLedgerEntry(
+                returnReceipt,
+                userPayload?.userId,
+              );
             }
           }
         } else {

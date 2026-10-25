@@ -1,19 +1,25 @@
-"use client";
+'use client';
 
-import React, { useCallback, useEffect, useState } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Building2, CalendarDays, CheckCircle2, ChevronLeft } from "lucide-react";
-import { api } from "@/services/api-client";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { EmptyState, LoadingState } from "@/components/ui/states";
-import { useLanguage } from "@/hooks/useLanguage";
-import { getStoredUser } from "@/hooks/useAuth";
-import { HistoryRail } from "./history-rail";
-import { StageOverview } from "./stage-overview";
-import { ActivitySection } from "./activity-section";
-import type { EntryFormResponse, HistoryDay } from "./types";
+import { NA } from '@/utils/na';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import {
+  Building2,
+  CalendarDays,
+  CheckCircle2,
+  ChevronLeft,
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { EmptyState, LoadingState } from '@/components/ui/states';
+import { useLanguage } from '@/hooks/useLanguage';
+import { getStoredUser } from '@/hooks/useAuth';
+import { HistoryRail } from './history-rail';
+import { StageOverview } from './stage-overview';
+import { ActivitySection } from './activity-section';
+import type { EntryFormResponse, HistoryDay } from './types';
 
 /**
  * The daily data entry workspace.
@@ -54,22 +60,22 @@ export default function EntryWorkspace() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const batchParam = searchParams.get("batch") ?? "";
-  const dateParam = searchParams.get("date") ?? "";
-  const stageParam = searchParams.get("stage") ?? "";
+  const batchParam = searchParams.get('batch') ?? '';
+  const dateParam = searchParams.get('date') ?? '';
+  const stageParam = searchParams.get('stage') ?? '';
 
   const [batches, setBatches] = useState<BatchOption[]>([]);
   const [farms, setFarms] = useState<FarmRef[]>([]);
   const [form, setForm] = useState<EntryFormResponse | null>(null);
   const [history, setHistory] = useState<HistoryDay[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
-  const batchId = batchParam || batches[0]?.batch_id || "";
+  const batchId = batchParam || batches[0]?.batch_id || '';
 
   /** Change the URL, which is the only place this screen keeps its state. */
   const navigate = useCallback(
-    (patch: Record<string, string | null>, mode: "push" | "replace") => {
+    (patch: Record<string, string | null>, mode: 'push' | 'replace') => {
       const next = new URLSearchParams(searchParams.toString());
       for (const [key, value] of Object.entries(patch)) {
         if (value === null) next.delete(key);
@@ -85,7 +91,7 @@ export default function EntryWorkspace() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get("/batch?limit=200&status=ACTIVE");
+        const res = await api.get('/batch?limit=200&status=ACTIVE');
         if (cancelled) return;
         setBatches(res?.data ?? []);
       } catch (e: unknown) {
@@ -94,18 +100,20 @@ export default function EntryWorkspace() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ── The farm list, to resolve a batch's farm_id to a code/name ───────── */
   // Only fetched for non-standard users: a STANDARD_USER's farm is fixed and
   // is read straight off the stored session instead (see recordingFor below).
   useEffect(() => {
-    if (getStoredUser()?.userType === "STANDARD_USER") return;
+    if (getStoredUser()?.userType === 'STANDARD_USER') return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get("/location?locationType=FARM&rootOnly=true");
+        const res = await api.get('/location?locationType=FARM&rootOnly=true');
         if (cancelled) return;
         const rows = Array.isArray(res) ? res : res?.data;
         if (Array.isArray(rows)) setFarms(rows);
@@ -113,7 +121,9 @@ export default function EntryWorkspace() {
         // The badge simply stays hidden if this can't be loaded.
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* ── Name the batch in the URL once one is known ──────────────────────── */
@@ -121,18 +131,23 @@ export default function EntryWorkspace() {
   // after a reload, because "the first active batch" is not a stable address.
   // The resolved id is the same one already in use, so this costs no re-fetch.
   useEffect(() => {
-    if (!batchParam && batches.length) navigate({ batch: batches[0].batch_id }, "replace");
+    if (!batchParam && batches.length)
+      navigate({ batch: batches[0].batch_id }, 'replace');
   }, [batchParam, batches, navigate]);
 
   /* ── The form for this batch, day and stage, and the day rail ────────── */
   const load = useCallback(async () => {
     if (!batchId) return;
-    setError("");
+    setError('');
     try {
       // No `date` is sent when the URL has none: which day it is on the farm is
       // the server's answer, and it answers with today.
-      const query = [dateParam ? `date=${dateParam}` : "", stageParam ? `stageId=${stageParam}` : ""]
-        .filter(Boolean).join("&");
+      const query = [
+        dateParam ? `date=${dateParam}` : '',
+        stageParam ? `stageId=${stageParam}` : '',
+      ]
+        .filter(Boolean)
+        .join('&');
       const [formRes, historyRes] = await Promise.all([
         api.get(`/batch/${batchId}/daily-data/form?${query}`),
         api.get(`/batch/${batchId}/daily-data/history?days=30`),
@@ -144,11 +159,19 @@ export default function EntryWorkspace() {
     }
   }, [batchId, dateParam, stageParam]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (loading) return <LoadingState />;
   if (!batches.length) {
-    return <EmptyState icon={CalendarDays} title={t("deNoBatches")} description={t("deNoBatchesBody")} />;
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title={t('deNoBatches')}
+        description={t('deNoBatchesBody')}
+      />
+    );
   }
 
   /* ── Which farm this entry is being recorded for ─────────────────────── */
@@ -159,15 +182,20 @@ export default function EntryWorkspace() {
   // (already on the /batch list row) resolved against the fetched farm list.
   const storedUser = getStoredUser();
   const selectedBatch = batches.find((b) => b.batch_id === batchId);
-  const recordingForFarm = storedUser?.userType === "STANDARD_USER"
-    ? storedUser.farm ?? null
-    : farms.find((f) => f.location_id === selectedBatch?.farm_id) ?? null;
+  const recordingForFarm =
+    storedUser?.userType === 'STANDARD_USER'
+      ? (storedUser.farm ?? null)
+      : (farms.find((f) => f.location_id === selectedBatch?.farm_id) ?? null);
   const recordingForLabel = recordingForFarm
-    ? t("deRecordingForFarm", { code: recordingForFarm.location_code, name: recordingForFarm.location_name || recordingForFarm.location_code })
+    ? t('deRecordingForFarm', {
+        code: recordingForFarm.location_code,
+        name: recordingForFarm.location_name || recordingForFarm.location_code,
+      })
     : null;
 
   const selectedDay = form?.date ?? dateParam;
-  const currentStage = form?.stages.find((s) => s.stage_id === stageParam) ?? null;
+  const currentStage =
+    form?.stages.find((s) => s.stage_id === stageParam) ?? null;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -176,33 +204,42 @@ export default function EntryWorkspace() {
         <Card className="p-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[220px] flex-1">
-              <span className="mb-1 block text-xs font-medium text-(--text-secondary)">{t("deSelectBatch")}</span>
+              <span className="mb-1 block text-xs font-medium text-(--text-secondary)">
+                {t('deSelectBatch')}
+              </span>
               <SearchableSelect
-                ariaLabel={t("deSelectBatch")}
+                ariaLabel={t('deSelectBatch')}
                 value={batchId}
-                onChange={(val) => navigate({ batch: val, stage: null, date: null }, "replace")}
+                onChange={(val) =>
+                  navigate({ batch: val, stage: null, date: null }, 'replace')
+                }
                 options={batches.map((b) => ({
                   value: b.batch_id,
                   label: b.batch_no,
                 }))}
-                placeholder={t("deSelectBatch")}
+                placeholder={t('deSelectBatch')}
                 searchPlaceholder="Search batch…"
               />
             </div>
             <div className="min-w-[170px]">
-              <span className="mb-1 block text-xs font-medium text-(--text-secondary)">{t("deWorkingDay")}</span>
+              <span className="mb-1 block text-xs font-medium text-(--text-secondary)">
+                {t('deWorkingDay')}
+              </span>
               <div className="flex h-12 items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] px-3 text-sm font-semibold text-(--text-primary)">
                 <CalendarDays size={15} className="text-(--accent)" />
-                {selectedDay || "—"}
+                {selectedDay || NA}
                 {form && form.date === form.today && (
-                  <span className="text-xs font-normal text-(--text-secondary)">· {t("deToday")}</span>
+                  <span className="text-xs font-normal text-(--text-secondary)">
+                    · {t('deToday')}
+                  </span>
                 )}
               </div>
             </div>
           </div>
           {recordingForLabel && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-(--text-secondary)">
-              <Building2 size={13} className="shrink-0 text-(--accent)" /> {recordingForLabel}
+              <Building2 size={13} className="shrink-0 text-(--accent)" />{' '}
+              {recordingForLabel}
             </p>
           )}
         </Card>
@@ -210,15 +247,28 @@ export default function EntryWorkspace() {
         {error && <p className="px-1 text-[13px] text-(--danger)">{error}</p>}
 
         {form && !form.hasScheduler && (
-          <Card><EmptyState icon={CalendarDays} title={t("deNoScheduler")} description={t("deNoSchedulerBody")} /></Card>
+          <Card>
+            <EmptyState
+              icon={CalendarDays}
+              title={t('deNoScheduler')}
+              description={t('deNoSchedulerBody')}
+            />
+          </Card>
         )}
 
         {/* ── No stage chosen: the overview is the screen ─────────────── */}
-        {form?.hasScheduler && !stageParam && (
-          form.stages.length
-            ? <StageOverview stages={form.stages} onSelect={(id) => navigate({ stage: id }, "push")} />
-            : <Card><EmptyState icon={CheckCircle2} title={t("deNothingDue")} /></Card>
-        )}
+        {form?.hasScheduler &&
+          !stageParam &&
+          (form.stages.length ? (
+            <StageOverview
+              stages={form.stages}
+              onSelect={(id) => navigate({ stage: id }, 'push')}
+            />
+          ) : (
+            <Card>
+              <EmptyState icon={CheckCircle2} title={t('deNothingDue')} />
+            </Card>
+          ))}
 
         {/* ── A stage chosen: the day's work for it ──────────────────── */}
         {form?.hasScheduler && stageParam && (
@@ -228,17 +278,25 @@ export default function EntryWorkspace() {
                 variant="ghost"
                 size="sm"
                 className="-ml-2 gap-1"
-                onClick={() => navigate({ stage: null }, "push")}
+                onClick={() => navigate({ stage: null }, 'push')}
               >
-                <ChevronLeft size={15} /> {t("deWAllStages")}
+                <ChevronLeft size={15} /> {t('deWAllStages')}
               </Button>
               <p className="text-sm font-semibold text-(--text-primary)">
                 {currentStage?.stage_name ?? form.batch.batch_no}
               </p>
             </div>
-            {form.lines.length === 0
-              ? <Card><EmptyState icon={CheckCircle2} title={t("deNothingDue")} /></Card>
-              : <ActivitySection form={form} batchId={batchId} onChanged={() => void load()} />}
+            {form.lines.length === 0 ? (
+              <Card>
+                <EmptyState icon={CheckCircle2} title={t('deNothingDue')} />
+              </Card>
+            ) : (
+              <ActivitySection
+                form={form}
+                batchId={batchId}
+                onChanged={() => void load()}
+              />
+            )}
           </div>
         )}
       </div>
@@ -251,7 +309,7 @@ export default function EntryWorkspace() {
           days={history}
           selected={selectedDay}
           today={form?.today}
-          onSelect={(day) => navigate({ date: day }, "replace")}
+          onSelect={(day) => navigate({ date: day }, 'replace')}
         />
       </aside>
     </div>

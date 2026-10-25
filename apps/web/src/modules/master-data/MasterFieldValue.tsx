@@ -1,31 +1,44 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { api } from "@/services/api-client";
-import { API_ORIGIN } from "@/lib/api-client";
-import type { MasterDataField } from "./types";
-import { entityDisplayText, nameOrCode } from "@/utils/code-name";
-import { formatDecimal } from "@/lib/utils";
+import { NA } from '@/utils/na';
+import { useEffect, useState } from 'react';
+import { api } from '@/services/api-client';
+import { API_ORIGIN } from '@/lib/api-client';
+import type { MasterDataField } from './types';
+import { entityDisplayText, nameOrCode } from '@/utils/code-name';
+import { formatDecimal } from '@/lib/utils';
 
 function safeReferenceDisplay(value: unknown): string {
-  const text = String(value ?? "");
-  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text) ? "Reference unavailable" : text;
+  const text = String(value ?? '');
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(text)
+    ? 'Reference unavailable'
+    : text;
 }
 
-export function formatMasterValue(value: unknown, field?: MasterDataField): string {
-  if (field?.multiple && (value == null || (Array.isArray(value) && !value.length))) {
-    return field.emptyMultipleLabel ?? "All (no restriction)";
+export function formatMasterValue(
+  value: unknown,
+  field?: MasterDataField,
+): string {
+  if (
+    field?.multiple &&
+    (value == null || (Array.isArray(value) && !value.length))
+  ) {
+    return field.emptyMultipleLabel ?? 'All (no restriction)';
   }
-  if (value === null || value === undefined || value === "") return field?.emptyLabel ?? "—";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value) && !value.length) return field?.multiple ? "All stages" : "—";
-  if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value.join(", ");
-  if (field?.type === "number" && Number.isFinite(Number(value))) {
+  if (value === null || value === undefined || value === '')
+    return field?.emptyLabel ?? NA;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value) && !value.length)
+    return field?.multiple ? 'All stages' : NA;
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string'))
+    return value.join(', ');
+  if (field?.type === 'number' && Number.isFinite(Number(value))) {
     const num = Number(value);
-    if (field?.key === "gps_latitude" || field?.key === "gps_longitude") {
+    if (field?.key === 'gps_latitude' || field?.key === 'gps_longitude') {
       return String(num);
     }
-    const isInt = field?.step === "1" || (!field?.step && Number.isInteger(num));
+    const isInt =
+      field?.step === '1' || (!field?.step && Number.isInteger(num));
     if (isInt) return String(num);
     // At most 2 decimals, but a small fraction (a 0.001 conversion factor) keeps its digits instead of reading 0.
     return formatDecimal(num);
@@ -33,83 +46,155 @@ export function formatMasterValue(value: unknown, field?: MasterDataField): stri
   // TDD row 102 asks for DD/MM/YYYY. Read the parts off the raw string rather
   // than through Date's local timezone, which shifts a bare "2026-09-08" back a
   // day for anyone west of UTC and would misdate a record on its own detail page.
-  if (field?.type === "date" && typeof value === "string") {
+  if (field?.type === 'date' && typeof value === 'string') {
     const [, y, m, d] = /^(\d{4})-(\d{2})-(\d{2})/.exec(value) || [];
     if (d) return `${d}/${m}/${y}`;
   }
-  if (Array.isArray(value) && value.every((entry) => entry?.attribute_name && "attribute_value" in entry)) {
-    return value.map((entry) => `${entry.attribute_name}: ${entry.attribute_value ?? "—"}`).join("\n");
+  if (
+    Array.isArray(value) &&
+    value.every((entry) => entry?.attribute_name && 'attribute_value' in entry)
+  ) {
+    return value
+      .map((entry) => `${entry.attribute_name}: ${entry.attribute_value ?? NA}`)
+      .join('\n');
   }
-  return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+  return typeof value === 'object'
+    ? JSON.stringify(value, null, 2)
+    : String(value);
 }
 
 /** Resolve UUID references through the same scoped, authorized APIs as the
  * master form. Do not guess labels or widen the workspace on a missing lookup. */
-export function MasterFieldValue({ field, value, record }: {
-  field?: MasterDataField; value: unknown; record: Record<string, unknown>;
+export function MasterFieldValue({
+  field,
+  value,
+  record,
+}: {
+  field?: MasterDataField;
+  value: unknown;
+  record: Record<string, unknown>;
 }) {
-  const [resolved, setResolved] = useState<{ request: string; label: string }>();
+  const [resolved, setResolved] = useState<{
+    request: string;
+    label: string;
+  }>();
 
   // If pre-loaded details exist on record for attached_sheds
-  if (field?.key === "attached_sheds" && Array.isArray((record as any)?.attached_shed_details)) {
-    const details = (record as any).attached_shed_details as Array<{ location_code?: string; location_name?: string; effective_from?: string | null; effective_to?: string | null }>;
-    if (details.length === 0) return <>{field?.emptyMultipleLabel ?? "None attached"}</>;
+  if (
+    field?.key === 'attached_sheds' &&
+    Array.isArray((record as any)?.attached_shed_details)
+  ) {
+    const details = (record as any).attached_shed_details as Array<{
+      location_code?: string;
+      location_name?: string;
+      effective_from?: string | null;
+      effective_to?: string | null;
+    }>;
+    if (details.length === 0)
+      return <>{field?.emptyMultipleLabel ?? 'None attached'}</>;
     // Master r8: a dated link is shown with its dates; an undated one reads as before.
-    const day = (d?: string | null) => (d ? String(d).slice(0, 10) : "");
-    return <>{details.map((d) => {
-      const label = nameOrCode(d.location_code, d.location_name);
-      return d.effective_from || d.effective_to ? `${label} (${day(d.effective_from) || "…"} → ${day(d.effective_to) || "…"})` : label;
-    }).join(", ")}</>;
+    const day = (d?: string | null) => (d ? String(d).slice(0, 10) : '');
+    return (
+      <>
+        {details
+          .map((d) => {
+            const label = nameOrCode(d.location_code, d.location_name);
+            return d.effective_from || d.effective_to
+              ? `${label} (${day(d.effective_from) || '…'} → ${day(d.effective_to) || '…'})`
+              : label;
+          })
+          .join(', ')}
+      </>
+    );
   }
 
   // A list field (KPIs & Alerts, Feed Consumption, Resource Requirements, Vaccination / Medication Protocol) reads as
   // its lines, with the form's own columns, not as raw JSON (Rishi, 14 Oct).
-  if (field?.type === "json" && field.jsonRow?.length) {
+  if (field?.type === 'json' && field.jsonRow?.length) {
     return <JsonRowsTable field={field} value={value} />;
   }
 
   // Master r16: Feed in Silo opens the item record.
-  if (field?.key === "silo_feed_item" && typeof value === "string" && value && typeof (record as any)?.silo_feed_item_id === "string") {
+  if (
+    field?.key === 'silo_feed_item' &&
+    typeof value === 'string' &&
+    value &&
+    typeof (record as any)?.silo_feed_item_id === 'string'
+  ) {
     // The feed's name, linked (14 Oct: a field shows the thing, not code + name).
-    const [code, ...rest] = value.split(" — ");
-    return <a className="text-(--accent) hover:underline" href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}>{nameOrCode(code, rest.join(" — "))}</a>;
+    const [code, ...rest] = value.split(' — ');
+    return (
+      <a
+        className="text-(--accent) hover:underline"
+        href={`/master-data/item?recordId=${encodeURIComponent((record as any).silo_feed_item_id)}`}
+      >
+        {nameOrCode(code, rest.join(' — '))}
+      </a>
+    );
   }
 
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(val);
 
   const rawIds: string[] = Array.isArray(value)
     ? value
-        .map((v) => (typeof v === "object" && v ? String((v as any)[field?.entityValueKey || "id"] || (v as any).id || "") : String(v ?? "")))
+        .map((v) =>
+          typeof v === 'object' && v
+            ? String(
+                (v as any)[field?.entityValueKey || 'id'] ||
+                  (v as any).id ||
+                  '',
+              )
+            : String(v ?? ''),
+        )
         .map((s) => s.trim())
         .filter(Boolean)
-    : typeof value === "string" && (value.includes(",") || field?.multiple)
-    ? value.split(",").map((s) => s.trim()).filter(Boolean)
-    : typeof value === "string" && value.trim()
-    ? [value.trim()]
-    : [];
+    : typeof value === 'string' && (value.includes(',') || field?.multiple)
+      ? value
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : typeof value === 'string' && value.trim()
+        ? [value.trim()]
+        : [];
 
-  const isEntity = field?.type === "select-entity" && !!field.entityEndpoint && rawIds.length > 0 && rawIds.every(isUuid);
-  const dependency = typeof field?.dependsOn === "string" ? String(record[field.dependsOn] || "") : "";
-  const endpoint = field?.entityEndpoint?.replace("{value}", encodeURIComponent(dependency));
-  const usesList = endpoint?.startsWith("/setup/") || (endpoint?.includes("?") && !endpoint?.includes("{value}"));
-  const canFetch = isEntity && (!field?.entityEndpoint?.includes("{value}") || dependency);
-  const rawIdsStr = rawIds.join(",");
+  const isEntity =
+    field?.type === 'select-entity' &&
+    !!field.entityEndpoint &&
+    rawIds.length > 0 &&
+    rawIds.every(isUuid);
+  const dependency =
+    typeof field?.dependsOn === 'string'
+      ? String(record[field.dependsOn] || '')
+      : '';
+  const endpoint = field?.entityEndpoint?.replace(
+    '{value}',
+    encodeURIComponent(dependency),
+  );
+  const usesList =
+    endpoint?.startsWith('/setup/') ||
+    (endpoint?.includes('?') && !endpoint?.includes('{value}'));
+  const canFetch =
+    isEntity && (!field?.entityEndpoint?.includes('{value}') || dependency);
+  const rawIdsStr = rawIds.join(',');
   const cacheKey = `${endpoint}:${rawIdsStr}`;
 
   useEffect(() => {
     if (!canFetch || !endpoint || !rawIdsStr) return;
     let cancelled = false;
 
-    const ids = rawIdsStr.split(",").filter(Boolean);
+    const ids = rawIdsStr.split(',').filter(Boolean);
 
     const extractLabel = (row: any): string => {
-      if (!row || typeof row !== "object") return "";
-      const labelKeys = field?.entityDisplay === "code"
-        ? (field?.entityLabelKeys || []).filter((key) => /(^|_)(code|no|number|key)$/i.test(key))
-        : field?.entityLabelKeys || [];
+      if (!row || typeof row !== 'object') return '';
+      const labelKeys =
+        field?.entityDisplay === 'code'
+          ? (field?.entityLabelKeys || []).filter((key) =>
+              /(^|_)(code|no|number|key)$/i.test(key),
+            )
+          : field?.entityLabelKeys || [];
       const text = entityDisplayText(row, labelKeys, field?.entityValueKey);
       if (text) return text;
-      return row.code || row.name || row.title || row.label || "";
+      return row.code || row.name || row.title || row.label || '';
     };
 
     if (usesList) {
@@ -119,16 +204,16 @@ export function MasterFieldValue({ field, value, record }: {
           if (cancelled) return;
           const data = result?.data ?? result;
           const list = Array.isArray(data) ? data : [];
-          const valKey = field?.entityValueKey || "id";
+          const valKey = field?.entityValueKey || 'id';
           const labels = ids.map((id) => {
             const match = list.find((item: any) => String(item[valKey]) === id);
-            return match ? extractLabel(match) : "";
+            return match ? extractLabel(match) : '';
           });
           const missing = ids.filter((id, i) => !labels[i]);
           if (missing.length === 0) {
-            setResolved({ request: cacheKey, label: labels.join(", ") });
+            setResolved({ request: cacheKey, label: labels.join(', ') });
           } else {
-            const base = endpoint.split("?")[0];
+            const base = endpoint.split('?')[0];
             Promise.all(
               ids.map((id, i) => {
                 if (labels[i]) return Promise.resolve(labels[i]);
@@ -142,13 +227,13 @@ export function MasterFieldValue({ field, value, record }: {
               }),
             ).then((allLabels) => {
               if (!cancelled) {
-                setResolved({ request: cacheKey, label: allLabels.join(", ") });
+                setResolved({ request: cacheKey, label: allLabels.join(', ') });
               }
             });
           }
         })
         .catch(() => {
-          const base = endpoint.split("?")[0];
+          const base = endpoint.split('?')[0];
           Promise.all(
             ids.map((id) =>
               api
@@ -161,12 +246,12 @@ export function MasterFieldValue({ field, value, record }: {
             ),
           ).then((allLabels) => {
             if (!cancelled) {
-              setResolved({ request: cacheKey, label: allLabels.join(", ") });
+              setResolved({ request: cacheKey, label: allLabels.join(', ') });
             }
           });
         });
     } else {
-      const base = endpoint.split("?")[0];
+      const base = endpoint.split('?')[0];
       Promise.all(
         ids.map((id) =>
           api
@@ -179,7 +264,7 @@ export function MasterFieldValue({ field, value, record }: {
         ),
       ).then((allLabels) => {
         if (!cancelled) {
-          setResolved({ request: cacheKey, label: allLabels.join(", ") });
+          setResolved({ request: cacheKey, label: allLabels.join(', ') });
         }
       });
     }
@@ -190,24 +275,30 @@ export function MasterFieldValue({ field, value, record }: {
   }, [canFetch, endpoint, usesList, cacheKey, rawIdsStr, field]);
 
   if (isEntity) {
-    if (!canFetch) return <>{rawIds.map(safeReferenceDisplay).join(", ")}</>;
+    if (!canFetch) return <>{rawIds.map(safeReferenceDisplay).join(', ')}</>;
     if (resolved?.request === cacheKey) {
-      return <>{resolved.label || "Reference unavailable"}</>;
+      return <>{resolved.label || 'Reference unavailable'}</>;
     }
     return <>Loading reference…</>;
   }
 
-  if (field?.type === "image" && typeof value === "string" && value) {
-    const src = value.startsWith("http") ? value : `${API_ORIGIN}${value}`;
+  if (field?.type === 'image' && typeof value === 'string' && value) {
+    const src = value.startsWith('http') ? value : `${API_ORIGIN}${value}`;
     return (
       <div className="flex items-center gap-3">
         <img
           src={src}
-          alt={field.label || "Image"}
+          alt={field.label || 'Image'}
           className="h-14 w-14 rounded border object-cover cursor-pointer"
-          onClick={() => window.open(src, "_blank")}
+          onClick={() => window.open(src, '_blank')}
         />
-        <a href={src} target="_blank" rel="noreferrer" className="underline text-xs" style={{ color: "var(--accent)" }}>
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="underline text-xs"
+          style={{ color: 'var(--accent)' }}
+        >
           View full image
         </a>
       </div>
@@ -217,21 +308,37 @@ export function MasterFieldValue({ field, value, record }: {
 }
 
 /** The rows of a list field as a table: one line per row, the form's columns, codes and ids shown as the thing. */
-function JsonRowsTable({ field, value }: { field: MasterDataField; value: unknown }) {
+function JsonRowsTable({
+  field,
+  value,
+}: {
+  field: MasterDataField;
+  value: unknown;
+}) {
   let rows: unknown = value;
-  if (typeof rows === "string") {
-    try { rows = JSON.parse(rows); } catch { rows = []; }
+  if (typeof rows === 'string') {
+    try {
+      rows = JSON.parse(rows);
+    } catch {
+      rows = [];
+    }
   }
-  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object") as Record<string, unknown>[];
-  if (!list.length) return <>{field.emptyLabel ?? "—"}</>;
+  const list = (Array.isArray(rows) ? rows : []).filter(
+    (r) => r && typeof r === 'object',
+  ) as Record<string, unknown>[];
+  if (!list.length) return <>{field.emptyLabel ?? NA}</>;
   const columns = field.jsonRow ?? [];
   const cell = (col: MasterDataField, row: Record<string, unknown>) => {
     const v = row[col.key];
-    if (v === null || v === undefined || v === "") return "—";
-    if (col.type === "select" && col.options?.length) {
-      return col.options.find((o) => String(o.value) === String(v))?.label ?? String(v);
+    if (v === null || v === undefined || v === '') return NA;
+    if (col.type === 'select' && col.options?.length) {
+      return (
+        col.options.find((o) => String(o.value) === String(v))?.label ??
+        String(v)
+      );
     }
-    if (col.type === "select-entity") return <MasterFieldValue field={col} value={v} record={row} />;
+    if (col.type === 'select-entity')
+      return <MasterFieldValue field={col} value={v} record={row} />;
     return formatMasterValue(v, col);
   };
   return (
@@ -240,15 +347,29 @@ function JsonRowsTable({ field, value }: { field: MasterDataField; value: unknow
         <thead>
           <tr className="bg-[var(--surface-raised)]">
             {columns.map((col) => (
-              <th key={col.key} scope="col" className="whitespace-nowrap border-b border-[var(--border)] px-2 py-1.5 font-semibold text-[var(--text-secondary)]">{col.label}</th>
+              <th
+                key={col.key}
+                scope="col"
+                className="whitespace-nowrap border-b border-[var(--border)] px-2 py-1.5 font-semibold text-[var(--text-secondary)]"
+              >
+                {col.label}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {list.map((row, i) => (
-            <tr key={i} className="border-b border-[var(--border)] last:border-b-0">
+            <tr
+              key={i}
+              className="border-b border-[var(--border)] last:border-b-0"
+            >
               {columns.map((col) => (
-                <td key={col.key} className="whitespace-nowrap px-2 py-1.5 font-normal">{cell(col, row)}</td>
+                <td
+                  key={col.key}
+                  className="whitespace-nowrap px-2 py-1.5 font-normal"
+                >
+                  {cell(col, row)}
+                </td>
               ))}
             </tr>
           ))}

@@ -1,47 +1,62 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { 
-  Loader2, 
-  Inbox, 
-  Eye, 
+import { NA } from '@/utils/na';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  Loader2,
+  Inbox,
+  Eye,
   RotateCcw,
   Search,
   Download,
-  FileSpreadsheet
-} from "lucide-react";
-import { api } from "@/services/api-client";
-import { apiDownload } from "@/lib/api-client";
-import { showToast, Toast } from "@/components/ui/toast";
-import { Pagination } from "@/components/ui/pagination";
-import { getActiveCompanyId } from "@/hooks/useAuth";
-import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { useLanguage } from "@/hooks/useLanguage";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Badge } from "@/components/ui/badge";
-import { Dialog } from "@/components/ui/dialog";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType, isInboundEntry } from "./inventory-ledger-detail";
+  FileSpreadsheet,
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import { apiDownload } from '@/lib/api-client';
+import { showToast, Toast } from '@/components/ui/toast';
+import { Pagination } from '@/components/ui/pagination';
+import { getActiveCompanyId } from '@/hooks/useAuth';
+import {
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import { useLanguage } from '@/hooks/useLanguage';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Badge } from '@/components/ui/badge';
+import { Dialog } from '@/components/ui/dialog';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
+import InventoryLedgerDetail, {
+  formatBcEntryType,
+  formatBcDocumentType,
+  isInboundEntry,
+} from './inventory-ledger-detail';
 
 const PAGE_SIZE = 25;
 
 type Row = Record<string, any>;
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  accent: { color: "var(--accent)" },
-  input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
+  accent: { color: 'var(--accent)' },
+  input: {
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--input-text)',
+    borderColor: 'var(--input-border)',
+  },
 };
 
-const inputCls = "nf-input-sm";
+const inputCls = 'nf-input-sm';
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 export default function InventoryLedgerPanel() {
@@ -53,16 +68,18 @@ export default function InventoryLedgerPanel() {
   const [items, setItems] = useState<Row[]>([]);
   const [warehouses, setWarehouses] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
-  const [itemId, setItemId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
-  const [entryType, setEntryType] = useState("");
-  const [transactionType, setTransactionType] = useState("");
-  const [documentNo, setDocumentNo] = useState("");
-  const [sortBy, setSortBy] = useState<"created_at" | "posting_date">("created_at");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [itemId, setItemId] = useState('');
+  const [warehouseId, setWarehouseId] = useState('');
+  const [entryType, setEntryType] = useState('');
+  const [transactionType, setTransactionType] = useState('');
+  const [documentNo, setDocumentNo] = useState('');
+  const [sortBy, setSortBy] = useState<'created_at' | 'posting_date'>(
+    'created_at',
+  );
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
@@ -73,23 +90,23 @@ export default function InventoryLedgerPanel() {
 
   const load = async () => {
     setLoading(true);
-    setError("");
+    setError('');
     try {
       const params = new URLSearchParams();
-      if (companyId) params.set("companyId", companyId);
-      if (itemId) params.set("itemId", itemId);
-      if (warehouseId) params.set("warehouseId", warehouseId);
-      if (entryType) params.set("entryType", entryType);
-      if (transactionType) params.set("transactionType", transactionType);
-      if (documentNo) params.set("documentNo", documentNo);
-      if (sortBy) params.set("sortBy", sortBy);
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
-      params.set("limit", "250");
+      if (companyId) params.set('companyId', companyId);
+      if (itemId) params.set('itemId', itemId);
+      if (warehouseId) params.set('warehouseId', warehouseId);
+      if (entryType) params.set('entryType', entryType);
+      if (transactionType) params.set('transactionType', transactionType);
+      if (documentNo) params.set('documentNo', documentNo);
+      if (sortBy) params.set('sortBy', sortBy);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      params.set('limit', '250');
       const res = await api.get(`/inventory-ledger?${params.toString()}`);
       setRows(unwrap<Row[]>(res) || []);
     } catch (err: any) {
-      setError(err?.message || t("ilpFailedToLoad"));
+      setError(err?.message || t('ilpFailedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -97,83 +114,127 @@ export default function InventoryLedgerPanel() {
 
   useEffect(() => {
     load();
-  }, [itemId, warehouseId, entryType, transactionType, documentNo, sortBy, dateFrom, dateTo]);
+  }, [
+    itemId,
+    warehouseId,
+    entryType,
+    transactionType,
+    documentNo,
+    sortBy,
+    dateFrom,
+    dateTo,
+  ]);
 
-  useEffect(() => { 
-    setPage(1); 
-  }, [itemId, warehouseId, entryType, transactionType, documentNo, sortBy, dateFrom, dateTo, pageSize]);
+  useEffect(() => {
+    setPage(1);
+  }, [
+    itemId,
+    warehouseId,
+    entryType,
+    transactionType,
+    documentNo,
+    sortBy,
+    dateFrom,
+    dateTo,
+    pageSize,
+  ]);
 
   const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
     const params = new URLSearchParams();
-    if (companyId) params.set("companyId", companyId);
-    params.set("limit", "500");
-    api.get(`/item?${params.toString()}`).then((r) => setItems(unwrap<Row[]>(r) || [])).catch((err) => { void err; });
-    api.get(`/warehouse?${params.toString()}`).then((r) => setWarehouses(unwrap<Row[]>(r) || [])).catch((err) => { void err; });
+    if (companyId) params.set('companyId', companyId);
+    params.set('limit', '500');
+    api
+      .get(`/item?${params.toString()}`)
+      .then((r) => setItems(unwrap<Row[]>(r) || []))
+      .catch((err) => {
+        void err;
+      });
+    api
+      .get(`/warehouse?${params.toString()}`)
+      .then((r) => setWarehouses(unwrap<Row[]>(r) || []))
+      .catch((err) => {
+        void err;
+      });
   }, []);
 
   const warehouseMap = new Map<string, Row>();
   warehouses.forEach((w) => warehouseMap.set(w.warehouse_id, w));
 
   const getLocationCode = (id?: string) => {
-    if (!id) return "—";
+    if (!id) return NA;
     const wh = warehouseMap.get(id);
-    if (!wh) return "—";
+    if (!wh) return NA;
     return wh.location_code || wh.warehouse_code || wh.warehouse_name;
   };
 
   // The export is the whole filtered ledger from the server, not the 250 rows
   // the screen loads, so a file always matches what the filters describe.
-  const [exporting, setExporting] = useState<"" | "xlsx" | "csv">("");
-  const exportLedger = async (format: "xlsx" | "csv") => {
+  const [exporting, setExporting] = useState<'' | 'xlsx' | 'csv'>('');
+  const exportLedger = async (format: 'xlsx' | 'csv') => {
     setExporting(format);
     try {
       const params = new URLSearchParams();
-      if (companyId) params.set("companyId", companyId);
-      if (itemId) params.set("itemId", itemId);
-      if (warehouseId) params.set("warehouseId", warehouseId);
-      if (entryType) params.set("entryType", entryType);
-      if (transactionType) params.set("transactionType", transactionType);
-      if (documentNo) params.set("documentNo", documentNo);
-      if (sortBy) params.set("sortBy", sortBy);
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
-      params.set("format", format);
-      const file = await apiDownload(`/inventory-ledger/export?${params.toString()}`, `inventory-ledger-entries.${format}`);
+      if (companyId) params.set('companyId', companyId);
+      if (itemId) params.set('itemId', itemId);
+      if (warehouseId) params.set('warehouseId', warehouseId);
+      if (entryType) params.set('entryType', entryType);
+      if (transactionType) params.set('transactionType', transactionType);
+      if (documentNo) params.set('documentNo', documentNo);
+      if (sortBy) params.set('sortBy', sortBy);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      params.set('format', format);
+      const file = await apiDownload(
+        `/inventory-ledger/export?${params.toString()}`,
+        `inventory-ledger-entries.${format}`,
+      );
       const url = URL.createObjectURL(file.blob);
-      const link = document.createElement("a");
+      const link = document.createElement('a');
       link.href = url;
       link.download = file.filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      const count = Number(file.headers.get("x-export-row-count") ?? 0);
-      if (file.headers.get("x-export-truncated") === "true") {
-        showToast.warn(`Exported the first ${count.toLocaleString()} entries. Narrow the filters to export the rest.`);
+      const count = Number(file.headers.get('x-export-row-count') ?? 0);
+      if (file.headers.get('x-export-truncated') === 'true') {
+        showToast.warn(
+          `Exported the first ${count.toLocaleString()} entries. Narrow the filters to export the rest.`,
+        );
       } else {
-        showToast.success(`Exported ${count.toLocaleString()} ${count === 1 ? "entry" : "entries"} to ${format === "xlsx" ? "Excel" : "CSV"}.`);
+        showToast.success(
+          `Exported ${count.toLocaleString()} ${count === 1 ? 'entry' : 'entries'} to ${format === 'xlsx' ? 'Excel' : 'CSV'}.`,
+        );
       }
     } catch (err: any) {
-      showToast.error(err?.message || "The export could not be created. Please try again.");
+      showToast.error(
+        err?.message || 'The export could not be created. Please try again.',
+      );
     } finally {
-      setExporting("");
+      setExporting('');
     }
   };
 
   const hasActiveFilters = Boolean(
-    itemId || warehouseId || entryType || transactionType || documentNo || dateFrom || dateTo
+    itemId ||
+    warehouseId ||
+    entryType ||
+    transactionType ||
+    documentNo ||
+    dateFrom ||
+    dateTo,
   );
 
   const resetFilters = () => {
-    setItemId("");
-    setWarehouseId("");
-    setEntryType("");
-    setTransactionType("");
-    setDocumentNo("");
-    setDateFrom("");
-    setDateTo("");
+    setItemId('');
+    setWarehouseId('');
+    setEntryType('');
+    setTransactionType('');
+    setDocumentNo('');
+    setDateFrom('');
+    setDateTo('');
   };
 
   return (
@@ -182,27 +243,37 @@ export default function InventoryLedgerPanel() {
       <div className="flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           <Badge variant="neutral" className="text-xs font-mono">
-            {rows.length} {rows.length === 1 ? "entry" : "entries"}
+            {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
           </Badge>
           <button
             type="button"
-            onClick={() => exportLedger("xlsx")}
+            onClick={() => exportLedger('xlsx')}
             disabled={!!exporting}
             className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
             style={{ ...S.surface, ...S.primary }}
             title="Download every entry matching the filters as an Excel file"
           >
-            {exporting === "xlsx" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Export Excel
+            {exporting === 'xlsx' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+            )}{' '}
+            Export Excel
           </button>
           <button
             type="button"
-            onClick={() => exportLedger("csv")}
+            onClick={() => exportLedger('csv')}
             disabled={!!exporting}
             className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
             style={{ ...S.surface, ...S.primary }}
             title="Download every entry matching the filters as a CSV file"
           >
-            {exporting === "csv" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Export CSV
+            {exporting === 'csv' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}{' '}
+            Export CSV
           </button>
           {hasActiveFilters && (
             <button
@@ -218,7 +289,10 @@ export default function InventoryLedgerPanel() {
       </div>
 
       {/* Filter Controls Bar (Business Central standard dimensions & filters) */}
-      <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border p-2.5" style={S.surface}>
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border p-2.5"
+        style={S.surface}
+      >
         {/* Document No / Batch search */}
         <div className="relative">
           <input
@@ -229,7 +303,10 @@ export default function InventoryLedgerPanel() {
             className={`${inputCls} w-60 pl-7`}
             style={S.input}
           />
-          <Search className="absolute left-2 top-2 h-3.5 w-3.5" style={S.muted} />
+          <Search
+            className="absolute left-2 top-2 h-3.5 w-3.5"
+            style={S.muted}
+          />
         </div>
 
         {/* Location Code Filter */}
@@ -239,7 +316,12 @@ export default function InventoryLedgerPanel() {
             value={warehouseId}
             onChange={setWarehouseId}
             options={[
-              { value: "", code: "ALL", name: "All Locations", label: "All Locations (Location Code)" },
+              {
+                value: '',
+                code: 'ALL',
+                name: 'All Locations',
+                label: 'All Locations (Location Code)',
+              },
               ...warehouses.map((wh) => ({
                 value: wh.warehouse_id,
                 code: wh.warehouse_code,
@@ -247,10 +329,10 @@ export default function InventoryLedgerPanel() {
                 label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
               })),
             ]}
-            columnHeaders={["Code", "Location Name"]}
+            columnHeaders={['Code', 'Location Name']}
             columns={[
-              { key: "code", label: "Code" },
-              { key: "name", label: "Location Name" },
+              { key: 'code', label: 'Code' },
+              { key: 'name', label: 'Location Name' },
             ]}
             placeholder="All Locations"
             triggerClassName="nf-input-sm w-full h-9"
@@ -264,7 +346,12 @@ export default function InventoryLedgerPanel() {
             value={itemId}
             onChange={setItemId}
             options={[
-              { value: "", code: "ALL", name: t("ilpAllItemsOptions", { count: items.length }), label: t("ilpAllItemsOptions", { count: items.length }) },
+              {
+                value: '',
+                code: 'ALL',
+                name: t('ilpAllItemsOptions', { count: items.length }),
+                label: t('ilpAllItemsOptions', { count: items.length }),
+              },
               ...items.map((it) => ({
                 value: it.item_id,
                 code: it.item_code,
@@ -272,12 +359,12 @@ export default function InventoryLedgerPanel() {
                 label: `${it.item_code} — ${it.item_name}`,
               })),
             ]}
-            columnHeaders={["Code", "Item Name"]}
+            columnHeaders={['Code', 'Item Name']}
             columns={[
-              { key: "code", label: "Code" },
-              { key: "name", label: "Item Name" },
+              { key: 'code', label: 'Code' },
+              { key: 'name', label: 'Item Name' },
             ]}
-            placeholder={t("ilpAllItemsOptions", { count: items.length })}
+            placeholder={t('ilpAllItemsOptions', { count: items.length })}
             triggerClassName="nf-input-sm w-full h-9"
           />
         </div>
@@ -289,12 +376,12 @@ export default function InventoryLedgerPanel() {
             value={entryType}
             onChange={setEntryType}
             options={[
-              { value: "", label: "All Entry Types" },
-              { value: "POSITIVE", label: "Positive (+)" },
-              { value: "NEGATIVE", label: "Negative (-)" },
-              { value: "TRANSFER", label: "Transfer" },
-              { value: "OVERHEAD", label: "Overhead" },
-              { value: "DESCRIPTIVE", label: "Descriptive" },
+              { value: '', label: 'All Entry Types' },
+              { value: 'POSITIVE', label: 'Positive (+)' },
+              { value: 'NEGATIVE', label: 'Negative (-)' },
+              { value: 'TRANSFER', label: 'Transfer' },
+              { value: 'OVERHEAD', label: 'Overhead' },
+              { value: 'DESCRIPTIVE', label: 'Descriptive' },
             ]}
             columnHeaders={false}
             triggerClassName="nf-input-sm min-w-[9rem] h-9"
@@ -308,19 +395,19 @@ export default function InventoryLedgerPanel() {
             value={transactionType}
             onChange={setTransactionType}
             options={[
-              { value: "", label: t("ilpAllTransactionTypes") },
-              { value: "PURCHASE", label: "Purchase" },
-              { value: "CONSUMPTION", label: "Consumption" },
-              { value: "OUTPUT", label: "Output" },
-              { value: "TRANSFER_SHIPMENT", label: "Transfer_Shipment" },
-              { value: "TRANSFER_RECEIPT", label: "Transfer_Receipt" },
-              { value: "SALES", label: "Sales" },
-              { value: "VARIANCE_POSITIVE", label: "Variance_Positive" },
-              { value: "VARIANCE_NEGATIVE", label: "Variance_Negative" },
-              { value: "OVERHEAD", label: "Overhead" },
-              { value: "DESCRIPTIVE", label: "Descriptive" },
-              { value: "BIO_HARVEST", label: "Harvest (bio-asset slaughter)" },
-              { value: "REVERSAL", label: "Reversal" },
+              { value: '', label: t('ilpAllTransactionTypes') },
+              { value: 'PURCHASE', label: 'Purchase' },
+              { value: 'CONSUMPTION', label: 'Consumption' },
+              { value: 'OUTPUT', label: 'Output' },
+              { value: 'TRANSFER_SHIPMENT', label: 'Transfer_Shipment' },
+              { value: 'TRANSFER_RECEIPT', label: 'Transfer_Receipt' },
+              { value: 'SALES', label: 'Sales' },
+              { value: 'VARIANCE_POSITIVE', label: 'Variance_Positive' },
+              { value: 'VARIANCE_NEGATIVE', label: 'Variance_Negative' },
+              { value: 'OVERHEAD', label: 'Overhead' },
+              { value: 'DESCRIPTIVE', label: 'Descriptive' },
+              { value: 'BIO_HARVEST', label: 'Harvest (bio-asset slaughter)' },
+              { value: 'REVERSAL', label: 'Reversal' },
             ]}
             columnHeaders={false}
             triggerClassName="nf-input-sm min-w-[11rem] h-9"
@@ -332,10 +419,10 @@ export default function InventoryLedgerPanel() {
           <SearchableSelect
             ariaLabel="Sort By"
             value={sortBy}
-            onChange={(val) => setSortBy(val as "created_at" | "posting_date")}
+            onChange={(val) => setSortBy(val as 'created_at' | 'posting_date')}
             options={[
-              { value: "created_at", label: "Recently Posted First" },
-              { value: "posting_date", label: "Posting Date" },
+              { value: 'created_at', label: 'Recently Posted First' },
+              { value: 'posting_date', label: 'Posting Date' },
             ]}
             columnHeaders={false}
             triggerClassName="nf-input-sm min-w-[10rem] h-9"
@@ -344,108 +431,199 @@ export default function InventoryLedgerPanel() {
 
         {/* Date Range */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>{t("ilpFrom")}</span>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} style={S.input} />
+          <span className="text-[11px] font-medium" style={S.muted}>
+            {t('ilpFrom')}
+          </span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className={inputCls}
+            style={S.input}
+          />
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>{t("ilpTo")}</span>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} style={S.input} />
+          <span className="text-[11px] font-medium" style={S.muted}>
+            {t('ilpTo')}
+          </span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className={inputCls}
+            style={S.input}
+          />
         </div>
       </div>
 
-      <Toast variant="danger" message={error} onClose={() => setError("")} />
+      <Toast variant="danger" message={error} onClose={() => setError('')} />
 
       {/* Main Inventory Ledger Entries Table */}
-      <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
+      <div
+        className="overflow-hidden rounded-[var(--radius-md)] border"
+        style={S.surface}
+      >
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
-                <TableHead className="whitespace-nowrap w-20">Entry No.</TableHead>
-                <TableHead className="whitespace-nowrap w-28 min-w-[105px]">{t("ilpPostingDate")}</TableHead>
-                <TableHead className="whitespace-nowrap w-36 min-w-[130px]">{t("ilpDocument")}</TableHead>
+                <TableHead className="whitespace-nowrap w-20">
+                  Entry No.
+                </TableHead>
+                <TableHead className="whitespace-nowrap w-28 min-w-[105px]">
+                  {t('ilpPostingDate')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap w-36 min-w-[130px]">
+                  {t('ilpDocument')}
+                </TableHead>
                 {/* Code and name are two columns (Rishi, 14 Oct). */}
                 <TableHead className="whitespace-nowrap">Item No.</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[210px]">Item Description</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[150px]">{t("ilpLocation")}</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[135px]">Transaction Type</TableHead>
-                <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
-                <TableHead className="whitespace-nowrap text-right w-28">{t("ilpQty")}</TableHead>
-                <TableHead className="whitespace-nowrap text-right w-28">{t("ilpRemaining")}</TableHead>
-                <TableHead className="whitespace-nowrap text-right w-24">{t("ilpRate")}</TableHead>
-                <TableHead className="whitespace-nowrap text-right w-28">{t("ilpAmount")}</TableHead>
-                <TableHead className="whitespace-nowrap text-center min-w-[100px]">Item Tracking</TableHead>
-                <TableHead className="whitespace-nowrap w-28">{t("ilpBatchNo")}</TableHead>
-                <TableHead className="whitespace-nowrap text-center w-16">Action</TableHead>
+                <TableHead className="whitespace-nowrap min-w-[210px]">
+                  Item Description
+                </TableHead>
+                <TableHead className="whitespace-nowrap min-w-[150px]">
+                  {t('ilpLocation')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap min-w-[135px]">
+                  Transaction Type
+                </TableHead>
+                <TableHead className="whitespace-nowrap min-w-[110px]">
+                  Entry Type
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right w-28">
+                  {t('ilpQty')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right w-28">
+                  {t('ilpRemaining')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right w-24">
+                  {t('ilpRate')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right w-28">
+                  {t('ilpAmount')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-center min-w-[100px]">
+                  Item Tracking
+                </TableHead>
+                <TableHead className="whitespace-nowrap w-28">
+                  {t('ilpBatchNo')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-center w-16">
+                  Action
+                </TableHead>
               </tr>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
-                    <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> 
-                    {t("ilpLoading")}
+                  <TableCell
+                    colSpan={15}
+                    className="py-12 text-center"
+                    style={S.sub}
+                  >
+                    <Loader2
+                      className="mx-auto mb-2 h-5 w-5 animate-spin"
+                      style={S.accent}
+                    />
+                    {t('ilpLoading')}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
-                    <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> 
-                    {hasActiveFilters ? "No inventory ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
+                  <TableCell
+                    colSpan={15}
+                    className="py-12 text-center"
+                    style={S.sub}
+                  >
+                    <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
+                    {hasActiveFilters
+                      ? 'No inventory ledger entries match the selected filters.'
+                      : t('ilpNoLedgerEntries')}
                   </TableCell>
                 </tr>
               ) : (
                 pagedRows.map((row) => {
                   const isPos = isInboundEntry(row);
                   const qty = Number(row.quantity || 0);
-                  const rem = row.remaining_quantity !== null && row.remaining_quantity !== undefined 
-                    ? Number(row.remaining_quantity) 
-                    : null;
+                  const rem =
+                    row.remaining_quantity !== null &&
+                    row.remaining_quantity !== undefined
+                      ? Number(row.remaining_quantity)
+                      : null;
                   const rate = Number(row.rate || 0);
                   const amt = Number(row.amount || 0);
 
                   return (
-                    <TableRow 
+                    <TableRow
                       key={row.ledger_id}
                       onClick={() => setViewingEntry(row)}
                       className="cursor-pointer hover:bg-[var(--surface-raised)] transition"
                     >
                       {/* Entry No. */}
-                      <TableCell className="whitespace-nowrap font-mono font-semibold" style={S.primary}>
+                      <TableCell
+                        className="whitespace-nowrap font-mono font-semibold"
+                        style={S.primary}
+                      >
                         {row.entry_no}
                       </TableCell>
 
                       {/* Posting Date */}
-                      <TableCell className="whitespace-nowrap font-medium" style={S.primary}>
+                      <TableCell
+                        className="whitespace-nowrap font-medium"
+                        style={S.primary}
+                      >
                         {row.posting_date}
                       </TableCell>
 
                       {/* Document No. & External Document No. */}
                       <TableCell className="whitespace-nowrap">
                         <div className="flex flex-col">
-                          <span className="font-mono text-xs font-semibold" style={S.primary}>
+                          <span
+                            className="font-mono text-xs font-semibold"
+                            style={S.primary}
+                          >
                             {row.document_no}
                           </span>
                           <span className="text-[10px]" style={S.muted}>
                             {formatBcDocumentType(row.document_type)}
-                            {row.external_reference_no ? ` • Ext: ${row.external_reference_no}` : ""}
+                            {row.external_reference_no
+                              ? ` • Ext: ${row.external_reference_no}`
+                              : ''}
                           </span>
                         </div>
                       </TableCell>
 
-                      <TableCell className="whitespace-nowrap font-mono text-xs font-semibold" style={S.primary}>{row.item_code}</TableCell>
-                      <TableCell className="max-w-[260px] truncate text-xs" style={S.sub} title={row.item_description}>{row.item_description}</TableCell>
+                      <TableCell
+                        className="whitespace-nowrap font-mono text-xs font-semibold"
+                        style={S.primary}
+                      >
+                        {row.item_code}
+                      </TableCell>
+                      <TableCell
+                        className="max-w-[260px] truncate text-xs"
+                        style={S.sub}
+                        title={row.item_description}
+                      >
+                        {row.item_description}
+                      </TableCell>
 
                       {/* Location Code */}
                       <TableCell className="whitespace-nowrap" style={S.sub}>
-                        <span className="truncate max-w-[170px] block font-mono text-xs" title={getLocationCode(row.warehouse_id)}>
+                        <span
+                          className="truncate max-w-[170px] block font-mono text-xs"
+                          title={getLocationCode(row.warehouse_id)}
+                        >
                           {getLocationCode(row.warehouse_id)}
                         </span>
                       </TableCell>
 
                       {/* Entry Type (Business Central format) */}
                       <TableCell className="whitespace-nowrap">
-                        <Badge variant="neutral" className="text-[11px] font-semibold" title={row.transaction_type}>
+                        <Badge
+                          variant="neutral"
+                          className="text-[11px] font-semibold"
+                          title={row.transaction_type}
+                        >
                           {formatBcEntryType(row.transaction_type)}
                         </Badge>
                       </TableCell>
@@ -453,67 +631,98 @@ export default function InventoryLedgerPanel() {
                       {/* Movement (Positive / Negative / Transfer / Overhead / Descriptive) */}
                       <TableCell className="whitespace-nowrap">
                         <StatusBadge
-                          status={isPos ? "POSITIVE" : row.entry_type}
+                          status={isPos ? 'POSITIVE' : row.entry_type}
                           label={
-                            row.entry_type === "POSITIVE"
-                              ? "Positive (+)"
-                              : row.entry_type === "NEGATIVE"
-                              ? "Negative (-)"
-                              : row.entry_type === "TRANSFER"
-                              ? (isPos ? "Receipt" : "Transfer")
-                              : row.entry_type === "OVERHEAD"
-                              ? "Overhead"
-                              : row.entry_type === "DESCRIPTIVE"
-                              ? "Descriptive"
-                              : row.entry_type
+                            row.entry_type === 'POSITIVE'
+                              ? 'Positive (+)'
+                              : row.entry_type === 'NEGATIVE'
+                                ? 'Negative (-)'
+                                : row.entry_type === 'TRANSFER'
+                                  ? isPos
+                                    ? 'Receipt'
+                                    : 'Transfer'
+                                  : row.entry_type === 'OVERHEAD'
+                                    ? 'Overhead'
+                                    : row.entry_type === 'DESCRIPTIVE'
+                                      ? 'Descriptive'
+                                      : row.entry_type
                           }
                         />
                       </TableCell>
 
                       {/* Quantity with UOM */}
-                      <TableCell 
+                      <TableCell
                         className="whitespace-nowrap text-right font-mono font-semibold"
                         style={{
                           color: isPos
-                            ? "var(--success)"
+                            ? 'var(--success)'
                             : qty < 0
-                            ? "var(--danger)"
-                            : "var(--text-primary)",
+                              ? 'var(--danger)'
+                              : 'var(--text-primary)',
                         }}
                       >
                         {isPos
                           ? `+${qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
-                          : qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>
+                          : qty.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 4,
+                            })}
+                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">
+                          {row.uom}
+                        </span>
                       </TableCell>
 
                       {/* Remaining Quantity */}
-                      <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
+                      <TableCell
+                        className="whitespace-nowrap text-right font-mono text-xs"
+                        style={S.sub}
+                      >
                         {isPos ? (
                           rem !== null ? (
-                            <span className={rem === 0 ? "text-[var(--text-muted)] line-through" : ""}>
-                              {rem.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                              <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
+                            <span
+                              className={
+                                rem === 0
+                                  ? 'text-[var(--text-muted)] line-through'
+                                  : ''
+                              }
+                            >
+                              {rem.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 4,
+                              })}
+                              <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">
+                                {row.uom}
+                              </span>
                             </span>
-                          ) : "—"
+                          ) : (
+                            NA
+                          )
                         ) : (
-                          <span style={S.muted}>—</span>
+                          <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
 
                       {/* Unit Cost */}
-                      <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
+                      <TableCell
+                        className="whitespace-nowrap text-right font-mono text-xs"
+                        style={S.sub}
+                      >
                         {formatMoney(rate)}
                       </TableCell>
 
                       {/* Cost Amount (Actual) */}
-                      <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>
+                      <TableCell
+                        className="whitespace-nowrap text-right font-mono text-xs font-semibold"
+                        style={S.primary}
+                      >
                         {formatMoney(amt)}
                       </TableCell>
 
                       {/* Item Tracking (Yes / No) */}
                       <TableCell className="whitespace-nowrap text-center text-xs">
-                        {row.lot_no || row.serial_no || Number(row.lot_lines) > 0 ? (
+                        {row.lot_no ||
+                        row.serial_no ||
+                        Number(row.lot_lines) > 0 ? (
                           <Badge
                             variant="success"
                             className="text-[10px] font-semibold cursor-default"
@@ -521,11 +730,13 @@ export default function InventoryLedgerPanel() {
                               Number(row.lot_lines) > 0
                                 ? `${row.lot_lines} lots — open the entry to see which`
                                 : row.serial_no
-                                ? `Serial No(s): ${row.serial_no}`
-                                : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ""}`
+                                  ? `Serial No(s): ${row.serial_no}`
+                                  : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ''}`
                             }
                           >
-                            {Number(row.lot_lines) > 0 ? `${row.lot_lines} lots` : "Yes"}
+                            {Number(row.lot_lines) > 0
+                              ? `${row.lot_lines} lots`
+                              : 'Yes'}
                           </Badge>
                         ) : (
                           <span style={S.muted}>No</span>
@@ -533,8 +744,11 @@ export default function InventoryLedgerPanel() {
                       </TableCell>
 
                       {/* Production Batch No. */}
-                      <TableCell className="whitespace-nowrap font-mono text-xs" style={row.batch_no ? S.primary : S.muted}>
-                        {row.batch_no || "—"}
+                      <TableCell
+                        className="whitespace-nowrap font-mono text-xs"
+                        style={row.batch_no ? S.primary : S.muted}
+                      >
+                        {row.batch_no || NA}
                       </TableCell>
 
                       {/* Action */}
@@ -562,16 +776,20 @@ export default function InventoryLedgerPanel() {
 
         {/* Pagination */}
         {!loading && rows.length > 0 && (
-          <div className="border-t px-3 py-1.5 flex items-center justify-between" style={{ borderColor: "var(--border)" }}>
+          <div
+            className="border-t px-3 py-1.5 flex items-center justify-between"
+            style={{ borderColor: 'var(--border)' }}
+          >
             <span className="text-xs" style={S.muted}>
-              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length} entries
+              Showing {(page - 1) * pageSize + 1}–
+              {Math.min(page * pageSize, rows.length)} of {rows.length} entries
             </span>
-            <Pagination 
-              page={page} 
-              pageSize={pageSize} 
-              total={rows.length} 
-              onPageChange={setPage} 
-              onPageSizeChange={setPageSize} 
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={rows.length}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
             />
           </div>
         )}
@@ -581,7 +799,11 @@ export default function InventoryLedgerPanel() {
       <Dialog
         open={Boolean(viewingEntry)}
         onClose={() => setViewingEntry(null)}
-        title={viewingEntry ? `Inventory Ledger Entry — ${viewingEntry.document_no}` : ""}
+        title={
+          viewingEntry
+            ? `Inventory Ledger Entry — ${viewingEntry.document_no}`
+            : ''
+        }
         maxWidth="xl"
       >
         {viewingEntry && (

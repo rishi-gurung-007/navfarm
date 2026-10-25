@@ -1,4 +1,7 @@
-import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
+import {
+  transactionCls,
+  useFarmScope,
+} from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
@@ -10,7 +13,11 @@ import { AnimalService } from '../animal/animal.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BreedingService } from './breeding.service';
 import * as schema from '../../../core/database/schema';
-import { MatingType, PregCheckMethod, ConceptionResult } from './dto/breeding.dto';
+import {
+  MatingType,
+  PregCheckMethod,
+  ConceptionResult,
+} from './dto/breeding.dto';
 
 /**
  * The `recordMating`/`recordPregnancyCheck`/`recordFarrowing`/
@@ -36,14 +43,27 @@ describe('BreedingService', () => {
    * fixture is therefore in 'batch-1' and live unless a test says otherwise (current_batch_id: null, is_active: false).
    */
   const rows = new (class extends Map<unknown, unknown[]> {
-    set(key: unknown, value: unknown[]) {
-      return super.set(key, key === schema.animalRegister ? value.map((a) => ({ is_active: true, current_batch_id: 'batch-1', ...(a as object) })) : value);
+    override set(key: unknown, value: unknown[]) {
+      return super.set(
+        key,
+        key === schema.animalRegister
+          ? value.map((a) => ({
+              is_active: true,
+              current_batch_id: 'batch-1',
+              ...(a as object),
+            }))
+          : value,
+      );
     }
   })();
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
   const mockDbUpdate = jest.fn();
-  const mockDb = { select: mockDbSelect, insert: mockDbInsert, update: mockDbUpdate };
+  const mockDb = {
+    select: mockDbSelect,
+    insert: mockDbInsert,
+    update: mockDbUpdate,
+  };
 
   let capturedWhere: unknown;
 
@@ -57,7 +77,10 @@ describe('BreedingService', () => {
   const chain = (result: unknown[]) => {
     const self: any = {
       from: () => self,
-      where: (cond: unknown) => { capturedWhere = cond; return self; },
+      where: (cond: unknown) => {
+        capturedWhere = cond;
+        return self;
+      },
       limit: () => self,
       for: () => self,
       orderBy: () => self,
@@ -68,7 +91,8 @@ describe('BreedingService', () => {
     return self;
   };
 
-  const renderedWhere = () => new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
+  const renderedWhere = () =>
+    new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
 
   beforeEach(async () => {
     rows.clear();
@@ -83,20 +107,47 @@ describe('BreedingService', () => {
     // gender and animal_code are read by the resolveSowAndBoar guard: a fixture
     // without them reads as a non-female animal and refuses before the test's
     // own assertion point.
-    rows.set(schema.animalRegister, [{ animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, total_piglets_born_live: 0, total_piglets_weaned: 0 }]);
+    rows.set(schema.animalRegister, [
+      {
+        animal_id: 'sow-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        animal_code: 'SOW-001',
+        gender: 'F',
+        parity_count: 0,
+        total_piglets_born_live: 0,
+        total_piglets_weaned: 0,
+      },
+    ]);
     // Every litter comes from a mating (G9): the sow's open one, found when the farrowing names none.
-    rows.set(schema.breedingRecord, [{ breeding_id: 'br-open', mating_date: '2026-01-01' }]);
+    rows.set(schema.breedingRecord, [
+      { breeding_id: 'br-open', mating_date: '2026-01-01' },
+    ]);
     rows.set(schema.farrowingRecord, []);
-    rows.set(schema.batchHeader, [{ batch_id: 'batch-1', batch_no: 'BATCH-1', tracking_mode: 'ANIMAL_WISE', status: 'ACTIVE', farm_id: null }]);
+    rows.set(schema.batchHeader, [
+      {
+        batch_id: 'batch-1',
+        batch_no: 'BATCH-1',
+        tracking_mode: 'ANIMAL_WISE',
+        status: 'ACTIVE',
+        farm_id: null,
+      },
+    ]);
     rows.set(schema.semenBatch, []);
     rows.set(schema.breedMaster, []);
 
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
-    mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
+    mockDbSelect.mockImplementation(() => ({
+      from: (table: unknown) => chain(rows.get(table) ?? []),
+    }));
     mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
-    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+    mockDbUpdate.mockReturnValue({
+      set: jest
+        .fn()
+        .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+    });
 
     cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
@@ -145,7 +196,16 @@ describe('BreedingService', () => {
 
     it('defaults to 116 days expected farrowing date when the sow has no breed, and 28 days preg check date', async () => {
       rows.set(schema.breedingRecord, []);
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', gender: 'F', parity_count: 1, breed_id: null }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 1,
+          breed_id: null,
+        },
+      ]);
       // The lot is validated against the sow's company and the boar's farm scope (M4).
       rows.set(schema.semenBatch, [{ semen_batch_id: 'SEM-LOT-01' }]);
 
@@ -169,11 +229,26 @@ describe('BreedingService', () => {
     // sow's own breed — this is the write that decided 2026-09-14/15 replaced.
     it("uses the sow's breed gestation_days over the 116-day default", async () => {
       rows.set(schema.breedingRecord, []);
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', gender: 'F', parity_count: 1, breed_id: 'breed-large-white' }]);
-      rows.set(schema.breedMaster, [{ breed_id: 'breed-large-white', gestation_days: 113 }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 1,
+          breed_id: 'breed-large-white',
+        },
+      ]);
+      rows.set(schema.breedMaster, [
+        { breed_id: 'breed-large-white', gestation_days: 113 },
+      ]);
 
       const result = await service.recordMating(
-        { sow_animal_id: 'sow-1', mating_type: MatingType.AI, mating_date: '2026-03-01' },
+        {
+          sow_animal_id: 'sow-1',
+          mating_type: MatingType.AI,
+          mating_date: '2026-03-01',
+        },
         'tenant-1',
       );
 
@@ -183,12 +258,14 @@ describe('BreedingService', () => {
 
   describe('recordPregnancyCheck', () => {
     it('updates sow status to PREGNANT on pregnancy confirmation', async () => {
-      rows.set(schema.breedingRecord, [{
-        breeding_id: 'breed-1',
-        sow_animal_id: 'sow-1',
-        preg_check_date: '2026-03-29',
-        preg_check_method: 'ULTRASOUND',
-      }]);
+      rows.set(schema.breedingRecord, [
+        {
+          breeding_id: 'breed-1',
+          sow_animal_id: 'sow-1',
+          preg_check_date: '2026-03-29',
+          preg_check_method: 'ULTRASOUND',
+        },
+      ]);
 
       const result = await service.recordPregnancyCheck(
         'breed-1',
@@ -206,12 +283,14 @@ describe('BreedingService', () => {
 
   describe('recordFarrowing', () => {
     it('records live piglets, computes total litter born, and sets sow to LACTATING', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1',
-        company_id: 'comp-1',
-        parity_count: 2,
-        total_piglets_born_live: 24,
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          parity_count: 2,
+          total_piglets_born_live: 24,
+        },
+      ]);
 
       const result = await service.recordFarrowing(
         {
@@ -234,16 +313,22 @@ describe('BreedingService', () => {
     // Without the fix, a GILT's first farrowing left animal_type untouched —
     // she stayed a GILT forever, including on every later farrowing.
     it('promotes a GILT to SOW on her first farrowing', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'gilt-1',
-        company_id: 'comp-1',
-        animal_type: 'GILT',
-        parity_count: 0,
-        total_piglets_born_live: 0,
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'gilt-1',
+          company_id: 'comp-1',
+          animal_type: 'GILT',
+          parity_count: 0,
+          total_piglets_born_live: 0,
+        },
+      ]);
 
       await service.recordFarrowing(
-        { sow_animal_id: 'gilt-1', farrowing_date: '2026-06-23', piglets_born_live: 10 },
+        {
+          sow_animal_id: 'gilt-1',
+          farrowing_date: '2026-06-23',
+          piglets_born_live: 10,
+        },
         'tenant-1',
       );
 
@@ -252,16 +337,22 @@ describe('BreedingService', () => {
     });
 
     it('leaves an already-SOW animal_type alone on a later farrowing', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1',
-        company_id: 'comp-1',
-        animal_type: 'SOW',
-        parity_count: 1,
-        total_piglets_born_live: 12,
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_type: 'SOW',
+          parity_count: 1,
+          total_piglets_born_live: 12,
+        },
+      ]);
 
       await service.recordFarrowing(
-        { sow_animal_id: 'sow-1', farrowing_date: '2026-06-23', piglets_born_live: 10 },
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-06-23',
+          piglets_born_live: 10,
+        },
         'tenant-1',
       );
 
@@ -275,13 +366,23 @@ describe('BreedingService', () => {
   // out of farrowing added another, and weaning added none.
   describe('parity completes at weaning', () => {
     it('does not move parity_count at farrowing, and numbers the litter parity + 1', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1', company_id: 'comp-1', animal_type: 'SOW', status: 'PREGNANT',
-        parity_count: 2, total_piglets_born_live: 24,
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_type: 'SOW',
+          status: 'PREGNANT',
+          parity_count: 2,
+          total_piglets_born_live: 24,
+        },
+      ]);
 
       const result = await service.recordFarrowing(
-        { sow_animal_id: 'sow-1', farrowing_date: '2026-06-23', piglets_born_live: 12 },
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-06-23',
+          piglets_born_live: 12,
+        },
         'tenant-1',
       );
 
@@ -293,62 +394,153 @@ describe('BreedingService', () => {
     });
 
     it('refuses a second farrowing while the last litter is not weaned (litter number above parity_count)', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', status: 'LACTATING',
-        parity_count: 2, total_piglets_born_live: 24,
-      }]);
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-3', parity_number: 3 }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_code: 'SOW-001',
+          status: 'LACTATING',
+          parity_count: 2,
+          total_piglets_born_live: 24,
+        },
+      ]);
+      rows.set(schema.farrowingRecord, [
+        { farrow_id: 'f-3', parity_number: 3 },
+      ]);
 
       await expect(
-        service.recordFarrowing({ sow_animal_id: 'sow-1', farrowing_date: '2026-06-23', piglets_born_live: 9 }, 'tenant-1'),
+        service.recordFarrowing(
+          {
+            sow_animal_id: 'sow-1',
+            farrowing_date: '2026-06-23',
+            piglets_born_live: 9,
+          },
+          'tenant-1',
+        ),
       ).rejects.toThrow('not weaned yet');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('does not trust the sow status alone: LACTATING with no unweaned litter on record can farrow', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1', company_id: 'comp-1', animal_code: 'SOW-001', status: 'LACTATING',
-        parity_count: 2, total_piglets_born_live: 24,
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          animal_code: 'SOW-001',
+          status: 'LACTATING',
+          parity_count: 2,
+          total_piglets_born_live: 24,
+        },
+      ]);
 
       const result = await service.recordFarrowing(
-        { sow_animal_id: 'sow-1', farrowing_date: '2026-06-23', piglets_born_live: 9 },
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-06-23',
+          piglets_born_live: 9,
+        },
         'tenant-1',
       );
       expect(result.parity_number).toBe(3);
     });
 
     it('sets parity_count to the litter number at weaning and counts weaned piglets', async () => {
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-1', sow_animal_id: 'sow-1', parity_number: 3, piglets_weaned: 0, notes: null }]);
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1', company_id: 'comp-1', status: 'LACTATING', parity_count: 2, total_piglets_weaned: 20,
-      }]);
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f-1',
+          sow_animal_id: 'sow-1',
+          parity_number: 3,
+          piglets_weaned: 0,
+          notes: null,
+        },
+      ]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          status: 'LACTATING',
+          parity_count: 2,
+          total_piglets_weaned: 20,
+        },
+      ]);
 
-      const result = await service.recordWeaning('f-1', { weaning_date: '2026-07-21', piglets_weaned: 11 } as any, 'tenant-1');
+      const result = await service.recordWeaning(
+        'f-1',
+        { weaning_date: '2026-07-21', piglets_weaned: 11 } as any,
+        'tenant-1',
+      );
 
       const sowSet = mockDbUpdate.mock.results[0].value.set.mock.calls[1][0];
-      expect(sowSet).toMatchObject({ parity_count: 3, total_piglets_weaned: 31, status: 'ACTIVE' });
+      expect(sowSet).toMatchObject({
+        parity_count: 3,
+        total_piglets_weaned: 31,
+        status: 'ACTIVE',
+      });
       expect(result.parity_count).toBe(3);
     });
 
     it('does not count the litter or its piglets twice when the same weaning is posted again', async () => {
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-1', sow_animal_id: 'sow-1', parity_number: 3, piglets_weaned: 11, notes: null }]);
-      rows.set(schema.animalRegister, [{
-        animal_id: 'sow-1', company_id: 'comp-1', status: 'ACTIVE', parity_count: 3, total_piglets_weaned: 31,
-      }]);
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f-1',
+          sow_animal_id: 'sow-1',
+          parity_number: 3,
+          piglets_weaned: 11,
+          notes: null,
+        },
+      ]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'comp-1',
+          status: 'ACTIVE',
+          parity_count: 3,
+          total_piglets_weaned: 31,
+        },
+      ]);
 
-      await service.recordWeaning('f-1', { weaning_date: '2026-07-21', piglets_weaned: 11 } as any, 'tenant-1');
+      await service.recordWeaning(
+        'f-1',
+        { weaning_date: '2026-07-21', piglets_weaned: 11 } as any,
+        'tenant-1',
+      );
 
       const sowSet = mockDbUpdate.mock.results[0].value.set.mock.calls[1][0];
-      expect(sowSet).toMatchObject({ parity_count: 3, total_piglets_weaned: 31 });
+      expect(sowSet).toMatchObject({
+        parity_count: 3,
+        total_piglets_weaned: 31,
+      });
     });
 
     // Agreed 9 Oct: a weaned sow goes to Dry Sow, by the ordinary stage move.
-    const weanedSow = { animal_id: 'sow-1', company_id: 'co-1', nob_id: 'nob-1', lob_id: 'lob-1', status: 'LACTATING', parity_count: 2, total_piglets_weaned: 0, current_batch_id: 'b-sows', current_stage_id: 'st-lact' };
-    const weanIt = () => service.recordWeaning('f-1', { weaning_date: '2026-11-06', piglets_weaned: 10 } as any, 'tenant-1');
+    const weanedSow = {
+      animal_id: 'sow-1',
+      company_id: 'co-1',
+      nob_id: 'nob-1',
+      lob_id: 'lob-1',
+      status: 'LACTATING',
+      parity_count: 2,
+      total_piglets_weaned: 0,
+      current_batch_id: 'b-sows',
+      current_stage_id: 'st-lact',
+    };
+    const weanIt = () =>
+      service.recordWeaning(
+        'f-1',
+        { weaning_date: '2026-11-06', piglets_weaned: 10 } as any,
+        'tenant-1',
+      );
 
     it('moves a weaned sow of an animal-wise batch to the Dry Sow stage through the stage move', async () => {
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-1', sow_animal_id: 'sow-1', parity_number: 3, piglets_weaned: 0, notes: null }]);
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f-1',
+          sow_animal_id: 'sow-1',
+          parity_number: 3,
+          piglets_weaned: 0,
+          notes: null,
+        },
+      ]);
       rows.set(schema.animalRegister, [weanedSow]);
       rows.set(schema.batchHeader, [{ tracking_mode: 'ANIMAL_WISE' }]);
       rows.set(schema.stageMaster, [{ stage_id: 'st-dry' }]);
@@ -357,7 +549,11 @@ describe('BreedingService', () => {
 
       expect(animals.transitionStage).toHaveBeenCalledWith(
         'sow-1',
-        expect.objectContaining({ to_stage_id: 'st-dry', transition_date: '2026-11-06', reason: 'Weaned litter 3' }),
+        expect.objectContaining({
+          to_stage_id: 'st-dry',
+          transition_date: '2026-11-06',
+          reason: 'Weaned litter 3',
+        }),
         'tenant-1',
         undefined,
       );
@@ -366,11 +562,21 @@ describe('BreedingService', () => {
     });
 
     it('leaves the sow where she is when there is no Dry Sow stage, or her batch is not animal-wise', async () => {
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-1', sow_animal_id: 'sow-1', parity_number: 3, piglets_weaned: 0, notes: null }]);
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f-1',
+          sow_animal_id: 'sow-1',
+          parity_number: 3,
+          piglets_weaned: 0,
+          notes: null,
+        },
+      ]);
       rows.set(schema.animalRegister, [weanedSow]);
       rows.set(schema.batchHeader, [{ tracking_mode: 'ANIMAL_WISE' }]);
       rows.set(schema.stageMaster, []);
-      expect((await weanIt() as any).message).toContain('no Dry Sow stage is set up');
+      expect(((await weanIt()) as any).message).toContain(
+        'no Dry Sow stage is set up',
+      );
 
       rows.set(schema.batchHeader, [{ tracking_mode: 'BATCH_WISE' }]);
       rows.set(schema.stageMaster, [{ stage_id: 'st-dry' }]);
@@ -381,58 +587,124 @@ describe('BreedingService', () => {
 
   // G9: a litter is linked to the mating it came from, so the boar's litters show through his matings.
   describe('the mating a litter comes from', () => {
-    const sow = { animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', status: 'PREGNANT', parity_count: 0 };
+    const sow = {
+      animal_id: 'sow-1',
+      company_id: 'co-1',
+      animal_code: 'SOW-001',
+      gender: 'F',
+      status: 'PREGNANT',
+      parity_count: 0,
+    };
     const farrow = (over: object = {}) =>
-      service.recordFarrowing({ sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 9, ...over } as any, 'tenant-1');
+      service.recordFarrowing(
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-10-09',
+          piglets_born_live: 9,
+          ...over,
+        } as any,
+        'tenant-1',
+      );
 
-    it('links the sow\'s open mating when the farrowing names none', async () => {
+    it("links the sow's open mating when the farrowing names none", async () => {
       rows.set(schema.animalRegister, [sow]);
       await farrow();
-      const values = mockDbInsert.mock.results.map((r) => (r.value.values as jest.Mock).mock.calls[0]?.[0]).find((v: any) => v?.farrow_id);
+      const values = mockDbInsert.mock.results
+        .map((r) => (r.value.values as jest.Mock).mock.calls[0]?.[0])
+        .find((v: any) => v?.farrow_id);
       expect(values).toMatchObject({ breeding_id: 'br-open' });
     });
 
     it('refuses a farrowing when no mating is recorded', async () => {
       rows.set(schema.animalRegister, [sow]);
       rows.set(schema.breedingRecord, []);
-      await expect(farrow()).rejects.toThrow('No open mating is recorded for SOW-001');
+      await expect(farrow()).rejects.toThrow(
+        'No open mating is recorded for SOW-001',
+      );
     });
 
     it('refuses a named mating that already farrowed, or is dated after the farrowing', async () => {
       rows.set(schema.animalRegister, [sow]);
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-1', mating_date: '2026-06-01', farrow_id: 'f-old' }]);
-      await expect(farrow({ breeding_id: 'br-1' })).rejects.toThrow('already farrowed');
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-1', mating_date: '2026-10-20', farrow_id: null }]);
-      await expect(farrow({ breeding_id: 'br-1' })).rejects.toThrow('dated on or after this farrowing');
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-1', mating_date: '2026-06-01', farrow_id: 'f-old' },
+      ]);
+      await expect(farrow({ breeding_id: 'br-1' })).rejects.toThrow(
+        'already farrowed',
+      );
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-1', mating_date: '2026-10-20', farrow_id: null },
+      ]);
+      await expect(farrow({ breeding_id: 'br-1' })).rejects.toThrow(
+        'dated on or after this farrowing',
+      );
     });
   });
 
   // Decision of 9 Oct: the piglets of a litter are a lot of the piglet bio-asset item in a batch-wise batch, moved on by
   // transfer to whatever stage or batch is wanted.
   describe('the piglet lot', () => {
-    const sow = { animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', animal_type: 'SOW', status: 'PREGNANT', parity_count: 1, total_piglets_born_live: 10, total_piglets_weaned: 9 };
+    const sow = {
+      animal_id: 'sow-1',
+      company_id: 'co-1',
+      animal_code: 'SOW-001',
+      animal_type: 'SOW',
+      status: 'PREGNANT',
+      parity_count: 1,
+      total_piglets_born_live: 10,
+      total_piglets_weaned: 9,
+    };
 
     it('holds a farrowing’s piglets as a lot — born live plus fostered in, less fostered out — and keeps the batch on the record', async () => {
       rows.set(schema.animalRegister, [sow]);
-      pigletLots.createLot.mockResolvedValue({ batch_id: 'b-pig', batch_no: 'BATCH-000010', lot_no: 'LOT-00009' });
+      pigletLots.createLot.mockResolvedValue({
+        batch_id: 'b-pig',
+        batch_no: 'BATCH-000010',
+        lot_no: 'LOT-00009',
+      });
 
       const result: any = await service.recordFarrowing(
-        { sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 11, foster_received: 2, fostered_out: 1, piglet_item_id: 'item-piglet', piglet_stage_id: 'st-1' } as any,
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-10-09',
+          piglets_born_live: 11,
+          foster_received: 2,
+          fostered_out: 1,
+          piglet_item_id: 'item-piglet',
+          piglet_stage_id: 'st-1',
+        } as any,
         'tenant-1',
       );
 
       expect(pigletLots.createLot).toHaveBeenCalledWith(
-        expect.objectContaining({ quantity: 12, item_id: 'item-piglet', stage_id: 'st-1', farrowing_date: '2026-10-09' }),
+        expect.objectContaining({
+          quantity: 12,
+          item_id: 'item-piglet',
+          stage_id: 'st-1',
+          farrowing_date: '2026-10-09',
+        }),
         'tenant-1',
         undefined,
       );
-      expect(result).toMatchObject({ piglet_batch_id: 'b-pig', piglet_lot_no: 'LOT-00009', piglet_batch_no: 'BATCH-000010' });
-      expect(result.message).toContain('12 piglets held as lot LOT-00009 in batch BATCH-000010');
+      expect(result).toMatchObject({
+        piglet_batch_id: 'b-pig',
+        piglet_lot_no: 'LOT-00009',
+        piglet_batch_no: 'BATCH-000010',
+      });
+      expect(result.message).toContain(
+        '12 piglets held as lot LOT-00009 in batch BATCH-000010',
+      );
     });
 
     it('records the litter alone, and says so, when no piglet item is chosen', async () => {
       rows.set(schema.animalRegister, [sow]);
-      const result: any = await service.recordFarrowing({ sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 11 } as any, 'tenant-1');
+      const result: any = await service.recordFarrowing(
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-10-09',
+          piglets_born_live: 11,
+        } as any,
+        'tenant-1',
+      );
       expect(pigletLots.createLot).not.toHaveBeenCalled();
       expect(result.piglet_batch_id).toBeNull();
       expect(result.message).toContain('No piglet lot was created');
@@ -440,24 +712,63 @@ describe('BreedingService', () => {
 
     it('makes no lot for a litter with nothing born alive', async () => {
       rows.set(schema.animalRegister, [sow]);
-      await service.recordFarrowing({ sow_animal_id: 'sow-1', farrowing_date: '2026-10-09', piglets_born_live: 0, piglets_stillborn: 4, piglet_item_id: 'item-piglet' } as any, 'tenant-1');
+      await service.recordFarrowing(
+        {
+          sow_animal_id: 'sow-1',
+          farrowing_date: '2026-10-09',
+          piglets_born_live: 0,
+          piglets_stillborn: 4,
+          piglet_item_id: 'item-piglet',
+        } as any,
+        'tenant-1',
+      );
       expect(pigletLots.createLot).not.toHaveBeenCalled();
     });
 
     const litter = (over: object = {}) => {
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'f-1', company_id: 'co-1', sow_animal_id: 'sow-1', parity_number: 2, piglets_weaned: 0, piglet_batch_id: 'b-pig', piglet_lot_no: 'LOT-00009', notes: null, ...over }]);
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f-1',
+          company_id: 'co-1',
+          sow_animal_id: 'sow-1',
+          parity_number: 2,
+          piglets_weaned: 0,
+          piglet_batch_id: 'b-pig',
+          piglet_lot_no: 'LOT-00009',
+          notes: null,
+          ...over,
+        },
+      ]);
       rows.set(schema.animalRegister, [{ ...sow, status: 'LACTATING' }]);
       rows.set(schema.batchBioAssetState, [{ current_quantity: '12' }]);
     };
-    const wean = (dto: object) => service.recordWeaning('f-1', { weaning_date: '2026-11-06', piglets_weaned: 10, ...dto } as any, 'tenant-1');
+    const wean = (dto: object) =>
+      service.recordWeaning(
+        'f-1',
+        { weaning_date: '2026-11-06', piglets_weaned: 10, ...dto } as any,
+        'tenant-1',
+      );
 
     it('records what the lot lost before weaning as mortality, and moves the weaned head to the chosen batch', async () => {
       litter();
       const result: any = await wean({ move_to_batch_id: 'b-weaner' });
 
-      expect(batchService.recordMortality).toHaveBeenCalledWith('b-pig', expect.objectContaining({ transaction_date: '2026-11-06', quantity: 2 }), 'tenant-1', undefined);
+      expect(batchService.recordMortality).toHaveBeenCalledWith(
+        'b-pig',
+        expect.objectContaining({
+          transaction_date: '2026-11-06',
+          quantity: 2,
+        }),
+        'tenant-1',
+        undefined,
+      );
       expect(batchTransfers.create).toHaveBeenCalledWith(
-        expect.objectContaining({ to_batch_id: 'b-weaner', quantity: 10, transfer_type: 'PARTIAL', reason: 'WEANING' }),
+        expect.objectContaining({
+          to_batch_id: 'b-weaner',
+          quantity: 10,
+          transfer_type: 'PARTIAL',
+          reason: 'WEANING',
+        }),
         'tenant-1',
         'b-pig',
         undefined,
@@ -466,8 +777,13 @@ describe('BreedingService', () => {
       expect(result.message).toContain('10 moved to the destination batch');
     });
 
-    it('closes the piglet lot once weaning leaves nothing in it, and leaves it open while head remain', async () => {
-      const closed = () => mockDbUpdate.mock.results.some((r) => (r.value.set as jest.Mock).mock.calls.some(([v]) => v?.status === 'CLOSED'));
+    it('leaves an emptied piglet lot open for a user to close (Rishi, 19 Oct), and says so', async () => {
+      const closed = () =>
+        mockDbUpdate.mock.results.some((r) =>
+          (r.value.set as jest.Mock).mock.calls.some(
+            ([v]) => v?.status === 'CLOSED',
+          ),
+        );
       litter();
       await wean({ piglets_weaned: 12 }); // stays in the lot: 12 still on hand
       expect(closed()).toBe(false);
@@ -478,15 +794,28 @@ describe('BreedingService', () => {
         rows.set(schema.batchBioAssetState, [{ current_quantity: '0' }]);
         return {};
       });
-      const result: any = await wean({ piglets_weaned: 12, move_to_batch_id: 'b-weaner' });
-      expect(closed()).toBe(true);
-      expect(result.message).toContain('piglet lot is empty and was closed');
+      const result: any = await wean({
+        piglets_weaned: 12,
+        move_to_batch_id: 'b-weaner',
+      });
+      expect(closed()).toBe(false);
+      expect(result.message).toContain(
+        'piglet lot is now empty; close it from the batch',
+      );
     });
 
     it('moves the lot on to a stage instead when a stage is chosen', async () => {
       litter();
       await wean({ move_to_stage_code: 'WEANER' });
-      expect(batchService.transferStage).toHaveBeenCalledWith('b-pig', expect.objectContaining({ to_stage_code: 'WEANER', transfer_date: '2026-11-06' }), 'tenant-1', undefined);
+      expect(batchService.transferStage).toHaveBeenCalledWith(
+        'b-pig',
+        expect.objectContaining({
+          to_stage_code: 'WEANER',
+          transfer_date: '2026-11-06',
+        }),
+        'tenant-1',
+        undefined,
+      );
       expect(batchTransfers.create).not.toHaveBeenCalled();
     });
 
@@ -498,10 +827,16 @@ describe('BreedingService', () => {
 
     it('refuses more weaned than the lot holds, a batch and a stage together, and a move for a litter with no lot', async () => {
       litter();
-      await expect(wean({ piglets_weaned: 13 })).rejects.toThrow('holds 12 piglets; 13 cannot have been weaned');
-      await expect(wean({ move_to_batch_id: 'b', move_to_stage_code: 'WEANER' })).rejects.toThrow('a batch or on to a stage, not both');
+      await expect(wean({ piglets_weaned: 13 })).rejects.toThrow(
+        'holds 12 piglets; 13 cannot have been weaned',
+      );
+      await expect(
+        wean({ move_to_batch_id: 'b', move_to_stage_code: 'WEANER' }),
+      ).rejects.toThrow('a batch or on to a stage, not both');
       litter({ piglet_batch_id: null });
-      await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow('has no piglet lot to move');
+      await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow(
+        'has no piglet lot to move',
+      );
       expect(batchTransfers.create).not.toHaveBeenCalled();
     });
 
@@ -510,146 +845,366 @@ describe('BreedingService', () => {
       await wean({});
       expect(batchService.recordMortality).not.toHaveBeenCalled();
       expect(batchTransfers.create).not.toHaveBeenCalled();
-      await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow('already weaned');
+      await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow(
+        'already weaned',
+      );
     });
   });
 
   // Decision of 9 Oct: a collection naming an item is a lot of it in stock, with a lot-level QR; a mating that names the
   // lot uses its doses.
   describe('semen as stock', () => {
-    const boar = { animal_id: 'boar-1', company_id: 'co-1', animal_code: 'BOAR-1', animal_type: 'BOAR', gender: 'M', current_batch_id: 'b-boar' };
-    const collection = (over: object = {}) => ({ boar_animal_id: 'boar-1', collection_date: '2026-10-09', doses_collected: 40, ...over }) as any;
+    const boar = {
+      animal_id: 'boar-1',
+      company_id: 'co-1',
+      animal_code: 'BOAR-1',
+      animal_type: 'BOAR',
+      gender: 'M',
+      current_batch_id: 'b-boar',
+    };
+    const collection = (over: object = {}) =>
+      ({
+        boar_animal_id: 'boar-1',
+        collection_date: '2026-10-09',
+        doses_collected: 40,
+        ...over,
+      }) as any;
 
     it('posts a collection that names an item as a lot of it, and keeps the lot, its store and its QR on the record', async () => {
       rows.set(schema.animalRegister, [boar]);
-      semenLots.postCollection.mockResolvedValue({ lot_no: 'LOT-00011', expiry_date: '2026-11-08', warehouse_id: 'store-1', qr_id: 'qr-1', pack_no: 'PACK-000007' });
+      semenLots.postCollection.mockResolvedValue({
+        lot_no: 'LOT-00011',
+        expiry_date: '2026-11-08',
+        warehouse_id: 'store-1',
+        qr_id: 'qr-1',
+        pack_no: 'PACK-000007',
+      });
 
-      const result: any = await service.recordSemenCollection(collection({ output_item_id: 'item-semen' }), 'tenant-1');
+      const result: any = await service.recordSemenCollection(
+        collection({ output_item_id: 'item-semen' }),
+        'tenant-1',
+      );
 
       expect(semenLots.postCollection).toHaveBeenCalledWith(
-        expect.objectContaining({ boarBatchId: 'b-boar', collectionDate: '2026-10-09', doses: 40, itemId: 'item-semen' }),
+        expect.objectContaining({
+          boarBatchId: 'b-boar',
+          collectionDate: '2026-10-09',
+          doses: 40,
+          itemId: 'item-semen',
+        }),
         'tenant-1',
         undefined,
       );
-      expect(result).toMatchObject({ inventory_posted: true, lot_no: 'LOT-00011', expiry_date: '2026-11-08', warehouse_id: 'store-1', qr_id: 'qr-1', qr_pack_no: 'PACK-000007' });
-      expect(result.message).toContain('Posted to inventory as lot LOT-00011 (expires 2026-11-08), QR PACK-000007');
+      expect(result).toMatchObject({
+        inventory_posted: true,
+        lot_no: 'LOT-00011',
+        expiry_date: '2026-11-08',
+        warehouse_id: 'store-1',
+        qr_id: 'qr-1',
+        qr_pack_no: 'PACK-000007',
+      });
+      expect(result.message).toContain(
+        'Posted to inventory as lot LOT-00011 (expires 2026-11-08), QR PACK-000007',
+      );
     });
 
     it('records a collection with no item as before, and says it is not stock', async () => {
       rows.set(schema.animalRegister, [boar]);
-      const result: any = await service.recordSemenCollection(collection(), 'tenant-1');
+      const result: any = await service.recordSemenCollection(
+        collection(),
+        'tenant-1',
+      );
       expect(semenLots.postCollection).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ inventory_posted: false, lot_no: null, qr_id: null });
+      expect(result).toMatchObject({
+        inventory_posted: false,
+        lot_no: null,
+        qr_id: null,
+      });
       expect(result.message).toContain('Not posted to inventory');
     });
 
     it('takes the doses out of the lot a mating names, and refuses the mating if the lot cannot supply them', async () => {
-      const sow = { animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, is_active: true, current_batch_id: 'batch-1' };
+      const sow = {
+        animal_id: 'sow-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        animal_code: 'SOW-001',
+        gender: 'F',
+        parity_count: 0,
+        is_active: true,
+        current_batch_id: 'batch-1',
+      };
       rows.set(schema.animalRegister, [sow]);
       rows.set(schema.breedingRecord, []);
-      jest.spyOn(service as any, 'resolveSowAndBoar').mockResolvedValue({ sow, companyId: 'co-1', boarAnimalId: 'boar-1' });
-      const lot = { semen_batch_id: 'sb-1', boar_animal_id: 'boar-1', company_id: 'co-1', tenant_id: 'tenant-1', doses_collected: '40', doses_used_internal: '0', doses_sold: '0', lot_no: 'LOT-1' };
+      jest
+        .spyOn(service as any, 'resolveSowAndBoar')
+        .mockResolvedValue({ sow, companyId: 'co-1', boarAnimalId: 'boar-1' });
+      const lot = {
+        semen_batch_id: 'sb-1',
+        boar_animal_id: 'boar-1',
+        company_id: 'co-1',
+        tenant_id: 'tenant-1',
+        doses_collected: '40',
+        doses_used_internal: '0',
+        doses_sold: '0',
+        lot_no: 'LOT-1',
+      };
       rows.set(schema.semenBatch, [lot]);
 
-      await service.recordMating({ sow_animal_id: 'sow-1', boar_animal_id: 'boar-1', semen_lot_id: 'sb-1', mating_type: 'AI', mating_date: '2026-10-09', semen_dose_qty: 2 } as any, 'tenant-1');
-      expect(semenLots.issueDoses).toHaveBeenCalledWith(lot, 2, expect.any(String), '2026-10-09', 'tenant-1', undefined);
+      await service.recordMating(
+        {
+          sow_animal_id: 'sow-1',
+          boar_animal_id: 'boar-1',
+          semen_lot_id: 'sb-1',
+          mating_type: 'AI',
+          mating_date: '2026-10-09',
+          semen_dose_qty: 2,
+        } as any,
+        'tenant-1',
+      );
+      expect(semenLots.issueDoses).toHaveBeenCalledWith(
+        lot,
+        2,
+        expect.any(String),
+        '2026-10-09',
+        'tenant-1',
+        undefined,
+      );
 
-      semenLots.issueDoses.mockRejectedValueOnce(new BadRequestException('The semen lot LOT-1 has 1 dose left; 2 cannot be used.'));
+      semenLots.issueDoses.mockRejectedValueOnce(
+        new BadRequestException(
+          'The semen lot LOT-1 has 1 dose left; 2 cannot be used.',
+        ),
+      );
       await expect(
-        service.recordMating({ sow_animal_id: 'sow-1', boar_animal_id: 'boar-1', semen_lot_id: 'sb-1', mating_type: 'AI', mating_date: '2026-10-09', semen_dose_qty: 2 } as any, 'tenant-1'),
+        service.recordMating(
+          {
+            sow_animal_id: 'sow-1',
+            boar_animal_id: 'boar-1',
+            semen_lot_id: 'sb-1',
+            mating_type: 'AI',
+            mating_date: '2026-10-09',
+            semen_dose_qty: 2,
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow('1 dose left');
     });
 
     // Pooled semen: one lot mixed from the ejaculates of several boars.
     describe('pooled from several boars', () => {
-      const boar2 = { animal_id: 'boar-2', company_id: 'co-1', animal_code: 'BOAR-2', animal_type: 'BOAR', gender: 'M', is_active: true, current_batch_id: 'b-boar' };
-      const insertedRows = () => mockDbInsert.mock.results.flatMap((r: any) => r.value.values.mock.calls.map((c: any[]) => c[0]));
+      const boar2 = {
+        animal_id: 'boar-2',
+        company_id: 'co-1',
+        animal_code: 'BOAR-2',
+        animal_type: 'BOAR',
+        gender: 'M',
+        is_active: true,
+        current_batch_id: 'b-boar',
+      };
+      const insertedRows = () =>
+        mockDbInsert.mock.results.flatMap((r: any) =>
+          r.value.values.mock.calls.map((c: any[]) => c[0]),
+        );
 
       it('makes ONE lot of the boars together, names every boar on it, and splits the typed cost between them', async () => {
         rows.set(schema.animalRegister, [boar, boar2]);
-        semenLots.postCollection.mockResolvedValue({ lot_no: 'LOT-00020', expiry_date: '2026-10-14', warehouse_id: 'store-1', qr_id: 'qr-2', pack_no: 'PACK-000008' });
+        semenLots.postCollection.mockResolvedValue({
+          lot_no: 'LOT-00020',
+          expiry_date: '2026-10-14',
+          warehouse_id: 'store-1',
+          qr_id: 'qr-2',
+          pack_no: 'PACK-000008',
+        });
 
         const result: any = await service.recordSemenCollection(
-          collection({ output_item_id: 'item-pooled', pool_boar_animal_ids: ['boar-2'], feed_cost_period: 80, overhead_cost_period: 20 }),
+          collection({
+            output_item_id: 'item-pooled',
+            pool_boar_animal_ids: ['boar-2'],
+            feed_cost_period: 80,
+            overhead_cost_period: 20,
+          }),
           'tenant-1',
         );
 
         // one posting to stock, with the other boar named so the QR can list him
         expect(semenLots.postCollection).toHaveBeenCalledTimes(1);
-        expect(semenLots.postCollection.mock.calls[0][0].poolBoars).toEqual([boar2]);
+        expect(semenLots.postCollection.mock.calls[0][0].poolBoars).toEqual([
+          boar2,
+        ]);
         // the lot's cost is the whole mix over its doses
-        expect(result).toMatchObject({ lot_no: 'LOT-00020', pooled_boars: ['BOAR-1', 'BOAR-2'], running_cost_period: '100.0000', unit_cost_per_dose: '2.500000' });
-        expect(result.message).toContain('one pooled lot from 2 boars (BOAR-1, BOAR-2)');
+        expect(result).toMatchObject({
+          lot_no: 'LOT-00020',
+          pooled_boars: ['BOAR-1', 'BOAR-2'],
+          running_cost_period: '100.0000',
+          unit_cost_per_dose: '2.500000',
+        });
+        expect(result.message).toContain(
+          'one pooled lot from 2 boars (BOAR-1, BOAR-2)',
+        );
         // the lot record, then one contributor row per boar in the order chosen
         const [lot, contributors] = insertedRows();
         expect(lot.boar_animal_id).toBe('boar-1');
         expect(contributors).toEqual([
-          expect.objectContaining({ semen_batch_id: lot.semen_batch_id, boar_animal_id: 'boar-1', sort_order: 0, cost_share: '50.0000' }),
-          expect.objectContaining({ semen_batch_id: lot.semen_batch_id, boar_animal_id: 'boar-2', sort_order: 1, cost_share: '50.0000' }),
+          expect.objectContaining({
+            semen_batch_id: lot.semen_batch_id,
+            boar_animal_id: 'boar-1',
+            sort_order: 0,
+            cost_share: '50.0000',
+          }),
+          expect.objectContaining({
+            semen_batch_id: lot.semen_batch_id,
+            boar_animal_id: 'boar-2',
+            sort_order: 1,
+            cost_share: '50.0000',
+          }),
         ]);
       });
 
       it('is an ordinary single-boar lot when the only boar named is the primary, and writes no contributor rows', async () => {
         rows.set(schema.animalRegister, [boar]);
-        const result: any = await service.recordSemenCollection(collection({ pool_boar_animal_ids: ['boar-1', 'boar-1'] }), 'tenant-1');
+        const result: any = await service.recordSemenCollection(
+          collection({ pool_boar_animal_ids: ['boar-1', 'boar-1'] }),
+          'tenant-1',
+        );
         expect(result.pooled_boars).toBeUndefined();
         expect(insertedRows()).toHaveLength(1);
       });
 
       it('refuses to pool an animal that is not a boar, one that is inactive, or one that does not exist', async () => {
         rows.set(schema.animalRegister, [boar, { ...boar2, gender: 'F' }]);
-        await expect(service.recordSemenCollection(collection({ pool_boar_animal_ids: ['boar-2'] }), 'tenant-1')).rejects.toThrow('BOAR-2 is not a boar');
+        await expect(
+          service.recordSemenCollection(
+            collection({ pool_boar_animal_ids: ['boar-2'] }),
+            'tenant-1',
+          ),
+        ).rejects.toThrow('BOAR-2 is not a boar');
 
         rows.set(schema.animalRegister, [boar, { ...boar2, is_active: false }]);
-        await expect(service.recordSemenCollection(collection({ pool_boar_animal_ids: ['boar-2'] }), 'tenant-1')).rejects.toThrow('no longer active');
+        await expect(
+          service.recordSemenCollection(
+            collection({ pool_boar_animal_ids: ['boar-2'] }),
+            'tenant-1',
+          ),
+        ).rejects.toThrow('no longer active');
 
         rows.set(schema.animalRegister, [boar]);
-        await expect(service.recordSemenCollection(collection({ pool_boar_animal_ids: ['boar-ghost'] }), 'tenant-1')).rejects.toThrow(NotFoundException);
+        await expect(
+          service.recordSemenCollection(
+            collection({ pool_boar_animal_ids: ['boar-ghost'] }),
+            'tenant-1',
+          ),
+        ).rejects.toThrow(NotFoundException);
         expect(semenLots.postCollection).not.toHaveBeenCalled();
       });
 
       it('records no single sire for an AI service from a pooled lot, and refuses a boar that is not one of the pool', async () => {
-        const sow = { animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, current_batch_id: null };
+        const sow = {
+          animal_id: 'sow-1',
+          tenant_id: 'tenant-1',
+          company_id: 'co-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 0,
+          current_batch_id: null,
+        };
         rows.set(schema.animalRegister, [sow]);
-        rows.set(schema.semenBatch, [{ semen_batch_id: 'sb-pool', boar_animal_id: 'boar-1' }]);
-        rows.set(schema.semenBatchBoar, [{ boar_animal_id: 'boar-1' }, { boar_animal_id: 'boar-2' }]);
+        rows.set(schema.semenBatch, [
+          { semen_batch_id: 'sb-pool', boar_animal_id: 'boar-1' },
+        ]);
+        rows.set(schema.semenBatchBoar, [
+          { boar_animal_id: 'boar-1' },
+          { boar_animal_id: 'boar-2' },
+        ]);
 
-        const pooled = await (service as any).resolveSowAndBoar({ sow_animal_id: 'sow-1', semen_lot_id: 'sb-pool', mating_type: 'AI' }, 'tenant-1');
+        const pooled = await (service as any).resolveSowAndBoar(
+          {
+            sow_animal_id: 'sow-1',
+            semen_lot_id: 'sb-pool',
+            mating_type: 'AI',
+          },
+          'tenant-1',
+        );
         expect(pooled.boarAnimalId).toBeNull();
 
         await expect(
-          (service as any).resolveSowAndBoar({ sow_animal_id: 'sow-1', semen_lot_id: 'sb-pool', boar_animal_id: 'boar-9', mating_type: 'AI' }, 'tenant-1'),
-        ).rejects.toThrow('not one of the boars this pooled semen lot was mixed from');
+          (service as any).resolveSowAndBoar(
+            {
+              sow_animal_id: 'sow-1',
+              semen_lot_id: 'sb-pool',
+              boar_animal_id: 'boar-9',
+              mating_type: 'AI',
+            },
+            'tenant-1',
+          ),
+        ).rejects.toThrow(
+          'not one of the boars this pooled semen lot was mixed from',
+        );
       });
 
       it('still names the one boar behind a lot from a single boar', async () => {
-        const sow = { animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, current_batch_id: null };
+        const sow = {
+          animal_id: 'sow-1',
+          tenant_id: 'tenant-1',
+          company_id: 'co-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 0,
+          current_batch_id: null,
+        };
         rows.set(schema.animalRegister, [sow, { ...boar }]);
-        rows.set(schema.semenBatch, [{ semen_batch_id: 'sb-1', boar_animal_id: 'boar-1' }]);
+        rows.set(schema.semenBatch, [
+          { semen_batch_id: 'sb-1', boar_animal_id: 'boar-1' },
+        ]);
         rows.set(schema.semenBatchBoar, []);
-        const lot = await (service as any).boarOfSemenLot('sb-1', 'co-1', 'tenant-1');
+        const lot = await (service as any).boarOfSemenLot(
+          'sb-1',
+          'co-1',
+          'tenant-1',
+        );
         expect(lot).toEqual({ boarId: 'boar-1', poolBoarIds: [] });
       });
     });
 
     it('uses no doses for a mating that names no lot', async () => {
-      const sow = { animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, is_active: true, current_batch_id: 'batch-1' };
+      const sow = {
+        animal_id: 'sow-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        animal_code: 'SOW-001',
+        gender: 'F',
+        parity_count: 0,
+        is_active: true,
+        current_batch_id: 'batch-1',
+      };
       rows.set(schema.animalRegister, [sow]);
       rows.set(schema.breedingRecord, []);
-      jest.spyOn(service as any, 'resolveSowAndBoar').mockResolvedValue({ sow, companyId: 'co-1', boarAnimalId: 'boar-1' });
-      await service.recordMating({ sow_animal_id: 'sow-1', mating_type: 'NATURAL_MATING', boar_animal_id: 'boar-1', mating_date: '2026-10-09' } as any, 'tenant-1');
+      jest
+        .spyOn(service as any, 'resolveSowAndBoar')
+        .mockResolvedValue({ sow, companyId: 'co-1', boarAnimalId: 'boar-1' });
+      await service.recordMating(
+        {
+          sow_animal_id: 'sow-1',
+          mating_type: 'NATURAL_MATING',
+          boar_animal_id: 'boar-1',
+          mating_date: '2026-10-09',
+        } as any,
+        'tenant-1',
+      );
       expect(semenLots.issueDoses).not.toHaveBeenCalled();
     });
   });
 
   describe('recordSemenCollection', () => {
     it('calculates unit cost per dose from period running costs', async () => {
-      rows.set(schema.animalRegister, [{
-        animal_id: 'boar-1',
-        company_id: 'comp-1',
-        animal_code: 'BOAR-1',
-        gender: 'M',
-      }]);
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'boar-1',
+          company_id: 'comp-1',
+          animal_code: 'BOAR-1',
+          gender: 'M',
+        },
+      ]);
 
       const result = await service.recordSemenCollection(
         {
@@ -677,12 +1232,21 @@ describe('BreedingService', () => {
    * animal and every referenced id must itself be in scope.
    */
   describe('breeding references are bound to the animal and the caller scope', () => {
-    const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+    const grasmere = {
+      farmId: 'farm-g',
+      restricted: true,
+      companyId: 'co-1',
+      lobId: 'lob-pig',
+    };
 
     it('stores the sow company, never the body company', async () => {
       rows.set(schema.breedingRecord, []);
       const result = await service.recordMating(
-        { sow_animal_id: 'sow-1', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
+        {
+          sow_animal_id: 'sow-1',
+          mating_type: MatingType.AI,
+          mating_date: '2026-03-01',
+        } as any,
         'tenant-1',
       );
       expect(result.company_id).toBe('co-1');
@@ -690,18 +1254,39 @@ describe('BreedingService', () => {
 
     it('refuses a body company_id that differs from the sow company, before any insert', async () => {
       // Without the fix the record was inserted under 'co-other'.
-      await expect(service.recordMating(
-        { sow_animal_id: 'sow-1', company_id: 'co-other', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
-        'tenant-1',
-      )).rejects.toThrow(BadRequestException);
-      await expect(service.recordFarrowing(
-        { sow_animal_id: 'sow-1', company_id: 'co-other', farrowing_date: '2026-06-23', piglets_born_live: 8 } as any,
-        'tenant-1',
-      )).rejects.toThrow(BadRequestException);
-      await expect(service.recordSemenCollection(
-        { boar_animal_id: 'sow-1', company_id: 'co-other', collection_date: '2026-04-01', doses_collected: 10 } as any,
-        'tenant-1',
-      )).rejects.toThrow(BadRequestException);
+      await expect(
+        service.recordMating(
+          {
+            sow_animal_id: 'sow-1',
+            company_id: 'co-other',
+            mating_type: MatingType.AI,
+            mating_date: '2026-03-01',
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.recordFarrowing(
+          {
+            sow_animal_id: 'sow-1',
+            company_id: 'co-other',
+            farrowing_date: '2026-06-23',
+            piglets_born_live: 8,
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.recordSemenCollection(
+          {
+            boar_animal_id: 'sow-1',
+            company_id: 'co-other',
+            collection_date: '2026-04-01',
+            doses_collected: 10,
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -709,10 +1294,17 @@ describe('BreedingService', () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.batchHeader, []); // exists on Kintyre, so the scoped query finds nothing
 
-      await expect(service.recordMating(
-        { sow_animal_id: 'sow-1', batch_id: 'batch-kintyre', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
-        'tenant-1',
-      )).rejects.toThrow("Batch with ID 'batch-kintyre' not found.");
+      await expect(
+        service.recordMating(
+          {
+            sow_animal_id: 'sow-1',
+            batch_id: 'batch-kintyre',
+            mating_type: MatingType.AI,
+            mating_date: '2026-03-01',
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow("Batch with ID 'batch-kintyre' not found.");
       expect(renderedWhere()).toContain('`batch_header`.`farm_id` = ?');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
@@ -721,10 +1313,17 @@ describe('BreedingService', () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.batchHeader, []);
 
-      await expect(service.recordFarrowing(
-        { sow_animal_id: 'sow-1', batch_id: 'batch-kintyre', farrowing_date: '2026-06-23', piglets_born_live: 8 } as any,
-        'tenant-1',
-      )).rejects.toThrow(NotFoundException);
+      await expect(
+        service.recordFarrowing(
+          {
+            sow_animal_id: 'sow-1',
+            batch_id: 'batch-kintyre',
+            farrowing_date: '2026-06-23',
+            piglets_born_live: 8,
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
@@ -732,10 +1331,17 @@ describe('BreedingService', () => {
       useFarmScope(cls, grasmere);
       rows.set(schema.semenBatch, []);
 
-      await expect(service.recordMating(
-        { sow_animal_id: 'sow-1', semen_lot_id: 'lot-kintyre', mating_type: MatingType.AI, mating_date: '2026-03-01' } as any,
-        'tenant-1',
-      )).rejects.toThrow("Semen lot with ID 'lot-kintyre' not found.");
+      await expect(
+        service.recordMating(
+          {
+            sow_animal_id: 'sow-1',
+            semen_lot_id: 'lot-kintyre',
+            mating_type: MatingType.AI,
+            mating_date: '2026-03-01',
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow("Semen lot with ID 'lot-kintyre' not found.");
       expect(renderedWhere()).toContain('animal_register af');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
@@ -743,7 +1349,12 @@ describe('BreedingService', () => {
 
   describe('farm scope', () => {
     it('lists only matings of sows on the active farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: false,
+        companyId: 'co-1',
+        lobId: null,
+      });
 
       await service.getMatingRecords('tenant-1');
 
@@ -751,7 +1362,12 @@ describe('BreedingService', () => {
     });
 
     it('lists only farrowings of sows on the active farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: false,
+        companyId: 'co-1',
+        lobId: null,
+      });
 
       await service.getFarrowingRecords('tenant-1');
 
@@ -759,7 +1375,12 @@ describe('BreedingService', () => {
     });
 
     it('lists only semen batches of boars on the active farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: false, companyId: 'co-1', lobId: null });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: false,
+        companyId: 'co-1',
+        lobId: null,
+      });
 
       await service.getSemenBatches('tenant-1');
 
@@ -770,62 +1391,136 @@ describe('BreedingService', () => {
       ['matings', () => service.getMatingRecords('tenant-1')],
       ['farrowings', () => service.getFarrowingRecords('tenant-1')],
       ['semen batches', () => service.getSemenBatches('tenant-1')],
-    ])('bounds %s by company and LOB when an operational admin selected no farm', async (_label, run) => {
-      useFarmScope(cls, { farmId: null, restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+    ])(
+      'bounds %s by company and LOB when an operational admin selected no farm',
+      async (_label, run) => {
+        useFarmScope(cls, {
+          farmId: null,
+          restricted: true,
+          companyId: 'co-1',
+          lobId: 'lob-pig',
+        });
 
-      await run();
+        await run();
 
-      const where = renderedWhere();
-      expect(where).toContain('`animal_register`.`company_id` = ?');
-      expect(where).toContain('`animal_register`.`lob_id` = ?');
-    });
+        const where = renderedWhere();
+        expect(where).toContain('`animal_register`.`company_id` = ?');
+        expect(where).toContain('`animal_register`.`lob_id` = ?');
+      },
+    );
 
     it('answers 404 when recording a mating for a sow on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       rows.set(schema.animalRegister, []);
 
       await expect(
-        service.recordMating({ sow_animal_id: 'sow-k', mating_date: '2026-09-01' } as any, 'tenant-1'),
+        service.recordMating(
+          { sow_animal_id: 'sow-k', mating_date: '2026-09-01' } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('answers 404 when recording a farrowing for a sow on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       rows.set(schema.animalRegister, []);
 
       await expect(
-        service.recordFarrowing({ sow_animal_id: 'sow-k', farrowing_date: '2026-09-01', piglets_born_live: 8 } as any, 'tenant-1'),
+        service.recordFarrowing(
+          {
+            sow_animal_id: 'sow-k',
+            farrowing_date: '2026-09-01',
+            piglets_born_live: 8,
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('answers 404 when recording a semen collection for a boar on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
       rows.set(schema.animalRegister, []);
 
       await expect(
-        service.recordSemenCollection({ boar_animal_id: 'boar-k', collection_date: '2026-09-01', doses_collected: 10 } as any, 'tenant-1'),
+        service.recordSemenCollection(
+          {
+            boar_animal_id: 'boar-k',
+            collection_date: '2026-09-01',
+            doses_collected: 10,
+          } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('answers 404 for a pregnancy check on a breeding record whose sow is on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-      rows.set(schema.breedingRecord, [{ breeding_id: 'breed-1', tenant_id: 'tenant-1', sow_animal_id: 'sow-k', preg_check_date: '2026-09-01', preg_check_method: 'ULTRASOUND', notes: null }]);
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
+      rows.set(schema.breedingRecord, [
+        {
+          breeding_id: 'breed-1',
+          tenant_id: 'tenant-1',
+          sow_animal_id: 'sow-k',
+          preg_check_date: '2026-09-01',
+          preg_check_method: 'ULTRASOUND',
+          notes: null,
+        },
+      ]);
       // The sow exists tenant-wide but not on this active farm.
       rows.set(schema.animalRegister, []);
 
       await expect(
-        service.recordPregnancyCheck('breed-1', { pregnancy_confirmed: true } as any, 'tenant-1'),
+        service.recordPregnancyCheck(
+          'breed-1',
+          { pregnancy_confirmed: true } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('answers 404 for a weaning on a farrowing record whose sow is on another farm', async () => {
-      useFarmScope(cls, { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' });
-      rows.set(schema.farrowingRecord, [{ farrow_id: 'farrow-1', tenant_id: 'tenant-1', sow_animal_id: 'sow-k', notes: null }]);
+      useFarmScope(cls, {
+        farmId: 'farm-g',
+        restricted: true,
+        companyId: 'co-1',
+        lobId: 'lob-pig',
+      });
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'farrow-1',
+          tenant_id: 'tenant-1',
+          sow_animal_id: 'sow-k',
+          notes: null,
+        },
+      ]);
       // The sow exists tenant-wide but not on this active farm.
       rows.set(schema.animalRegister, []);
 
       await expect(
-        service.recordWeaning('farrow-1', { weaning_date: '2026-09-29', piglets_weaned: 7 } as any, 'tenant-1'),
+        service.recordWeaning(
+          'farrow-1',
+          { weaning_date: '2026-09-29', piglets_weaned: 7 } as any,
+          'tenant-1',
+        ),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -836,113 +1531,347 @@ describe('BreedingService', () => {
    */
   describe('batch-first breeding rules', () => {
     const mate = (over: object = {}) =>
-      ({ sow_animal_id: 'sow-1', mating_type: MatingType.AI, mating_date: '2026-03-01', ...over }) as any;
+      ({
+        sow_animal_id: 'sow-1',
+        mating_type: MatingType.AI,
+        mating_date: '2026-03-01',
+        ...over,
+      }) as any;
     const farrow = (over: object = {}) =>
-      ({ sow_animal_id: 'sow-1', farrowing_date: '2026-06-24', piglets_born_live: 12, ...over }) as any;
+      ({
+        sow_animal_id: 'sow-1',
+        farrowing_date: '2026-06-24',
+        piglets_born_live: 12,
+        ...over,
+      }) as any;
     const collect = (over: object = {}) =>
-      ({ boar_animal_id: 'boar-1', collection_date: '2026-10-09', doses_collected: 40, ...over }) as any;
-    const boar = { animal_id: 'boar-1', company_id: 'co-1', animal_code: 'BOAR-1', animal_type: 'BOAR', gender: 'M' };
+      ({
+        boar_animal_id: 'boar-1',
+        collection_date: '2026-10-09',
+        doses_collected: 40,
+        ...over,
+      }) as any;
+    const boar = {
+      animal_id: 'boar-1',
+      company_id: 'co-1',
+      animal_code: 'BOAR-1',
+      animal_type: 'BOAR',
+      gender: 'M',
+    };
     beforeEach(() => rows.set(schema.breedingRecord, []));
 
     it('refuses a sow or boar that is in no batch, and one that is in a different batch from the one chosen', async () => {
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, current_batch_id: null }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('not in a batch');
-      await expect(service.recordFarrowing(farrow(), 'tenant-1')).rejects.toThrow('not in a batch');
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'co-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 0,
+          current_batch_id: null,
+        },
+      ]);
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'not in a batch',
+      );
+      await expect(
+        service.recordFarrowing(farrow(), 'tenant-1'),
+      ).rejects.toThrow('not in a batch');
       rows.set(schema.animalRegister, [{ ...boar, current_batch_id: null }]);
-      await expect(service.recordSemenCollection(collect(), 'tenant-1')).rejects.toThrow('not in a batch');
-      rows.set(schema.animalRegister, [{ animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, current_batch_id: 'batch-2' }]);
-      await expect(service.recordMating(mate({ batch_id: 'batch-1' }), 'tenant-1')).rejects.toThrow("is not in batch 'BATCH-1'");
+      await expect(
+        service.recordSemenCollection(collect(), 'tenant-1'),
+      ).rejects.toThrow('not in a batch');
+      rows.set(schema.animalRegister, [
+        {
+          animal_id: 'sow-1',
+          company_id: 'co-1',
+          animal_code: 'SOW-001',
+          gender: 'F',
+          parity_count: 0,
+          current_batch_id: 'batch-2',
+        },
+      ]);
+      await expect(
+        service.recordMating(mate({ batch_id: 'batch-1' }), 'tenant-1'),
+      ).rejects.toThrow("is not in batch 'BATCH-1'");
     });
 
     it('refuses a batch that is not animal-wise or not active', async () => {
-      rows.set(schema.batchHeader, [{ batch_id: 'batch-1', batch_no: 'BATCH-1', tracking_mode: 'BATCH_WISE', status: 'ACTIVE', farm_id: null }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('not animal-wise');
-      rows.set(schema.batchHeader, [{ batch_id: 'batch-1', batch_no: 'BATCH-1', tracking_mode: 'ANIMAL_WISE', status: 'CLOSED', farm_id: null }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('closed, not active');
+      rows.set(schema.batchHeader, [
+        {
+          batch_id: 'batch-1',
+          batch_no: 'BATCH-1',
+          tracking_mode: 'BATCH_WISE',
+          status: 'ACTIVE',
+          farm_id: null,
+        },
+      ]);
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'not animal-wise',
+      );
+      rows.set(schema.batchHeader, [
+        {
+          batch_id: 'batch-1',
+          batch_no: 'BATCH-1',
+          tracking_mode: 'ANIMAL_WISE',
+          status: 'CLOSED',
+          farm_id: null,
+        },
+      ]);
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'closed, not active',
+      );
     });
 
     it('files the mating, the litter and the collection under the batch the animal stands in', async () => {
       const mating: any = await service.recordMating(mate(), 'tenant-1');
       expect(mating.batch_id).toBe('batch-1');
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-open', mating_date: '2026-01-01' }]);
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-open', mating_date: '2026-01-01' },
+      ]);
       const litter: any = await service.recordFarrowing(farrow(), 'tenant-1');
       expect(litter.batch_id).toBe('batch-1');
-      rows.set(schema.animalRegister, [boar].map((b) => ({ ...b, current_batch_id: 'batch-1' })));
-      const lot: any = await service.recordSemenCollection(collect(), 'tenant-1');
+      rows.set(
+        schema.animalRegister,
+        [boar].map((b) => ({ ...b, current_batch_id: 'batch-1' })),
+      );
+      const lot: any = await service.recordSemenCollection(
+        collect(),
+        'tenant-1',
+      );
       expect(lot.boar_batch_id).toBe('batch-1');
     });
 
     it('refuses to serve a sow that already has an open service, is pregnant, is nursing, or is not live', async () => {
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-1', mating_date: '2026-02-01' }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('already has an open service');
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-1', mating_date: '2026-02-01' },
+      ]);
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'already has an open service',
+      );
       rows.set(schema.breedingRecord, []);
-      const sow = { animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0 };
+      const sow = {
+        animal_id: 'sow-1',
+        company_id: 'co-1',
+        animal_code: 'SOW-001',
+        gender: 'F',
+        parity_count: 0,
+      };
       rows.set(schema.animalRegister, [{ ...sow, status: 'PREGNANT' }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('PREGNANT');
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'PREGNANT',
+      );
       rows.set(schema.animalRegister, [{ ...sow, status: 'LACTATING' }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('nursing');
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'nursing',
+      );
       rows.set(schema.animalRegister, [{ ...sow, is_active: false }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('no longer active');
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'no longer active',
+      );
       rows.set(schema.animalRegister, [{ ...sow, animal_type: 'BOAR' }]);
-      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow('not a SOW or GILT');
+      await expect(service.recordMating(mate(), 'tenant-1')).rejects.toThrow(
+        'not a SOW or GILT',
+      );
     });
 
     it('refuses a boar who is inactive or not a boar on a service, and a semen lot on a natural mating', async () => {
-      const sow = { animal_id: 'sow-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0 };
+      const sow = {
+        animal_id: 'sow-1',
+        company_id: 'co-1',
+        animal_code: 'SOW-001',
+        gender: 'F',
+        parity_count: 0,
+      };
       // The table mock answers every animal lookup with the first row, so look the two up by id.
       let animalsById: Record<string, object> = {};
-      jest.spyOn(service as any, 'findScopedAnimal').mockImplementation(async (id: any) => animalsById[id]);
+      jest
+        .spyOn(service as any, 'findScopedAnimal')
+        .mockImplementation(async (id: any) => animalsById[id]);
       const live = { is_active: true, current_batch_id: 'batch-1' };
-      animalsById = { 'sow-1': { ...sow, ...live }, 'boar-1': { ...boar, ...live, is_active: false } };
-      await expect(service.recordMating(mate({ mating_type: MatingType.NATURAL_MATING, boar_animal_id: 'boar-1' }), 'tenant-1')).rejects.toThrow('no longer active');
-      animalsById = { 'sow-1': { ...sow, ...live }, 'boar-1': { ...boar, ...live } };
+      animalsById = {
+        'sow-1': { ...sow, ...live },
+        'boar-1': { ...boar, ...live, is_active: false },
+      };
       await expect(
-        service.recordMating(mate({ mating_type: MatingType.NATURAL_MATING, boar_animal_id: 'boar-1', semen_lot_id: 'sb-1' }), 'tenant-1'),
+        service.recordMating(
+          mate({
+            mating_type: MatingType.NATURAL_MATING,
+            boar_animal_id: 'boar-1',
+          }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('no longer active');
+      animalsById = {
+        'sow-1': { ...sow, ...live },
+        'boar-1': { ...boar, ...live },
+      };
+      await expect(
+        service.recordMating(
+          mate({
+            mating_type: MatingType.NATURAL_MATING,
+            boar_animal_id: 'boar-1',
+            semen_lot_id: 'sb-1',
+          }),
+          'tenant-1',
+        ),
       ).rejects.toThrow('AI service, not a natural mating');
     });
 
     it('refuses future dates, a second insemination out of range, and part doses', async () => {
-      await expect(service.recordMating(mate({ mating_date: '2999-01-01' }), 'tenant-1')).rejects.toThrow('cannot be in the future');
-      await expect(service.recordMating(mate({ second_mating_date: '2026-02-28' }), 'tenant-1')).rejects.toThrow('cannot be before the first');
-      await expect(service.recordMating(mate({ second_mating_date: '2026-03-20' }), 'tenant-1')).rejects.toThrow('within a week');
-      await expect(service.recordMating(mate({ semen_dose_qty: 1.5 }), 'tenant-1')).rejects.toThrow('whole number');
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-open', mating_date: '2026-01-01' }]);
-      await expect(service.recordFarrowing(farrow({ farrowing_date: '2999-01-01' }), 'tenant-1')).rejects.toThrow('cannot be in the future');
+      await expect(
+        service.recordMating(mate({ mating_date: '2999-01-01' }), 'tenant-1'),
+      ).rejects.toThrow('cannot be in the future');
+      await expect(
+        service.recordMating(
+          mate({ second_mating_date: '2026-02-28' }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('cannot be before the first');
+      await expect(
+        service.recordMating(
+          mate({ second_mating_date: '2026-03-20' }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('within a week');
+      await expect(
+        service.recordMating(mate({ semen_dose_qty: 1.5 }), 'tenant-1'),
+      ).rejects.toThrow('whole number');
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-open', mating_date: '2026-01-01' },
+      ]);
+      await expect(
+        service.recordFarrowing(
+          farrow({ farrowing_date: '2999-01-01' }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('cannot be in the future');
     });
 
     it('refuses an expired semen lot, and one collected after the mating', async () => {
-      rows.set(schema.semenBatch, [{ semen_batch_id: 'sb-1', boar_animal_id: 'boar-1', company_id: 'co-1', tenant_id: 'tenant-1', collection_date: '2026-02-20', expiry_date: '2026-02-25', doses_collected: '40', lot_no: 'LOT-1' }]);
-      jest.spyOn(service as any, 'resolveSowAndBoar').mockResolvedValue({ sow: rows.get(schema.animalRegister)![0], companyId: 'co-1', boarAnimalId: 'boar-1' });
-      await expect(service.recordMating(mate({ semen_lot_id: 'sb-1' }), 'tenant-1')).rejects.toThrow('expired on 2026-02-25');
-      rows.set(schema.semenBatch, [{ semen_batch_id: 'sb-1', boar_animal_id: 'boar-1', company_id: 'co-1', tenant_id: 'tenant-1', collection_date: '2026-03-02', doses_collected: '40', lot_no: 'LOT-1' }]);
-      await expect(service.recordMating(mate({ semen_lot_id: 'sb-1' }), 'tenant-1')).rejects.toThrow('after this mating');
+      rows.set(schema.semenBatch, [
+        {
+          semen_batch_id: 'sb-1',
+          boar_animal_id: 'boar-1',
+          company_id: 'co-1',
+          tenant_id: 'tenant-1',
+          collection_date: '2026-02-20',
+          expiry_date: '2026-02-25',
+          doses_collected: '40',
+          lot_no: 'LOT-1',
+        },
+      ]);
+      jest.spyOn(service as any, 'resolveSowAndBoar').mockResolvedValue({
+        sow: rows.get(schema.animalRegister)![0],
+        companyId: 'co-1',
+        boarAnimalId: 'boar-1',
+      });
+      await expect(
+        service.recordMating(mate({ semen_lot_id: 'sb-1' }), 'tenant-1'),
+      ).rejects.toThrow('expired on 2026-02-25');
+      rows.set(schema.semenBatch, [
+        {
+          semen_batch_id: 'sb-1',
+          boar_animal_id: 'boar-1',
+          company_id: 'co-1',
+          tenant_id: 'tenant-1',
+          collection_date: '2026-03-02',
+          doses_collected: '40',
+          lot_no: 'LOT-1',
+        },
+      ]);
+      await expect(
+        service.recordMating(mate({ semen_lot_id: 'sb-1' }), 'tenant-1'),
+      ).rejects.toThrow('after this mating');
       expect(semenLots.issueDoses).not.toHaveBeenCalled();
     });
 
     it('refuses a farrowing from a mating recorded as FAILED or REPEAT, an empty litter, part piglets and more fostered out than there are', async () => {
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-open', mating_date: '2026-01-01', conception_result: 'REPEAT', farrow_id: null }]);
-      await expect(service.recordFarrowing(farrow({ breeding_id: 'br-open' }), 'tenant-1')).rejects.toThrow('recorded as REPEAT');
-      rows.set(schema.breedingRecord, [{ breeding_id: 'br-open', mating_date: '2026-01-01' }]);
-      await expect(service.recordFarrowing(farrow({ piglets_born_live: 0 }), 'tenant-1')).rejects.toThrow('at least one piglet');
-      await expect(service.recordFarrowing(farrow({ piglets_born_live: 11.5 }), 'tenant-1')).rejects.toThrow('whole numbers');
-      await expect(service.recordFarrowing(farrow({ fostered_out: 13 }), 'tenant-1')).rejects.toThrow('Fostered out (13)');
-      await expect(service.recordFarrowing(farrow({ foster_received: 2, fostered_out: 14 }), 'tenant-1')).resolves.toBeDefined();
+      rows.set(schema.breedingRecord, [
+        {
+          breeding_id: 'br-open',
+          mating_date: '2026-01-01',
+          conception_result: 'REPEAT',
+          farrow_id: null,
+        },
+      ]);
+      await expect(
+        service.recordFarrowing(farrow({ breeding_id: 'br-open' }), 'tenant-1'),
+      ).rejects.toThrow('recorded as REPEAT');
+      rows.set(schema.breedingRecord, [
+        { breeding_id: 'br-open', mating_date: '2026-01-01' },
+      ]);
+      await expect(
+        service.recordFarrowing(farrow({ piglets_born_live: 0 }), 'tenant-1'),
+      ).rejects.toThrow('at least one piglet');
+      await expect(
+        service.recordFarrowing(
+          farrow({ piglets_born_live: 11.5 }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('whole numbers');
+      await expect(
+        service.recordFarrowing(farrow({ fostered_out: 13 }), 'tenant-1'),
+      ).rejects.toThrow('Fostered out (13)');
+      await expect(
+        service.recordFarrowing(
+          farrow({ foster_received: 2, fostered_out: 14 }),
+          'tenant-1',
+        ),
+      ).resolves.toBeDefined();
     });
 
     it('refuses a collection from a boar who is not male or inactive, doses that are not whole, used + sold over collected, a future or pre-entry date, and a pooled boar from another batch', async () => {
       const inBatch = { ...boar, current_batch_id: 'batch-1' };
       rows.set(schema.animalRegister, [{ ...inBatch, gender: 'F' }]);
-      await expect(service.recordSemenCollection(collect(), 'tenant-1')).rejects.toThrow('not male');
+      await expect(
+        service.recordSemenCollection(collect(), 'tenant-1'),
+      ).rejects.toThrow('not male');
       rows.set(schema.animalRegister, [{ ...inBatch, is_active: false }]);
-      await expect(service.recordSemenCollection(collect(), 'tenant-1')).rejects.toThrow('no longer active');
-      rows.set(schema.animalRegister, [{ ...inBatch, entry_date: '2026-10-10' }]);
-      await expect(service.recordSemenCollection(collect(), 'tenant-1')).rejects.toThrow('entered on 2026-10-10');
+      await expect(
+        service.recordSemenCollection(collect(), 'tenant-1'),
+      ).rejects.toThrow('no longer active');
+      rows.set(schema.animalRegister, [
+        { ...inBatch, entry_date: '2026-10-10' },
+      ]);
+      await expect(
+        service.recordSemenCollection(collect(), 'tenant-1'),
+      ).rejects.toThrow('entered on 2026-10-10');
       rows.set(schema.animalRegister, [inBatch]);
-      await expect(service.recordSemenCollection(collect({ collection_date: '2999-01-01' }), 'tenant-1')).rejects.toThrow('cannot be in the future');
-      await expect(service.recordSemenCollection(collect({ doses_collected: 10.5 }), 'tenant-1')).rejects.toThrow('whole number');
-      await expect(service.recordSemenCollection(collect({ doses_used_internal: 30, doses_sold: 11 }), 'tenant-1')).rejects.toThrow('cannot be more than the doses collected');
-      rows.set(schema.animalRegister, [inBatch, { ...boar, animal_id: 'boar-2', animal_code: 'BOAR-2', is_active: true, current_batch_id: 'batch-9' }]);
-      await expect(service.recordSemenCollection(collect({ pool_boar_animal_ids: ['boar-2'] }), 'tenant-1')).rejects.toThrow('not in the same batch');
+      await expect(
+        service.recordSemenCollection(
+          collect({ collection_date: '2999-01-01' }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('cannot be in the future');
+      await expect(
+        service.recordSemenCollection(
+          collect({ doses_collected: 10.5 }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('whole number');
+      await expect(
+        service.recordSemenCollection(
+          collect({ doses_used_internal: 30, doses_sold: 11 }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('cannot be more than the doses collected');
+      rows.set(schema.animalRegister, [
+        inBatch,
+        {
+          ...boar,
+          animal_id: 'boar-2',
+          animal_code: 'BOAR-2',
+          is_active: true,
+          current_batch_id: 'batch-9',
+        },
+      ]);
+      await expect(
+        service.recordSemenCollection(
+          collect({ pool_boar_animal_ids: ['boar-2'] }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('not in the same batch');
     });
   });
 });

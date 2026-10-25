@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from '@/utils/na';
 import { Badge } from '@/components/ui/badge';
 import { InlineAlert } from '@/components/ui/alert';
 import {
@@ -207,10 +208,10 @@ export function CostingCalculation({
                         {d.lot_no ? ` · ${d.lot_no}` : ''}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {d.posting_date || '—'}
+                        {d.posting_date || NA}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {d.document_no || '—'}
+                        {d.document_no || NA}
                       </TableCell>
                       <TableCell
                         className="py-2 px-3 font-mono text-right"
@@ -311,10 +312,10 @@ export function CostingCalculation({
                         #{r.entry_no}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {r.posting_date || '—'}
+                        {r.posting_date || NA}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {r.document_no || '—'}
+                        {r.document_no || NA}
                         {r.transaction_type === 'REVERSAL' ? ' (reversal)' : ''}
                       </TableCell>
                       <TableCell

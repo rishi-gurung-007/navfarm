@@ -1,32 +1,78 @@
-import { companyCondition, MASTER_TABLES, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  companyCondition,
+  MASTER_TABLES,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, ne, not, or, isNull, sql, desc, getTableColumns, count, inArray } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  like,
+  ne,
+  not,
+  or,
+  isNull,
+  sql,
+  desc,
+  getTableColumns,
+  count,
+  inArray,
+} from 'drizzle-orm';
 import { AnyMySqlTable } from 'drizzle-orm/mysql-core';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateNumberSeriesDto, UpdateNumberSeriesDto, QueryNumberSeriesDto } from './dto/number-series.dto';
-import { CreateNoSeriesDto, UpdateNoSeriesDto } from '../../master-data/no-series/dto/no-series.dto';
+import {
+  CreateNumberSeriesDto,
+  UpdateNumberSeriesDto,
+  QueryNumberSeriesDto,
+} from './dto/number-series.dto';
+import {
+  CreateNoSeriesDto,
+  UpdateNoSeriesDto,
+} from '../../master-data/no-series/dto/no-series.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { formatSeriesCode, formatSeriesStem, nextSequence, nextSequenceInStem, segmentFields, assertCodeFits, parseSegment, describeSeriesPattern } from './code-format.util';
+import {
+  formatSeriesCode,
+  formatSeriesStem,
+  nextSequence,
+  nextSequenceInStem,
+  segmentFields,
+  assertCodeFits,
+  parseSegment,
+  describeSeriesPattern,
+} from './code-format.util';
 import { MASTER_CODE_COLUMNS } from './master-code-columns';
 import { generateCompositeCode } from './composite-code.util';
 import { CodePreviewDto } from './dto/code-preview.dto';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 
 const normalizeMaster = (value: string | null | undefined): string | null =>
   value ? value.toUpperCase().replaceAll('-', '_') : null;
 
 /** A series has issued numbers once its counter has moved or a last number is on record. */
-const hasIssuedNumbers = (row: { last_no_used?: string | null; current_seq?: number | string | null }): boolean =>
-  !!row.last_no_used || Number(row.current_seq ?? 0) > 0;
+const hasIssuedNumbers = (row: {
+  last_no_used?: string | null;
+  current_seq?: number | string | null;
+}): boolean => !!row.last_no_used || Number(row.current_seq ?? 0) > 0;
 
+const toMysqlTimestamp = (date: Date = new Date()) =>
+  date.toISOString().slice(0, 19).replace('T', ' ');
 
-const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Masters that compose their own code from a type-driven segment (e.g. a
@@ -100,22 +146,35 @@ const SEGMENT_CODE_LOOKUPS: Record<string, [string, string, string]> = {
  * series has no such problem and may use the same character for both.
  */
 const HIERARCHICAL_SEGMENTS = new Set([
-  'parent_location_id', 'location_id', 'parent_category_id', 'parent_account_id', 'parent_cost_center_id',
+  'parent_location_id',
+  'location_id',
+  'parent_category_id',
+  'parent_account_id',
+  'parent_cost_center_id',
 ]);
 
 /** Rejects a separator pair that could not be read back. Returns the message, or null. */
-export const separatorConflict = (segments: string[], separator: string | null, seqSeparator: string | null, seqLength?: number): string | null => {
+export const separatorConflict = (
+  segments: string[],
+  separator: string | null,
+  seqSeparator: string | null,
+  seqLength?: number,
+): string | null => {
   // With no number there is nothing to tell apart from the path: Item Category
   // is FEED-LACTATION, parent then name, and "-" for both is exactly right.
   if (seqLength === 0) return null;
-  const hierarchical = segments.find((entry) => HIERARCHICAL_SEGMENTS.has(entry.split(':')[0]));
+  const hierarchical = segments.find((entry) =>
+    HIERARCHICAL_SEGMENTS.has(entry.split(':')[0]),
+  );
   if (!hierarchical) return null;
   const between = separator || '-';
   const beforeNumber = seqSeparator || between;
   if (between !== beforeNumber) return null;
-  return `"${hierarchical}" contributes a code that already contains "${between}", so using "${between}" both between the parts and before the number `
-    + `would produce a code nothing can read back — and the sibling counter would stop finding its own run. `
-    + `Set a different Separator Before the Number (Location uses "/" between the levels and "-" before the number).`;
+  return (
+    `"${hierarchical}" contributes a code that already contains "${between}", so using "${between}" both between the parts and before the number ` +
+    `would produce a code nothing can read back — and the sibling counter would stop finding its own run. ` +
+    `Set a different Separator Before the Number (Location uses "/" between the levels and "-" before the number).`
+  );
 };
 
 /** The declared width of a varchar code column, for the Option C length check. */
@@ -129,9 +188,14 @@ const codeColumnLength = (column: any): number | undefined => {
  * scoped through its breed and has no company_id column at all; passing its
  * undefined column to eq() builds invalid SQL, so the clause is simply omitted.
  */
-const scopeKeyConditions = (columns: Record<string, any>, tenantId: string, companyId?: string | null) => {
+const scopeKeyConditions = (
+  columns: Record<string, any>,
+  tenantId: string,
+  companyId?: string | null,
+) => {
   const conditions = [eq(columns.tenant_id, tenantId)];
-  if (columns.company_id) conditions.push(companyCondition(columns.company_id, companyId));
+  if (columns.company_id)
+    conditions.push(companyCondition(columns.company_id, companyId));
   return conditions;
 };
 
@@ -141,7 +205,7 @@ export class NumberSeriesService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
     private readonly nobLobResolution: NobLobResolutionService,
-  ) { }
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -159,8 +223,14 @@ export class NumberSeriesService {
    * icon's delete-really-means-deactivate convention every other master in
    * this app already follows — work for Number Series without a migration.
    */
-  private withActive<T extends { blocked: boolean | null }>(row: T): T & { is_active: boolean; pattern: string } {
-    return { ...row, is_active: !row.blocked, pattern: describeSeriesPattern(row as any) };
+  private withActive<T extends { blocked: boolean | null }>(
+    row: T,
+  ): T & { is_active: boolean; pattern: string } {
+    return {
+      ...row,
+      is_active: !row.blocked,
+      pattern: describeSeriesPattern(row as any),
+    };
   }
 
   /**
@@ -185,12 +255,18 @@ export class NumberSeriesService {
     },
     loadExistingCodes: () => Promise<Array<string | null | undefined>>,
   ): Promise<void> {
-    const [existing] = await this.db.select().from(schema.noSeries).where(and(
-      eq(schema.noSeries.tenant_id, tenantId),
-      companyCondition(schema.noSeries.company_id, companyId),
-      eq(schema.noSeries.code, defaults.seriesCode),
-      isNull(schema.noSeries.deleted_at),
-    )).limit(1);
+    const [existing] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          companyCondition(schema.noSeries.company_id, companyId),
+          eq(schema.noSeries.code, defaults.seriesCode),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .limit(1);
     if (existing) return;
 
     // Existing companies must not observe later changes to tenant drafts.
@@ -199,26 +275,32 @@ export class NumberSeriesService {
     const existingCodes = await loadExistingCodes();
     const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedSeparator = separator.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`^${escapedPrefix}${escapedSeparator}(\\d+)$`, 'i');
+    const pattern = new RegExp(
+      `^${escapedPrefix}${escapedSeparator}(\\d+)$`,
+      'i',
+    );
     const currentSeq = existingCodes.reduce((max, code) => {
       const match = code?.match(pattern);
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
 
-    await this.db.insert(schema.noSeries).values({
-      id: randomUUID(),
-      tenant_id: tenantId,
-      company_id: companyId,
-      code: defaults.seriesCode,
-      description: defaults.seriesName,
-      document_type: defaults.documentType,
-      prefix,
-      separator,
-      seq_length: defaults.seqLength,
-      current_seq: currentSeq,
-      reset_frequency: 'NEVER',
-      manual_nos: true,
-    }).onDuplicateKeyUpdate({ set: { description: defaults.seriesName } });
+    await this.db
+      .insert(schema.noSeries)
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: companyId,
+        code: defaults.seriesCode,
+        description: defaults.seriesName,
+        document_type: defaults.documentType,
+        prefix,
+        separator,
+        seq_length: defaults.seqLength,
+        current_seq: currentSeq,
+        reset_frequency: 'NEVER',
+        manual_nos: true,
+      })
+      .onDuplicateKeyUpdate({ set: { description: defaults.seriesName } });
   }
 
   /**
@@ -241,7 +323,9 @@ export class NumberSeriesService {
     record: Record<string, unknown> = {},
   ): Promise<string> {
     if (!executor) {
-      return this.db.transaction((tx) => this.generateNext(seriesCode, tenantId, companyId, tx, record));
+      return this.db.transaction((tx) =>
+        this.generateNext(seriesCode, tenantId, companyId, tx, record),
+      );
     }
 
     const conditions = [
@@ -250,9 +334,7 @@ export class NumberSeriesService {
       isNull(schema.noSeries.deleted_at),
     ];
     // Templates and company counters are independent after company creation.
-    conditions.push(
-      companyCondition(schema.noSeries.company_id, companyId)
-    );
+    conditions.push(companyCondition(schema.noSeries.company_id, companyId));
 
     let series: typeof schema.noSeries.$inferSelect | undefined;
     try {
@@ -270,9 +352,19 @@ export class NumberSeriesService {
 
     if (!series) {
       const normalizedMaster = seriesCode.toUpperCase().replaceAll('-', '_');
-      if (MASTER_CODE_COLUMNS[normalizedMaster] || normalizedMaster === 'ITEM' || normalizedMaster === 'LOCATION') {
+      if (
+        MASTER_CODE_COLUMNS[normalizedMaster] ||
+        normalizedMaster === 'ITEM' ||
+        normalizedMaster === 'LOCATION'
+      ) {
         try {
-          const defaultSeries = await this.findDefaultSeriesByMaster(seriesCode, tenantId, companyId, undefined, executor);
+          const defaultSeries = await this.findDefaultSeriesByMaster(
+            seriesCode,
+            tenantId,
+            companyId,
+            undefined,
+            executor,
+          );
           if (defaultSeries) {
             series = defaultSeries;
             seriesCode = defaultSeries.code;
@@ -284,14 +376,26 @@ export class NumberSeriesService {
     }
 
     if (!series) {
-      throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
+      throw new NotFoundException(
+        `Number series '${seriesCode}' not found for this tenant/company scope.`,
+      );
     }
     if (series.blocked) {
-      throw new BadRequestException(`Number series '${seriesCode}' is inactive.`);
+      throw new BadRequestException(
+        `Number series '${seriesCode}' is inactive.`,
+      );
     }
 
     const now = new Date();
-    const { sequence: nextSeq, code: formattedCode } = await this.nextAvailableCode(series, tenantId, companyId, executor, now, record);
+    const { sequence: nextSeq, code: formattedCode } =
+      await this.nextAvailableCode(
+        series,
+        tenantId,
+        companyId,
+        executor,
+        now,
+        record,
+      );
 
     await executor
       .update(schema.noSeries)
@@ -321,19 +425,38 @@ export class NumberSeriesService {
     const columns = table ? getTableColumns(table) : undefined;
     const occupied = new Set<string>();
     if (table && field && columns?.[field]) {
-      const occupiedConditions = scopeKeyConditions(columns, tenantId, companyId);
-      const rows = await executor.select({ code: columns[field] }).from(table).where(and(...occupiedConditions));
+      const occupiedConditions = scopeKeyConditions(
+        columns,
+        tenantId,
+        companyId,
+      );
+      const rows = await executor
+        .select({ code: columns[field] })
+        .from(table)
+        .where(and(...occupiedConditions));
       for (const row of rows) occupied.add(String(row.code).toUpperCase());
     }
-    const segments = await this.resolveSegmentValues(series, record, tenantId, companyId, executor);
+    const segments = await this.resolveSegmentValues(
+      series,
+      record,
+      tenantId,
+      companyId,
+      executor,
+    );
     // A series built from segments counts within its stem, not across the whole
     // series: the first shed of farm 2 is FARM002-SHED-001 even when farm 1
     // already has three. That is what location.service has always done for
     // locations, generalised — without it, folding a hierarchy onto this path
     // would renumber every child by its siblings elsewhere in the tenant.
-    const stem = segmentFields(series).length ? formatSeriesStem(series, now, segments) : '';
+    const stem = segmentFields(series).length
+      ? formatSeriesStem(series, now, segments)
+      : '';
     let sequence = stem
-      ? nextSequenceInStem(stem, series.seq_separator || series.separator || '-', occupied)
+      ? nextSequenceInStem(
+          stem,
+          series.seq_separator || series.separator || '-',
+          occupied,
+        )
       : nextSequence(series, now);
     let code = formatSeriesCode(series, sequence, now, segments);
     // With no sequence there is nothing to advance, so a clash is final. Saying
@@ -342,15 +465,19 @@ export class NumberSeriesService {
       if (occupied.has(code.toUpperCase())) {
         throw new ConflictException(
           `Code "${code}" already exists. This series has no number, so its code comes entirely from the fields — ` +
-          `two records with the same values cannot both have one. Rename, or give the series a sequence.`
+            `two records with the same values cannot both have one. Rename, or give the series a sequence.`,
         );
       }
     } else {
-      while (occupied.has(code.toUpperCase())) code = formatSeriesCode(series, ++sequence, now, segments);
+      while (occupied.has(code.toUpperCase()))
+        code = formatSeriesCode(series, ++sequence, now, segments);
     }
     // Option C: an over-long code is refused, never trimmed. Codes are identity,
     // and trimming turns two different names into one code.
-    assertCodeFits(code, columns?.[field] ? codeColumnLength(columns[field]) : undefined);
+    assertCodeFits(
+      code,
+      columns?.[field] ? codeColumnLength(columns[field]) : undefined,
+    );
     return { sequence, code };
   }
 
@@ -371,7 +498,9 @@ export class NumberSeriesService {
     executor: MySql2Database<typeof schema> = this.db,
   ): Promise<Record<string, unknown>> {
     // A date segment is stored as `field:YEAR`; the lookup wants the field.
-    const wanted = new Set(segmentFields(series).map((entry) => parseSegment(entry).field));
+    const wanted = new Set(
+      segmentFields(series).map((entry) => parseSegment(entry).field),
+    );
     const resolved: Record<string, unknown> = {};
     for (const field of wanted) {
       const raw = record[field];
@@ -379,9 +508,22 @@ export class NumberSeriesService {
       const reference = SEGMENT_REFERENCES[field];
       const codeLookup = SEGMENT_CODE_LOOKUPS[field];
       if (reference && UUID_PATTERN.test(String(raw))) {
-        resolved[field] = await this.lookupReferencedCode(reference, String(raw), tenantId, companyId, executor);
+        resolved[field] = await this.lookupReferencedCode(
+          reference,
+          String(raw),
+          tenantId,
+          companyId,
+          executor,
+        );
       } else if (codeLookup) {
-        resolved[field] = (await this.lookupReferencedCode(codeLookup, String(raw), tenantId, companyId, executor)) ?? raw;
+        resolved[field] =
+          (await this.lookupReferencedCode(
+            codeLookup,
+            String(raw),
+            tenantId,
+            companyId,
+            executor,
+          )) ?? raw;
       } else {
         resolved[field] = raw;
       }
@@ -404,12 +546,14 @@ export class NumberSeriesService {
     const [row] = await executor
       .select({ code: columns[codeColumn] })
       .from(table)
-      .where(and(
-        eq(columns[idColumn], id),
-        eq(columns.tenant_id, tenantId),
-        companyCondition(columns.company_id, companyId),
-        isNull(columns.deleted_at),
-      ))
+      .where(
+        and(
+          eq(columns[idColumn], id),
+          eq(columns.tenant_id, tenantId),
+          companyCondition(columns.company_id, companyId),
+          isNull(columns.deleted_at),
+        ),
+      )
       .limit(1);
     return row?.code == null ? undefined : String(row.code);
   }
@@ -444,9 +588,7 @@ export class NumberSeriesService {
         eq(schema.noSeries.blocked, false),
         isNull(schema.noSeries.deleted_at),
       ];
-      conditions.push(
-        companyCondition(schema.noSeries.company_id, companyId)
-      );
+      conditions.push(companyCondition(schema.noSeries.company_id, companyId));
       try {
         const [row] = await executor
           .select({ id: schema.noSeries.id })
@@ -471,8 +613,18 @@ export class NumberSeriesService {
 
     // Check if a default series is configured for this master (e.g. custom series code or NS-*)
     try {
-      const defaultSeries = await this.findDefaultSeriesByMaster(masterKey, tenantId, companyId, typeValue, executor);
-      if (defaultSeries && this.seriesMatchesCompanyScope(defaultSeries, companyId)) return defaultSeries.code;
+      const defaultSeries = await this.findDefaultSeriesByMaster(
+        masterKey,
+        tenantId,
+        companyId,
+        typeValue,
+        executor,
+      );
+      if (
+        defaultSeries &&
+        this.seriesMatchesCompanyScope(defaultSeries, companyId)
+      )
+        return defaultSeries.code;
     } catch {
       // Fall through
     }
@@ -486,7 +638,9 @@ export class NumberSeriesService {
     series: Pick<typeof schema.noSeries.$inferSelect, 'company_id'>,
     companyId?: string | null,
   ): boolean {
-    return companyId ? series.company_id === companyId : series.company_id == null;
+    return companyId
+      ? series.company_id === companyId
+      : series.company_id == null;
   }
 
   /**
@@ -507,37 +661,75 @@ export class NumberSeriesService {
    * that one by what is taken emptied it the moment every master had a series,
    * leaving a create form with nothing to choose.
    */
-  async availableMasters(tenantId: string, companyId?: string | null, current?: string, all = false) {
+  async availableMasters(
+    tenantId: string,
+    companyId?: string | null,
+    current?: string,
+    all = false,
+  ) {
     const rows = await this.db
       .select({ code: schema.noSeries.code })
       .from(schema.noSeries)
-      .where(and(
-        eq(schema.noSeries.tenant_id, tenantId),
-        isNull(schema.noSeries.deleted_at),
-        companyCondition(schema.noSeries.company_id, companyId),
-      ));
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          isNull(schema.noSeries.deleted_at),
+          companyCondition(schema.noSeries.company_id, companyId),
+        ),
+      );
     const taken = new Set(rows.map((r) => r.code));
     const keep = current?.toUpperCase();
     return Object.keys(MASTER_CODE_COLUMNS)
       .sort()
-      .filter((key) => all || key === keep || (!taken.has(key) && !SELF_CODED_MASTERS.has(key)))
-      .map((key) => ({ master_key: key, code_column: MASTER_CODE_COLUMNS[key] }));
+      .filter(
+        (key) =>
+          all ||
+          key === keep ||
+          (!taken.has(key) && !SELF_CODED_MASTERS.has(key)),
+      )
+      .map((key) => ({
+        master_key: key,
+        code_column: MASTER_CODE_COLUMNS[key],
+      }));
   }
 
-  async resolveCodeSettings(master: string, type: string | undefined, tenantId: string, companyId?: string | null) {
-    if (!/^[A-Z][A-Z_]{0,49}$/.test(master)) throw new BadRequestException('Invalid master code.');
-    const code = await this.resolveSeriesFor(master, type, tenantId, companyId) ||
-      (master === 'ANIMAL' ? await this.resolveSeriesFor('ANIMAL', 'PIGGERY', tenantId, companyId) : null);
+  async resolveCodeSettings(
+    master: string,
+    type: string | undefined,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
+    if (!/^[A-Z][A-Z_]{0,49}$/.test(master))
+      throw new BadRequestException('Invalid master code.');
+    const code =
+      (await this.resolveSeriesFor(master, type, tenantId, companyId)) ||
+      (master === 'ANIMAL'
+        ? await this.resolveSeriesFor('ANIMAL', 'PIGGERY', tenantId, companyId)
+        : null);
     if (!code) return { generated: false, allowManual: true };
 
     try {
-      const [row] = await this.db.select().from(schema.noSeries).where(and(
-        eq(schema.noSeries.tenant_id, tenantId), eq(schema.noSeries.code, code),
-        eq(schema.noSeries.blocked, false), isNull(schema.noSeries.deleted_at),
-        companyCondition(schema.noSeries.company_id, companyId),
-      )).orderBy(sql`${schema.noSeries.company_id} IS NULL`).limit(1);
+      const [row] = await this.db
+        .select()
+        .from(schema.noSeries)
+        .where(
+          and(
+            eq(schema.noSeries.tenant_id, tenantId),
+            eq(schema.noSeries.code, code),
+            eq(schema.noSeries.blocked, false),
+            isNull(schema.noSeries.deleted_at),
+            companyCondition(schema.noSeries.company_id, companyId),
+          ),
+        )
+        .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
+        .limit(1);
       if (row) {
-        return { generated: true, allowManual: row.manual_nos, seriesCode: row.code, prefix: row.prefix };
+        return {
+          generated: true,
+          allowManual: row.manual_nos,
+          seriesCode: row.code,
+          prefix: row.prefix,
+        };
       }
     } catch {
       // Fall through in mock environments
@@ -547,18 +739,32 @@ export class NumberSeriesService {
   }
 
   /** Read-only: never initializes a series, increments a counter, or reserves a code. */
-  async previewCode(query: CodePreviewDto, tenantId: string, companyId?: string | null) {
-    if (!MASTER_CODE_COLUMNS[query.master]) throw new BadRequestException('Unsupported master code.');
+  async previewCode(
+    query: CodePreviewDto,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
+    if (!MASTER_CODE_COLUMNS[query.master])
+      throw new BadRequestException('Unsupported master code.');
     let type = query.type;
     if (query.master === 'ANIMAL') {
       const scope = this.cls.get<{ lobId?: string }>('masterScope');
       const lobId = query.lobId || scope?.lobId;
       if (lobId) {
-        const [lob] = await this.db.select({ code: schema.lobMaster.lob_code }).from(schema.lobMaster).where(eq(schema.lobMaster.lob_id, lobId)).limit(1);
+        const [lob] = await this.db
+          .select({ code: schema.lobMaster.lob_code })
+          .from(schema.lobMaster)
+          .where(eq(schema.lobMaster.lob_id, lobId))
+          .limit(1);
         type = lob?.code;
       }
     }
-    const settings = await this.resolveCodeSettings(query.master, type, tenantId, companyId);
+    const settings = await this.resolveCodeSettings(
+      query.master,
+      type,
+      tenantId,
+      companyId,
+    );
     if (!settings.generated || !settings.seriesCode) return settings;
     // The record the form is holding, so the preview composes the same segments
     // the allocator will. Malformed JSON previews as if nothing was sent rather
@@ -567,49 +773,117 @@ export class NumberSeriesService {
     if (query.record) {
       try {
         const parsed = JSON.parse(query.record);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) record = parsed as Record<string, unknown>;
-      } catch { record = {}; }
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+          record = parsed as Record<string, unknown>;
+      } catch {
+        record = {};
+      }
     }
-    const [series] = await this.db.select().from(schema.noSeries).where(and(
-      eq(schema.noSeries.tenant_id, tenantId), companyCondition(schema.noSeries.company_id, companyId),
-      eq(schema.noSeries.code, settings.seriesCode),
-      eq(schema.noSeries.blocked, false), isNull(schema.noSeries.deleted_at),
-    )).limit(1);
+    const [series] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          companyCondition(schema.noSeries.company_id, companyId),
+          eq(schema.noSeries.code, settings.seriesCode),
+          eq(schema.noSeries.blocked, false),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .limit(1);
     if (!series) return { generated: false, allowManual: true };
     const hierarchy: Record<string, [string, string, string, string]> = {
-      LOCATION: ['location', 'location_id', 'location_code', 'parent_location_id'],
-      ITEM_CATEGORY: ['item-category', 'category_id', 'category_code', 'parent_category_id'],
-      GL_ACCOUNT: ['gl-account', 'gl_account_id', 'account_code', 'parent_account_id'],
-      COST_CENTER: ['cost-center', 'cost_center_id', 'cost_center_code', 'parent_cost_center_id'],
+      LOCATION: [
+        'location',
+        'location_id',
+        'location_code',
+        'parent_location_id',
+      ],
+      ITEM_CATEGORY: [
+        'item-category',
+        'category_id',
+        'category_code',
+        'parent_category_id',
+      ],
+      GL_ACCOUNT: [
+        'gl-account',
+        'gl_account_id',
+        'account_code',
+        'parent_account_id',
+      ],
+      COST_CENTER: [
+        'cost-center',
+        'cost_center_id',
+        'cost_center_code',
+        'parent_cost_center_id',
+      ],
     };
     const definition = hierarchy[query.master];
     if (query.parentId && definition) {
       const [parentKey, parentId, parentCode, childParent] = definition;
       const parentTable = MASTER_TABLES[parentKey];
       const parentColumns = getTableColumns(parentTable);
-      const [parent] = await this.db.select().from(parentTable).where(and(
-        eq(parentColumns[parentId], query.parentId), eq(parentColumns.tenant_id, tenantId),
-        companyCondition(parentColumns.company_id, companyId), isNull(parentColumns.deleted_at),
-        eq(parentColumns.is_active, true), ...masterScopeConditions(this.cls, parentTable),
-      )).limit(1);
-      if (!parent) throw new BadRequestException('Select an active parent in this workspace.');
+      const [parent] = await this.db
+        .select()
+        .from(parentTable)
+        .where(
+          and(
+            eq(parentColumns[parentId], query.parentId),
+            eq(parentColumns.tenant_id, tenantId),
+            companyCondition(parentColumns.company_id, companyId),
+            isNull(parentColumns.deleted_at),
+            eq(parentColumns.is_active, true),
+            ...masterScopeConditions(this.cls, parentTable),
+          ),
+        )
+        .limit(1);
+      if (!parent)
+        throw new BadRequestException(
+          'Select an active parent in this workspace.',
+        );
       let prefix = series.prefix || series.code;
       if (query.master === 'LOCATION') {
-        const [locationType] = await this.db.select().from(schema.locationTypeMaster).where(and(
-          eq(schema.locationTypeMaster.tenant_id, tenantId), companyCondition(schema.locationTypeMaster.company_id, companyId),
-          eq(schema.locationTypeMaster.type_code, query.type || ''), isNull(schema.locationTypeMaster.deleted_at),
-        )).limit(1);
-        if (!locationType) throw new BadRequestException('Select a location type first.');
+        const [locationType] = await this.db
+          .select()
+          .from(schema.locationTypeMaster)
+          .where(
+            and(
+              eq(schema.locationTypeMaster.tenant_id, tenantId),
+              companyCondition(schema.locationTypeMaster.company_id, companyId),
+              eq(schema.locationTypeMaster.type_code, query.type || ''),
+              isNull(schema.locationTypeMaster.deleted_at),
+            ),
+          )
+          .limit(1);
+        if (!locationType)
+          throw new BadRequestException('Select a location type first.');
         prefix = locationType.code_prefix;
       }
-      const table = resolveSeriesTable(query.master.toLowerCase().replaceAll('_', '-'));
-      if (!table) throw new BadRequestException(`No master table configured for '${query.master}'.`);
+      const table = resolveSeriesTable(
+        query.master.toLowerCase().replaceAll('_', '-'),
+      );
+      if (!table)
+        throw new BadRequestException(
+          `No master table configured for '${query.master}'.`,
+        );
       const columns = getTableColumns(table);
-      const conditions = [eq(columns.tenant_id, tenantId), companyCondition(columns.company_id, companyId), eq(columns[childParent], query.parentId)];
-      if (query.master === 'LOCATION') conditions.push(eq(columns.location_type, query.type!));
+      const conditions = [
+        eq(columns.tenant_id, tenantId),
+        companyCondition(columns.company_id, companyId),
+        eq(columns[childParent], query.parentId),
+      ];
+      if (query.master === 'LOCATION')
+        conditions.push(eq(columns.location_type, query.type!));
       const preview = await generateCompositeCode({
-        parentCode: String(parent[parentCode]), prefix, seqLength: series.seq_length,
-        fetchSiblingCodes: async () => this.db.select({ code: columns[MASTER_CODE_COLUMNS[query.master]] }).from(table).where(and(...conditions)) as Promise<{ code: string }[]>,
+        parentCode: String(parent[parentCode]),
+        prefix,
+        seqLength: series.seq_length,
+        fetchSiblingCodes: async () =>
+          this.db
+            .select({ code: columns[MASTER_CODE_COLUMNS[query.master]] })
+            .from(table)
+            .where(and(...conditions)) as Promise<{ code: string }[]>,
       });
       return { ...settings, preview };
     }
@@ -628,10 +902,23 @@ export class NumberSeriesService {
     // the form can send their values back and ask again when one changes. Without
     // them the preview was composed with those segments empty — PIG-0005 on screen
     // while the save, which has the date of birth, issued PIG-2026-0003.
-    const segmentFieldNames = [...new Set(segmentFields(series).map((entry) => parseSegment(entry).field))];
+    const segmentFieldNames = [
+      ...new Set(
+        segmentFields(series).map((entry) => parseSegment(entry).field),
+      ),
+    ];
     return {
       ...settings,
-      preview: (await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), record)).code,
+      preview: (
+        await this.nextAvailableCode(
+          series,
+          tenantId,
+          companyId,
+          this.db,
+          new Date(),
+          record,
+        )
+      ).code,
       segmentFields: segmentFieldNames,
     };
   }
@@ -644,10 +931,26 @@ export class NumberSeriesService {
    * directly — without threading it, their segments would silently resolve to
    * nothing while the form's preview showed the composed code.
    */
-  async resolveNewCode(master: string, supplied: string | undefined, tenantId: string, companyId?: string | null, type?: string, record: Record<string, unknown> = {}): Promise<string> {
-    if (supplied) return this.manualCode(master, supplied, tenantId, companyId, type);
-    const series = await this.resolveSeriesFor(master, type, tenantId, companyId);
-    if (!series) throw new BadRequestException('Enter a manual code or configure a number series for this master.');
+  async resolveNewCode(
+    master: string,
+    supplied: string | undefined,
+    tenantId: string,
+    companyId?: string | null,
+    type?: string,
+    record: Record<string, unknown> = {},
+  ): Promise<string> {
+    if (supplied)
+      return this.manualCode(master, supplied, tenantId, companyId, type);
+    const series = await this.resolveSeriesFor(
+      master,
+      type,
+      tenantId,
+      companyId,
+    );
+    if (!series)
+      throw new BadRequestException(
+        'Enter a manual code or configure a number series for this master.',
+      );
     return this.generateNext(series, tenantId, companyId, undefined, record);
   }
 
@@ -663,7 +966,16 @@ export class NumberSeriesService {
    * from this map has no string-held references, so its code is always free to
    * follow its series.
    */
-  private static readonly CODE_REFERENCES: Record<string, Array<{ table: string; column: string; label: string; isUuid?: boolean; jsonArrayOfCodes?: boolean }>> = {
+  private static readonly CODE_REFERENCES: Record<
+    string,
+    Array<{
+      table: string;
+      column: string;
+      label: string;
+      isUuid?: boolean;
+      jsonArrayOfCodes?: boolean;
+    }>
+  > = {
     ITEM_TYPE: [{ table: 'itemMaster', column: 'item_type', label: 'an item' }],
     UOM: [
       { table: 'itemMaster', column: 'uom_primary', label: 'an item' },
@@ -673,12 +985,31 @@ export class NumberSeriesService {
       { table: 'batchHeader', column: 'current_stage_code', label: 'a batch' },
       { table: 'batchStageLog', column: 'to_stage_code', label: 'a stage log' },
       { table: 'farmRecord', column: 'stage_code', label: 'a farm record' },
-      { table: 'reasonMaster', column: 'applicable_stages', label: 'a reason', jsonArrayOfCodes: true },
+      {
+        table: 'reasonMaster',
+        column: 'applicable_stages',
+        label: 'a reason',
+        jsonArrayOfCodes: true,
+      },
     ],
-    SPECIES: [{ table: 'breedMaster', column: 'species_id', label: 'a breed', isUuid: true }],
-    ITEM_CATEGORY: [{ table: 'itemMaster', column: 'sub_category', label: 'an item' }],
+    SPECIES: [
+      {
+        table: 'breedMaster',
+        column: 'species_id',
+        label: 'a breed',
+        isUuid: true,
+      },
+    ],
+    ITEM_CATEGORY: [
+      { table: 'itemMaster', column: 'sub_category', label: 'an item' },
+    ],
     ITEM_ATTRIBUTE: [
-      { table: 'itemAttributeValues', column: 'attribute_id', label: 'an item attribute value', isUuid: true },
+      {
+        table: 'itemAttributeValues',
+        column: 'attribute_id',
+        label: 'an item attribute value',
+        isUuid: true,
+      },
     ],
   };
 
@@ -703,20 +1034,44 @@ export class NumberSeriesService {
     tenantId: string,
     companyId?: string | null,
   ): Promise<string> {
-    const seriesCode = await this.resolveSeriesFor(master, undefined, tenantId, companyId);
-    if (!seriesCode) throw new BadRequestException(`No number series is configured for ${master}.`);
-    const [series] = await this.db.select().from(schema.noSeries).where(and(
-      eq(schema.noSeries.tenant_id, tenantId),
-      eq(schema.noSeries.code, seriesCode),
-      isNull(schema.noSeries.deleted_at),
-    )).orderBy(sql`${schema.noSeries.company_id} IS NULL`).limit(1);
-    if (!series) throw new BadRequestException(`Number series '${seriesCode}' not found.`);
+    const seriesCode = await this.resolveSeriesFor(
+      master,
+      undefined,
+      tenantId,
+      companyId,
+    );
+    if (!seriesCode)
+      throw new BadRequestException(
+        `No number series is configured for ${master}.`,
+      );
+    const [series] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          eq(schema.noSeries.code, seriesCode),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
+      .limit(1);
+    if (!series)
+      throw new BadRequestException(`Number series '${seriesCode}' not found.`);
 
     // Sequence-only series: nothing in the code came from the record, so a
     // rename has nothing to follow. The code stays as it is.
-    if (!segmentFields(series).length) return String(row[MASTER_CODE_COLUMNS[master]] ?? '');
+    if (!segmentFields(series).length)
+      return String(row[MASTER_CODE_COLUMNS[master]] ?? '');
 
-    const { code } = await this.nextAvailableCode(series, tenantId, companyId, this.db, new Date(), row);
+    const { code } = await this.nextAvailableCode(
+      series,
+      tenantId,
+      companyId,
+      this.db,
+      new Date(),
+      row,
+    );
     return code;
   }
 
@@ -740,7 +1095,8 @@ export class NumberSeriesService {
     const refs = NumberSeriesService.CODE_REFERENCES[master] ?? [];
     const tableKey = master.toLowerCase().replaceAll('_', '-');
     const table0 = MASTER_TABLES[tableKey];
-    if (!table0 || !codeColumn) throw new BadRequestException('Unsupported master code.');
+    if (!table0 || !codeColumn)
+      throw new BadRequestException('Unsupported master code.');
     const columns0 = getTableColumns(table0);
     const codeCol = columns0[codeColumn];
     const idKey = Object.keys(columns0).find((k) => k.endsWith('_id')) ?? 'id';
@@ -759,12 +1115,18 @@ export class NumberSeriesService {
         if (ref.jsonArrayOfCodes) {
           // applicable_stages holds stage codes as a JSON array — a JSON_CONTAINS,
           // not an equality.
-          conditions.push(sql`JSON_CONTAINS(${col}, ${JSON.stringify(oldCode)})`);
+          conditions.push(
+            sql`JSON_CONTAINS(${col}, ${JSON.stringify(oldCode)})`,
+          );
         } else {
           conditions.push(eq(col, ref.isUuid ? idValue : oldCode));
         }
         if (refCols.tenant_id) conditions.push(eq(refCols.tenant_id, tenantId));
-        const [hit] = await this.db.select({ one: sql`1` }).from(refTable).where(and(...conditions)).limit(1);
+        const [hit] = await this.db
+          .select({ one: sql`1` })
+          .from(refTable)
+          .where(and(...conditions))
+          .limit(1);
         if (hit) {
           throw new ConflictException(
             `Code cannot follow the series while '${oldCode}' is still used by ${ref.label}. Retire the row or clear the references first.`,
@@ -779,31 +1141,71 @@ export class NumberSeriesService {
     // Width and uniqueness, the same gate a manual code passes. The row itself
     // is excluded so keeping the code is never a self-collision.
     const width = Number(codeCol.getSQLType().match(/\((\d+)\)/)?.[1] || 255);
-    if (!newCode || newCode.length > width) throw new BadRequestException(`Code must contain 1 to ${width} characters.`);
-    const [duplicate] = await this.db.select().from(table0).where(and(
-      ...scopeKeyConditions(columns0, tenantId, companyId),
-      eq(codeCol, newCode),
-      ne(codeCol, oldCode),
-    )).limit(1);
-    if (duplicate) throw new ConflictException(`Code '${newCode}' already exists in this scope.`);
+    if (!newCode || newCode.length > width)
+      throw new BadRequestException(
+        `Code must contain 1 to ${width} characters.`,
+      );
+    const [duplicate] = await this.db
+      .select()
+      .from(table0)
+      .where(
+        and(
+          ...scopeKeyConditions(columns0, tenantId, companyId),
+          eq(codeCol, newCode),
+          ne(codeCol, oldCode),
+        ),
+      )
+      .limit(1);
+    if (duplicate)
+      throw new ConflictException(
+        `Code '${newCode}' already exists in this scope.`,
+      );
     return newCode;
   }
 
   /** Validate an explicit manual identity without consuming the series. */
-  async manualCode(master: string, supplied: string, tenantId: string, companyId?: string | null, type?: string) {
-    const settings = await this.resolveCodeSettings(master, type, tenantId, companyId);
-    if (settings.generated && !settings.allowManual) throw new BadRequestException('This number series does not allow manual entry.');
+  async manualCode(
+    master: string,
+    supplied: string,
+    tenantId: string,
+    companyId?: string | null,
+    type?: string,
+  ) {
+    const settings = await this.resolveCodeSettings(
+      master,
+      type,
+      tenantId,
+      companyId,
+    );
+    if (settings.generated && !settings.allowManual)
+      throw new BadRequestException(
+        'This number series does not allow manual entry.',
+      );
     const code = supplied.trim().toUpperCase();
     const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
-    if (!table || !MASTER_CODE_COLUMNS[master]) throw new BadRequestException('Unsupported master code.');
+    if (!table || !MASTER_CODE_COLUMNS[master])
+      throw new BadRequestException('Unsupported master code.');
     const columns = getTableColumns(table);
     const column = columns[MASTER_CODE_COLUMNS[master]];
     const width = Number(column.getSQLType().match(/\((\d+)\)/)?.[1] || 255);
-    if (!code || code.length > width) throw new BadRequestException(`Code must contain 1 to ${width} characters.`);
-    const [duplicate] = await this.db.select().from(table).where(and(
-      ...scopeKeyConditions(columns, tenantId, companyId), eq(column, code),
-    )).limit(1);
-    if (duplicate) throw new ConflictException(`Code '${code}' already exists in this scope.`);
+    if (!code || code.length > width)
+      throw new BadRequestException(
+        `Code must contain 1 to ${width} characters.`,
+      );
+    const [duplicate] = await this.db
+      .select()
+      .from(table)
+      .where(
+        and(
+          ...scopeKeyConditions(columns, tenantId, companyId),
+          eq(column, code),
+        ),
+      )
+      .limit(1);
+    if (duplicate)
+      throw new ConflictException(
+        `Code '${code}' already exists in this scope.`,
+      );
     return code;
   }
 
@@ -828,8 +1230,14 @@ export class NumberSeriesService {
     type?: string,
     record: Record<string, unknown> = {},
   ): Promise<string | null> {
-    if (supplied?.trim()) return this.manualCode(master, supplied, tenantId, companyId, type);
-    const series = await this.resolveSeriesFor(master, type, tenantId, companyId);
+    if (supplied?.trim())
+      return this.manualCode(master, supplied, tenantId, companyId, type);
+    const series = await this.resolveSeriesFor(
+      master,
+      type,
+      tenantId,
+      companyId,
+    );
     if (!series) return null;
     return this.generateNext(series, tenantId, companyId, undefined, record);
   }
@@ -854,15 +1262,29 @@ export class NumberSeriesService {
     if (code === current) return null;
 
     const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
-    if (!table || !MASTER_CODE_COLUMNS[master]) throw new BadRequestException('Unsupported master code.');
+    if (!table || !MASTER_CODE_COLUMNS[master])
+      throw new BadRequestException('Unsupported master code.');
     const columns = getTableColumns(table);
     const column = columns[MASTER_CODE_COLUMNS[master]];
     const width = Number(column.getSQLType().match(/\((\d+)\)/)?.[1] || 255);
-    if (!code || code.length > width) throw new BadRequestException(`Code must contain 1 to ${width} characters.`);
-    const [duplicate] = await this.db.select().from(table).where(and(
-      ...scopeKeyConditions(columns, tenantId, companyId), eq(column, code),
-    )).limit(1);
-    if (duplicate) throw new ConflictException(`Code '${code}' already exists in this scope.`);
+    if (!code || code.length > width)
+      throw new BadRequestException(
+        `Code must contain 1 to ${width} characters.`,
+      );
+    const [duplicate] = await this.db
+      .select()
+      .from(table)
+      .where(
+        and(
+          ...scopeKeyConditions(columns, tenantId, companyId),
+          eq(column, code),
+        ),
+      )
+      .limit(1);
+    if (duplicate)
+      throw new ConflictException(
+        `Code '${code}' already exists in this scope.`,
+      );
     return code;
   }
 
@@ -887,9 +1309,7 @@ export class NumberSeriesService {
       eq(schema.noSeries.code, seriesCode),
       isNull(schema.noSeries.deleted_at),
     ];
-    conditions.push(
-      companyCondition(schema.noSeries.company_id, companyId)
-    );
+    conditions.push(companyCondition(schema.noSeries.company_id, companyId));
 
     const [series] = await executor
       .select()
@@ -900,10 +1320,14 @@ export class NumberSeriesService {
       .for('update');
 
     if (!series) {
-      throw new NotFoundException(`Number series '${seriesCode}' not found for this tenant/company scope.`);
+      throw new NotFoundException(
+        `Number series '${seriesCode}' not found for this tenant/company scope.`,
+      );
     }
     if (series.blocked) {
-      throw new BadRequestException(`Number series '${seriesCode}' is inactive.`);
+      throw new BadRequestException(
+        `Number series '${seriesCode}' is inactive.`,
+      );
     }
     return series;
   }
@@ -945,8 +1369,17 @@ export class NumberSeriesService {
     };
   }
 
-  async create(dto: CreateNumberSeriesDto, tenantId: string, userPayload?: any) {
-    const conflict = separatorConflict(dto.code_segments ?? [], dto.separator ?? null, dto.seq_separator ?? null, dto.seq_length);
+  async create(
+    dto: CreateNumberSeriesDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
+    const conflict = separatorConflict(
+      dto.code_segments ?? [],
+      dto.separator ?? null,
+      dto.seq_separator ?? null,
+      dto.seq_length,
+    );
     if (conflict) throw new BadRequestException(conflict);
     const duplicateConditions = [
       eq(schema.noSeries.tenant_id, tenantId),
@@ -954,24 +1387,40 @@ export class NumberSeriesService {
       isNull(schema.noSeries.deleted_at),
     ];
     duplicateConditions.push(
-      dto.company_id ? eq(schema.noSeries.company_id, dto.company_id) : isNull(schema.noSeries.company_id)
+      dto.company_id
+        ? eq(schema.noSeries.company_id, dto.company_id)
+        : isNull(schema.noSeries.company_id),
     );
 
-    const existing = await this.db.select().from(schema.noSeries).where(and(...duplicateConditions)).limit(1);
+    const existing = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(and(...duplicateConditions))
+      .limit(1);
     if (existing.length > 0) {
-      throw new ConflictException(`Number series '${dto.series_code}' already exists in this scope.`);
+      throw new ConflictException(
+        `Number series '${dto.series_code}' already exists in this scope.`,
+      );
     }
 
-    await this.assertSingleSeriesPerMaster(dto.document_type, tenantId, dto.company_id || null);
+    await this.assertSingleSeriesPerMaster(
+      dto.document_type,
+      tenantId,
+      dto.company_id || null,
+    );
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
     // wins). no_series.nob_id/lob_id are nullable, so an ambiguous
     // company simply stores null rather than blocking the create.
-    const resolvedNobLob = await this.nobLobResolution.resolve(tenantId, dto.company_id, {
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
-    });
+    const resolvedNobLob = await this.nobLobResolution.resolve(
+      tenantId,
+      dto.company_id,
+      {
+        nob_id: dto.nob_id,
+        lob_id: dto.lob_id,
+      },
+    );
 
     const seriesId = randomUUID();
     const newSeries = {
@@ -1017,7 +1466,9 @@ export class NumberSeriesService {
     const [series] = await this.db
       .select()
       .from(schema.noSeries)
-      .where(and(eq(schema.noSeries.id, id), isNull(schema.noSeries.deleted_at)))
+      .where(
+        and(eq(schema.noSeries.id, id), isNull(schema.noSeries.deleted_at)),
+      )
       .limit(1);
 
     if (!series) {
@@ -1028,19 +1479,21 @@ export class NumberSeriesService {
 
   async findAll(query: QueryNumberSeriesDto, tenantId: string) {
     // No isNull(deleted_at) filter — list view shows both Active/Inactive states (toggle switch) so a blocked row can be found again and restored.
-    const conditions: any[] = [
-      eq(schema.noSeries.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.noSeries.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.noSeries, query.companyId));
-    if (query.documentType) conditions.push(eq(schema.noSeries.document_type, query.documentType));
-    if (query.isActive !== undefined) conditions.push(eq(schema.noSeries.blocked, !query.isActive));
+    conditions.push(
+      ...masterScopeConditions(this.cls, schema.noSeries, query.companyId),
+    );
+    if (query.documentType)
+      conditions.push(eq(schema.noSeries.document_type, query.documentType));
+    if (query.isActive !== undefined)
+      conditions.push(eq(schema.noSeries.blocked, !query.isActive));
     if (query.search) {
       conditions.push(
         or(
           like(schema.noSeries.code, `%${query.search}%`),
-          like(schema.noSeries.description, `%${query.search}%`)
-        )
+          like(schema.noSeries.description, `%${query.search}%`),
+        ),
       );
     }
 
@@ -1049,23 +1502,36 @@ export class NumberSeriesService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    const rows = await this.db.select().from(schema.noSeries).where(and(...conditions))
+    const rows = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(and(...conditions))
       .orderBy(listOrderBy(schema.noSeries, query, schema.noSeries.code))
-      .limit(limit).offset(offset);
+      .limit(limit)
+      .offset(offset);
 
     return rows.map((row) => this.toSeriesShape(row));
   }
 
-  async update(id: string, dto: UpdateNumberSeriesDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateNumberSeriesDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const series = await this.findOne(id);
 
     // Checked against the row as it will be, not as it is: changing one
     // separator alone is how the pair ends up unreadable.
-    const nextSegments = (dto.code_segments ?? series.code_segments ?? []) as string[];
+    const nextSegments = (dto.code_segments ??
+      series.code_segments ??
+      []) as string[];
     const conflict = separatorConflict(
       Array.isArray(nextSegments) ? nextSegments : [],
       dto.separator ?? series.separator ?? null,
-      dto.seq_separator !== undefined ? dto.seq_separator : (series.seq_separator ?? null),
+      dto.seq_separator !== undefined
+        ? dto.seq_separator
+        : (series.seq_separator ?? null),
       dto.seq_length ?? series.seq_length,
     );
     if (conflict) throw new BadRequestException(conflict);
@@ -1073,41 +1539,101 @@ export class NumberSeriesService {
     // Same rule as updateNoSeriesRow: a series that has issued numbers keeps its
     // master, prefix, segments and length. Only its name, and whether it is
     // active, stay editable.
-    if (hasIssuedNumbers({ last_no_used: series.last_generated_code, current_seq: series.current_seq }) || (await this.masterHasRecords(series.document_type, tenantId, series.company_id))) {
-      const sameList = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    if (
+      hasIssuedNumbers({
+        last_no_used: series.last_generated_code,
+        current_seq: series.current_seq,
+      }) ||
+      (await this.masterHasRecords(
+        series.document_type,
+        tenantId,
+        series.company_id,
+      ))
+    ) {
+      const sameList = (a: unknown, b: unknown) =>
+        JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
       const changed: string[] = [];
-      if (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(series.document_type)) changed.push('Applies To (Master)');
-      if (dto.prefix !== undefined && (dto.prefix || null) !== (series.prefix || null)) changed.push('Prefix');
-      if (dto.separator !== undefined && dto.separator !== series.separator) changed.push('Separator');
-      if (dto.seq_length !== undefined && dto.seq_length !== series.seq_length) changed.push('Sequence Length');
-      if (dto.reset_frequency !== undefined && dto.reset_frequency !== series.reset_frequency) changed.push('Reset Frequency');
-      if (dto.code_segments !== undefined && !sameList(dto.code_segments?.length ? dto.code_segments : null, series.code_segments)) changed.push('Code Segments');
-      if (dto.prefix_position !== undefined && (dto.prefix_position || 'END') !== (series.prefix_position || 'END')) changed.push('Prefix Position');
-      if (dto.seq_separator !== undefined && (dto.seq_separator || null) !== (series.seq_separator || null)) changed.push('Sequence Separator');
+      if (
+        dto.document_type !== undefined &&
+        normalizeMaster(dto.document_type) !==
+          normalizeMaster(series.document_type)
+      )
+        changed.push('Applies To (Master)');
+      if (
+        dto.prefix !== undefined &&
+        (dto.prefix || null) !== (series.prefix || null)
+      )
+        changed.push('Prefix');
+      if (dto.separator !== undefined && dto.separator !== series.separator)
+        changed.push('Separator');
+      if (dto.seq_length !== undefined && dto.seq_length !== series.seq_length)
+        changed.push('Sequence Length');
+      if (
+        dto.reset_frequency !== undefined &&
+        dto.reset_frequency !== series.reset_frequency
+      )
+        changed.push('Reset Frequency');
+      if (
+        dto.code_segments !== undefined &&
+        !sameList(
+          dto.code_segments?.length ? dto.code_segments : null,
+          series.code_segments,
+        )
+      )
+        changed.push('Code Segments');
+      if (
+        dto.prefix_position !== undefined &&
+        (dto.prefix_position || 'END') !== (series.prefix_position || 'END')
+      )
+        changed.push('Prefix Position');
+      if (
+        dto.seq_separator !== undefined &&
+        (dto.seq_separator || null) !== (series.seq_separator || null)
+      )
+        changed.push('Sequence Separator');
       if (changed.length) {
         throw new BadRequestException(
           `This number series has already issued numbers, so ${changed.join(', ')} can no longer be changed. You can still rename it or block it.`,
         );
       }
     }
-    if (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(series.document_type)) {
-      await this.assertSingleSeriesPerMaster(dto.document_type, tenantId, series.company_id || null, id);
+    if (
+      dto.document_type !== undefined &&
+      normalizeMaster(dto.document_type) !==
+        normalizeMaster(series.document_type)
+    ) {
+      await this.assertSingleSeriesPerMaster(
+        dto.document_type,
+        tenantId,
+        series.company_id || null,
+        id,
+      );
     }
 
     const updates: any = { updated_by: userPayload?.userId || null };
     if (dto.series_name !== undefined) updates.description = dto.series_name;
-    if (dto.document_type !== undefined) updates.document_type = dto.document_type;
+    if (dto.document_type !== undefined)
+      updates.document_type = dto.document_type;
     if (dto.prefix !== undefined) updates.prefix = dto.prefix;
     if (dto.separator !== undefined) updates.separator = dto.separator;
     if (dto.seq_length !== undefined) updates.seq_length = dto.seq_length;
-    if (dto.reset_frequency !== undefined) updates.reset_frequency = dto.reset_frequency;
+    if (dto.reset_frequency !== undefined)
+      updates.reset_frequency = dto.reset_frequency;
     if (dto.allow_manual !== undefined) updates.manual_nos = dto.allow_manual;
-    if (dto.code_segments !== undefined) updates.code_segments = dto.code_segments?.length ? dto.code_segments : null;
-    if (dto.prefix_position !== undefined) updates.prefix_position = dto.prefix_position || 'END';
-    if (dto.seq_separator !== undefined) updates.seq_separator = dto.seq_separator || null;
+    if (dto.code_segments !== undefined)
+      updates.code_segments = dto.code_segments?.length
+        ? dto.code_segments
+        : null;
+    if (dto.prefix_position !== undefined)
+      updates.prefix_position = dto.prefix_position || 'END';
+    if (dto.seq_separator !== undefined)
+      updates.seq_separator = dto.seq_separator || null;
     if (dto.is_active !== undefined) updates.blocked = !dto.is_active;
 
-    await this.db.update(schema.noSeries).set(updates).where(eq(schema.noSeries.id, id));
+    await this.db
+      .update(schema.noSeries)
+      .set(updates)
+      .where(eq(schema.noSeries.id, id));
 
     await this.auditService.log({
       tenantId,
@@ -1128,7 +1654,11 @@ export class NumberSeriesService {
 
     await this.db
       .update(schema.noSeries)
-      .set({ blocked: true, deleted_at: toMysqlTimestamp() as any, updated_by: userPayload?.userId || null })
+      .set({
+        blocked: true,
+        deleted_at: toMysqlTimestamp() as any,
+        updated_by: userPayload?.userId || null,
+      })
       .where(eq(schema.noSeries.id, id));
 
     await this.auditService.log({
@@ -1141,7 +1671,10 @@ export class NumberSeriesService {
       oldValues: series,
     });
 
-    return { success: true, message: `Number series '${series.series_code}' has been deactivated.` };
+    return {
+      success: true,
+      message: `Number series '${series.series_code}' has been deactivated.`,
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -1163,14 +1696,22 @@ export class NumberSeriesService {
    * write the code directly — so the counter alone cannot be trusted. Item is
    * excluded: several series share it, so records say nothing about this one.
    */
-  private async masterHasRecords(master: string | null | undefined, tenantId: string | null | undefined, companyId: string | null | undefined): Promise<boolean> {
+  private async masterHasRecords(
+    master: string | null | undefined,
+    tenantId: string | null | undefined,
+    companyId: string | null | undefined,
+  ): Promise<boolean> {
     const key = normalizeMaster(master);
     if (!key || key === 'ITEM' || !tenantId) return false;
     const table = resolveSeriesTable(key.toLowerCase().replaceAll('_', '-'));
     if (!table) return false;
     const columns = getTableColumns(table);
     if (!columns.tenant_id) return false;
-    const [row] = await this.db.select({ one: sql<number>`1` }).from(table).where(and(...scopeKeyConditions(columns, tenantId, companyId))).limit(1);
+    const [row] = await this.db
+      .select({ one: sql<number>`1` })
+      .from(table)
+      .where(and(...scopeKeyConditions(columns, tenantId, companyId)))
+      .limit(1);
     return !!row;
   }
 
@@ -1183,12 +1724,23 @@ export class NumberSeriesService {
     const key = normalizeMaster(master);
     if (!key || key === 'ITEM') return;
     const conditions: any[] = [
-      or(eq(schema.noSeries.document_type, key), eq(schema.noSeries.master_type, key))!,
+      or(
+        eq(schema.noSeries.document_type, key),
+        eq(schema.noSeries.master_type, key),
+      )!,
     ];
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
-    conditions.push(companyId ? eq(schema.noSeries.company_id, companyId) : isNull(schema.noSeries.company_id));
+    conditions.push(
+      companyId
+        ? eq(schema.noSeries.company_id, companyId)
+        : isNull(schema.noSeries.company_id),
+    );
     if (exceptId) conditions.push(ne(schema.noSeries.id, exceptId));
-    const [duplicate] = await this.db.select({ id: schema.noSeries.id, code: schema.noSeries.code }).from(schema.noSeries).where(and(...conditions)).limit(1);
+    const [duplicate] = await this.db
+      .select({ id: schema.noSeries.id, code: schema.noSeries.code })
+      .from(schema.noSeries)
+      .where(and(...conditions))
+      .limit(1);
     if (duplicate) {
       throw new ConflictException(
         `A number series (${duplicate.code}) already exists for this master. Each master can have only one series — only Item can have several. Edit the existing series instead.`,
@@ -1196,21 +1748,36 @@ export class NumberSeriesService {
     }
   }
 
-  async createNoSeriesRow(dto: CreateNoSeriesDto, tenantId?: string, companyId?: string | null) {
+  async createNoSeriesRow(
+    dto: CreateNoSeriesDto,
+    tenantId?: string,
+    companyId?: string | null,
+  ) {
     if (dto.code && dto.code.length > 20) {
       throw new BadRequestException('Series Code cannot exceed 20 characters.');
     }
     if (dto.description && dto.description.length > 100) {
-      throw new BadRequestException('Description cannot exceed 100 characters.');
+      throw new BadRequestException(
+        'Description cannot exceed 100 characters.',
+      );
     }
     if (dto.no_series_code && dto.no_series_code.length > 20) {
-      throw new BadRequestException('Prefix / Pattern cannot exceed 20 characters.');
+      throw new BadRequestException(
+        'Prefix / Pattern cannot exceed 20 characters.',
+      );
     }
     if (dto.last_no_used && dto.last_no_used.length > 20) {
-      throw new BadRequestException('Last No. Used cannot exceed 20 characters.');
+      throw new BadRequestException(
+        'Last No. Used cannot exceed 20 characters.',
+      );
     }
-    if (dto.seq_length !== undefined && (dto.seq_length < 1 || dto.seq_length > 10)) {
-      throw new BadRequestException('Sequence Length must be between 1 and 10 digits.');
+    if (
+      dto.seq_length !== undefined &&
+      (dto.seq_length < 1 || dto.seq_length > 10)
+    ) {
+      throw new BadRequestException(
+        'Sequence Length must be between 1 and 10 digits.',
+      );
     }
     if (dto.increment_by !== undefined && dto.increment_by < 1) {
       throw new BadRequestException('Increment By must be at least 1.');
@@ -1223,15 +1790,23 @@ export class NumberSeriesService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`No. Series with code '${dto.code}' already exists.`);
+      throw new ConflictException(
+        `No. Series with code '${dto.code}' already exists.`,
+      );
     }
 
     const id = randomUUID();
     const isDefault = dto.is_default ?? true;
-    const documentType = (dto.document_type || (dto as any).master_type || null)?.toUpperCase()?.replaceAll('-', '_');
+    const documentType = (dto.document_type || (dto as any).master_type || null)
+      ?.toUpperCase()
+      ?.replaceAll('-', '_');
     const targetCompanyId = dto.company_id || companyId || null;
 
-    await this.assertSingleSeriesPerMaster(documentType, tenantId ?? null, targetCompanyId);
+    await this.assertSingleSeriesPerMaster(
+      documentType,
+      tenantId ?? null,
+      targetCompanyId,
+    );
 
     // If setting this series as default, automatically uncheck is_default on any existing series for the same master type in the same scope
     if (isDefault && documentType) {
@@ -1242,7 +1817,8 @@ export class NumberSeriesService {
         )!,
         eq(schema.noSeries.is_default, true),
       ];
-      if (tenantId) unsetConditions.push(eq(schema.noSeries.tenant_id, tenantId));
+      if (tenantId)
+        unsetConditions.push(eq(schema.noSeries.tenant_id, tenantId));
       if (targetCompanyId) {
         unsetConditions.push(eq(schema.noSeries.company_id, targetCompanyId));
       } else {
@@ -1261,7 +1837,8 @@ export class NumberSeriesService {
     const cleanPrefix = dto.prefix || dto.no_series_code || null;
     // Series made before the form could compose a code carry no shape fields and
     // are left as they were; anything sent from the form always names a separator.
-    if (dto.separator !== undefined || dto.code_segments !== undefined) this.assertSeriesHasIdentity(cleanPrefix, dto.code_segments);
+    if (dto.separator !== undefined || dto.code_segments !== undefined)
+      this.assertSeriesHasIdentity(cleanPrefix, dto.code_segments);
     const newRecord = {
       id,
       tenant_id: tenantId || null,
@@ -1318,55 +1895,70 @@ export class NumberSeriesService {
     const conditions: any[] = [];
     if (documentType) {
       const normalizedDoc = documentType.toUpperCase().replaceAll('-', '_');
-      conditions.push(or(
-        eq(schema.noSeries.document_type, normalizedDoc),
-        eq(schema.noSeries.master_type, normalizedDoc),
-      )!);
+      conditions.push(
+        or(
+          eq(schema.noSeries.document_type, normalizedDoc),
+          eq(schema.noSeries.master_type, normalizedDoc),
+        )!,
+      );
     }
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
 
     if (companyId) {
-      // Check if this company has its own series (or check if any exist with this company_id)
-      const [companyCount] = await this.db
-        .select({ total: count() })
-        .from(schema.noSeries)
-        .where(and(
-          eq(schema.noSeries.company_id, companyId),
-          tenantId ? eq(schema.noSeries.tenant_id, tenantId) : undefined!,
-        ));
-      if (Number(companyCount?.total ?? 0) > 0) {
-        conditions.push(eq(schema.noSeries.company_id, companyId));
-      } else {
-        // Fall back to tenant-level templates if company hasn't copied/created any yet
-        conditions.push(isNull(schema.noSeries.company_id));
-      }
+      // A company lists only its own series (20 Oct): no tenant-level fallback.
+      conditions.push(eq(schema.noSeries.company_id, companyId));
     } else {
       conditions.push(isNull(schema.noSeries.company_id));
     }
     if (search) {
       const s = `%${search.trim()}%`;
-      conditions.push(or(
-        like(schema.noSeries.code, s),
-        like(schema.noSeries.description, s),
-        like(schema.noSeries.no_series_code, s),
-        like(schema.noSeries.document_type, s),
-      ));
+      conditions.push(
+        or(
+          like(schema.noSeries.code, s),
+          like(schema.noSeries.description, s),
+          like(schema.noSeries.no_series_code, s),
+          like(schema.noSeries.document_type, s),
+        ),
+      );
     }
     if (filter) {
       const { pattern, ...rest } = filter;
-      conditions.push(...listFilterConditions(schema.noSeries, pattern === undefined ? rest : { ...rest, prefix: pattern }));
+      conditions.push(
+        ...listFilterConditions(
+          schema.noSeries,
+          pattern === undefined ? rest : { ...rest, prefix: pattern },
+        ),
+      );
     }
     const limit = query?.limit ? Math.max(1, Number(query.limit)) : 100;
     const offset = query?.offset ? Math.max(0, Number(query.offset)) : 0;
     // `pattern` is computed for display; sorting by it sorts by the stored prefix.
-    const orderBy = listOrderBy(schema.noSeries, query?.sort === 'pattern' ? { ...query, sort: 'prefix' } : query, schema.noSeries.created_at);
+    const orderBy = listOrderBy(
+      schema.noSeries,
+      query?.sort === 'pattern' ? { ...query, sort: 'prefix' } : query,
+      schema.noSeries.created_at,
+    );
 
     const rows = conditions.length
-      ? await this.db.select().from(schema.noSeries).where(and(...conditions)).orderBy(orderBy).limit(limit).offset(offset)
-      : await this.db.select().from(schema.noSeries).orderBy(orderBy).limit(limit).offset(offset);
+      ? await this.db
+          .select()
+          .from(schema.noSeries)
+          .where(and(...conditions))
+          .orderBy(orderBy)
+          .limit(limit)
+          .offset(offset)
+      : await this.db
+          .select()
+          .from(schema.noSeries)
+          .orderBy(orderBy)
+          .limit(limit)
+          .offset(offset);
 
     const [counted] = conditions.length
-      ? await this.db.select({ total: count() }).from(schema.noSeries).where(and(...conditions))
+      ? await this.db
+          .select({ total: count() })
+          .from(schema.noSeries)
+          .where(and(...conditions))
       : await this.db.select({ total: count() }).from(schema.noSeries);
 
     return {
@@ -1403,15 +1995,24 @@ export class NumberSeriesService {
    * Sets the given No. Series as the default for its document_type, atomically
    * unsetting the old default in the same transaction.
    */
-  async setDefaultSeries(id: string, tenantId: string, companyId?: string | null) {
+  async setDefaultSeries(
+    id: string,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
     const [series] = await this.db
       .select()
       .from(schema.noSeries)
       .where(eq(schema.noSeries.id, id))
       .limit(1);
     if (!series) throw new NotFoundException(`No. Series '${id}' not found.`);
-    const targetType = (series.document_type || series.master_type)?.toUpperCase()?.replaceAll('-', '_');
-    if (!targetType) throw new BadRequestException('This series has no document/master type set.');
+    const targetType = (series.document_type || series.master_type)
+      ?.toUpperCase()
+      ?.replaceAll('-', '_');
+    if (!targetType)
+      throw new BadRequestException(
+        'This series has no document/master type set.',
+      );
 
     const targetCompanyId = series.company_id || companyId || null;
     const unsetConditions: any[] = [
@@ -1423,7 +2024,9 @@ export class NumberSeriesService {
       eq(schema.noSeries.is_default, true),
     ];
     if (tenantId || series.tenant_id) {
-      unsetConditions.push(eq(schema.noSeries.tenant_id, series.tenant_id || tenantId));
+      unsetConditions.push(
+        eq(schema.noSeries.tenant_id, series.tenant_id || tenantId),
+      );
     }
     if (targetCompanyId) {
       unsetConditions.push(eq(schema.noSeries.company_id, targetCompanyId));
@@ -1459,7 +2062,10 @@ export class NumberSeriesService {
     tenantId?: string,
     companyId?: string | null,
     externalTx?: any,
-  ): Promise<{ next_number: string; series: typeof schema.noSeries.$inferSelect }> {
+  ): Promise<{
+    next_number: string;
+    series: typeof schema.noSeries.$inferSelect;
+  }> {
     const executeInTx = async (tx: MySql2Database<typeof schema>) => {
       try {
         // Set lock wait timeout to 5 seconds per Section 6 & 8 of TDD
@@ -1478,8 +2084,15 @@ export class NumberSeriesService {
           .for('update');
       } catch (err: any) {
         // Check for MySQL lock wait timeout (code 1205 / ER_LOCK_WAIT_TIMEOUT)
-        if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.errno === 1205 || String(err?.message || '').includes('Lock wait timeout')) {
-          throw new HttpException('Item code generation busy, please retry.', HttpStatus.SERVICE_UNAVAILABLE);
+        if (
+          err?.code === 'ER_LOCK_WAIT_TIMEOUT' ||
+          err?.errno === 1205 ||
+          String(err?.message || '').includes('Lock wait timeout')
+        ) {
+          throw new HttpException(
+            'Item code generation busy, please retry.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
         }
         throw err;
       }
@@ -1490,12 +2103,16 @@ export class NumberSeriesService {
       }
 
       if (series.blocked) {
-        throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+        throw new BadRequestException(
+          `No. Series [${series.code}] is blocked. Cannot generate item number.`,
+        );
       }
 
       const increment = series.increment_by || 1;
-      const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-      const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+      const padDigits =
+        series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+      const prefix =
+        series.no_series_code ?? (series.code ? `${series.code}-` : '');
       let nextCode: string;
 
       if (series.last_no_used) {
@@ -1534,8 +2151,15 @@ export class NumberSeriesService {
         return executeInTx(tx as any);
       });
     } catch (err: any) {
-      if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.errno === 1205 || String(err?.message || '').includes('Lock wait timeout')) {
-        throw new HttpException('Item code generation busy, please retry.', HttpStatus.SERVICE_UNAVAILABLE);
+      if (
+        err?.code === 'ER_LOCK_WAIT_TIMEOUT' ||
+        err?.errno === 1205 ||
+        String(err?.message || '').includes('Lock wait timeout')
+      ) {
+        throw new HttpException(
+          'Item code generation busy, please retry.',
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
       }
       throw err;
     }
@@ -1544,15 +2168,22 @@ export class NumberSeriesService {
   /**
    * Previews the next number without updating last_no_used.
    */
-  async previewNextNumberById(id: string): Promise<{ next_number: string; series: typeof schema.noSeries.$inferSelect }> {
+  async previewNextNumberById(id: string): Promise<{
+    next_number: string;
+    series: typeof schema.noSeries.$inferSelect;
+  }> {
     const series = await this.findOneById(id);
     if (series.blocked) {
-      throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+      throw new BadRequestException(
+        `No. Series [${series.code}] is blocked. Cannot generate item number.`,
+      );
     }
 
     const increment = series.increment_by || 1;
-    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
+    const padDigits =
+      series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+    const prefix =
+      series.no_series_code ?? (series.code ? `${series.code}-` : '');
     let nextCode: string;
 
     if (series.last_no_used) {
@@ -1580,10 +2211,16 @@ export class NumberSeriesService {
   async previewNextNumbersById(
     id: string,
     count = 1,
-  ): Promise<{ next_number: string; numbers: string[]; series: typeof schema.noSeries.$inferSelect }> {
+  ): Promise<{
+    next_number: string;
+    numbers: string[];
+    series: typeof schema.noSeries.$inferSelect;
+  }> {
     const series = await this.findOneById(id);
     if (series.blocked) {
-      throw new BadRequestException(`No. Series [${series.code}] is blocked. Cannot generate item number.`);
+      throw new BadRequestException(
+        `No. Series [${series.code}] is blocked. Cannot generate item number.`,
+      );
     }
 
     const increment = series.increment_by || 1;
@@ -1620,14 +2257,20 @@ export class NumberSeriesService {
   /**
    * Updates last_no_used for a number series upon document posting if the used code is higher.
    */
-  async recordLastNoUsed(id: string, usedCode: string, executor: any = this.db) {
+  async recordLastNoUsed(
+    id: string,
+    usedCode: string,
+    executor: any = this.db,
+  ) {
     if (!id || !usedCode) return;
     try {
       const series = await this.findOneById(id);
       if (!series) return;
 
       const newMatch = usedCode.match(/(\d+)$/);
-      const oldMatch = series.last_no_used ? series.last_no_used.match(/(\d+)$/) : null;
+      const oldMatch = series.last_no_used
+        ? series.last_no_used.match(/(\d+)$/)
+        : null;
 
       let shouldUpdate = false;
       if (!series.last_no_used) {
@@ -1672,7 +2315,9 @@ export class NumberSeriesService {
     executor: MySql2Database<typeof schema> = this.db,
   ) {
     const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
-    const normalizedSubType = type ? type.toUpperCase().replaceAll('-', '_') : null;
+    const normalizedSubType = type
+      ? type.toUpperCase().replaceAll('-', '_')
+      : null;
 
     // 0. If a subtype is passed, check if a specific series exists for it (e.g. LOCATION_FARM)
     // NOTE: For ITEM, standard item creation must NOT be hijacked by subtype templates like NS-FEED.
@@ -1688,13 +2333,18 @@ export class NumberSeriesService {
         isNull(schema.noSeries.deleted_at),
       ];
       if (tenantId) subConditions.push(eq(schema.noSeries.tenant_id, tenantId));
-      if (tenantId || companyId) subConditions.push(companyCondition(schema.noSeries.company_id, companyId));
+      if (tenantId || companyId)
+        subConditions.push(
+          companyCondition(schema.noSeries.company_id, companyId),
+        );
       try {
         const [typeSeries] = await executor
           .select()
           .from(schema.noSeries)
           .where(and(...subConditions))
-          .orderBy(sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`)
+          .orderBy(
+            sql`${schema.noSeries.is_default} DESC, ${schema.noSeries.created_at} ASC`,
+          )
           .limit(1);
 
         if (typeSeries) return typeSeries;
@@ -1709,14 +2359,19 @@ export class NumberSeriesService {
         const [setup] = await executor
           .select()
           .from(schema.inventorySetup)
-          .where(and(
-            eq(schema.inventorySetup.tenant_id, tenantId),
-            eq(schema.inventorySetup.company_id, companyId),
-          ))
+          .where(
+            and(
+              eq(schema.inventorySetup.tenant_id, tenantId),
+              eq(schema.inventorySetup.company_id, companyId),
+            ),
+          )
           .limit(1);
 
         if (setup?.numbering_config) {
-          const config = setup.numbering_config as Record<string, { enabled?: boolean; default_series_id?: string | null }>;
+          const config = setup.numbering_config as Record<
+            string,
+            { enabled?: boolean; default_series_id?: string | null }
+          >;
           const masterCfg = config[normalizedType];
           if (masterCfg) {
             // Explicitly disabled in company inventory setup: do not generate
@@ -1727,14 +2382,16 @@ export class NumberSeriesService {
               const [explicitSeries] = await executor
                 .select()
                 .from(schema.noSeries)
-                .where(and(
-                  eq(schema.noSeries.id, masterCfg.default_series_id),
-                  eq(schema.noSeries.tenant_id, tenantId),
-                  companyCondition(schema.noSeries.company_id, companyId),
-                  eq(schema.noSeries.blocked, false),
-                  isNull(schema.noSeries.deleted_at),
-                  eq(schema.noSeries.is_default, true),
-                ))
+                .where(
+                  and(
+                    eq(schema.noSeries.id, masterCfg.default_series_id),
+                    eq(schema.noSeries.tenant_id, tenantId),
+                    companyCondition(schema.noSeries.company_id, companyId),
+                    eq(schema.noSeries.blocked, false),
+                    isNull(schema.noSeries.deleted_at),
+                    eq(schema.noSeries.is_default, true),
+                  ),
+                )
                 .limit(1);
               if (explicitSeries) return explicitSeries;
             }
@@ -1755,7 +2412,15 @@ export class NumberSeriesService {
             eq(schema.noSeries.master_type, normalizedType),
           ),
           normalizedType === 'ITEM'
-            ? not(inArray(schema.noSeries.code, ['NS-VAC', 'NS-FEED', 'NS-MED', 'NS-RAW', 'NS-LVS']))
+            ? not(
+                inArray(schema.noSeries.code, [
+                  'NS-VAC',
+                  'NS-FEED',
+                  'NS-MED',
+                  'NS-RAW',
+                  'NS-LVS',
+                ]),
+              )
             : sql`1=1`,
         )!,
         eq(schema.noSeries.code, normalizedType),
@@ -1765,7 +2430,8 @@ export class NumberSeriesService {
       isNull(schema.noSeries.deleted_at),
     ];
     if (tenantId) conditions.push(eq(schema.noSeries.tenant_id, tenantId));
-    if (tenantId || companyId) conditions.push(companyCondition(schema.noSeries.company_id, companyId));
+    if (tenantId || companyId)
+      conditions.push(companyCondition(schema.noSeries.company_id, companyId));
 
     try {
       const rows = await executor
@@ -1798,12 +2464,16 @@ export class NumberSeriesService {
     const normalizedType = masterType.toUpperCase().replaceAll('-', '_');
     if (SELF_CODED_MASTERS.has(normalizedType) && tenantId) {
       try {
-        const codeRes: any = await this.previewCode({
-          master: normalizedType,
-          type: type || undefined,
-          parentId: parentId || undefined,
-          record: record || undefined,
-        } as any, tenantId, companyId);
+        const codeRes: any = await this.previewCode(
+          {
+            master: normalizedType,
+            type: type || undefined,
+            parentId: parentId || undefined,
+            record: record || undefined,
+          } as any,
+          tenantId,
+          companyId,
+        );
         if (codeRes && codeRes.generated && codeRes.preview) {
           return {
             generated: true,
@@ -1823,17 +2493,29 @@ export class NumberSeriesService {
       }
     }
 
-    const candidate = await this.findDefaultSeriesByMaster(masterType, tenantId, companyId, type);
-    const series = candidate && this.seriesMatchesCompanyScope(candidate, companyId) ? candidate : null;
+    const candidate = await this.findDefaultSeriesByMaster(
+      masterType,
+      tenantId,
+      companyId,
+      type,
+    );
+    const series =
+      candidate && this.seriesMatchesCompanyScope(candidate, companyId)
+        ? candidate
+        : null;
     if (!series) {
       if (MASTER_CODE_COLUMNS[normalizedType] && tenantId) {
         try {
-          const codeRes: any = await this.previewCode({
-            master: normalizedType,
-            type: type || undefined,
-            parentId: parentId || undefined,
-            record: record || undefined,
-          } as any, tenantId, companyId);
+          const codeRes: any = await this.previewCode(
+            {
+              master: normalizedType,
+              type: type || undefined,
+              parentId: parentId || undefined,
+              record: record || undefined,
+            } as any,
+            tenantId,
+            companyId,
+          );
           if (codeRes && codeRes.generated && codeRes.preview) {
             return {
               generated: true,
@@ -1882,8 +2564,10 @@ export class NumberSeriesService {
     if (!series) return;
 
     let formattedNumber = usedNumber;
-    const prefix = series.no_series_code ?? (series.code ? `${series.code}-` : '');
-    const padDigits = series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
+    const prefix =
+      series.no_series_code ?? (series.code ? `${series.code}-` : '');
+    const padDigits =
+      series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
     const match = usedNumber.match(/(\d+)$/);
     if (match && prefix) {
       const numVal = parseInt(match[1], 10);
@@ -1907,29 +2591,54 @@ export class NumberSeriesService {
    * reads at issue time — a typo would silently drop out of every code.
    */
   private seriesShapeUpdates(dto: {
-    separator?: string; seq_separator?: string; reset_frequency?: string; code_segments?: string[]; prefix_position?: string;
+    separator?: string;
+    seq_separator?: string;
+    reset_frequency?: string;
+    code_segments?: string[];
+    prefix_position?: string;
   }): Partial<typeof schema.noSeries.$inferInsert> {
     const out: Partial<typeof schema.noSeries.$inferInsert> = {};
     if (dto.separator !== undefined) out.separator = dto.separator || '-';
-    if (dto.seq_separator !== undefined) out.seq_separator = dto.seq_separator || null;
-    if (dto.reset_frequency !== undefined) out.reset_frequency = dto.reset_frequency;
-    if (dto.prefix_position !== undefined) out.prefix_position = dto.prefix_position || 'END';
+    if (dto.seq_separator !== undefined)
+      out.seq_separator = dto.seq_separator || null;
+    if (dto.reset_frequency !== undefined)
+      out.reset_frequency = dto.reset_frequency;
+    if (dto.prefix_position !== undefined)
+      out.prefix_position = dto.prefix_position || 'END';
     if (dto.code_segments !== undefined) {
-      const bad = dto.code_segments.filter((entry) => !/^[a-z][a-z0-9_]*(:(YEAR|DATE))?$/.test(entry));
-      if (bad.length) throw new BadRequestException(`Code segment ${bad.map((b) => `'${b}'`).join(', ')} is not a field name (optionally :YEAR or :DATE).`);
-      if (new Set(dto.code_segments.map((e) => e.split(':')[0])).size !== dto.code_segments.length) {
-        throw new BadRequestException('A field can appear only once in the code segments.');
+      const bad = dto.code_segments.filter(
+        (entry) => !/^[a-z][a-z0-9_]*(:(YEAR|DATE))?$/.test(entry),
+      );
+      if (bad.length)
+        throw new BadRequestException(
+          `Code segment ${bad.map((b) => `'${b}'`).join(', ')} is not a field name (optionally :YEAR or :DATE).`,
+        );
+      if (
+        new Set(dto.code_segments.map((e) => e.split(':')[0])).size !==
+        dto.code_segments.length
+      ) {
+        throw new BadRequestException(
+          'A field can appear only once in the code segments.',
+        );
       }
-      if (dto.code_segments.length > 6) throw new BadRequestException('A code can be built from at most 6 fields.');
+      if (dto.code_segments.length > 6)
+        throw new BadRequestException(
+          'A code can be built from at most 6 fields.',
+        );
       out.code_segments = dto.code_segments.length ? dto.code_segments : null;
     }
     return out;
   }
 
   /** A code needs something to tell one master's codes from another's: a prefix or at least one field. */
-  private assertSeriesHasIdentity(prefix: string | null | undefined, segments: unknown) {
+  private assertSeriesHasIdentity(
+    prefix: string | null | undefined,
+    segments: unknown,
+  ) {
     if (!prefix && !segmentFields({ code_segments: segments }).length) {
-      throw new BadRequestException('Give the series a prefix or at least one field to build the code from.');
+      throw new BadRequestException(
+        'Give the series a prefix or at least one field to build the code from.',
+      );
     }
   }
 
@@ -1937,16 +2646,27 @@ export class NumberSeriesService {
     const existing = await this.findOneById(id);
 
     if (dto.description && dto.description.length > 100) {
-      throw new BadRequestException('Description cannot exceed 100 characters.');
+      throw new BadRequestException(
+        'Description cannot exceed 100 characters.',
+      );
     }
     if (dto.no_series_code && dto.no_series_code.length > 20) {
-      throw new BadRequestException('Prefix / Pattern cannot exceed 20 characters.');
+      throw new BadRequestException(
+        'Prefix / Pattern cannot exceed 20 characters.',
+      );
     }
     if (dto.last_no_used && dto.last_no_used.length > 20) {
-      throw new BadRequestException('Last No. Used cannot exceed 20 characters.');
+      throw new BadRequestException(
+        'Last No. Used cannot exceed 20 characters.',
+      );
     }
-    if (dto.seq_length !== undefined && (dto.seq_length < 1 || dto.seq_length > 10)) {
-      throw new BadRequestException('Sequence Length must be between 1 and 10 digits.');
+    if (
+      dto.seq_length !== undefined &&
+      (dto.seq_length < 1 || dto.seq_length > 10)
+    ) {
+      throw new BadRequestException(
+        'Sequence Length must be between 1 and 10 digits.',
+      );
     }
     if (dto.increment_by !== undefined && dto.increment_by < 1) {
       throw new BadRequestException('Increment By must be at least 1.');
@@ -1955,7 +2675,14 @@ export class NumberSeriesService {
     // Once a series has issued a number it is part of live records' identity:
     // moving it to another master, or changing its prefix, length or step,
     // would make new codes disagree with the ones already out there.
-    if (hasIssuedNumbers(existing) || (await this.masterHasRecords(existing.document_type ?? existing.master_type, existing.tenant_id, existing.company_id))) {
+    if (
+      hasIssuedNumbers(existing) ||
+      (await this.masterHasRecords(
+        existing.document_type ?? existing.master_type,
+        existing.tenant_id,
+        existing.company_id,
+      ))
+    ) {
       const structural: Array<[string, unknown]> = [
         ['Applies To (Master)', dto.document_type],
         ['Prefix / Pattern', dto.no_series_code ?? dto.prefix],
@@ -1969,19 +2696,37 @@ export class NumberSeriesService {
         ['Last No. Used', dto.last_no_used],
         ['Default', dto.is_default],
       ];
-      const attempted = structural.filter(([, v]) => v !== undefined).map(([label]) => label);
+      const attempted = structural
+        .filter(([, v]) => v !== undefined)
+        .map(([label]) => label);
       const wouldChange =
-        (dto.document_type !== undefined && normalizeMaster(dto.document_type) !== normalizeMaster(existing.document_type ?? existing.master_type)) ||
-        ((dto.no_series_code ?? dto.prefix) !== undefined && ((dto.no_series_code ?? dto.prefix) || null) !== ((existing.no_series_code ?? existing.prefix) || null)) ||
-        (dto.seq_length !== undefined && dto.seq_length !== existing.seq_length) ||
-        (dto.increment_by !== undefined && dto.increment_by !== existing.increment_by) ||
-        (dto.code_segments !== undefined && JSON.stringify(dto.code_segments.length ? dto.code_segments : null) !== JSON.stringify(existing.code_segments ?? null)) ||
-        (dto.prefix_position !== undefined && (dto.prefix_position || 'END') !== (existing.prefix_position || 'END')) ||
-        (dto.separator !== undefined && (dto.separator || '-') !== (existing.separator || '-')) ||
-        (dto.seq_separator !== undefined && (dto.seq_separator || null) !== (existing.seq_separator || null)) ||
-        (dto.reset_frequency !== undefined && dto.reset_frequency !== existing.reset_frequency) ||
-        (dto.last_no_used !== undefined && dto.last_no_used !== existing.last_no_used) ||
-        (dto.is_default !== undefined && !!dto.is_default !== !!existing.is_default);
+        (dto.document_type !== undefined &&
+          normalizeMaster(dto.document_type) !==
+            normalizeMaster(existing.document_type ?? existing.master_type)) ||
+        ((dto.no_series_code ?? dto.prefix) !== undefined &&
+          ((dto.no_series_code ?? dto.prefix) || null) !==
+            ((existing.no_series_code ?? existing.prefix) || null)) ||
+        (dto.seq_length !== undefined &&
+          dto.seq_length !== existing.seq_length) ||
+        (dto.increment_by !== undefined &&
+          dto.increment_by !== existing.increment_by) ||
+        (dto.code_segments !== undefined &&
+          JSON.stringify(
+            dto.code_segments.length ? dto.code_segments : null,
+          ) !== JSON.stringify(existing.code_segments ?? null)) ||
+        (dto.prefix_position !== undefined &&
+          (dto.prefix_position || 'END') !==
+            (existing.prefix_position || 'END')) ||
+        (dto.separator !== undefined &&
+          (dto.separator || '-') !== (existing.separator || '-')) ||
+        (dto.seq_separator !== undefined &&
+          (dto.seq_separator || null) !== (existing.seq_separator || null)) ||
+        (dto.reset_frequency !== undefined &&
+          dto.reset_frequency !== existing.reset_frequency) ||
+        (dto.last_no_used !== undefined &&
+          dto.last_no_used !== existing.last_no_used) ||
+        (dto.is_default !== undefined &&
+          !!dto.is_default !== !!existing.is_default);
       if (wouldChange) {
         throw new BadRequestException(
           `This number series has already issued numbers, so ${attempted.join(', ')} can no longer be changed. You can still edit its description or block it.`,
@@ -1991,8 +2736,16 @@ export class NumberSeriesService {
 
     if (dto.document_type !== undefined) {
       const nextMaster = normalizeMaster(dto.document_type);
-      if (nextMaster !== normalizeMaster(existing.document_type ?? existing.master_type)) {
-        await this.assertSingleSeriesPerMaster(nextMaster, existing.tenant_id ?? null, existing.company_id ?? null, id);
+      if (
+        nextMaster !==
+        normalizeMaster(existing.document_type ?? existing.master_type)
+      ) {
+        await this.assertSingleSeriesPerMaster(
+          nextMaster,
+          existing.tenant_id ?? null,
+          existing.company_id ?? null,
+          id,
+        );
       }
     }
 
@@ -2002,7 +2755,9 @@ export class NumberSeriesService {
 
     if (dto.description !== undefined) updates.description = dto.description;
     if (dto.document_type !== undefined) {
-      const normalizedDoc = dto.document_type ? dto.document_type.toUpperCase().replaceAll('-', '_') : null;
+      const normalizedDoc = dto.document_type
+        ? dto.document_type.toUpperCase().replaceAll('-', '_')
+        : null;
       updates.document_type = normalizedDoc;
       updates.master_type = normalizedDoc;
     }
@@ -2017,16 +2772,35 @@ export class NumberSeriesService {
     if (dto.manual_nos !== undefined) updates.manual_nos = dto.manual_nos;
     if (dto.last_no_used !== undefined) updates.last_no_used = dto.last_no_used;
     if (dto.blocked !== undefined) updates.blocked = dto.blocked;
-    if (updates.prefix === '') { updates.prefix = null; updates.no_series_code = null; }
+    if (updates.prefix === '') {
+      updates.prefix = null;
+      updates.no_series_code = null;
+    }
     Object.assign(updates, this.seriesShapeUpdates(dto));
     // Only when this edit touches what identifies the code: renaming or blocking a
     // series that never had a prefix must stay possible.
-    if (dto.prefix !== undefined || dto.no_series_code !== undefined || dto.code_segments !== undefined) this.assertSeriesHasIdentity(
-      updates.prefix !== undefined ? updates.prefix : existing.prefix ?? existing.no_series_code,
-      updates.code_segments !== undefined ? updates.code_segments : existing.code_segments,
-    );
+    if (
+      dto.prefix !== undefined ||
+      dto.no_series_code !== undefined ||
+      dto.code_segments !== undefined
+    )
+      this.assertSeriesHasIdentity(
+        updates.prefix !== undefined
+          ? updates.prefix
+          : (existing.prefix ?? existing.no_series_code),
+        updates.code_segments !== undefined
+          ? updates.code_segments
+          : existing.code_segments,
+      );
 
-    const targetDocType = (updates.document_type ?? updates.master_type ?? existing.document_type ?? existing.master_type)?.toUpperCase()?.replaceAll('-', '_');
+    const targetDocType = (
+      updates.document_type ??
+      updates.master_type ??
+      existing.document_type ??
+      existing.master_type
+    )
+      ?.toUpperCase()
+      ?.replaceAll('-', '_');
     // If setting this series as default, automatically uncheck is_default on any other series for the same master type in the SAME scope (company or tenant)
     if (updates.is_default === true && targetDocType) {
       const unsetConditions: any[] = [
@@ -2041,7 +2815,9 @@ export class NumberSeriesService {
         unsetConditions.push(eq(schema.noSeries.tenant_id, existing.tenant_id));
       }
       if (existing.company_id) {
-        unsetConditions.push(eq(schema.noSeries.company_id, existing.company_id));
+        unsetConditions.push(
+          eq(schema.noSeries.company_id, existing.company_id),
+        );
       } else {
         unsetConditions.push(isNull(schema.noSeries.company_id));
       }
@@ -2055,7 +2831,10 @@ export class NumberSeriesService {
         .where(and(...unsetConditions));
     }
 
-    await this.db.update(schema.noSeries).set(updates).where(eq(schema.noSeries.id, id));
+    await this.db
+      .update(schema.noSeries)
+      .set(updates)
+      .where(eq(schema.noSeries.id, id));
     return this.findOneById(id);
   }
 

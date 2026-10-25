@@ -1,0 +1,364 @@
+import {
+  kpiLimits,
+  KpiLimitsInput,
+} from '../../production/lifecycle/kpi-limits';
+
+/**
+ * The arithmetic of the R07 Farrowing Report, kept apart from the queries so it can be tested on plain rows.
+ * Column definitions are Triple-C_reports COMMENTS.xlsx row 6, as Rishi settled them on 18 Oct:
+ *   - Farrowing Rate % is the sheet's own formula: sows farrowed ÷ sows served, both within the dates.
+ *   - Total Litter Mass is shown both ways ("ALL OR ONE"): the total of every weaned litter, and the average litter.
+ *   - Active Week Mortality is the piglet deaths in the current week — the Monday-to-Sunday week holding Date To.
+ *   - Average Wean per Sow and Gilt Maternal Body Loss read the litters weaned between the dates (Rishi, 20 Oct).
+ */
+
+export interface ServiceRow {
+  batch_id: string;
+  parity_number: number | null;
+}
+
+export interface FarrowingRow {
+  batch_id: string;
+  farrow_id: string;
+  piglet_batch_id: string | null;
+  piglets_born_total: number;
+  piglets_born_live: number;
+  piglets_stillborn: number;
+  piglets_mummified: number;
+  foster_received: number;
+  fostered_out: number;
+  weaning_date: string | null;
+  piglets_weaned: number;
+  avg_weaning_weight_kg: number | null;
+}
+
+export interface MortalityRow {
+  piglet_batch_id: string;
+  transaction_date: string;
+  quantity: number;
+}
+
+/** A litter weaned between the report's dates, whenever it was farrowed. */
+export interface WeanedRow {
+  batch_id: string;
+  sow_animal_id: string;
+  parity_number: number;
+  farrowing_date: string;
+  weaning_date: string;
+  piglets_weaned: number;
+}
+
+/** A sow's posted body weight from batch data entry, with the stage it was taken in. */
+export interface SowWeightRow {
+  animal_id: string;
+  stage_code: 'GESTATION' | 'LACTATION';
+  entry_date: string;
+  weight_kg: number;
+}
+
+export interface WeaningData {
+  weaned: WeanedRow[];
+  weights: SowWeightRow[];
+}
+
+export interface FarrowingMetrics {
+  sows_served: number;
+  sows_farrowed: number;
+  farrowing_rate_pct: number | null;
+  total_born_per_sow: number | null;
+  born_alive_per_sow: number | null;
+  born_dead: number;
+  mummified: number;
+  active_week_mortality: number;
+  pre_wean_mortality_pct: number | null;
+  avg_weaning_weight_kg: number | null;
+  litter_mass_total_kg: number | null;
+  litter_mass_avg_kg: number | null;
+  gilts_served: number;
+  second_parity_served: number;
+  sows_weaned: number;
+  wean_per_sow: number | null;
+  gilt_body_loss_pct: number | null;
+}
+
+const round = (value: number, places = 2) => Number(value.toFixed(places));
+const ratio = (num: number, den: number, scale = 1) =>
+  den > 0 ? round((num / den) * scale) : null;
+
+/** Monday of the week that holds `date` (YYYY-MM-DD), as YYYY-MM-DD. */
+export function weekStart(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  const offset = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - offset);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The same calendar dates one year earlier; 29 Feb falls back to 28 Feb. */
+export function minusOneYear(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const prior = new Date(Date.UTC(y - 1, m - 1, d));
+  if (prior.getUTCMonth() !== m - 1) prior.setUTCDate(0);
+  return prior.toISOString().slice(0, 10);
+}
+
+export function computeFarrowingMetrics(
+  services: ServiceRow[],
+  farrowings: FarrowingRow[],
+  mortality: MortalityRow[],
+  dateTo: string,
+  weaning: WeaningData = { weaned: [], weights: [] },
+): FarrowingMetrics {
+  const sum = (rows: FarrowingRow[], pick: (r: FarrowingRow) => number) =>
+    rows.reduce((acc, r) => acc + pick(r), 0);
+  const served = services.length;
+  const farrowed = farrowings.length;
+
+  // Pre-wean mortality: piglets lost from the litter's lot up to its weaning (or to date, while still nursing),
+  // over the lot it started with — born live, plus fostered in, less fostered out.
+  const weaningOf = new Map(
+    farrowings
+      .filter((f) => f.piglet_batch_id)
+      .map((f) => [f.piglet_batch_id as string, f.weaning_date]),
+  );
+  const preWeanDeaths = mortality
+    .filter((m) => weaningOf.has(m.piglet_batch_id))
+    .filter((m) => {
+      const weaned = weaningOf.get(m.piglet_batch_id);
+      return !weaned || m.transaction_date <= weaned;
+    })
+    .reduce((acc, m) => acc + m.quantity, 0);
+  const startingLot = sum(
+    farrowings,
+    (f) => f.piglets_born_live + f.foster_received - f.fostered_out,
+  );
+
+  const activeFrom = weekStart(dateTo);
+  const activeWeek = mortality
+    .filter(
+      (m) =>
+        weaningOf.has(m.piglet_batch_id) &&
+        m.transaction_date >= activeFrom &&
+        m.transaction_date <= dateTo,
+    )
+    .reduce((acc, m) => acc + m.quantity, 0);
+
+  const weighed = farrowings.filter(
+    (f) => f.piglets_weaned > 0 && f.avg_weaning_weight_kg != null,
+  );
+  const weanedHead = sum(weighed, (f) => f.piglets_weaned);
+  const litterMass = sum(
+    weighed,
+    (f) => f.piglets_weaned * (f.avg_weaning_weight_kg as number),
+  );
+
+  return {
+    sows_served: served,
+    sows_farrowed: farrowed,
+    farrowing_rate_pct: ratio(farrowed, served, 100),
+    total_born_per_sow: ratio(
+      sum(farrowings, (f) => f.piglets_born_total),
+      farrowed,
+    ),
+    born_alive_per_sow: ratio(
+      sum(farrowings, (f) => f.piglets_born_live),
+      farrowed,
+    ),
+    born_dead: sum(farrowings, (f) => f.piglets_stillborn),
+    mummified: sum(farrowings, (f) => f.piglets_mummified),
+    active_week_mortality: activeWeek,
+    pre_wean_mortality_pct: ratio(preWeanDeaths, startingLot, 100),
+    avg_weaning_weight_kg: ratio(litterMass, weanedHead),
+    litter_mass_total_kg: weighed.length ? round(litterMass) : null,
+    litter_mass_avg_kg: ratio(litterMass, weighed.length),
+    // breeding_record.parity_number is the litter the service is for: a gilt's first service is litter 1.
+    gilts_served: services.filter((s) => s.parity_number === 1).length,
+    second_parity_served: services.filter((s) => s.parity_number === 2).length,
+    sows_weaned: weaning.weaned.length,
+    wean_per_sow: ratio(
+      weaning.weaned.reduce((acc, w) => acc + w.piglets_weaned, 0),
+      weaning.weaned.length,
+    ),
+    gilt_body_loss_pct: giltBodyLossPct(weaning),
+  };
+}
+
+/**
+ * Gilt Maternal Body Weight Loss % (sheet AN6): (weight before farrowing − weight at weaning) ÷ weight before
+ * farrowing × 100, averaged over the gilt litters (parity 1) that have both. Before farrowing is the gilt's latest
+ * gestation weighing on or before the farrowing date — a gilt has no earlier gestation for it to come from. At weaning
+ * is her latest lactation weighing from farrowing to the weaning date. Null when no gilt litter has both.
+ */
+function giltBodyLossPct({ weaned, weights }: WeaningData): number | null {
+  const latest = (
+    animalId: string,
+    stage: SowWeightRow['stage_code'],
+    from: string,
+    to: string,
+  ) =>
+    weights
+      .filter(
+        (w) =>
+          w.animal_id === animalId &&
+          w.stage_code === stage &&
+          w.entry_date >= from &&
+          w.entry_date <= to,
+      )
+      .reduce<SowWeightRow | null>(
+        (best, w) => (!best || w.entry_date > best.entry_date ? w : best),
+        null,
+      );
+  const losses: number[] = [];
+  for (const litter of weaned.filter((w) => w.parity_number === 1)) {
+    const before = latest(
+      litter.sow_animal_id,
+      'GESTATION',
+      '0000-01-01',
+      litter.farrowing_date,
+    );
+    const after = latest(
+      litter.sow_animal_id,
+      'LACTATION',
+      litter.farrowing_date,
+      litter.weaning_date,
+    );
+    if (before && after && before.weight_kg > 0)
+      losses.push(
+        ((before.weight_kg - after.weight_kg) / before.weight_kg) * 100,
+      );
+  }
+  return losses.length
+    ? round(losses.reduce((a, b) => a + b, 0) / losses.length)
+    : null;
+}
+
+/** True when a period had nothing recorded at all — the report shows "No data" rather than a row of zeros. */
+export function isEmptyPeriod(m: FarrowingMetrics): boolean {
+  return m.sows_served === 0 && m.sows_farrowed === 0 && m.sows_weaned === 0;
+}
+
+/**
+ * The KPI each target column reads from breed_lifecycle_stages.kpi_thresholds — its Average Value and Tolerance, or
+ * an older row's lower and upper limits (kpiLimits; Rishi, 20 Oct). A breed with no such row shows "N/A".
+ */
+export const TARGET_METRICS = {
+  service_target: 'SERVICE_TARGET',
+  farrowing_target: 'FARROWING_TARGET',
+  farrowing_rate: 'FARROWING_RATE',
+  total_born: 'TOTAL_BORN',
+  born_alive: 'BORN_ALIVE',
+  born_dead: 'BORN_DEAD',
+  mummified: 'MUMMIFIED',
+  active_week_mortality: 'ACTIVE_WEEK_MORTALITY',
+  pre_wean_mortality: 'PRE_WEAN_MORTALITY',
+  weaning_weight: 'WEANING_WEIGHT',
+  total_litter_mass: 'TOTAL_LITTER_MASS', // the batch's weaned litters together, not one litter (Rishi, 21 Oct)
+  wean_per_sow: 'WEAN_PER_SOW',
+  gilt_body_loss: 'GILT_BODY_LOSS',
+  gilt_service_target: 'GILT_SERVICE_TARGET',
+  second_parity_service_target: 'SECOND_PARITY_SERVICE_TARGET',
+} as const;
+
+export type TargetKey = keyof typeof TARGET_METRICS;
+/** A KPI's target: its Average Value and the band its tolerance allows (kpiLimits). */
+export interface Target {
+  average: number | null;
+  lower: number | null;
+  upper: number | null;
+}
+export type Targets = Record<TargetKey, Target | null>;
+
+interface ThresholdRow extends KpiLimitsInput {
+  metric?: string;
+}
+
+/**
+ * Targets for one breed from its lifecycle rows. A farm's own row wins over the company-wide one, the way a
+ * lifecycle farm override does everywhere else.
+ */
+export function targetsFromLifecycle(
+  rows: Array<{ farm_id: string | null; kpi_thresholds: unknown }>,
+  farmId: string,
+): Targets {
+  const ordered = [...rows].sort(
+    (a, b) => Number(b.farm_id === farmId) - Number(a.farm_id === farmId),
+  );
+  const found = new Map<string, Target>();
+  for (const row of ordered) {
+    const list =
+      typeof row.kpi_thresholds === 'string'
+        ? safeParse(row.kpi_thresholds)
+        : row.kpi_thresholds;
+    if (!Array.isArray(list)) continue;
+    for (const t of list as ThresholdRow[]) {
+      if (!t?.metric || found.has(t.metric)) continue;
+      const target = kpiLimits(t);
+      if (
+        target.average === null &&
+        target.lower === null &&
+        target.upper === null
+      )
+        continue;
+      found.set(t.metric, target);
+    }
+  }
+  const out = {} as Targets;
+  for (const [key, metric] of Object.entries(TARGET_METRICS) as Array<
+    [TargetKey, string]
+  >) {
+    out[key] = found.get(metric) ?? null;
+  }
+  return out;
+}
+
+function safeParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** The target every batch in a set agrees on, for the farm total row; null when they differ or none has one. */
+export function commonTargets(all: Targets[]): Targets {
+  const out = {} as Targets;
+  for (const key of Object.keys(TARGET_METRICS) as TargetKey[]) {
+    const values = all.map((t) => t[key]);
+    const first = values[0];
+    out[key] =
+      first &&
+      values.every(
+        (v) =>
+          v &&
+          v.average === first.average &&
+          v.lower === first.lower &&
+          v.upper === first.upper,
+      )
+        ? first
+        : null;
+  }
+  return out;
+}
+
+/**
+ * The batch that stood where this one stands a year earlier (Rishi, 19 Oct: "matching batch last year"): the batch
+ * on the farm whose first service falls nearest the same date a year before this batch's first service, within a
+ * week either side. Null when no batch served in that week — the row's prior year then reads N/A.
+ */
+export function matchPriorBatch(
+  firstService: string | null | undefined,
+  candidates: Array<{ batch_id: string; first_service: string | null }>,
+  windowDays = 7,
+): string | null {
+  if (!firstService) return null;
+  const target = Date.parse(`${minusOneYear(firstService)}T00:00:00Z`);
+  let best: { id: string; gap: number } | null = null;
+  for (const c of candidates) {
+    if (!c.first_service) continue;
+    const gap =
+      Math.abs(Date.parse(`${c.first_service}T00:00:00Z`) - target) /
+      86_400_000;
+    if (gap <= windowDays && (!best || gap < best.gap))
+      best = { id: c.batch_id, gap };
+  }
+  return best?.id ?? null;
+}

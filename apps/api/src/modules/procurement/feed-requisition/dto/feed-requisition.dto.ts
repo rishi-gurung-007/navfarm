@@ -1,6 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Matches, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Matches,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export class QueryFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
@@ -8,81 +23,178 @@ export class QueryFeedRequisitionDto {
 }
 
 export class FeedConsolidationQueryDto {
-  @ApiPropertyOptional({ enum: ['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED'] }) @IsOptional()
+  @ApiPropertyOptional({
+    enum: ['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED'],
+  })
+  @IsOptional()
   @IsIn(['DRAFT', 'REVIEWED', 'CONSOLIDATED', 'CANCELLED'])
   status?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
-  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @IsUUID(undefined, { each: true }) requisitionIds?: string[];
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  requisitionIds?: string[];
   @ApiPropertyOptional() @IsOptional() @IsDateString() fromDate?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() toDate?: string;
 }
 
 export class FeedConsolidationLineDto {
   @ApiProperty() @IsUUID() requisitionLineId!: string;
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) millApprovedQtyKg?: number;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) adjustmentReason?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  millApprovedQtyKg?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  adjustmentReason?: string;
 }
 
 export class CreateFeedConsolidationDto extends FeedConsolidationQueryDto {
   @ApiProperty({ type: [FeedConsolidationLineDto] })
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedConsolidationLineDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => FeedConsolidationLineDto)
   lines!: FeedConsolidationLineDto[];
+}
+
+/** One detailed truck-compartment loading fact under a Loading Instruction Sheet. */
+export class FeedLoadingSheetCompartmentDto {
+  @ApiPropertyOptional() @IsOptional() @IsUUID() compartmentId?: string;
+  @ApiProperty() @IsString() @MaxLength(50) compartmentNo!: string;
+  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) kgLoaded!: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(36)
+  loadedBy?: string;
+  @ApiPropertyOptional() @IsOptional() @IsDateString() loadedAt?: string;
 }
 
 /** Loading Instruction Sheet rows 70–72: what the mill records at loading. */
 export class UpdateFeedLoadingSheetDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) compartmentNo?: string;
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0) kgLoaded?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  compartmentNo?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  kgLoaded?: number;
   /** Row 72: the mill staff name confirming loading (stored in feed_loading_sheet.loaded_by, 36 characters). */
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(36, { message: 'Loaded By can be at most 36 characters.' }) loadedBy?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(36, { message: 'Loaded By can be at most 36 characters.' })
+  loadedBy?: string;
+  @ApiPropertyOptional({ type: [FeedLoadingSheetCompartmentDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeedLoadingSheetCompartmentDto)
+  compartments?: FeedLoadingSheetCompartmentDto[];
 }
 
 /** Row 76: dispatch may carry the mill's typed estimated arrival (local date and time, YYYY-MM-DDTHH:mm). */
 export class DispatchFeedLoadingSheetDto {
-  @ApiPropertyOptional() @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/, { message: 'Estimated arrival must be a date and time.' }) estimatedArrivalAt?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/, {
+    message: 'Estimated arrival must be a date and time.',
+  })
+  estimatedArrivalAt?: string;
 }
 
 export class AutoDraftFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
-  @ApiPropertyOptional({ description: 'Last forecast day the draft covers (default planning date + 7, at most + 45)' })
-  @IsOptional() @IsDateString() to?: string;
+  @ApiPropertyOptional({
+    description:
+      'Last forecast day the draft covers (default planning date + 7, at most + 45)',
+  })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }
 
 /** Requisition §2: a manual line names its destination silo or store, the item, the kilograms and the delivery date. */
 export class ManualFeedLineInput {
   @ApiProperty() @IsUUID() destination_location_id: string;
   @ApiProperty() @IsUUID() item_id: string;
-  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg: number;
+  @ApiProperty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantity_kg: number;
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
-  @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
-  @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
-  @ApiPropertyOptional({ description: 'Active company Reason Master identity for the feed-line exception/override' })
-  @IsOptional() @IsUUID() reason_id?: string;
+  @ApiPropertyOptional({
+    description:
+      'Requisition row 13: why the line orders an item the lifecycle does not require',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(180)
+  exception_reason?: string;
+  @ApiPropertyOptional({
+    description:
+      'Active company Reason Master identity for the feed-line exception/override',
+  })
+  @IsOptional()
+  @IsUUID()
+  reason_id?: string;
 }
 
 export class CreateManualFeedRequisitionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() farmId?: string;
-  @ApiPropertyOptional({ description: 'Requisition date (YYYY-MM-DD); defaults to farm today when omitted' })
+  @ApiPropertyOptional({
+    description:
+      'Requisition date (YYYY-MM-DD); defaults to farm today when omitted',
+  })
   @IsOptional()
   @IsDateString()
   requisition_date?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  remarks?: string;
   @ApiProperty({ type: [ManualFeedLineInput] })
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ManualFeedLineInput)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ManualFeedLineInput)
   lines: ManualFeedLineInput[];
 }
 
 export class FeedRequisitionFromRunLineDto {
   @ApiProperty() @IsUUID() destination_location_id: string;
   @ApiProperty() @IsUUID() item_id: string;
-  @ApiProperty() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg: number;
+  @ApiProperty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantity_kg: number;
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
 }
 
 export class CreateFeedRequisitionFromRunDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  remarks?: string;
   @ApiProperty({ type: [FeedRequisitionFromRunLineDto] })
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionFromRunLineDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => FeedRequisitionFromRunLineDto)
   lines: FeedRequisitionFromRunLineDto[];
 }
 
@@ -95,22 +207,56 @@ export class CreateFeedRequisitionFromRunDto {
  */
 export class FeedLineEditInput {
   @ApiProperty() @IsUUID() line_id: string;
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsNumber() @Min(0.001) quantity_kg?: number;
-  @ApiPropertyOptional() @IsOptional() @IsDateString() proposed_delivery_date?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantity_kg?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  proposed_delivery_date?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() item_id?: string;
-  @ApiPropertyOptional() @IsOptional() @IsUUID() destination_location_id?: string;
-  @ApiPropertyOptional({ description: 'Requisition row 13: why the line orders an item the lifecycle does not require' })
-  @IsOptional() @IsString() @MaxLength(180) exception_reason?: string;
-  @ApiPropertyOptional({ description: 'Active company Reason Master identity for the feed-line exception/override' })
-  @IsOptional() @IsUUID() reason_id?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  destination_location_id?: string;
+  @ApiPropertyOptional({
+    description:
+      'Requisition row 13: why the line orders an item the lifecycle does not require',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(180)
+  exception_reason?: string;
+  @ApiPropertyOptional({
+    description:
+      'Active company Reason Master identity for the feed-line exception/override',
+  })
+  @IsOptional()
+  @IsUUID()
+  reason_id?: string;
 }
 
 export class UpdateFeedRequisitionDto {
-  @ApiPropertyOptional({ description: 'Requisition §1 row 36' }) @IsOptional() @IsString() @MaxLength(2000) remarks?: string;
-  @ApiPropertyOptional({ description: 'Requisition §1 row 34: escalate only', enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'] })
-  @IsOptional() @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO']) priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
+  @ApiPropertyOptional({ description: 'Requisition §1 row 36' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  remarks?: string;
+  @ApiPropertyOptional({
+    description: 'Requisition §1 row 34: escalate only',
+    enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'],
+  })
+  @IsOptional()
+  @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'])
+  priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
   @ApiPropertyOptional({ type: [FeedLineEditInput] })
-  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => FeedLineEditInput)
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeedLineEditInput)
   lines?: FeedLineEditInput[];
 }
 
@@ -123,7 +269,10 @@ export class FeedRequisitionShipmentDto {
   @ApiProperty() @IsUUID() transfer_id: string;
   @ApiProperty() @IsDateString() posting_date: string;
   @ApiProperty({ type: [FeedRequisitionEventLineDto] })
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionEventLineDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => FeedRequisitionEventLineDto)
   lines: FeedRequisitionEventLineDto[];
 }
 
@@ -133,14 +282,33 @@ export class FeedRequisitionShipmentDto {
  * (assertFeedReceiptLine), not here, because it depends on what shipped.
  */
 export class FeedRequisitionReceiptLineDto extends FeedRequisitionEventLineDto {
-  @ApiPropertyOptional({ description: 'Ignored: a reason is now required on every short receipt' })
-  @IsOptional() @IsBoolean() final_receipt?: boolean;
-  @ApiPropertyOptional({ description: 'Mandatory on every short receipt (checkpoint 26)' })
-  @IsOptional() @IsString() @MaxLength(500) variance_reason?: string;
-  @ApiPropertyOptional({ description: 'Bags physically received; required for BAGGED feed (checkpoint 27)' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) bag_count?: number;
+  @ApiPropertyOptional({
+    description: 'Ignored: a reason is now required on every short receipt',
+  })
+  @IsOptional()
+  @IsBoolean()
+  final_receipt?: boolean;
+  @ApiPropertyOptional({
+    description: 'Mandatory on every short receipt (checkpoint 26)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  variance_reason?: string;
+  @ApiPropertyOptional({
+    description:
+      'Bags physically received; required for BAGGED feed (checkpoint 27)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  bag_count?: number;
   @ApiPropertyOptional({ description: 'Mill delivery note no. (optional)' })
-  @IsOptional() @IsString() @MaxLength(80) delivery_note_no?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  delivery_note_no?: string;
 }
 
 export class FeedRequisitionReceiptDto {
@@ -148,6 +316,9 @@ export class FeedRequisitionReceiptDto {
   @ApiProperty() @IsUUID() shipment_id: string;
   @ApiProperty() @IsDateString() posting_date: string;
   @ApiProperty({ type: [FeedRequisitionReceiptLineDto] })
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => FeedRequisitionReceiptLineDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => FeedRequisitionReceiptLineDto)
   lines: FeedRequisitionReceiptLineDto[];
 }

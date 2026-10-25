@@ -18,6 +18,7 @@ import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { stageDayRange } from '../lifecycle/feed-row-days';
 import { wantedVaccinations } from '../lifecycle/vaccination-lines';
+import { kpiLimits } from '../lifecycle/kpi-limits';
 
 export interface StageLineDraft {
   line_type: 'CONSUMPTION' | 'OUTPUT' | 'DESCRIPTIVE' | 'RESOURCE';
@@ -56,10 +57,15 @@ const num = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
-const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
 /** Metrics that are counted (the day's total), not measured (the average of what was weighed or scored). */
-const COUNT_METRICS = new Set(['MORTALITY_COUNT', 'HEAD_COUNT', 'PIGLETS_BORN', 'LITTER_SIZE', 'EGG_COUNT']);
+const COUNT_METRICS = new Set([
+  'MORTALITY_COUNT',
+  'HEAD_COUNT',
+  'PIGLETS_BORN',
+  'LITTER_SIZE',
+  'EGG_COUNT',
+]);
 
 export interface KpiLineInput {
   metric?: unknown;
@@ -81,23 +87,24 @@ export interface KpiLineInput {
  */
 export function kpiLineDraft(
   line: KpiLineInput,
-  ctx: { period: string | null | undefined; stageEndDay: number | null; metricName?: string | null; uom: string | null; lifecycleId: string | null },
+  ctx: {
+    period: string | null | undefined;
+    stageEndDay: number | null;
+    metricName?: string | null;
+    uom: string | null;
+    lifecycleId: string | null;
+  },
 ): StageLineDraft | null {
   const metric = typeof line.metric === 'string' ? line.metric.trim() : '';
   if (!metric) return null;
-  const avg = num(line.average_value);
-  const tol = num(line.tolerance_pct);
-  const side = typeof line.tolerance_type === 'string' ? line.tolerance_type.toUpperCase() : '';
-  let lower = num(line.lower_limit);
-  let upper = num(line.upper_limit);
-  if (avg !== null && tol !== null) {
-    if (side !== 'LOWER') upper = round4(avg * (1 + tol / 100));
-    if (side !== 'UPPER') lower = round4(avg * (1 - tol / 100));
-  }
+  const { average: avg, lower, upper } = kpiLimits(line);
   const weekly = String(ctx.period ?? '').toUpperCase() === 'WEEKLY';
   const from = num(line.from_day);
   const to = num(line.to_day);
-  const severity = typeof line.severity === 'string' && line.severity ? line.severity.toUpperCase() : 'WARNING';
+  const severity =
+    typeof line.severity === 'string' && line.severity
+      ? line.severity.toUpperCase()
+      : 'WARNING';
   return {
     line_type: 'DESCRIPTIVE',
     activity_name: `KPI: ${ctx.metricName || metric.replace(/_/g, ' ')}`,
@@ -134,18 +141,27 @@ export interface MedicationRow {
  */
 export function medicationLineDrafts(
   rows: unknown,
-  ctx: { stageEndDay: number | null; items: Map<string, { item_name: string; tracked: boolean }>; lifecycleId: string | null },
+  ctx: {
+    stageEndDay: number | null;
+    items: Map<string, { item_name: string; tracked: boolean }>;
+    lifecycleId: string | null;
+  },
 ): StageLineDraft[] {
   if (!Array.isArray(rows)) return [];
   const byDrug = new Map<string, MedicationRow[]>();
   for (const r of rows as MedicationRow[]) {
-    const id = typeof r?.medicine_item_id === 'string' ? r.medicine_item_id : '';
+    const id =
+      typeof r?.medicine_item_id === 'string' ? r.medicine_item_id : '';
     if (!id || !ctx.items.has(id)) continue;
     byDrug.set(id, [...(byDrug.get(id) ?? []), r]);
   }
   return [...byDrug.entries()].map(([itemId, cards]) => {
     const item = ctx.items.get(itemId)!;
-    const problems = [...new Set(cards.map((c) => String(c.problem ?? '').trim()).filter(Boolean))];
+    const problems = [
+      ...new Set(
+        cards.map((c) => String(c.problem ?? '').trim()).filter(Boolean),
+      ),
+    ];
     return {
       line_type: 'CONSUMPTION' as const,
       activity_name: `Medication: ${item.item_name}${problems.length ? ` — ${problems.join(', ')}` : ''}`,
@@ -164,8 +180,11 @@ export function medicationLineDrafts(
       extension_config: {
         as_needed: true,
         treatments: cards.map((c) => ({
-          problem: c.problem ?? null, symptom: c.symptom ?? null, dose: c.dose ?? null,
-          repeat: c.repeat ?? null, withdrawal_days: num(c.withdrawal_days),
+          problem: c.problem ?? null,
+          symptom: c.symptom ?? null,
+          dose: c.dose ?? null,
+          repeat: c.repeat ?? null,
+          withdrawal_days: num(c.withdrawal_days),
         })),
       },
       lifecycle_ref_id: ctx.lifecycleId,
@@ -173,12 +192,20 @@ export function medicationLineDrafts(
   });
 }
 
-export interface ResourceRow { resource_id?: unknown; quantity?: unknown; notes?: unknown }
+export interface ResourceRow {
+  resource_id?: unknown;
+  quantity?: unknown;
+  notes?: unknown;
+}
 
 /** Resource Requirements as RESOURCE lines over the stage, one per resource (quantities of one resource added up). */
 export function resourceLineDrafts(
   rows: unknown,
-  ctx: { stageEndDay: number | null; resources: Map<string, string>; lifecycleId: string | null },
+  ctx: {
+    stageEndDay: number | null;
+    resources: Map<string, string>;
+    lifecycleId: string | null;
+  },
 ): StageLineDraft[] {
   if (!Array.isArray(rows)) return [];
   const byResource = new Map<string, { qty: number | null; notes: string[] }>();
@@ -211,100 +238,235 @@ export function resourceLineDrafts(
 
 /** The KPI UOM a metric is recorded in, when the KPI line names none. */
 export const KPI_METRIC_DEFAULT_UOM: Record<string, string> = {
-  BODY_WEIGHT: 'KG', FCR: 'RATIO', ADG: 'G_DAY', BCS_SCORE: 'SCORE', MORTALITY_COUNT: 'HEAD', TEMPERATURE: 'CELSIUS',
-  HEAD_COUNT: 'HEAD', LITTER_SIZE: 'HEAD', WEANING_WEIGHT: 'KG', PIGLETS_BORN: 'HEAD', SEMEN_MOTILITY: 'PCT', EGG_COUNT: 'NOS',
+  BODY_WEIGHT: 'KG',
+  FCR: 'RATIO',
+  ADG: 'G_DAY',
+  BCS_SCORE: 'SCORE',
+  MORTALITY_COUNT: 'HEAD',
+  TEMPERATURE: 'CELSIUS',
+  HEAD_COUNT: 'HEAD',
+  LITTER_SIZE: 'HEAD',
+  WEANING_WEIGHT: 'KG',
+  PIGLETS_BORN: 'HEAD',
+  SEMEN_MOTILITY: 'PCT',
+  EGG_COUNT: 'NOS',
   MILK_LITRES: 'LITRES',
 };
 
 /** The stage's activities for a batch entering it on `effectiveFrom` (stage day 1). Empty when the breed has no row for the stage. */
 export async function buildStageSchedulerLines(
   db: MySql2Database<typeof schema>,
-  args: { batch: typeof schema.batchHeader.$inferSelect; stageId: string; stage: typeof schema.stageMaster.$inferSelect; effectiveFrom?: string | null },
+  args: {
+    batch: typeof schema.batchHeader.$inferSelect;
+    stageId: string;
+    stage: typeof schema.stageMaster.$inferSelect;
+    effectiveFrom?: string | null;
+  },
 ): Promise<StageLineDraft[]> {
   const { batch, stageId, stage } = args;
   if (!batch.breed_id) return [];
   const t = schema.breedLifecycleStages;
-  const rows = await db.select().from(t)
-    .where(and(eq(t.breed_id, batch.breed_id), eq(t.stage_id, stageId), eq(t.is_active, true), isNull(t.retired_at)))
+  const rows = await db
+    .select()
+    .from(t)
+    .where(
+      and(
+        eq(t.breed_id, batch.breed_id),
+        eq(t.stage_id, stageId),
+        eq(t.is_active, true),
+        isNull(t.retired_at),
+      ),
+    )
     .orderBy(t.period_from);
   if (!rows.length) return [];
   // The stage's own facts (KPIs, protocols, standards) are on each of its rows; the first speaks for the stage.
   const [lifecycle] = rows;
-  const stageEndDay = stage.typical_duration_days ? Number(stage.typical_duration_days) : null;
+  const stageEndDay = stage.typical_duration_days
+    ? Number(stage.typical_duration_days)
+    : null;
 
   // Everything the lines name, looked up once.
-  const asArray = (v: unknown) => (Array.isArray(v) ? v as Array<Record<string, unknown>> : []);
+  const asArray = (v: unknown) =>
+    Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
   const itemIds = new Set<string>();
   for (const r of rows) if (r.feed_item_id) itemIds.add(r.feed_item_id);
   if (lifecycle.output_item_id) itemIds.add(lifecycle.output_item_id);
-  for (const v of asArray(lifecycle.vaccination_protocol)) if (typeof v.vaccine_item_id === 'string') itemIds.add(v.vaccine_item_id);
-  for (const m of asArray(lifecycle.medication_protocol)) if (typeof m.medicine_item_id === 'string') itemIds.add(m.medicine_item_id);
-  const items = new Map((itemIds.size ? await db
-    .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name, lot: schema.itemMaster.is_lot_tracked, serial: schema.itemMaster.is_serial_tracked })
-    .from(schema.itemMaster)
-    .where(and(inArray(schema.itemMaster.item_id, [...itemIds]), isNull(schema.itemMaster.deleted_at))) : [])
-    .map((i) => [i.item_id, { item_name: i.item_name, tracked: Boolean(i.lot || i.serial) }]));
-  const resourceIds = asArray(lifecycle.resource_requirements).map((r) => r.resource_id).filter((id): id is string => typeof id === 'string');
-  const resources = new Map((resourceIds.length ? await db
-    .select({ resource_id: schema.resourceMaster.resource_id, resource_name: schema.resourceMaster.resource_name })
-    .from(schema.resourceMaster).where(inArray(schema.resourceMaster.resource_id, resourceIds)) : [])
-    .map((r) => [r.resource_id, r.resource_name]));
+  for (const v of asArray(lifecycle.vaccination_protocol))
+    if (typeof v.vaccine_item_id === 'string') itemIds.add(v.vaccine_item_id);
+  for (const m of asArray(lifecycle.medication_protocol))
+    if (typeof m.medicine_item_id === 'string') itemIds.add(m.medicine_item_id);
+  const items = new Map(
+    (itemIds.size
+      ? await db
+          .select({
+            item_id: schema.itemMaster.item_id,
+            item_name: schema.itemMaster.item_name,
+            lot: schema.itemMaster.is_lot_tracked,
+            serial: schema.itemMaster.is_serial_tracked,
+          })
+          .from(schema.itemMaster)
+          .where(
+            and(
+              inArray(schema.itemMaster.item_id, [...itemIds]),
+              isNull(schema.itemMaster.deleted_at),
+            ),
+          )
+      : []
+    ).map((i) => [
+      i.item_id,
+      { item_name: i.item_name, tracked: Boolean(i.lot || i.serial) },
+    ]),
+  );
+  const resourceIds = asArray(lifecycle.resource_requirements)
+    .map((r) => r.resource_id)
+    .filter((id): id is string => typeof id === 'string');
+  const resources = new Map(
+    (resourceIds.length
+      ? await db
+          .select({
+            resource_id: schema.resourceMaster.resource_id,
+            resource_name: schema.resourceMaster.resource_name,
+          })
+          .from(schema.resourceMaster)
+          .where(inArray(schema.resourceMaster.resource_id, resourceIds))
+      : []
+    ).map((r) => [r.resource_id, r.resource_name]),
+  );
   const kpiRows = asArray(lifecycle.kpi_thresholds);
-  const metricCodes = [...new Set(kpiRows.map((k) => k.metric).filter((m): m is string => typeof m === 'string' && !!m))];
-  const metrics = new Map((metricCodes.length ? await db
-    .select({ code: schema.kpiMetricMaster.metric_code, name: schema.kpiMetricMaster.metric_name, uom: schema.kpiMetricMaster.default_uom })
-    .from(schema.kpiMetricMaster)
-    .where(and(inArray(schema.kpiMetricMaster.metric_code, metricCodes), sql`(${schema.kpiMetricMaster.company_id} IS NULL OR ${schema.kpiMetricMaster.company_id} = ${batch.company_id})`)) : [])
-    .map((m) => [m.code, m]));
+  const metricCodes = [
+    ...new Set(
+      kpiRows
+        .map((k) => k.metric)
+        .filter((m): m is string => typeof m === 'string' && !!m),
+    ),
+  ];
+  const metrics = new Map(
+    (metricCodes.length
+      ? await db
+          .select({
+            code: schema.kpiMetricMaster.metric_code,
+            name: schema.kpiMetricMaster.metric_name,
+            uom: schema.kpiMetricMaster.default_uom,
+          })
+          .from(schema.kpiMetricMaster)
+          .where(
+            and(
+              inArray(schema.kpiMetricMaster.metric_code, metricCodes),
+              sql`(${schema.kpiMetricMaster.company_id} IS NULL OR ${schema.kpiMetricMaster.company_id} = ${batch.company_id})`,
+            ),
+          )
+      : []
+    ).map((m) => [m.code, m]),
+  );
 
   const lines: StageLineDraft[] = [];
 
   // Feed Consumption lines: one daily line per feed line, over its stage days.
   for (const row of rows) {
-    if (!row.feed_item_id || !(Number(row.feed_qty_per_head_per_day_kg) > 0)) continue;
-    const { fromDay, toDay } = stageDayRange(row.calc_unit, row.period_from, row.period_to);
+    if (!row.feed_item_id || !(Number(row.feed_qty_per_head_per_day_kg) > 0))
+      continue;
+    const { fromDay, toDay } = stageDayRange(
+      row.calc_unit,
+      row.period_from,
+      row.period_to,
+    );
     const item = items.get(row.feed_item_id);
     lines.push({
       line_type: 'CONSUMPTION',
       activity_name: `${stage.stage_name} Feed — ${item?.item_name ?? 'Unknown Item'}`,
-      occurrence: 'DAILY', start_day: fromDay, end_day: toDay, day_of_week: null, custom_days: null,
-      is_mandatory: true, item_id: row.feed_item_id, item_description: item?.item_name ?? null,
-      standard_qty: Number(row.feed_qty_per_head_per_day_kg), qty_basis: 'PER_HEAD', allow_qty_edit: true,
-      lot_required: item?.tracked ?? false, lifecycle_ref_id: row.lifecycle_id,
+      occurrence: 'DAILY',
+      start_day: fromDay,
+      end_day: toDay,
+      day_of_week: null,
+      custom_days: null,
+      is_mandatory: true,
+      item_id: row.feed_item_id,
+      item_description: item?.item_name ?? null,
+      standard_qty: Number(row.feed_qty_per_head_per_day_kg),
+      qty_basis: 'PER_HEAD',
+      allow_qty_edit: true,
+      lot_required: item?.tracked ?? false,
+      lifecycle_ref_id: row.lifecycle_id,
     });
   }
 
   // Resource Requirements.
-  lines.push(...resourceLineDrafts(lifecycle.resource_requirements, { stageEndDay, resources, lifecycleId: lifecycle.lifecycle_id }));
+  lines.push(
+    ...resourceLineDrafts(lifecycle.resource_requirements, {
+      stageEndDay,
+      resources,
+      lifecycleId: lifecycle.lifecycle_id,
+    }),
+  );
 
   // Vaccination Protocol: by age in weeks, from the batch's oldest animal's date of birth (vaccination-lines.ts).
   if (args.effectiveFrom) {
-    const [{ dob }] = await db.select({ dob: sql<string | null>`MIN(${schema.animalRegister.dob})` }).from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.current_batch_id, batch.batch_id), eq(schema.animalRegister.is_active, true)));
-    const wanted = wantedVaccinations(lifecycle.vaccination_protocol, dob ? String(dob).slice(0, 10) : null, String(args.effectiveFrom).slice(0, 10), stageEndDay);
+    const [{ dob }] = await db
+      .select({ dob: sql<string | null>`MIN(${schema.animalRegister.dob})` })
+      .from(schema.animalRegister)
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batch.batch_id),
+          eq(schema.animalRegister.is_active, true),
+        ),
+      );
+    const wanted = wantedVaccinations(
+      lifecycle.vaccination_protocol,
+      dob ? String(dob).slice(0, 10) : null,
+      String(args.effectiveFrom).slice(0, 10),
+      stageEndDay,
+    );
     for (const w of wanted) {
       const item = items.get(w.itemId);
       if (!item) continue;
       lines.push({
         line_type: 'CONSUMPTION',
         activity_name: `Vaccination: ${item.item_name} (age ${w.weeks} weeks)`,
-        occurrence: 'CUSTOM', start_day: w.day, end_day: w.day, day_of_week: null, custom_days: [w.day],
-        is_mandatory: true, item_id: w.itemId, item_description: item.item_name,
-        standard_qty: w.doseMl, qty_basis: 'PER_HEAD', allow_qty_edit: true, lot_required: item.tracked,
+        occurrence: 'CUSTOM',
+        start_day: w.day,
+        end_day: w.day,
+        day_of_week: null,
+        custom_days: [w.day],
+        is_mandatory: true,
+        item_id: w.itemId,
+        item_description: item.item_name,
+        standard_qty: w.doseMl,
+        qty_basis: 'PER_HEAD',
+        allow_qty_edit: true,
+        lot_required: item.tracked,
         lifecycle_ref_id: lifecycle.lifecycle_id,
       });
     }
   }
 
   // Medication Protocol, as needed.
-  lines.push(...medicationLineDrafts(lifecycle.medication_protocol, { stageEndDay, items, lifecycleId: lifecycle.lifecycle_id }));
+  lines.push(
+    ...medicationLineDrafts(lifecycle.medication_protocol, {
+      stageEndDay,
+      items,
+      lifecycleId: lifecycle.lifecycle_id,
+    }),
+  );
 
   // KPIs & Alerts.
   const kpiLines = kpiRows
     .map((k) => {
-      const m = typeof k.metric === 'string' ? metrics.get(k.metric) : undefined;
-      const uom = (typeof k.uom === 'string' && k.uom) || m?.uom || (typeof k.metric === 'string' ? KPI_METRIC_DEFAULT_UOM[k.metric] : null) || null;
-      return kpiLineDraft(k, { period: lifecycle.kpi_alert_period, stageEndDay, metricName: m?.name ?? null, uom, lifecycleId: lifecycle.lifecycle_id });
+      const m =
+        typeof k.metric === 'string' ? metrics.get(k.metric) : undefined;
+      const uom =
+        (typeof k.uom === 'string' && k.uom) ||
+        m?.uom ||
+        (typeof k.metric === 'string'
+          ? KPI_METRIC_DEFAULT_UOM[k.metric]
+          : null) ||
+        null;
+      return kpiLineDraft(k, {
+        period: lifecycle.kpi_alert_period,
+        stageEndDay,
+        metricName: m?.name ?? null,
+        uom,
+        lifecycleId: lifecycle.lifecycle_id,
+      });
     })
     .filter((l): l is StageLineDraft => l !== null);
   lines.push(...kpiLines);
@@ -313,27 +475,57 @@ export async function buildStageSchedulerLines(
   // The stage's standards, unless a KPI line already captures that metric.
   if (lifecycle.std_mortality_rate_pct && !kpiMetrics.has('MORTALITY_COUNT')) {
     lines.push({
-      line_type: 'DESCRIPTIVE', activity_name: `${stage.stage_name} Mortality`,
-      occurrence: 'DAILY', start_day: 1, end_day: null, day_of_week: null, custom_days: null, is_mandatory: true,
-      kpi_metric: 'MORTALITY_COUNT', kpi_uom: KPI_METRIC_DEFAULT_UOM.MORTALITY_COUNT, capture_per: 'TOTAL',
-      std_value: num(lifecycle.std_mortality_rate_pct), alert_severity: 'CRITICAL', lifecycle_ref_id: lifecycle.lifecycle_id,
+      line_type: 'DESCRIPTIVE',
+      activity_name: `${stage.stage_name} Mortality`,
+      occurrence: 'DAILY',
+      start_day: 1,
+      end_day: null,
+      day_of_week: null,
+      custom_days: null,
+      is_mandatory: true,
+      kpi_metric: 'MORTALITY_COUNT',
+      kpi_uom: KPI_METRIC_DEFAULT_UOM.MORTALITY_COUNT,
+      capture_per: 'TOTAL',
+      std_value: num(lifecycle.std_mortality_rate_pct),
+      alert_severity: 'CRITICAL',
+      lifecycle_ref_id: lifecycle.lifecycle_id,
     });
   }
   if (lifecycle.output_item_id && lifecycle.std_output_qty) {
     const item = items.get(lifecycle.output_item_id);
     lines.push({
-      line_type: 'OUTPUT', activity_name: `${stage.stage_name} Output`,
-      occurrence: 'ONCE', start_day: stageEndDay || 1, end_day: null, day_of_week: null, custom_days: null, is_mandatory: false,
-      item_id: lifecycle.output_item_id, item_description: item?.item_name ?? null,
-      standard_qty: num(lifecycle.std_output_qty), output_basis: 'PER_BATCH', creates_inventory: true, output_lot_auto: true,
+      line_type: 'OUTPUT',
+      activity_name: `${stage.stage_name} Output`,
+      occurrence: 'ONCE',
+      start_day: stageEndDay || 1,
+      end_day: null,
+      day_of_week: null,
+      custom_days: null,
+      is_mandatory: false,
+      item_id: lifecycle.output_item_id,
+      item_description: item?.item_name ?? null,
+      standard_qty: num(lifecycle.std_output_qty),
+      output_basis: 'PER_BATCH',
+      creates_inventory: true,
+      output_lot_auto: true,
       lifecycle_ref_id: lifecycle.lifecycle_id,
     });
   } else if (lifecycle.std_body_weight_kg && !kpiMetrics.has('BODY_WEIGHT')) {
     lines.push({
-      line_type: 'DESCRIPTIVE', activity_name: `${stage.stage_name} Body Weight Check`,
-      occurrence: 'WEEKLY', start_day: 7, end_day: null, day_of_week: 1, custom_days: null, is_mandatory: false,
-      kpi_metric: 'BODY_WEIGHT', kpi_uom: KPI_METRIC_DEFAULT_UOM.BODY_WEIGHT, capture_per: 'AVERAGE',
-      std_value: num(lifecycle.std_body_weight_kg), alert_severity: 'WARNING', lifecycle_ref_id: lifecycle.lifecycle_id,
+      line_type: 'DESCRIPTIVE',
+      activity_name: `${stage.stage_name} Body Weight Check`,
+      occurrence: 'WEEKLY',
+      start_day: 7,
+      end_day: null,
+      day_of_week: 1,
+      custom_days: null,
+      is_mandatory: false,
+      kpi_metric: 'BODY_WEIGHT',
+      kpi_uom: KPI_METRIC_DEFAULT_UOM.BODY_WEIGHT,
+      capture_per: 'AVERAGE',
+      std_value: num(lifecycle.std_body_weight_kg),
+      alert_severity: 'WARNING',
+      lifecycle_ref_id: lifecycle.lifecycle_id,
     });
   }
   return lines;

@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from '@/utils/na';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -29,7 +30,11 @@ function FieldInfoTooltip({ text }: { text: string }) {
     if (!open) return;
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
-      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      if (
+        triggerRef.current?.contains(target) ||
+        popoverRef.current?.contains(target)
+      )
+        return;
       setOpen(false);
     };
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -64,7 +69,11 @@ function FieldInfoTooltip({ text }: { text: string }) {
           ref={popoverRef}
           role="tooltip"
           className="absolute left-0 top-full z-50 mt-1.5 w-64 max-w-[calc(100vw-2rem)] rounded-lg border p-2.5 text-xs leading-relaxed shadow-lg"
-          style={{ backgroundColor: 'var(--surface-raised)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+          style={{
+            backgroundColor: 'var(--surface-raised)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-secondary)',
+          }}
         >
           {text}
         </span>
@@ -83,10 +92,22 @@ function FieldInfoTooltip({ text }: { text: string }) {
  * (e.g. "set by template") that should always be visible, not hidden behind
  * a hover — the two are not interchangeable.
  */
-export function Field({ label, htmlFor, hint, tooltip, error, required, className, children }: FieldProps) {
+export function Field({
+  label,
+  htmlFor,
+  hint,
+  tooltip,
+  error,
+  required,
+  className,
+  children,
+}: FieldProps) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
-      <label htmlFor={htmlFor} className="nf-text-label flex items-center gap-1 text-(--text-secondary)">
+      <label
+        htmlFor={htmlFor}
+        className="nf-text-label flex items-center gap-1 text-(--text-secondary)"
+      >
         {label}
         {required && <span className="ml-0.5 text-(--accent)">*</span>}
         {tooltip && <FieldInfoTooltip text={tooltip} />}
@@ -128,7 +149,7 @@ export function ReadField({
   mono,
   className,
   appearance = 'plain',
-  emptyText = '—',
+  emptyText = NA,
 }: {
   label: string;
   value: ReactNode;
@@ -141,16 +162,19 @@ export function ReadField({
   const labelId = useId();
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
-      <span id={labelId} className="nf-text-label text-(--text-secondary)">{label}</span>
+      <span id={labelId} className="nf-text-label text-(--text-secondary)">
+        {label}
+      </span>
       <span
         role={appearance === 'control' ? 'textbox' : undefined}
         aria-readonly={appearance === 'control' ? true : undefined}
         aria-labelledby={appearance === 'control' ? labelId : undefined}
         className={cn(
           'min-w-0 break-words text-sm',
-          appearance === 'control' && 'flex min-h-11 cursor-text select-text items-center rounded-[var(--radius-sm)] border border-(--input-border) bg-(--surface-raised) px-3 py-2',
+          appearance === 'control' &&
+            'flex min-h-11 cursor-text select-text items-center rounded-[var(--radius-sm)] border border-(--input-border) bg-(--surface-raised) px-3 py-2',
           mono && 'font-mono',
-          empty ? 'text-(--text-muted)' : 'font-medium text-(--text-primary)'
+          empty ? 'text-(--text-muted)' : 'font-medium text-(--text-primary)',
         )}
       >
         {empty ? emptyText : value}
@@ -194,13 +218,21 @@ export function FieldGroup({
 }) {
   return (
     <section className={cn('flex flex-col gap-3', className)}>
-      {(title || description || action) && <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          {title && <h3 className="nf-text-label-strong text-(--text-primary)">{title}</h3>}
-          {description && <p className="text-[12px] text-(--text-muted)">{description}</p>}
+      {(title || description || action) && (
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            {title && (
+              <h3 className="nf-text-label-strong text-(--text-primary)">
+                {title}
+              </h3>
+            )}
+            {description && (
+              <p className="text-[12px] text-(--text-muted)">{description}</p>
+            )}
+          </div>
+          {action}
         </div>
-        {action}
-      </div>}
+      )}
       <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-12">
         {children}
       </div>

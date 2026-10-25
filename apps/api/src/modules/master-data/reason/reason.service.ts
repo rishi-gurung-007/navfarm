@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -8,94 +12,233 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateReasonDto, QueryReasonDto, UpdateReasonDto } from './reason.dto';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import type { ReasonCategory } from '../../../core/database/reason-code-seed';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const table = schema.reasonMaster;
 @Injectable()
 export class ReasonService {
-  constructor(private readonly cls: ClsService, private readonly audit: AuditLogService, private readonly numbering: NumberSeriesService) {}
-  private get db() { return this.cls.get<MySql2Database<typeof schema>>('tenantDb'); }
-  private scope(tenantId: string) { return [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table)]; }
-  private async assertStages(codes: string[] | null | undefined, tenantId: string, companyId?: string | null) {
+  constructor(
+    private readonly cls: ClsService,
+    private readonly audit: AuditLogService,
+    private readonly numbering: NumberSeriesService,
+  ) {}
+  private get db() {
+    return this.cls.get<MySql2Database<typeof schema>>('tenantDb');
+  }
+  private scope(tenantId: string) {
+    return [
+      eq(table.tenant_id, tenantId),
+      ...masterScopeConditions(this.cls, table),
+    ];
+  }
+  private async assertStages(
+    codes: string[] | null | undefined,
+    tenantId: string,
+    companyId?: string | null,
+  ) {
     if (!codes?.length) return;
-    const rows = await this.db.select({ code: schema.stageMaster.stage_code }).from(schema.stageMaster).where(and(
-      eq(schema.stageMaster.tenant_id, tenantId), eq(schema.stageMaster.is_active, true), inArray(schema.stageMaster.stage_code, codes),
-      ...masterScopeConditions(this.cls, schema.stageMaster, companyId || undefined),
-    ));
-    if (codes.some((code) => !rows.some((row) => row.code === code))) throw new BadRequestException('Select active stages from this workspace.');
+    const rows = await this.db
+      .select({ code: schema.stageMaster.stage_code })
+      .from(schema.stageMaster)
+      .where(
+        and(
+          eq(schema.stageMaster.tenant_id, tenantId),
+          eq(schema.stageMaster.is_active, true),
+          inArray(schema.stageMaster.stage_code, codes),
+          ...masterScopeConditions(
+            this.cls,
+            schema.stageMaster,
+            companyId || undefined,
+          ),
+        ),
+      );
+    if (codes.some((code) => !rows.some((row) => row.code === code)))
+      throw new BadRequestException(
+        'Select active stages from this workspace.',
+      );
   }
   async findOne(id: string, tenantId: string) {
-    const [row] = await this.db.select().from(table).where(and(eq(table.reason_id, id), ...this.scope(tenantId))).limit(1);
-    if (!row) throw new NotFoundException('Reason is not available in this workspace.');
+    const [row] = await this.db
+      .select()
+      .from(table)
+      .where(and(eq(table.reason_id, id), ...this.scope(tenantId)))
+      .limit(1);
+    if (!row)
+      throw new NotFoundException('Reason is not available in this workspace.');
     return row;
   }
   async findActiveForOperationalScope(
     id: string,
     tenantId: string,
     scope: { companyId: string; nobId: string | null; lobId: string | null },
+    category?: ReasonCategory,
   ) {
-    const [row] = await this.db.select().from(table).where(and(
-      eq(table.reason_id, id),
-      eq(table.tenant_id, tenantId),
-      eq(table.company_id, scope.companyId),
-      scope.nobId ? or(eq(table.nob_id, scope.nobId), isNull(table.nob_id)) : isNull(table.nob_id),
-      scope.lobId ? or(eq(table.lob_id, scope.lobId), isNull(table.lob_id)) : isNull(table.lob_id),
-      eq(table.is_active, true),
-      eq(table.status, 'ACTIVE'),
-      isNull(table.deleted_at),
-    )).limit(1);
-    if (!row) throw new NotFoundException('Select an active Reason Master row visible to this company and farm LOB.');
+    const [row] = await this.db
+      .select()
+      .from(table)
+      .where(
+        and(
+          eq(table.reason_id, id),
+          eq(table.tenant_id, tenantId),
+          eq(table.company_id, scope.companyId),
+          scope.nobId
+            ? or(eq(table.nob_id, scope.nobId), isNull(table.nob_id))
+            : isNull(table.nob_id),
+          scope.lobId
+            ? or(eq(table.lob_id, scope.lobId), isNull(table.lob_id))
+            : isNull(table.lob_id),
+          eq(table.is_active, true),
+          eq(table.status, 'ACTIVE'),
+          isNull(table.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (!row)
+      throw new NotFoundException(
+        'Select an active Reason Master row visible to this company and farm LOB.',
+      );
+    if (category && row.category !== category) {
+      throw new BadRequestException(
+        `${row.reason_name} is a ${row.category} reason; choose an ${category} reason.`,
+      );
+    }
     return row;
   }
   async findAll(query: QueryReasonDto, tenantId: string) {
-    const conditions = [eq(table.tenant_id, tenantId), ...masterScopeConditions(this.cls, table, query.companyId)];
-    if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
+    const conditions = [
+      eq(table.tenant_id, tenantId),
+      ...masterScopeConditions(this.cls, table, query.companyId),
+    ];
+    if (query.isActive !== undefined)
+      conditions.push(eq(table.is_active, query.isActive));
     if (query.category) conditions.push(eq(table.category, query.category));
-    if (query.stageCode) conditions.push(sql`(${table.applicable_stages} IS NULL OR JSON_LENGTH(${table.applicable_stages}) = 0 OR JSON_CONTAINS(${table.applicable_stages}, ${JSON.stringify(query.stageCode)}))`);
+    if (query.stageCode)
+      conditions.push(
+        sql`(${table.applicable_stages} IS NULL OR JSON_LENGTH(${table.applicable_stages}) = 0 OR JSON_CONTAINS(${table.applicable_stages}, ${JSON.stringify(query.stageCode)}))`,
+      );
     // The list search also matches the reason's category (Freebuff task-3,
     // item 5): typing MORTALITY into the search box finds the mortality rows
     // the same way the Category filter would.
-    if (query.search) conditions.push(or(
-      like(table.reason_code, `%${query.search}%`),
-      like(table.reason_name, `%${query.search}%`),
-      like(table.sub_category, `%${query.search}%`),
-      like(table.category, `%${query.search}%`),
-    )!);
+    if (query.search)
+      conditions.push(
+        or(
+          like(table.reason_code, `%${query.search}%`),
+          like(table.reason_name, `%${query.search}%`),
+          like(table.sub_category, `%${query.search}%`),
+          like(table.category, `%${query.search}%`),
+        )!,
+      );
     conditions.push(...listFilterConditions(table, query.filter));
-    return this.db.select().from(table).where(and(...conditions)).orderBy(listOrderBy(table, query, table.reason_code)).limit(query.limit || 50).offset(query.offset || 0);
+    return this.db
+      .select()
+      .from(table)
+      .where(and(...conditions))
+      .orderBy(listOrderBy(table, query, table.reason_code))
+      .limit(query.limit || 50)
+      .offset(query.offset || 0);
   }
-  private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {
-    await this.audit.log({ tenantId: row.tenant_id, companyId: row.company_id || undefined, userId: user?.userId, action, entityName: 'reason_master', entityId: row.reason_id, oldValues, newValues: row });
+  private async log(
+    action: string,
+    row: typeof table.$inferSelect,
+    user: any,
+    oldValues?: unknown,
+  ) {
+    await this.audit.log({
+      tenantId: row.tenant_id,
+      companyId: row.company_id || undefined,
+      userId: user?.userId,
+      action,
+      entityName: 'reason_master',
+      entityId: row.reason_id,
+      oldValues,
+      newValues: row,
+    });
     return row;
   }
   async create(dto: CreateReasonDto, tenantId: string, user?: any) {
     await this.assertStages(dto.applicable_stages, tenantId, dto.company_id);
-    const reason_code = await this.numbering.resolveNewCode('REASON', dto.reason_code, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
+    const reason_code = await this.numbering.resolveNewCode(
+      'REASON',
+      dto.reason_code,
+      tenantId,
+      dto.company_id,
+      undefined,
+      dto as unknown as Record<string, unknown>,
+    );
     const reason_id = randomUUID();
-    await this.db.insert(table).values({ ...dto, reason_code, reason_id, tenant_id: tenantId, reason_name: dto.reason_name.trim(), applicable_stages: dto.applicable_stages?.length ? dto.applicable_stages : null, created_by: user?.userId, updated_by: user?.userId });
+    await this.db.insert(table).values({
+      ...dto,
+      reason_code,
+      reason_id,
+      tenant_id: tenantId,
+      reason_name: dto.reason_name.trim(),
+      applicable_stages: dto.applicable_stages?.length
+        ? dto.applicable_stages
+        : null,
+      created_by: user?.userId,
+      updated_by: user?.userId,
+    });
     return this.log('CREATE', await this.findOne(reason_id, tenantId), user);
   }
   async update(id: string, dto: UpdateReasonDto, tenantId: string, user?: any) {
     const before = await this.findOne(id, tenantId);
-    if (dto.applicable_stages !== undefined) await this.assertStages(dto.applicable_stages, tenantId, before.company_id);
+    if (dto.applicable_stages !== undefined)
+      await this.assertStages(
+        dto.applicable_stages,
+        tenantId,
+        before.company_id,
+      );
     assertCodeUnchanged('Reason', before.reason_code, dto.reason_code);
     let reason_code = before.reason_code;
     if (dto.reason_code !== undefined && dto.reason_code.trim()) {
       const trimmed = dto.reason_code.trim().toUpperCase();
       if (trimmed !== before.reason_code) {
-        const edited = await this.numbering.editedCode('REASON', trimmed, before.reason_code, tenantId, before.company_id);
+        const edited = await this.numbering.editedCode(
+          'REASON',
+          trimmed,
+          before.reason_code,
+          tenantId,
+          before.company_id,
+        );
         if (edited) reason_code = edited;
       }
     }
-    const updates = { ...dto, reason_code, reason_name: dto.reason_name?.trim() ?? before.reason_name, updated_by: user?.userId, updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ') };
-    await this.db.update(table).set(updates).where(and(eq(table.reason_id, id), ...this.scope(tenantId)));
+    const updates = {
+      ...dto,
+      reason_code,
+      reason_name: dto.reason_name?.trim() ?? before.reason_name,
+      updated_by: user?.userId,
+      updated_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    };
+    await this.db
+      .update(table)
+      .set(updates)
+      .where(and(eq(table.reason_id, id), ...this.scope(tenantId)));
     return this.log('UPDATE', await this.findOne(id, tenantId), user, before);
   }
   async setActive(id: string, active: boolean, tenantId: string, user?: any) {
     const before = await this.findOne(id, tenantId);
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    await this.db.update(table).set({ is_active: active, status: active ? 'ACTIVE' : 'INACTIVE', deleted_at: active ? null : now, updated_at: now, updated_by: user?.userId }).where(and(eq(table.reason_id, id), ...this.scope(tenantId)));
-    return this.log(active ? 'RESTORE' : 'DELETE', await this.findOne(id, tenantId), user, before);
+    await this.db
+      .update(table)
+      .set({
+        is_active: active,
+        status: active ? 'ACTIVE' : 'INACTIVE',
+        deleted_at: active ? null : now,
+        updated_at: now,
+        updated_by: user?.userId,
+      })
+      .where(and(eq(table.reason_id, id), ...this.scope(tenantId)));
+    return this.log(
+      active ? 'RESTORE' : 'DELETE',
+      await this.findOne(id, tenantId),
+      user,
+      before,
+    );
   }
 }

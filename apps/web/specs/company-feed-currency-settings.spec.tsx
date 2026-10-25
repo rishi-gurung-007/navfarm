@@ -2,16 +2,26 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import CompanyTab from '../src/components/console/console-tabs/company-tab';
 import { api } from '../src/services/api-client';
+import { chooseValue, selectedValue } from './support/searchable-select';
 
-jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn(), upload: jest.fn() } }));
-jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: string) => key }) }));
+jest.mock('../src/services/api-client', () => ({
+  api: { get: jest.fn(), post: jest.fn(), put: jest.fn(), upload: jest.fn() },
+}));
+jest.mock('../src/hooks/useLanguage', () => ({
+  useLanguage: () => ({ t: (key: string) => key }),
+}));
 
 const get = api.get as jest.Mock;
 const post = api.post as jest.Mock;
 const put = api.put as jest.Mock;
 const company = {
-  company_id: 'co-1', company_code: 'CO1', company_name: 'Company One',
-  default_language_id: 'en', base_currency_id: 'usd', default_timezone_id: 'Africa/Harare', country_id: 'ZW',
+  company_id: 'co-1',
+  company_code: 'CO1',
+  company_name: 'Company One',
+  default_language_id: 'en',
+  base_currency_id: 'usd',
+  default_timezone_id: 'Africa/Harare',
+  country_id: 'ZW',
 };
 const currencies = [
   { currency_id: 'usd', iso_code: 'USD', currency_name: 'US Dollar' },
@@ -21,26 +31,60 @@ const currencies = [
 beforeEach(() => {
   jest.clearAllMocks();
   get.mockImplementation((url: string) => {
-    if (url === '/language' || url === '/setup/wizard/nobs') return Promise.resolve([]);
-    if (url === '/setup/wizard/company-details/co-1') return Promise.resolve({
-      company, address: null, contact: null, fiscal: null, modules: [],
-      currencies: [{ ...currencies[0], is_base: true, is_local: false }, { ...currencies[1], is_base: false, is_local: true }],
-    });
-    if (url === '/feed-settings?companyId=co-1') return Promise.resolve({ data: {
-      defaultForecastDays: 7, maxForecastDays: 45,
-      productionWeekday: null,
-      submissionWeekday: null, submissionTime: null,
-      reminderWeekday: null, reminderTime: null,
-      physicalCountWeekday: null, physicalCountTime: null,
-      truckTargetKg: null, bulkMultipleKg: null,
-      capacityWarningPct: 90, bagTolerancePct: null,
-      financeVariancePct: 5, financeVarianceAmount: null,
-    } });
-    if (url === '/feed-forecast/farm-settings?companyId=co-1') return Promise.resolve({ data: [{
-      farmId: 'farm-1', code: 'GRA100', name: 'Grasmere', companyId: 'co-1', companyName: 'Company One',
-      settings: { safetyStockKg: null, bagSizeKg: null, bulkMultipleKg: null, truckTargetKg: null, productionWeekday: null },
-      silos: [],
-    }] });
+    if (url === '/language' || url === '/setup/wizard/nobs')
+      return Promise.resolve([]);
+    if (url === '/setup/wizard/company-details/co-1')
+      return Promise.resolve({
+        company,
+        address: null,
+        contact: null,
+        fiscal: null,
+        modules: [],
+        currencies: [
+          { ...currencies[0], is_base: true, is_local: false },
+          { ...currencies[1], is_base: false, is_local: true },
+        ],
+      });
+    if (url === '/feed-settings?companyId=co-1')
+      return Promise.resolve({
+        data: {
+          defaultForecastDays: 7,
+          maxForecastDays: 45,
+          productionWeekday: null,
+          submissionWeekday: null,
+          submissionTime: null,
+          reminderWeekday: null,
+          reminderTime: null,
+          physicalCountWeekday: null,
+          physicalCountTime: null,
+          truckTargetKg: null,
+          bulkMultipleKg: null,
+          capacityWarningPct: 90,
+          bagTolerancePct: null,
+          financeVariancePct: 5,
+          financeVarianceAmount: null,
+        },
+      });
+    if (url === '/feed-forecast/farm-settings?companyId=co-1')
+      return Promise.resolve({
+        data: [
+          {
+            farmId: 'farm-1',
+            code: 'GRA100',
+            name: 'Grasmere',
+            companyId: 'co-1',
+            companyName: 'Company One',
+            settings: {
+              safetyStockKg: null,
+              bagSizeKg: null,
+              bulkMultipleKg: null,
+              truckTargetKg: null,
+              productionWeekday: null,
+            },
+            silos: [],
+          },
+        ],
+      });
     return Promise.resolve([]);
   });
   post.mockResolvedValue({ success: true });
@@ -48,32 +92,100 @@ beforeEach(() => {
 });
 
 it('shows separate base and local currency fields and submits both explicit choices', async () => {
-  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="localization" />);
-  const local = await screen.findByLabelText(/ctLocalCurrency/, { selector: 'select' });
-  await waitFor(() => expect((local as HTMLSelectElement).value).toBe('local'));
-  fireEvent.change(local, { target: { value: 'usd' } });
+  render(
+    <CompanyTab
+      activeCompany={company}
+      companies={[company]}
+      currencies={currencies}
+      tenantId="tenant-1"
+      currentUser={{ userType: 'COMPANY_ADMIN' }}
+      skipDirectory
+      section="localization"
+    />,
+  );
+  // The editable field's trigger; the read-only summary above it carries the same label text.
+  const local = await waitFor(() => {
+    const el = document.getElementById('cfg-ct-local-currency');
+    if (!el) throw new Error('local currency field not rendered yet');
+    return el;
+  });
+  await waitFor(() => expect(selectedValue(local)).toBe('local'));
+  chooseValue(local, 'usd');
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/setup/wizard/step-5/co-1/usd/usd'));
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/setup/wizard/step-5/co-1/usd/usd'),
+  );
 });
 
 it('loads and saves company feed settings without inserting a client schedule into blank fields', async () => {
-  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="feed" />);
-  expect((await screen.findByLabelText(/ctFeedDefaultForecastDays/) as HTMLInputElement).value).toBe('7');
-  expect((screen.getByLabelText('ctFeedSubmissionTime') as HTMLInputElement).value).toBe('');
-  expect(screen.getByLabelText('ctFeedTruckTargetKg').getAttribute('min')).toBe('0.01');
-  expect(screen.getByLabelText('ctFeedBulkMultipleKg').getAttribute('min')).toBe('0.01');
-  fireEvent.change(screen.getByLabelText('ctFeedSubmissionTime'), { target: { value: '12:00' } });
+  render(
+    <CompanyTab
+      activeCompany={company}
+      companies={[company]}
+      currencies={currencies}
+      tenantId="tenant-1"
+      currentUser={{ userType: 'COMPANY_ADMIN' }}
+      skipDirectory
+      section="feed"
+    />,
+  );
+  expect(
+    (
+      (await screen.findByLabelText(
+        /ctFeedDefaultForecastDays/,
+      )) as HTMLInputElement
+    ).value,
+  ).toBe('7');
+  expect(
+    (screen.getByLabelText('ctFeedSubmissionTime') as HTMLInputElement).value,
+  ).toBe('');
+  expect(screen.getByLabelText('ctFeedTruckTargetKg').getAttribute('min')).toBe(
+    '0.01',
+  );
+  expect(
+    screen.getByLabelText('ctFeedBulkMultipleKg').getAttribute('min'),
+  ).toBe('0.01');
+  fireEvent.change(screen.getByLabelText('ctFeedSubmissionTime'), {
+    target: { value: '12:00' },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
-  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({
-    companyId: 'co-1', defaultForecastDays: 7, maxForecastDays: 45, submissionTime: '12:00',
-  })));
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/feed-settings',
+      expect.objectContaining({
+        companyId: 'co-1',
+        defaultForecastDays: 7,
+        maxForecastDays: 45,
+        submissionTime: '12:00',
+      }),
+    ),
+  );
 });
 
 it('accepts API-valid whole and decimal feed quantities and submits them', async () => {
-  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="feed" />);
-  await waitFor(() => expect((screen.getByLabelText(/ctFeedDefaultForecastDays/) as HTMLInputElement).value).toBe('7'));
-  const truckTarget = screen.getByLabelText('ctFeedTruckTargetKg') as HTMLInputElement;
-  const bulkMultiple = screen.getByLabelText('ctFeedBulkMultipleKg') as HTMLInputElement;
+  render(
+    <CompanyTab
+      activeCompany={company}
+      companies={[company]}
+      currencies={currencies}
+      tenantId="tenant-1"
+      currentUser={{ userType: 'COMPANY_ADMIN' }}
+      skipDirectory
+      section="feed"
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText(/ctFeedDefaultForecastDays/) as HTMLInputElement)
+        .value,
+    ).toBe('7'),
+  );
+  const truckTarget = screen.getByLabelText(
+    'ctFeedTruckTargetKg',
+  ) as HTMLInputElement;
+  const bulkMultiple = screen.getByLabelText(
+    'ctFeedBulkMultipleKg',
+  ) as HTMLInputElement;
 
   fireEvent.change(truckTarget, { target: { value: '1000' } });
   fireEvent.change(bulkMultiple, { target: { value: '2500.25' } });
@@ -82,21 +194,45 @@ it('accepts API-valid whole and decimal feed quantities and submits them', async
   expect(bulkMultiple.validity.stepMismatch).toBe(false);
   expect(truckTarget.form?.checkValidity()).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
-  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({
-    truckTargetKg: 1000,
-    bulkMultipleKg: 2500.25,
-  })));
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/feed-settings',
+      expect.objectContaining({
+        truckTargetKg: 1000,
+        bulkMultipleKg: 2500.25,
+      }),
+    ),
+  );
 });
 
 it('shows the scheduler tentative-plan day and time as settings, blank until configured, and saves them', async () => {
-  render(<CompanyTab activeCompany={company} companies={[company]} currencies={currencies} tenantId="tenant-1" currentUser={{ userType: 'COMPANY_ADMIN' }} skipDirectory section="feed" />);
-  const time = await screen.findByLabelText('ctFeedTentativePlanTime') as HTMLInputElement;
+  render(
+    <CompanyTab
+      activeCompany={company}
+      companies={[company]}
+      currencies={currencies}
+      tenantId="tenant-1"
+      currentUser={{ userType: 'COMPANY_ADMIN' }}
+      skipDirectory
+      section="feed"
+    />,
+  );
+  const time = (await screen.findByLabelText(
+    'ctFeedTentativePlanTime',
+  )) as HTMLInputElement;
   expect(time.value).toBe('');
   expect(screen.getByLabelText('ctFeedTentativePlanWeekday')).toBeTruthy();
-  fireEvent.change(screen.getByLabelText('ctFeedTentativePlanWeekday'), { target: { value: '3' } });
+  chooseValue(screen.getByLabelText('ctFeedTentativePlanWeekday'), '3');
   fireEvent.change(time, { target: { value: '09:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
-  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({
-    companyId: 'co-1', tentativePlanWeekday: 3, tentativePlanTime: '09:00',
-  })));
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/feed-settings',
+      expect.objectContaining({
+        companyId: 'co-1',
+        tentativePlanWeekday: 3,
+        tentativePlanTime: '09:00',
+      }),
+    ),
+  );
 });

@@ -2,7 +2,7 @@
 
 **Rishi is the source of truth for this application.** This file is the record
 of what he has decided: what he asked for, what was decided, and why. The BBP,
-the TDD tracker, the master templates and the MOMs are *reference* — evidence of
+the TDD tracker, the master templates and the MOMs are _reference_ — evidence of
 what the client has said — and every one of them is incomplete, unsigned, or
 contradicts another.
 
@@ -19,22 +19,23 @@ reasoning is what tells a later reader whether a new situation is covered.
 
 These apply to all work and are not up for re-litigation.
 
-| Rule | Why |
-|---|---|
-| **Piggery only.** NOB Livestock → LOB Piggery. Sixteen LOBs exist as taxonomy; nothing else is in scope. | Other domains come after piggery is complete. Keep shared scaffolding generic so adding one later stays additive. |
-| **Do not assume anything that is not clear. Ask.** | Rishi has said this repeatedly. He is explicit that he relies on the agent for piggery domain knowledge, so a confident guess is worse than a question. |
-| **Never invent client data.** No placeholder companies, no example identifiers, no "typical" values presented as the client's. | Indian demo placeholders (`greenvalleyfarms.in`, `GSTIN12345`, `+91…`, `Asia/Kolkata`) shipped on a Zimbabwe piggery's screens. |
-| **Review anything Arun's tooling landed.** | "he was creating a lot of difficulties… we would review anything that he adds to our branch". Also: "arun used gemini free antigravity so we have to work properly so that people do not compare us with cheap things". |
-| **The eight non-English translations are deferred to the end.** English only for now; new keys fall back to English per key. | 2026-09-06. Content will be settled in English first, then translated once. |
-| **Leave the dev servers running.** Close them only when memory is actually red — check `top -l 1 -n 0 \| grep PhysMem` and `sysctl vm.swapusage`. | 2026-09-07. Rishi browses the app in Brave while work happens; stopping the server pulls the page out from under him. The 8 GB machine still swaps hard, so check rather than guess. |
-| **Never run `pkill`.** Kill a PID confirmed with `lsof -ti :PORT`. | A `pkill` killed an entire working session. |
+| Rule                                                                                                                                              | Why                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Piggery only.** NOB Livestock → LOB Piggery. Sixteen LOBs exist as taxonomy; nothing else is in scope.                                          | Other domains come after piggery is complete. Keep shared scaffolding generic so adding one later stays additive.                                                                                                       |
+| **Do not assume anything that is not clear. Ask.**                                                                                                | Rishi has said this repeatedly. He is explicit that he relies on the agent for piggery domain knowledge, so a confident guess is worse than a question.                                                                 |
+| **Never invent client data.** No placeholder companies, no example identifiers, no "typical" values presented as the client's.                    | Indian demo placeholders (`greenvalleyfarms.in`, `GSTIN12345`, `+91…`, `Asia/Kolkata`) shipped on a Zimbabwe piggery's screens.                                                                                         |
+| **Review anything Arun's tooling landed.**                                                                                                        | "he was creating a lot of difficulties… we would review anything that he adds to our branch". Also: "arun used gemini free antigravity so we have to work properly so that people do not compare us with cheap things". |
+| **The eight non-English translations are deferred to the end.** English only for now; new keys fall back to English per key.                      | 2026-09-06. Content will be settled in English first, then translated once.                                                                                                                                             |
+| **Leave the dev servers running.** Close them only when memory is actually red — check `top -l 1 -n 0 \| grep PhysMem` and `sysctl vm.swapusage`. | 2026-09-07. Rishi browses the app in Brave while work happens; stopping the server pulls the page out from under him. The 8 GB machine still swaps hard, so check rather than guess.                                    |
+| **Never run `pkill`.** Kill a PID confirmed with `lsof -ti :PORT`.                                                                                | A `pkill` killed an entire working session.                                                                                                                                                                             |
 
 ---
 
 ## Master data
 
 ### Every master carries a code, from a number series
-*Asked 2026-09-06 ("add code for them too"), extended 2026-09-07.*
+
+_Asked 2026-09-06 ("add code for them too"), extended 2026-09-07._
 
 Each master has one series. When every master has one, the "add number series"
 button is hidden — there is nothing left to create. Auto-generated codes are not
@@ -43,11 +44,12 @@ editable in the form.
 Still open, and Rishi's to decide: manual entry currently ignores the series
 format entirely (`manualCode` checks width and uniqueness only), and ANIMAL and
 LOCATION are excluded from the series picker although the Animal template says
-the animal code comes from a series. Rishi deferred this: *"we would work on the
-number series later"*.
+the animal code comes from a series. Rishi deferred this: _"we would work on the
+number series later"_.
 
 ### The series describes the data, or the data follows the series — per master
-*Decided 2026-09-09.*
+
+_Decided 2026-09-09._
 
 The series and the master data had never agreed. Every series read
 `current_seq = 0` and `last_generated_code = NULL`: not one code in the database
@@ -67,7 +69,7 @@ Rishi's call is per master, not one blanket rewrite:
   already its own name.
 - **GL_ACCOUNT and COST_CENTER are `is_active = 0`** — defined, so the master is
   not reported as lacking a series, but never generating. A GL account's number
-  *is* the chart of accounts (1000s assets, 4000s revenue, 5000s expenses) and
+  _is_ the chart of accounts (1000s assets, 4000s revenue, 5000s expenses) and
   BBP-1 §1.6 puts that catalog in D365BC. `GL-001` discards the only information
   the number carries. `resolveSeriesFor` filters on `is_active`, so both fall to
   their existing `createManual` paths.
@@ -90,7 +92,8 @@ There is no counter here that is behind.
 `db-align-master-codes-to-series` brings an existing one into line.
 
 ### Code columns widened, and item categories conformed
-*Decided 2026-09-10, unblocking the above.*
+
+_Decided 2026-09-10, unblocking the above._
 
 Conforming ITEM_CATEGORY yields `BIOLOGICAL_ASSETS-BREEDING_STOCK`, which the
 ITEM series composes into a **57-character** item code against `item_code
@@ -101,14 +104,14 @@ Migration **0082** widens six columns to `varchar(255)`, the width five master
 code columns (breed, cost centre, GL account, item category, location) have
 carried all along:
 
-| Column | Was | Why |
-|---|---|---|
-| `item_master.item_code` | 50 | The actual overflow — 57 chars. |
-| `inventory_ledger.item_code` | 50 | Denormalised snapshot; has to move with the master or a long code truncates at posting. |
-| `uom_master.uom_code` | 20 | Series now derives from `uom_name`, which is prose. |
-| `item_type_master.type_code` | 30 | Same — derives from `type_name`. |
-| `location_type_master.type_code` | 30 | Same. |
-| `item_attribute_master.attribute_code` | 50 | Same — derives from `attribute_name`. |
+| Column                                 | Was | Why                                                                                     |
+| -------------------------------------- | --- | --------------------------------------------------------------------------------------- |
+| `item_master.item_code`                | 50  | The actual overflow — 57 chars.                                                         |
+| `inventory_ledger.item_code`           | 50  | Denormalised snapshot; has to move with the master or a long code truncates at posting. |
+| `uom_master.uom_code`                  | 20  | Series now derives from `uom_name`, which is prose.                                     |
+| `item_type_master.type_code`           | 30  | Same — derives from `type_name`.                                                        |
+| `location_type_master.type_code`       | 30  | Same.                                                                                   |
+| `item_attribute_master.attribute_code` | 50  | Same — derives from `attribute_name`.                                                   |
 
 Every one of these already sits inside a composite unique key; at
 utf8mb4 a `(tenant_id, company_id, code)` key is 1092 bytes against InnoDB's
@@ -139,14 +142,15 @@ Noticed while doing this and **not** fixed: all 29 `gl_mapping_master` rows have
 codes.
 
 ### Every code column is varchar(255), and the seeds generate every code
-*Decided 2026-09-10.*
+
+_Decided 2026-09-10._
 
 **Why not TEXT.** The obvious answer to "make any series combination fit" is to
 make the column TEXT. It breaks two things, both demonstrated rather than
 assumed:
 
-1. MySQL refuses a unique key on TEXT outright — *"BLOB/TEXT column used in key
-   specification without a key length"* — and every master code column sits in
+1. MySQL refuses a unique key on TEXT outright — _"BLOB/TEXT column used in key
+   specification without a key length"_ — and every master code column sits in
    a composite unique key. The workaround, a prefix length, makes uniqueness
    prefix-only: with `code(20)`,
    `LIVESTOCK-BIOLOGICAL_ASSETS-BREEDING_STOCK-ITM-0001` and
@@ -201,7 +205,8 @@ records. Not corrected here because inventing replacement client data is exactly
 what that rule forbids; Triple C has to supply real values.
 
 ### Tenant is the draft, the company is what is used
-*Decided 2026-09-10.*
+
+_Decided 2026-09-10._
 
 Every master carries `company_id`, `nob_id` and `lob_id`. No `area_id` — one LOB
 is one operational area for now, and a wider scope is later work.
@@ -236,7 +241,7 @@ Four things this broke, each found by driving the app rather than by tests:
   spreads `...dto`.
 - **Template copies were planned twice.** Giving `breed_lifecycle_stages` a
   `company_id` made it a first-class template while it was still in
-  `loadCompanyTemplateCopies`'s explicit child list — which existed *because* it
+  `loadCompanyTemplateCopies`'s explicit child list — which existed _because_ it
   had none. Every row was planned twice and the second insert died on the scope
   key. Removed from the child list.
 - **Item attributes were invisible at company scope.** They are seeded at stage 6,
@@ -257,7 +262,8 @@ C's data, which §3 forbids. Two are genuine gaps and neither is ours to close:
 `<type>-<category>-ITM-<seq>` and the three-segment form never appears.
 
 ### Medicine is not a master — it is an item
-*Decided 2026-09-06.*
+
+_Decided 2026-09-06._
 
 Removed and folded into Item. No separate tab, module or master: an item has a
 type, and medicine is one of those types. BBP-1 §1.5 only ever calls medicine an
@@ -265,7 +271,8 @@ item, and no document asks for a Medicine master; the table was added by Arun in
 July.
 
 ### Items, GL Accounts and Cost Centers stay locally editable, with a notice
-*Decided 2026-09-06.*
+
+_Decided 2026-09-06._
 
 BBP-1 §1.5 and §1.6 say these are created in D365BC only. No BC connector
 exists, so locking the screens would block all work. They remain editable and
@@ -274,18 +281,21 @@ that they are local records today. Each master supplies its own citation via
 `bcNote` — one hardcoded sentence would be wrong on every other screen.
 
 ### Array and JSON fields are edited as rows, not as JSON
-*Asked 2026-09-06: "ask for the input fields and a button to add it and then option to delete it and a add more button".*
+
+_Asked 2026-09-06: "ask for the input fields and a button to add it and then option to delete it and a add more button"._
 
 No user types raw JSON. Row editor with Add / Remove / Add more.
 
 ### The item form cascades: type → category → sub-category
-*Asked 2026-09-06.*
+
+_Asked 2026-09-06._
 
 Category appears only when an item type is chosen **and** that type has
 categories. Sub-category appears only when a category is chosen.
 
 ### UOM conversion is looked up, and captured once if missing
-*Asked 2026-09-06.*
+
+_Asked 2026-09-06._
 
 Primary UOM is what the item is bought in, secondary is what it is used in.
 The item form does not re-ask for a conversion factor that UOM Conversion
@@ -299,8 +309,9 @@ and nowhere else, and the next item over the same pair was asked again with
 nothing to stop a different answer.
 
 ### Item tracking is one three-way choice, over the two columns that already exist
-*Asked 2026-09-08: "one switch for tracking then one for lot/serial and then an
-input and in backend two booleans for lot and serial".*
+
+_Asked 2026-09-08: "one switch for tracking then one for lot/serial and then an
+input and in backend two booleans for lot and serial"._
 
 TDD row 11 wants LOT, SERIAL or neither. The table has `is_lot_tracked` and
 `is_serial_tracked` as independent flags, which can both be ticked — a state the
@@ -344,8 +355,9 @@ receipt records the number, and `goods-receipt-panel` already captures `lot_no`
 per line — locally until BC connects, like every other BC-owned record.
 
 ### The two GL accounts are read in the record, not typed in the form
-*Asked 2026-09-08: "Inventory GL Account (BC) + COGS GL Account (BC) should be
-shown in the detail with a text/chip saying from BC".*
+
+_Asked 2026-09-08: "Inventory GL Account (BC) + COGS GL Account (BC) should be
+shown in the detail with a text/chip saying from BC"._
 
 Both are listed in the item's `bcFields`, which puts them in the record view's
 Business Central panel under a From BC chip and takes them out of the create and
@@ -355,7 +367,8 @@ here. These two fields are BC's answer, and until the connector exists they read
 as a dash rather than as a local guess.
 
 ### Stock-control fields hang off the inventory flag; the withdrawal period does not
-*Asked 2026-09-08.*
+
+_Asked 2026-09-08._
 
 Min, max and reorder levels, lead time, shelf life and both storage
 temperatures appear only when Inventoriable is on — a non-inventoried item has
@@ -372,7 +385,8 @@ in the form and in the DTO, so the form refuses what the API would reject.
 ## Animal Register
 
 ### The Active column is dropped for animals
-*Decided 2026-09-07, after being asked whether the switch should work.*
+
+_Decided 2026-09-07, after being asked whether the switch should work._
 
 An animal is not deactivated, it is **disposed**. Breed has `@Delete(':id')` and
 `@Patch(':id/restore')`, which is what its switch calls; Animal has neither, only
@@ -388,7 +402,8 @@ The client's template lists ten statuses and TRANSFERRED is not among them, so
 representing it is a question for Triple C.
 
 ### Status renders as a chip; Active is a switch elsewhere
-*Asked 2026-09-07: "status and active are different thing right? so switches for the active and the statuses in chips".*
+
+_Asked 2026-09-07: "status and active are different thing right? so switches for the active and the statuses in chips"._
 
 They are different facts — status is the master's own state, Active is whether
 the record is live at all. Colour on the status chip says whether the record is
@@ -396,7 +411,8 @@ still in play, not a colour per value: a ten-value column painted ten ways is a
 chart, not a table.
 
 ### Disposal statuses cannot be set through the plain edit path
-*Enforced 2026-09-07 after the hole was demonstrated.*
+
+_Enforced 2026-09-07 after the hole was demonstrated._
 
 `PUT /animal/:id` with `{status:'SLAUGHTERED'}` returned **200** and left the
 animal SLAUGHTERED with `is_active` still 1, no disposal record, and the
@@ -406,13 +422,14 @@ TRANSFERRED, so Dispose cannot set CULLED either — the cull flow (out-of-
 production date, cull date, reason, weight, write-off) is not built.
 
 ### Clicking an animal opens a detail panel; four tabs
-*Asked 2026-09-07, refined the same day.*
+
+_Asked 2026-09-07, refined the same day._
 
 The list narrows and a panel opens beside it. Tabs: Animal data, Breeding
 details, Traceability, and Location traceability and History are to be added —
 Rishi chose to keep the genealogy timeline as well rather than replace it.
 
-*Attribution corrected 2026-09-08.* This entry used to credit the two new tabs
+_Attribution corrected 2026-09-08._ This entry used to credit the two new tabs
 to "TDD row 6". It should not: Excel row 6 (S.No. 5) asks only for a clickable
 list page, an animal card and an RHS overview pane. The tracker never mentions
 a History tab or a Location traceability tab, and neither do the master
@@ -429,7 +446,8 @@ the Animal data tab; the code stays in the header because it is the one fact
 that must hold on every tab.
 
 ### TDD row numbers in this repo mean Excel row numbers
-*Established 2026-09-08, after a misattribution traced back to it.*
+
+_Established 2026-09-08, after a misattribution traced back to it._
 
 The tracker has a `S.No.` column that runs one behind the spreadsheet's own row
 numbers, because row 1 is the header. When Rishi says "row 12" he means Excel
@@ -438,7 +456,8 @@ reader can find it either way. Getting this wrong is what credited the History
 and Location traceability tabs to a row about a list page.
 
 ### Age at Entry Weeks is computed whenever DOB is known
-*Asked 2026-09-08, from TDD tracker Excel row 12 (S.No. 11).*
+
+_Asked 2026-09-08, from TDD tracker Excel row 12 (S.No. 11)._
 
 The two documents specify different triggers. The tracker says "auto computed
 as per DOB of BORN ON FARM animals and MANUAL ENTRY if animals are IMPORTED" —
@@ -467,13 +486,14 @@ The template's own example row contradicts itself here (DOB 2024-10-01, entry
 PURCHASED_IMPORTED with a DOB filled in anyway). Flagged, not followed.
 
 ### The History and Location traceability tabs are ours
-*Decided 2026-09-08, replacing a false citation to the TDD tracker.*
+
+_Decided 2026-09-08, replacing a false citation to the TDD tracker._
 
 No client document specifies them. Rishi specified them:
 
 - **HISTORY** — columns LAST DATE / BATCH / CURRENT DATE / ENTRY NO. / STAGE.
   One row per **transition event**: LAST DATE is the previous move's date,
-  CURRENT DATE is this move's, STAGE and BATCH are what was moved *into*, and
+  CURRENT DATE is this move's, STAGE and BATCH are what was moved _into_, and
   ENTRY NO. is the source document's number.
 - **LOCATION TRACEABILITY** — PURCHASE / OUTPUT / TRANSFER / MORTALITY / CULLS
   with a Location column.
@@ -489,7 +509,8 @@ reading of what a farm needs; they are not something Triple C has asked for in
 writing.
 
 ### Parity counts completed pregnancies, post weaning
-*TDD row 27, implemented 2026-09-07.*
+
+_TDD row 27, implemented 2026-09-07._
 
 A sow whose current litter is still on her has not reached that parity yet, so
 her count is one behind the litter number. Rolled up onto the animal from the
@@ -500,7 +521,8 @@ farrowing records — BBP: "Parity incremented on weaning POST".
 ## Stages
 
 ### The stage master follows the TDD's names and the BBP's durations
-*Decided 2026-09-08: "didn't we made the stages to be dynamic so just update them".*
+
+_Decided 2026-09-08: "didn't we made the stages to be dynamic so just update them"._
 
 TDD row 24 governs the vocabulary; §1.7 governs every duration and range. Ranges
 stay ranges — no invented midpoint is presented as a client-approved figure.
@@ -509,11 +531,12 @@ stay ranges — no invented midpoint is presented as a client-approved figure.
   `SLAUGHTER→SLAUGHTERED`, `DISPOSED→DEAD`.
 - Activated: `WEANING`, `BOAR_AI` (both already existed, switched off).
 - Added: `PRODUCTIVE_SOW`, `CULLED`, `SOLD`.
-- `BBP_STAGE_RENAMES` was inverted — it used to normalise GILT_GROWER *to*
+- `BBP_STAGE_RENAMES` was inverted — it used to normalise GILT_GROWER _to_
   GILT_REARING, which would have undone this on the next alignment run.
 
 ### LACTATION and WEANING both stay
-*Decided 2026-09-08.*
+
+_Decided 2026-09-08._
 
 Lactation is a ~28-day period the BBP gives feed standards and a duration to;
 weaning is the event that ends it. An event does not replace a period.
@@ -521,7 +544,8 @@ INSEMINATION is likewise kept although the TDD omits it — the blueprint
 specifies it and the flush → gestation path runs through it.
 
 ### FLUSH_SERVICE and CB_GROWER stay inactive
-*Decided 2026-09-08.*
+
+_Decided 2026-09-08._
 
 Named in neither document. A disabled stage costs nothing; deleting one cannot
 be undone if something ever referenced it.
@@ -531,7 +555,8 @@ be undone if something ever referenced it.
 ## Company settings
 
 ### Settings is not a copy of the setup wizard
-*Asked 2026-09-07: "the settings should not be the copy of the setup".*
+
+_Asked 2026-09-07: "the settings should not be the copy of the setup"._
 
 The sections live in the console's own sub-sidebar, each is a route, and there
 is no modal, no step wording and no Edit gate — the fields are simply there,
@@ -542,7 +567,8 @@ The page H1 is the **section name**, matching the highlighted sub-sidebar item.
 "Company settings" is the main-sidebar item, one level up.
 
 ### No "Back to All Companies" button
-*Asked 2026-09-07: "when we are in a company scope and already have a switch to change the scope".*
+
+_Asked 2026-09-07: "when we are in a company scope and already have a switch to change the scope"._
 
 The sidebar scope switcher already offers tenant scope ("Consolidated metrics &
 all companies"), every company, and every operational area — on every screen. A
@@ -554,7 +580,8 @@ ignoring.
 ## Finance
 
 ### Currency follows the company config; entries are in base currency
-*Asked 2026-09-06.*
+
+_Asked 2026-09-06._
 
 Residual value is a **rate that computes an amount**, not a stored figure, so
 `breed_master.residual_value_pct` stays a rate. Exchange rates are a dated table
@@ -562,7 +589,8 @@ so a past period can be restated with the rate that applied at the time, and the
 entry UI is company-scoped and lives in Finance.
 
 ### Currency master lives in master data; rates are quoted against USD
-*Decided 2026-09-11.*
+
+_Decided 2026-09-11._
 
 `currency_master` and `exchange_rate` had existed since the first schema, with
 endpoints and no screen — which is why `exchange_rate` held zero rows and
@@ -575,8 +603,8 @@ Four decisions inside that:
 - **Rates are anchored to USD and read "1 USD = rate".** The tab asks only for
   the quoted currency; `from_currency_id` defaults to the USD row in the
   service. Entering ZWL as `36.25` rather than `0.027586` is how the rate is
-  actually quoted, and small decimals invite typos. This settles the *rate
-  anchor* only — it does not answer the open question about the reporting
+  actually quoted, and small decimals invite typos. This settles the _rate
+  anchor_ only — it does not answer the open question about the reporting
   currency, which is still ZWL-vs-USD and still Triple C's.
 - **A currency records its countries, not its country.** `currency_master`
   gained `country_codes`, a JSON array of ISO alpha-2 codes, because one country
@@ -608,7 +636,8 @@ the open question below is unchanged by that.
 ---
 
 ### Master codes stay unique; the tenant_id in their unique index is redundant
-*Decided 2026-09-11.*
+
+_Decided 2026-09-11._
 
 Allowing duplicate master codes behind a per-series switch was considered and
 rejected. The code is not display-only in this schema: `item.uom_primary` and
@@ -637,7 +666,8 @@ column is doing work.
 ## Deployment
 
 ### Windows test deployment keeps API and MySQL private behind the web origin
-*Decided 2026-09-10.*
+
+_Decided 2026-09-10._
 
 The initial Windows RDP test URL is `http://103.234.185.14:3002`. Next.js binds
 explicitly to `0.0.0.0:3002`; browser requests remain same-origin under
@@ -655,7 +685,8 @@ deployment.
 ## Master data lookup controls
 
 ### Entity-backed selections use a searchable code/name lookup
-*Decided 2026-09-10: "all for the selective fields we need a custom lookup popup with a search bar at top with a table below it with the name and code in 2 columns".*
+
+_Decided 2026-09-10: "all for the selective fields we need a custom lookup popup with a search bar at top with a table below it with the name and code in 2 columns"._
 
 Every `select-entity` field in the config-driven master-data forms opens the
 same lookup dialog: search at the top, followed by Code and Name columns. This
@@ -665,7 +696,8 @@ enumerations remain compact selects or segmented controls because they are not
 rows from a master and therefore do not have a code/name catalog to search.
 
 ### Location parent selection follows the immediate hierarchy level
-*Decided 2026-09-10: "when level 1 then no parent location and when level n then only locations with level n-1".*
+
+_Decided 2026-09-10: "when level 1 then no parent location and when level n then only locations with level n-1"._
 
 `parent_location_id` is the one canonical hierarchy link and `location_level`
 continues to be derived by the API, never typed by the user. A root Location
@@ -680,22 +712,23 @@ free-text field.
 
 ## Open — Triple C's to answer, not ours
 
-| Question | Where it bites |
-|---|---|
-| Animal code prefix: `PIG-YYYY-SEQ` (TDD row 7 + Animal Register template) or `ANM-YYYY-NNNNN` (BBP §2.1)? | The number series, and every animal code already issued. |
-| Does "weaning" mean the sow's event or the piglets' phase? | On the BBP's chain (Sow → Piglet Lot → Weaner Batch) the weaner phase belongs to a batch, not a sow. |
-| Residual value: a percentage (our column) or a per-kg rate (Bio Asset BBP, 20 Aug MOM)? | Amortisation and disposal gain/loss. |
-| Reporting currency: ZWL (§1.1 flowchart) or USD (§1.1 field spec)? | Every report. |
-| ZWL or ZiG? | The currency master. |
-| The 47 reason codes — 3 exist. Mortality alone is specified as 21. | Mortality, cull, return, scan-fail and selection entry screens. |
-| Kill Sheet and DOA have **no tables**. The BBP gives the kill sheet a process (attached to the TO, carcass weights per line, invoice = Delivered Qty × Avg Carcass Weight × Price/KG) but no field specification. | Revenue, and the end of the traceability chain. |
-| Location code format — the template says only "Unique code per tenant". | Our hierarchical scheme was an invention, and as of 2026-09-09 every seeded location carries it (`FARM-001/SHED-001/PEN-003`). If Triple C wants something else, the LOCATION series and `db-align-master-codes-to-series` are where it changes. |
-| Is the cull flow in scope? Out-of-production date, cull date, reason, weight, write-off, and the 14-day INFO alert are all specified and none are built. | CULLED cannot be set anywhere today. |
+| Question                                                                                                                                                                                                          | Where it bites                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Animal code prefix: `PIG-YYYY-SEQ` (TDD row 7 + Animal Register template) or `ANM-YYYY-NNNNN` (BBP §2.1)?                                                                                                         | The number series, and every animal code already issued.                                                                                                                                                                                         |
+| Does "weaning" mean the sow's event or the piglets' phase?                                                                                                                                                        | On the BBP's chain (Sow → Piglet Lot → Weaner Batch) the weaner phase belongs to a batch, not a sow.                                                                                                                                             |
+| Residual value: a percentage (our column) or a per-kg rate (Bio Asset BBP, 20 Aug MOM)?                                                                                                                           | Amortisation and disposal gain/loss.                                                                                                                                                                                                             |
+| Reporting currency: ZWL (§1.1 flowchart) or USD (§1.1 field spec)?                                                                                                                                                | Every report.                                                                                                                                                                                                                                    |
+| ZWL or ZiG?                                                                                                                                                                                                       | The currency master.                                                                                                                                                                                                                             |
+| The 47 reason codes — 3 exist. Mortality alone is specified as 21.                                                                                                                                                | Mortality, cull, return, scan-fail and selection entry screens.                                                                                                                                                                                  |
+| Kill Sheet and DOA have **no tables**. The BBP gives the kill sheet a process (attached to the TO, carcass weights per line, invoice = Delivered Qty × Avg Carcass Weight × Price/KG) but no field specification. | Revenue, and the end of the traceability chain.                                                                                                                                                                                                  |
+| Location code format — the template says only "Unique code per tenant".                                                                                                                                           | Our hierarchical scheme was an invention, and as of 2026-09-09 every seeded location carries it (`FARM-001/SHED-001/PEN-003`). If Triple C wants something else, the LOCATION series and `db-align-master-codes-to-series` are where it changes. |
+| Is the cull flow in scope? Out-of-production date, cull date, reason, weight, write-off, and the 14-day INFO alert are all specified and none are built.                                                          | CULLED cannot be set anywhere today.                                                                                                                                                                                                             |
 
 ---
 
 ## Demo data may be synthetic when it is clearly demo-only
-*Decided 2026-09-10.*
+
+_Decided 2026-09-10._
 
 The values written by the demo-only seed are not Triple C's production data.
 Synthetic values are allowed there so that testers can exercise complete forms
@@ -711,7 +744,8 @@ client evidence or Rishi's decision.
 ---
 
 ## Every master exposes the masters behind its dropdown options
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 The row now labelled **Dropdown options** is derived from the select-entity
 fields themselves, so a field added later needs no second place to remember.
@@ -741,7 +775,8 @@ An endpoint no master serves — `/setup/wizard/nobs`, `/costing-method`,
 wizard, not from a master on the screen.
 
 ## Vaccination and medication are rows, not hand-typed JSON
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 Both were `type: "json"` textareas on Breed Lifecycle Stages — someone typing
 valid JSON by hand into a form. They are now `jsonRow` row editors, the
@@ -774,7 +809,8 @@ the same fact, has never been exposed on any screen, and is NULL in every row;
 it is to be dropped when the next migration batch runs.
 
 ## Exchange Rates lives in Master Data only
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 The same screen was reachable at Master Data → Exchange Rates and at Finance →
 Exchange Rates, over the same `/currency/rates` endpoint — one catalog under two
@@ -788,7 +824,8 @@ permission, so the move aligns the UI with the permission model that was already
 in force.
 
 ## Shared sidebar routes keep one relative order across scopes
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 Master Data sat 4th in company scope and 10th in an operational area, Batches
 7th and 2nd, Livestock 8th and 4th. Same routes, same labels, different order —
@@ -796,7 +833,7 @@ so the muscle memory built in one scope was wrong in the other. Company scope
 now follows the operational spine: Dashboard, Batches, Livestock, Inventory &
 Stock, Finance & Costing, Master Data, then the company's own entities.
 
-Only the *relative* order of shared routes is locked, by
+Only the _relative_ order of shared routes is locked, by
 `specs/nav-scope-consistency.spec.ts`. Each scope keeps its own items and may
 interleave them — Schedulers sits next to Batches in an operational area and
 exists nowhere else. What a scope may not do is reshuffle the routes it has in
@@ -816,7 +853,8 @@ The Notifications asymmetry is deliberate and stays: tenant and company scope
 have it, an operational area does not.
 
 ## Animal Register is a master, and only a master
-*Decided 2026-09-12. Not yet implemented.*
+
+_Decided 2026-09-12. Not yet implemented._
 
 Animal Register existed twice over the same `/animal` endpoint: Master Data →
 Animal Register, and Livestock → Animal Register (`/livestock`, `animal-panel`).
@@ -839,7 +877,8 @@ transition modals write to `/animal` but are operational actions, not a second
 register.
 
 ## Item Tracking stays a three-way choice; "LOT AND SERIAL" imports as LOT
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 The Item Master template's real rows use Item Tracking = "LOT AND SERIAL" on
 several feed items (Creep-3 Lacto, Creep1-Lacto, Creep2-Lacto). That contradicts
@@ -852,7 +891,8 @@ recorded here rather than silently applied, because it is a narrowing of what
 the client's sheet says.
 
 ## CRATE is a location type under SHED
-*Decided 2026-09-12. Not yet implemented.*
+
+_Decided 2026-09-12. Not yet implemented._
 
 Porta's Location Master has 89 rows of type CRATE — farrowing and service-line
 crates, capacity 1 — under its houses. `location_type_master` has FARM, SHED,
@@ -871,20 +911,21 @@ Read only the MULTIPLIER and PortaMasterTemplates folders, as instructed. Seven
 other farms (Grasmere, Lionshead, Lionshead Extensions, Learig, Richlands, Villa
 Franca, AI Station) have the same four templates and were not opened.
 
-| Question | Where it bites |
-|---|---|
-| Do MULTIPLIER and PORTA FARM become two top-level locations under Triple C, replacing the single `FARM-001` "Triple C Farm" placeholder? | Every location, and the farm each batch runs on. The real addresses are Grasmere Farm, Norton and Kintyre Estate, Norton. |
-| The other seven farms — same treatment later, or out of scope? | Whether the location loader is written for two farms or nine. |
-| The ~17 Breed Master KPI columns — `avg litter total born`, `# born dead`, `# mummified`, pre-wean mortality %, total litter mass weaned, `w/s/y`, litter index, empty days, 70-day weight and gain, weaner FCE and mortality, grower FCE, mortality and ADG, AVG CDM to Colcom. A KPI/target master, or fields on Breed? | These are performance targets, not breed genetics. `KPI Triple C Pigs_SUBMISSIONS.xlsx` exists and has not been opened. |
-| `Period From`/`Period To` on the lifecycle sheets are natural language, not numbers: "from service week", "15 weeks pregnant", "Thursday day of weaning", "weekly farrow batch". `Calculation Unit` includes "Service week". Add a free-text anchor beside the numeric range, or normalise to numbers and keep the sheet text as a note? | `breed_lifecycle_stages.period_from`/`period_to` are numeric. Until this is settled the client's lifecycle data cannot be loaded. |
-| Breed Lifecycle Stages rows in the templates are per **(breed, stage, location, feed silo)** — the same stage repeats once per pen, crate or house (MDS-01…16, MWH-01…06, MGH-01…10), each pinning the silo to draw feed from. Our table has neither `location_id` nor silo columns. | The same blocker as above, and the reason a single "Weaner" row cannot hold the data. |
-| Location Master carries a Silo/Store name-number (`MGH1`, `PSL FS - 01`) and a "Feed in Bags" yes/no per location. Neither has a column. | Silo-level feed tracking and the bagged-vs-bulk distinction the lifecycle sheets depend on. |
-| Should `masterScopeConditions` scope master data by farm? `operational_area_master.farm_id` exists and is populated, and the service joins it, but the scope function filters only on tenant, company, NOB and LOB. | Rishi: "the top level location is the location of the actual farm on which the operations would be running and the things would be according to the top level location." |
+| Question                                                                                                                                                                                                                                                                                                                                 | Where it bites                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Do MULTIPLIER and PORTA FARM become two top-level locations under Triple C, replacing the single `FARM-001` "Triple C Farm" placeholder?                                                                                                                                                                                                 | Every location, and the farm each batch runs on. The real addresses are Grasmere Farm, Norton and Kintyre Estate, Norton.                                                |
+| The other seven farms — same treatment later, or out of scope?                                                                                                                                                                                                                                                                           | Whether the location loader is written for two farms or nine.                                                                                                            |
+| The ~17 Breed Master KPI columns — `avg litter total born`, `# born dead`, `# mummified`, pre-wean mortality %, total litter mass weaned, `w/s/y`, litter index, empty days, 70-day weight and gain, weaner FCE and mortality, grower FCE, mortality and ADG, AVG CDM to Colcom. A KPI/target master, or fields on Breed?                | These are performance targets, not breed genetics. `KPI Triple C Pigs_SUBMISSIONS.xlsx` exists and has not been opened.                                                  |
+| `Period From`/`Period To` on the lifecycle sheets are natural language, not numbers: "from service week", "15 weeks pregnant", "Thursday day of weaning", "weekly farrow batch". `Calculation Unit` includes "Service week". Add a free-text anchor beside the numeric range, or normalise to numbers and keep the sheet text as a note? | `breed_lifecycle_stages.period_from`/`period_to` are numeric. Until this is settled the client's lifecycle data cannot be loaded.                                        |
+| Breed Lifecycle Stages rows in the templates are per **(breed, stage, location, feed silo)** — the same stage repeats once per pen, crate or house (MDS-01…16, MWH-01…06, MGH-01…10), each pinning the silo to draw feed from. Our table has neither `location_id` nor silo columns.                                                     | The same blocker as above, and the reason a single "Weaner" row cannot hold the data.                                                                                    |
+| Location Master carries a Silo/Store name-number (`MGH1`, `PSL FS - 01`) and a "Feed in Bags" yes/no per location. Neither has a column.                                                                                                                                                                                                 | Silo-level feed tracking and the bagged-vs-bulk distinction the lifecycle sheets depend on.                                                                              |
+| Should `masterScopeConditions` scope master data by farm? `operational_area_master.farm_id` exists and is populated, and the service joins it, but the scope function filters only on tenant, company, NOB and LOB.                                                                                                                      | Rishi: "the top level location is the location of the actual farm on which the operations would be running and the things would be according to the top level location." |
 
 ---
 
 ## Master lists are sorted, filtered and paged in SQL
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 Every master list asked the API for `limit=200`, never sent an offset, and cut
 pages out of the result in the browser. Sixteen of the seventeen master services
@@ -921,7 +962,8 @@ Express 5, which defaults `query parser` to `simple` where Express 4 defaulted t
 unknown property. `main.ts` sets the parser back to `extended`.
 
 ## Item classification is on the Item list
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 The list showed Code, Name, Type and UOM, so the category an item was filed
 under could not be seen without opening it — though the type, category and
@@ -936,7 +978,8 @@ category's own code, which is what makes it readable as it stands. The join also
 makes Category filterable in SQL.
 
 ## Lookup chips follow the form, not the registry
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 The row now labelled **Dropdown options** listed masters in the order they
 happen to sit in `MASTER_DATA_CONFIGS`, so the Item screen read Item Categories
@@ -947,7 +990,8 @@ position, with any master that declares `lookupFor` without owning a field on
 the screen following in registry order.
 
 ## Only MULTIPLIER and Porta are seeded
-*Decided 2026-09-12.*
+
+_Decided 2026-09-12._
 
 Nine farms submitted master templates. Only MULTIPLIER and PORTA FARM are
 seeded; the other seven (Grasmere, Lionshead, Lionshead Extensions, Learig,
@@ -977,7 +1021,8 @@ Four decisions the seed rests on:
   Without them the location data would load with those fields dropped.
 
 ## The list contract reached every master by probing, not by reading
-*Recorded 2026-09-12.*
+
+_Recorded 2026-09-12._
 
 Rolling the contract out across 22 master endpoints turned up two failures that
 tests and typecheck both passed:
@@ -1008,7 +1053,8 @@ must be wired before any screen offers filters over them.
 ---
 
 ## MULTIPLIER and Porta are loaded; 453 rows wait on Triple C
-*Applied 2026-09-12 via `nx run api:db-seed-farm-locations --apply`.*
+
+_Applied 2026-09-12 via `nx run api:db-seed-farm-locations --apply`._
 
 250 of the 703 submitted location rows are in `tenant_devco`: MULTIPLIER 75 of
 512, Porta 175 of 191. `docs/triple-c-location-code-queries.md` lists every one
@@ -1064,7 +1110,8 @@ question for Triple C, not an inference for us.
 ---
 
 ## Resources and breeds seeded; master lists report a real total
-*2026-09-13.*
+
+_2026-09-13._
 
 **Resources and breeds.** `db-seed-farm-masters` loads 16 of 44 submitted
 resource rows and 2 of 4 breeds — Z-Line-Sow to MULTIPLIER, TN-70-Sow to PORTA,
@@ -1115,7 +1162,8 @@ mtimes when a change appears not to take.
 ---
 
 ## Column filters are a set, taken behind a drawer
-*Decided 2026-09-13.*
+
+_Decided 2026-09-13._
 
 The search box in the toolbar narrows on every keystroke: it is one field over
 the whole list, and typing is the interaction. Column filters are not that —
@@ -1139,7 +1187,7 @@ it and hands the list back.
 Two earlier attempts were wrong. The first used `components/ui/drawer`, which
 portals over a scrim and buries the rows behind the thing filtering them. The
 second put the in-page column behind `xl` (1280px), so on a 1200px window the
-panel silently stacked *below* the table, off screen — it looked like the button
+panel silently stacked _below_ the table, off screen — it looked like the button
 did nothing. The breakpoint is `lg` (1024) now, matched by `useIsDesktop()` so
 the grid and the shell can never disagree about which one is showing.
 
@@ -1196,9 +1244,9 @@ both snapshots regenerated. Seventeen files are touched by both, including
 merged or modified. The collision grows with every commit on either side, so
 this is deferred, not resolved.
 
-
 ## Sorting was accepted and ignored on three masters
-*Fixed 2026-09-13.*
+
+_Fixed 2026-09-13._
 
 Clicking a column header did nothing on Stages, Number Series and Animal
 Register. The API answered 200 to `sort=stage_code&dir=desc` and returned the
@@ -1219,7 +1267,8 @@ than replacing them. Animal Register had no `ORDER BY` at all.
 sorted and an unsorted list look identical from a status code.
 
 ## A list column shows its values, not its JSON
-*Fixed 2026-09-13.*
+
+_Fixed 2026-09-13._
 
 `displayValue` sent every object through `JSON.stringify`, so the Currencies
 list rendered the euro's countries as `["DE","FR","NL"]` — brackets, quotes and
@@ -1229,7 +1278,8 @@ an empty one reads as "—" like any other empty cell.
 ---
 
 ## Countries are a master now
-*Decided 2026-09-13.*
+
+_Decided 2026-09-13._
 
 Countries could be read and never added from the console. `country_master`
 holds 25 rows, `country_codes` on Currencies picks from them, and Suppliers and
@@ -1269,7 +1319,8 @@ another master's screen. Recorded because it is not obvious from the sub-nav,
 and because "why is X not listed" has now been asked twice.
 
 ## The bottom of a long list could sit under a scrollbar
-*Fixed 2026-09-13.*
+
+_Fixed 2026-09-13._
 
 Scrolled to its limit, a master list's last row was not visible — there was
 nothing further to scroll and the row was still underneath something.
@@ -1299,7 +1350,8 @@ headless browser is not the reader's browser, and scrollbar behaviour is one of
 the places they differ most.
 
 ## Countries is a sheet of the Currencies workbook
-*Corrected 2026-09-13.*
+
+_Corrected 2026-09-13._
 
 Countries was added as its own entry in the Master Data sidebar. Wrong: a
 country is only ever reached through the thing that needs it — which currency
@@ -1317,7 +1369,8 @@ list for every company under the tenant.
 ---
 
 ## arun_new is merged: scheduler per batch and stage, plus the activity master
-*Merged 2026-09-13.*
+
+_Merged 2026-09-13._
 
 Rishi's data-entry spec — a scheduler per batch and stage, activities carrying a
 default item and quantity the operator edits — is the model already built on
@@ -1335,7 +1388,7 @@ scheduler line copies when created. Note the copy: `scheduler_line` has no
 `activity_id`, so renaming an activity later does not touch existing lines.
 
 **His four migrations are kept as written, renumbered 0088-0091** to follow our
-already-applied 0086/0087. Not regenerated: they encode column *renames*
+already-applied 0086/0087. Not regenerated: they encode column _renames_
 (`spl_id` → `line_id`, `parameter_name` → `activity_name`) which drizzle-kit can
 only resolve by asking a human, and a regenerated migration would drop and
 recreate those columns instead, losing what is in them.
@@ -1371,7 +1424,8 @@ list was 17 conflicts; the dry run found 7, and most of those were generated
 files nobody hand-edits.
 
 ## Foundation posting repairs precede feature work
-*Rishi's instruction, 2026-09-14; handoff §2 F1–F4.*
+
+_Rishi's instruction, 2026-09-14; handoff §2 F1–F4._
 
 An omitted GL dimension imposes no constraint; a supplied dimension matches its
 value or a NULL wildcard. The old predicate demanded NULL when callers omitted
@@ -1386,14 +1440,14 @@ verification follows F2/F3; this entry does not claim it has run yet.
 These are technical repairs explicitly requested by Rishi, not new client
 accounting rules. Farm-access design remains deferred pending his scoping answer.
 
-*F2, 2026-09-14.* FIFO now refuses insufficient stock with a 400; no demo flag
+_F2, 2026-09-14._ FIFO now refuses insufficient stock with a 400; no demo flag
 or automatic opening layer is retained. Layer selection also requires the
 issuing company, which it previously omitted. Two focused tests pass, including
 the shortfall case observed returning a made-up cost before the fix. Existing
 historical AUTO-STOCK-REPLENISH rows are not silently deleted; their provenance
 and downstream applications will be reported during live verification.
 
-*F3/F4, 2026-09-14.* Posting owns one transaction across document status,
+_F3/F4, 2026-09-14._ Posting owns one transaction across document status,
 FIFO, GL, batch/daily records and audit. Nested services join it through a
 child CLS context; request context is restored afterward. Consumption edits
 reverse the original FIFO applications and GL accounts, retain compensating
@@ -1489,7 +1543,8 @@ individual form was manually opened; company creation submission and narrow
 remains in the separate verification reports. Both dev servers were left up.
 
 ## Operational area and farm are separate access dimensions
-*Decided 2026-09-14 by Rishi.*
+
+_Decided 2026-09-14 by Rishi._
 
 The earlier decision in this section incorrectly treated
 `operational_area_master.farm_id` as the farm boundary and kept every master
@@ -1522,7 +1577,8 @@ The API must enforce these boundaries for reads and writes. Client headers and
 filtered selectors are not authorization.
 
 ## Master pages and master-backed selection use one interaction system
-*Decided 2026-09-14 by Rishi.*
+
+_Decided 2026-09-14 by Rishi._
 
 Every master page uses the same intentional composition: title in the sticky
 header, breadcrumb beneath it, no repeated heading or filler description in the
@@ -1554,7 +1610,8 @@ screens the primary and contextual sidebars are visible together; on small
 screens one drawer switches between the two navigation levels.
 
 ## Logins: authorization rules settled while fixing item 1
-*Decided 2026-09-14.*
+
+_Decided 2026-09-14._
 
 **One ladder for user types.** `common/user-type-hierarchy.ts` is the single
 answer to "may this person hand out this access": only a type strictly below
@@ -1587,7 +1644,8 @@ lockout useless. The generic message says accounts lock for 15 minutes after 5
 failures, so a real user knows to wait.
 
 ## September 18 means an end-to-end MVP for all ten named areas
-*Decided 2026-09-14 by Rishi.*
+
+_Decided 2026-09-14 by Rishi._
 
 The deadline scope is Masters, Schedulers, Batch, Data Entry, Purchase and
 Receipt, Inventory Journal and Ledger, Requisition, Feed Forecast, Resource
@@ -1605,7 +1663,8 @@ Requisition, not the Requisition document itself: the first-class header/lines
 and the effect of approval still have to be connected.
 
 ## Daily Data Entry is one Stage-aware workspace
-*Decided 2026-09-14 by Rishi from the supplied Miro wireframe.*
+
+_Decided 2026-09-14 by Rishi from the supplied Miro wireframe._
 
 Data Entry is one route with a Stage overview and a selected-Stage workspace.
 Company/Farm/Batch/Date context and Draft work survive switching between them.
@@ -1644,7 +1703,8 @@ correction automatically relocks them. Posted history is superseded and
 reversed/reposted, never overwritten.
 
 ## Batch modes and transfers follow the same daily workflow
-*Decided 2026-09-14 by Rishi.*
+
+_Decided 2026-09-14 by Rishi._
 
 Batch creation exposes Registered Animals and Count Only. Their persisted codes
 remain the existing `REGISTERED` and `COUNT_ONLY`. Registered Animals
@@ -1664,7 +1724,8 @@ Transfers can change Stage, same-farm location, or farm, and create or select a
 destination Batch. Auto-approved still means validated, posted and audited.
 
 ## Cross-farm movement changes to the matching farm-specific Breed profile
-*Decided 2026-09-14 by Rishi after identifying the farm/Breed conflict.*
+
+_Decided 2026-09-14 by Rishi after identifying the farm/Breed conflict._
 
 Breed Code is currently the Breed Name with spaces replaced by `_`. The same
 biological breed therefore has the same code at each farm, while its location,
@@ -1679,8 +1740,9 @@ are never copied automatically. After the profile is created, the transfer is
 revalidated and resumes its approval path.
 
 ## Access, approvals and demo data settled on the evening of 14 September
-*Decided 2026-09-14 by Rishi, in answer to the conflicts between the two access
-designs.*
+
+_Decided 2026-09-14 by Rishi, in answer to the conflicts between the two access
+designs._
 
 **The access model in `2026-09-14-access-scope-and-master-data-ux-design.md`
 stands.** An operational admin covers every farm in the company for their LOB; a
@@ -1698,8 +1760,8 @@ someone recording today's deaths or sick animals.
 decided by admin user types — tenant, company or operational admin — within
 their scope. **Farm-to-farm transfers are approved only by a tenant admin or a
 company admin**, including a farm-to-farm transfer an operational admin
-initiates. *(Recorded reading: "the top level users approve" includes the
-operational admin; the farm-to-farm rule then narrows it. Confirm if wrong.)*
+initiates. _(Recorded reading: "the top level users approve" includes the
+operational admin; the farm-to-farm rule then narrows it. Confirm if wrong.)_
 
 **Demo data is rebuilt, not repaired.** Every NAVFarm record is dropped and the
 database is rebuilt from the seed scripts as one complete, presentable demo. This
@@ -1721,7 +1783,8 @@ defined demo-ready line; work continues in the same order until every area meets
 its MVP criteria, whether that lands earlier or later.
 
 ## Breed codes come from the BREED Number Series, manual entry allowed
-*Decided 2026-09-15 by Rishi.*
+
+_Decided 2026-09-15 by Rishi._
 
 A breed's code is issued by the BREED Number Series, which is configured with the
 `breed_name` segment and no sequence, so "Large White" becomes `LARGE_WHITE` — the
@@ -1737,8 +1800,9 @@ by breed code, so a mistyped manual code is what would make a transfer block for
 missing profile.
 
 ## Internal review favours a coherent working cut over broad incomplete scope
-*Decided 2026-09-15 by Rishi for the 20:00 IST internal review and the
-18 September presentable-MVP checkpoint.*
+
+_Decided 2026-09-15 by Rishi for the 20:00 IST internal review and the
+18 September presentable-MVP checkpoint._
 
 The immediate objective is a normally working, presentable review path. Features
 that cannot be made safe and coherent in time remain explicitly deferred rather
@@ -1752,7 +1816,8 @@ animal's sex, type or value. Individual Animal rows used in the review must come
 from explicit data; no existing placeholder helper may invent those values.
 
 ## Prototype priorities and master corrections
-*Decided 2026-09-15 by Rishi.*
+
+_Decided 2026-09-15 by Rishi._
 
 The immediate prototype order is Masters first, then Batch/Scheduler and Daily
 Data Entry. Existing Goods Receipt, Inventory Journal and Approval flows are to
@@ -1781,7 +1846,8 @@ calculation on the dashboard later if requested. Resource Ledger remains a new
 ledger posted by Resource activity entries.
 
 ## Nine-farm demo data and the 15 September master corrections
-*Decided 2026-09-15 evening by Rishi.*
+
+_Decided 2026-09-15 evening by Rishi._
 
 **Demo data.** Nine farms, not ten — the nine that submitted templates, under
 their real names and codes (MUL100, POR100, AI100, LEA100, LEX100, VIL100, and
@@ -1805,6 +1871,7 @@ Every operational record is dropped and rebuilt.
 proven by driving the app and reading MySQL.
 
 **Master and screen corrections:**
+
 1. Admin audit stores before and after values and shows who made the change.
 2. Team management: real users, role assignment.
 3. Animal detail panel has three tabs: Details, Breeding record history, Traceability.
@@ -1855,6 +1922,7 @@ with no farm/shed/store literal in sight. Verified in MySQL: all 89 seeded
 CRATE rows carry farm_id.
 
 **4. The rebuild chain now runs clean from empty.** Three gaps closed:
+
 - Template adoption is per-table idempotent (copy-master-templates) — the
   per-company activity rows from seed-dev-tenant no longer trip
   uq_activity_scope_code.
@@ -1908,7 +1976,7 @@ table referenced `reason_id` or `reason_code` as a foreign key, confirmed by
 grep. `batch_transfer.reason` and `stock_adjustment.reason` are still free
 text (TRANSFER and ADJUSTMENT categories exist for them in the template but
 were not wired — those modules weren't touched this session, flagged as a
-follow-up). What *was* wired: `DisposeAnimalDto.disposal_reason_id` — the
+follow-up). What _was_ wired: `DisposeAnimalDto.disposal_reason_id` — the
 single highest-value link, since MORTALITY + CULL is 31 of the 57 codes and
 `animal.dispose()` already had one clean call site. A DIED disposal with a
 reason attached is rejected if that reason isn't category MORTALITY
@@ -1943,13 +2011,13 @@ what the client wrote for values the picker can't fully express.
 Client instruction: replace the Data Type dropdown and free-text Unit field
 with a UOM picker and an optional default/example Value, and drop Mandatory/
 Affects Costing/Distinguishes Variants from the form. Asked first what "Value"
-should mean, since an attribute *definition* holding one value is a different
+should mean, since an attribute _definition_ holding one value is a different
 thing from the per-item value already entered on the Item form — client chose
 "default/example value, informational only, real value stays on the Item
 form."
 
 This reverses the 2026-09-08 decision that kept Unit as free text specifically
-*against* reusing `uom_master` (TDD row 132's "(UOM master)"), on the
+_against_ reusing `uom_master` (TDD row 132's "(UOM master)"), on the
 reasoning that doing so would pollute the picker Primary/Output UOM also use
 with specification units like "PCT". The client's own instruction now
 supersedes that — `uom_id` reuses the same `/uom` master and picker every
@@ -2065,22 +2133,22 @@ defaults so the work could finish; each is cheap to change, and the code and tes
 default rather than hedging between readings. Verified against `nf_devco` on 27 Sep —
 `docs/VERIFICATION-2026-09-26-feed-forecast-r.md`.
 
-| # | Question | The default it runs on |
-|---|---|---|
-| Q1 | The day a silo "runs down" | The first day **with demand** whose closing balance is at or below the low level (at or below zero when none is set). 500 kg at 100 kg/day runs down on day 5. Same rule as the low-feed alert. |
-| Q2 | What counts as confirmed incoming | Posted non-feeding ledger movements dated on or after the stock date, **plus** saved-but-unposted (DRAFT) stock transfers inside the window (out as negative). Approved requisitions are not counted — they would double-count once the feed arrives. Plan C replaces the DRAFT half with dispatched Transfer Orders. |
-| Q3 | The requisition's quantity | The largest projected deficit below the low level through the range, after incoming. With no low level and no incoming this is exactly the workbook's figure. |
-| Q4 | The requisition line's date | Required On, or the planning date when Required On has already passed. |
-| Q5 | Days of Stock with or without wastage | **With** — it divides by what actually leaves the silo, so it agrees with the run-down. Per Day Intake stays heads × rate without wastage, and the screen states the allowance used. |
-| Q6 | "As of the planning date" — start or end of day | The balance at the **start** of the day plus that day's deliveries. That day's feeding is the forecast's own demand, so a posted daily entry is never subtracted twice. |
-| Q7 | Days before the planning date inside the range | Not forecast; rows start at the planning date and the screen says so. |
-| Q8 | A back-dated planning date | Balances are as of that date; batches, head counts and stages are **today's** register, and the report says so (`AS_OF_PAST`). At most 45 days either side of today. |
-| Q9 | Where reporting periods come from | Nothing is seeded. An admin presses **Generate July–June periods**: End = the month's last Saturday, Start = the day after the previous End, Stock Take = End, Production Start = End + 1, code `YYYY-MM`. Every row stays editable. Note this makes the July period start in late June. |
-| Q10 | Must a period end on a Saturday | Enforced on create and edit; Stock Take must fall inside the period. |
-| Q11 | Farms already on lead time 0 | Migration 0120 changed the default to 2 **and** moved FARM rows still at 0 or NULL to 2 — all eleven in `nf_devco`. A farm that truly wants 0 re-enters it. |
-| Q12 | What each view shows | Daily = one date; Weekly = 7 days from the week start, grouped per batch + item + source; Reporting Period = the period's dates, grouped the same way; Custom = one row per date. Whatever the view, run-down, refill and Required On look up to 45 days past the planning date, so a one-day view still shows them. |
-| Q13 | When Days of Stock is "indicative" | When the container's daily demand for that item changes on any later date inside the range — a diet, rate or stage change of any batch it feeds. |
-| Q14 | Whose time zone "today" is | The company's `default_timezone_id` (Triple C = `Africa/Harare`); a missing or unknown zone falls back to the server's day, and the report names the zone it used. |
+| #   | Question                                        | The default it runs on                                                                                                                                                                                                                                                                                                |
+| --- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | The day a silo "runs down"                      | The first day **with demand** whose closing balance is at or below the low level (at or below zero when none is set). 500 kg at 100 kg/day runs down on day 5. Same rule as the low-feed alert.                                                                                                                       |
+| Q2  | What counts as confirmed incoming               | Posted non-feeding ledger movements dated on or after the stock date, **plus** saved-but-unposted (DRAFT) stock transfers inside the window (out as negative). Approved requisitions are not counted — they would double-count once the feed arrives. Plan C replaces the DRAFT half with dispatched Transfer Orders. |
+| Q3  | The requisition's quantity                      | The largest projected deficit below the low level through the range, after incoming. With no low level and no incoming this is exactly the workbook's figure.                                                                                                                                                         |
+| Q4  | The requisition line's date                     | Required On, or the planning date when Required On has already passed.                                                                                                                                                                                                                                                |
+| Q5  | Days of Stock with or without wastage           | **With** — it divides by what actually leaves the silo, so it agrees with the run-down. Per Day Intake stays heads × rate without wastage, and the screen states the allowance used.                                                                                                                                  |
+| Q6  | "As of the planning date" — start or end of day | The balance at the **start** of the day plus that day's deliveries. That day's feeding is the forecast's own demand, so a posted daily entry is never subtracted twice.                                                                                                                                               |
+| Q7  | Days before the planning date inside the range  | Not forecast; rows start at the planning date and the screen says so.                                                                                                                                                                                                                                                 |
+| Q8  | A back-dated planning date                      | Balances are as of that date; batches, head counts and stages are **today's** register, and the report says so (`AS_OF_PAST`). At most 45 days either side of today.                                                                                                                                                  |
+| Q9  | Where reporting periods come from               | Nothing is seeded. An admin presses **Generate July–June periods**: End = the month's last Saturday, Start = the day after the previous End, Stock Take = End, Production Start = End + 1, code `YYYY-MM`. Every row stays editable. Note this makes the July period start in late June.                              |
+| Q10 | Must a period end on a Saturday                 | Enforced on create and edit; Stock Take must fall inside the period.                                                                                                                                                                                                                                                  |
+| Q11 | Farms already on lead time 0                    | Migration 0120 changed the default to 2 **and** moved FARM rows still at 0 or NULL to 2 — all eleven in `nf_devco`. A farm that truly wants 0 re-enters it.                                                                                                                                                           |
+| Q12 | What each view shows                            | Daily = one date; Weekly = 7 days from the week start, grouped per batch + item + source; Reporting Period = the period's dates, grouped the same way; Custom = one row per date. Whatever the view, run-down, refill and Required On look up to 45 days past the planning date, so a one-day view still shows them.  |
+| Q13 | When Days of Stock is "indicative"              | When the container's daily demand for that item changes on any later date inside the range — a diet, rate or stage change of any batch it feeds.                                                                                                                                                                      |
+| Q14 | Whose time zone "today" is                      | The company's `default_timezone_id` (Triple C = `Africa/Harare`); a missing or unknown zone falls back to the server's day, and the report names the zone it used.                                                                                                                                                    |
 
 Two consequences worth Rishi's eye. The generated calendar is a **draft from the rule, not the
 client's calendar** — the workbook's illustrative September (23 Aug – 26 Sep) differs from what
@@ -2430,6 +2498,7 @@ Task 4 implementation that set runDownDate to the first day the closing balance
 fell at or below the silo's low-level threshold.
 
 The threshold (lowLevelKg) remains meaningful for:
+
 - `shortfallKg` (the reorder deficit calculation);
 - `refillDate` and `requiredOn` (derived from runDownDate minus the silo's
   reorder buffer and the farm's lead time);
@@ -2455,7 +2524,6 @@ Rishi's rulings, confirmed 2026-10-02:
 2. **Run Down Date Formula:** Run-down date is calculated from `Total Stock / Total Daily Consumption` (Days of Feed = Total Stock / Total Daily Consumption; Run Down Date = Planning Date + Days of Feed).
 3. **Clean Data (No dashes):** Eliminate all placeholder dashes (`-`, `—`) from the Feed Forecast grid and related UI. Always display real, proper data (e.g. `0.00`, `0`, valid dates, or clean text).
 4. **Internal Fulfilment for Business Central Requirements:** Build everything internally for the Business Central (BC) scope within NAVFarm. Do not leave out Mill Consolidation, Transfer Orders (TO), Vehicle Loading/Dispatch, and TO Receipts merely because external BC is not yet connected. Build the full internal pipeline in NAVFarm, structured with an integration toggle (`INTERNAL` vs `BC`) so that when BC is connected in the future, the user has the choice to use either Internal or BC fulfilment.
-
 
 ## 2026-10-03 — Feed TDD workbook governs feed; in-house mill pipeline
 
@@ -2515,6 +2583,7 @@ be edited (submitted, approved, released) still opens read-only.
 ## 2026-10-04 — Feed screens follow the workbook field for field; a real dashboard
 
 Rishi, 4 Oct:
+
 1. **New from the Feed Forecast is Feed, automatically.** The Feed Requisition tab's New skips the
    "what is this requisition for?" choice and opens the feed requisition straight away.
 2. **Every page shows the fields the TDD workbook lists for it** — field names, order and content —
@@ -2581,6 +2650,7 @@ Routes and URL tab keys are unchanged. Screens the workbook does not have keep o
 ## 2026-10-04 — Feed Forecast tab names; Stages removed; admins keep department checks
 
 Rishi, 4 Oct:
+
 1. The Feed Forecast tabs are **Dashboard · Calculation · Requisition · Physical Stock Count**.
 2. "if not in the file then remove it properly". The forecast's "Stages (n)" sub-tab is removed with its component,
    strings, response field and specs. The engine's stage-chain projection, which picks the next diet, stays because the
@@ -2592,6 +2662,7 @@ Rishi, 4 Oct:
 ## 2026-10-04 — Requisition LOB scope uses the farm's LOB; merge GitHub main locally for lot/serial
 
 Rishi, 4 Oct:
+
 1. The requisition services filtered on `company_master.lob_id`, a column that exists in no database, so restricted
    users (Farm Manager, Head of Farms, Standard User) got a 500. A requisition's line of business is **its farm's**
    (`location_master.lob_id`). Requisitions with no farm, and farms with no LOB, are visible to every LOB. No schema
@@ -2605,13 +2676,15 @@ Rishi, 4 Oct:
 Rishi, 5 Oct. The seeded MANAGER and OPERATOR roles had no PROCUREMENT permission rows, so a realistic restricted
 user was refused on every requisition route. A data script (AGENTS.md §4 shape: plan / `--verify` / `--apply`, local
 only) grants requisition permissions (PROCUREMENT / REQUISITION):
+
 - Farm Manager and Head of Farms (OPERATIONAL_ADMIN) roles: view, create, edit, submit, approve.
 - Standard User / Operator roles: view, create, edit, submit, but **not** approve.
-Release, shipment, receipt and Direct Transfer stay as configured; they are not part of this grant.
+  Release, shipment, receipt and Direct Transfer stay as configured; they are not part of this grant.
 
 ## 2026-10-05 — Requisition is its own menu item, common kinds only; FA/Service lines are Description + Qty
 
 Rishi, 5 Oct:
+
 1. Requisitions leave the Approvals menu. A top-level sidebar item **Requisition** lists and creates **common**
    requisitions only (Item, Fixed Asset, Service), with Approve / Reject on pending rows. **Feed requisitions live only
    under Feed Forecast → Requisition.** The Approvals page keeps the other sign-offs. This supersedes the 4 Oct ruling
@@ -2702,6 +2775,7 @@ view contract truncates it before the web can render it.
 
 These are interpretations of the 4 Oct list (`common-requisition-spec.md`) made in WP4a. They are **ours, not Rishi's
 rulings**. The coordinator asked for them to be recorded.
+
 1. **Who assigns Item Tracking after release.** The list says tracking is "MANDATORY before Transfer Shipment post",
    and that the shipment is "Done by sender department user". So on a released Store requisition, the Lot/Serial
    assignment for the unshipped balance belongs to the **From sub-location's department**: the store that ships picks
@@ -2723,6 +2797,7 @@ rulings**. The coordinator asked for them to be recorded.
 ## 2026-10-05 — Feed requisitions in the one document: feed fields shown, mill flow fulfils
 
 Rishi, 5 Oct (to the desktop controller, after confirming the unified-requisition rulings above):
+
 1. A requisition for feed shows Rishi's common header and lines **plus** the workbook's feed fields, but only when the
    requisition is for feed (Requisition and Loading Sheet §1–§2: Production Date, Submission Deadline, Priority, Farm
    Total vs truck target, per-line destination Silo, Recommended Qty, Days Remaining, delivery date, batch breakdown).
@@ -2805,6 +2880,7 @@ live check proves a real effective BIN assignment.
 ## 2026-10-05 — Common requisition: requester, Service lines, receipt and release
 
 Rishi, 5 Oct, answering the Phase 1 end-to-end findings:
+
 1. Requester User ID shows the user's **login (email)**, not the internal id.
 2. Service lines follow his list: **Description + Qty only**. The optional Resource picker is removed from Service lines.
 3. "The one requesting is the one who would be receiving." Transfer Receipt is posted by the **requester**. The list's
@@ -3227,6 +3303,7 @@ and tentative quantities for variance. Mill Approved and mill-capacity values
 remain unavailable until the deferred mill execution configuration/workflow is
 actually implemented. Plan codes use `PLAN-<FarmCode>-<ISO YYYYWW>-Rnn`, and
 old versions remain queryable rather than being overwritten.
+
 ## 2026-10-09 — Approved feed requisitions create an Actual Feed Plan revision
 
 When a run-linked feed requisition is approved, the approval transaction remains
@@ -3310,6 +3387,7 @@ line before Release; a partial consolidation is rejected rather than silently
 transferring an unapproved quantity. Shipment, dispatch and split receipts
 continue through the shared transfer service so the inventory ledger and
 fulfilment balances cannot double-count the original request.
+
 ## 8 Oct 2026 — Lot and serial consumption under FIFO costing (defaults, awaiting Rishi)
 
 Costing stays FIFO; the user's lot or serial selection decides which layers a consumption uses
@@ -3533,6 +3611,7 @@ Migration `0182_bcs_metric_repair` (data repair only; applied to nf_system and n
   named after it. Values already posted are history and were not rewritten.
 
 **Not done, and why.**
+
 - **Reopening a posted day (A5).** Re-posting a changed entry after a reopen still posts it a second time. Reversing the
   first posting needs a way to mark a batch transaction as reversed (a column and every reader of batch cost —
   `wip_value`, close, running unit cost — taught to skip it): a reversing row with the opposite sign would be summed as
@@ -3628,18 +3707,19 @@ nf_devco after backups).
 
 Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0145 kept), on the real posted
 GESTATION day of 8 Oct and a second day built with consumption, a lot-tracked output and an overhead:
-- *Reopen* of 8 Oct (4 entries, 8 transactions, 2 ledger issues): batch cost 94 100 → 93 300, journals 6 → 8 (mirrors
+
+- _Reopen_ of 8 Oct (4 entries, 8 transactions, 2 ledger issues): batch cost 94 100 → 93 300, journals 6 → 8 (mirrors
   of 240 and 560, net by account 94 100 → 93 300), the two feed items back in stock (+12, +28), the 4 transactions
   marked reversed, the 4 entries drafts, the lock REOPENED.
-- *Correction:* one animal's morning feed changed 6 → 5 and the stage posted again: feed stock 589 and 612, batch cost
+- _Correction:_ one animal's morning feed changed 6 → 5 and the stage posted again: feed stock 589 and 612, batch cost
   94 080, journal net 94 080 — exactly the corrected quantities, once — and the animal card then showed 5 kg.
-- *9 Oct* posted with 8 weaners of a lot-tracked item into the store and a 150 overhead, then **refused** while 3 of
+- _9 Oct_ posted with 8 weaners of a lot-tracked item into the store and a 150 overhead, then **refused** while 3 of
   the 8 were marked used ("already been used or moved"): stock, cost, 14 journals and the LOCKED state unchanged.
-- *Reopen* with the stock intact: 6 entries to drafts; cost back to 94 080; feed stock back; weaner layers 0 and the lot
+- _Reopen_ with the stock intact: 6 entries to drafts; cost back to 94 080; feed stock back; weaner layers 0 and the lot
   netting 0; output line removed; the day's journals net 0.00 across every account; the overhead journal mirrored.
-- A failed *post* on an unrelated lot shortage also left stock, cost and journals untouched.
-The reopen box on the data-entry screen now says what a reopen does and reports how many entries were reversed and which
-were left posted; that screen change is typechecked but was not driven in a browser.
+- A failed _post_ on an unrelated lot shortage also left stock, cost and journals untouched.
+  The reopen box on the data-entry screen now says what a reopen does and reports how many entries were reversed and which
+  were left posted; that screen change is typechecked but was not driven in a browser.
 
 ## 9 Oct 2026 — Piglets are a lot of the piglet bio-asset item in a batch-wise batch (Arun's answers 1 and 2, awaiting Rishi)
 
@@ -3698,19 +3778,20 @@ and on the Breeding screen, one posting behind both).
   weight is sent only when entered. (The semen form's pre-filled figures are still there; that is Phase 5.)
 
 Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0146 kept):
-- *Refused*: a farrowing naming a non-bio-asset item ("not a bio-asset item") left no farrowing and no batch.
-- *Farrowing* of 11 live, 2 stillborn and 1 fostered in: parity stayed 0, the sow LACTATING; a lot LOT-00003 in an ACTIVE
+
+- _Refused_: a farrowing naming a non-bio-asset item ("not a bio-asset item") left no farrowing and no batch.
+- _Farrowing_ of 11 live, 2 stillborn and 1 fostered in: parity stayed 0, the sow LACTATING; a lot LOT-00003 in an ACTIVE
   batch-wise BIO_ASSET batch of 12 in the sow's shed pen, the piglet item and lot on its input line at rate 0, bio state
   12 at value 0, an acquisition ledger row at cost 0, no journal, a FARROWING scheduler counting 12.
-- *Weaning* 10 of the 12 to a second batch-wise bio-asset batch (10 head, 2 500): 2 recorded as mortality on the lot, a
+- _Weaning_ 10 of the 12 to a second batch-wise bio-asset batch (10 head, 2 500): 2 recorded as mortality on the lot, a
   posted head-count transfer of 10, the lot 0 and the destination 20 head still at 2 500, the sow's parity 1 and ACTIVE;
   13 weaned was refused, a batch with a stage was refused, and weaning posted again moved nothing.
-- *Data entry*: a FARROWING-stage OUTPUT line entered for a second sow (9 live) created the same litter and a lot LOT-00004
+- _Data entry_: a FARROWING-stage OUTPUT line entered for a second sow (9 live) created the same litter and a lot LOT-00004
   in its own batch of 9, wrote no stock entry in the sow's batch, and the animal card listed the piglet batch and lot; the
   same sow's line entered again was refused.
-Not driven live: weaning entered through data entry, moving the lot on to a stage, and the wording of the message that
-refuses a changed farrowing line (all unit-tested); the Breeding screen changes are typechecked and covered by existing
-component tests but were not driven in a browser.
+  Not driven live: weaning entered through data entry, moving the lot on to a stage, and the wording of the message that
+  refuses a changed farrowing line (all unit-tested); the Breeding screen changes are typechecked and covered by existing
+  component tests but were not driven in a browser.
 
 ## 9 Oct 2026 — Phase 5 built: semen is stock, with a lot-level QR, and matings use its doses (awaiting Rishi)
 
@@ -3741,17 +3822,18 @@ Built to the answers on brief decisions 2, 5 and 8 recorded above.
 
 Proved against the running API and MySQL on `nf_devco` (restored afterwards; 0143–0147 kept; a medicine item with a 5-day shelf
 life stood in for a semen item, there being none in the demo):
-- *Refused*: an item that does not exist left no lot and no pack.
-- *Collection* of 40 doses: lot LOT-00003 expiring 2026-10-14, an inbound OUTPUT entry in MUL100/STORE-001 at rate 0 against the
+
+- _Refused_: an item that does not exist left no lot and no pack.
+- _Collection_ of 40 doses: lot LOT-00003 expiring 2026-10-14, an inbound OUTPUT entry in MUL100/STORE-001 at rate 0 against the
   boar's batch BATCH-000002, a pack PACK-000001 whose QR data held the boar (PIG-0010, tag, breed), batch, lot, date, doses,
   expiry and store, and no cost.
-- *Matings*: 2 doses from the lot — used 2, lot stock 40 → 38, one issue entry; 100 doses refused ("has 38 doses left") with nothing
+- _Matings_: 2 doses from the lot — used 2, lot stock 40 → 38, one issue entry; 100 doses refused ("has 38 doses left") with nothing
   recorded; the demo's older lot, with nothing left (40 collected, 30 used, 10 sold), refused.
-- *Data entry*: 25 doses entered for the boar on a line of the same item made LOT-00004 and PACK-000002 and wrote no stock entry
+- _Data entry_: 25 doses entered for the boar on a line of the same item made LOT-00004 and PACK-000002 and wrote no stock entry
   in the boar's batch; the line entered again with another value was refused as a semen collection; the boar's card and the Packs
   screen's API listed both lots/packs.
-Not driven: the Breeding screen's new semen form and mating lot picker (typechecked, existing component tests pass, not driven in
-a browser).
+  Not driven: the Breeding screen's new semen form and mating lot picker (typechecked, existing component tests pass, not driven in
+  a browser).
 
 **Found on the way (not changed).** The seeded activity "Boar Semen Collection" carries the output basis `PER_HEAD`, which a
 schedule line rejects (the accepted bases are PER_SOW, PER_PEN, PER_BATCH), so a line cannot be made from the activity as
@@ -3872,8 +3954,8 @@ twice added nothing). Every flow below was run through the API and read in MySQL
 
 - **Pooled semen — one lot mixed from several boars.** Arun asked to collect semen from several boars and mix it; there
   is no document row behind it, so what follows is ours until Rishi confirms. The collection is entered against the
-  first boar and names the others (Data Entry: *Pool with other boars* under the semen line; Breeding screen: *Mix with
-  other boars*). It makes **one** lot, one posting to stock and one QR, which names every boar. `semen_batch.boar_animal_id`
+  first boar and names the others (Data Entry: _Pool with other boars_ under the semen line; Breeding screen: _Mix with
+  other boars_). It makes **one** lot, one posting to stock and one QR, which names every boar. `semen_batch.boar_animal_id`
   stays the first boar; `semen_batch_boar` (migration 0152) holds one row per boar with the share of the lot's cost he
   carried. A lot from one boar has no rows there, so every earlier lot reads as before.
 - **Cost of a pooled lot = what every boar in it cost.** Each boar's own period (since his last collection — a lot he was
@@ -3881,20 +3963,20 @@ twice added nothing). Every flow below was run through the API and read in MySQL
   lot's total and split equally. Doses are one total for the mix. **Open:** whether per-boar doses or volumes must be kept.
 - **A service from a pooled lot records no single sire.** The sire is one of the pool and not known, so
   `breeding_record.boar_animal_id` stays empty (a boar named must be one of the pool). On a boar's card such a service is
-  counted apart (*from pooled lots*) and its litter is **not** counted as sired by him; the sow's card says *pooled lot*.
+  counted apart (_from pooled lots_) and its litter is **not** counted as sired by him; the sow's card says _pooled lot_.
   **Open:** whether the pool should instead count towards each boar's sired litters.
 - **A boar pooled into a lot cannot also have a collection of his own on the same line and day** — his doses would be
   counted twice; the entry is refused with the boar named. The pool is kept on the draft (`batch_daily_data.pool_animal_ids`).
 - **Why the seeded boars read as sows (a seed fault, fixed).** `seed-boars-sows-batches` registered the two boars under
   the sows' breed (Z-Line-Sow, which has no Boar AI stage, so the QR of every lot named a sow line) and housed them in
-  `MUL100/SHED-002`, which is the *Dry Sow* House (the Boar House is `SHED-006`); its sows were in the Farrowing House at
-  Gestation, and the boar's semen line was `PER_SOW`. Now: boars are *Teaser Boar* (the only active boar line carrying
+  `MUL100/SHED-002`, which is the _Dry Sow_ House (the Boar House is `SHED-006`); its sows were in the Farrowing House at
+  Gestation, and the boar's semen line was `PER_SOW`. Now: boars are _Teaser Boar_ (the only active boar line carrying
   Boar AI) in the Boar House, sows are Z-Line-Sow at Insemination in the Dry Sow House, the line is `PER_BATCH`.
-- **Ours, test fixtures only:** the two output items (*AI Semen Dose - Fresh (single boar)* and *- Pooled (multi-boar)*)
-  and their 5-day shelf life (it gives the lot an expiry; the existing *BOAR semen* item has none). Their cost is copied
-  from *BOAR semen*, not invented.
-- **Open — where semen is kept.** A lot goes to the farm's first active STORE by code (MUL100/STORE-001, *Demo Medicine
-  Store*). A store has only `STORE` or `SILO` as its type, so a dedicated semen/cold store would need that distinction
+- **Ours, test fixtures only:** the two output items (_AI Semen Dose - Fresh (single boar)_ and _- Pooled (multi-boar)_)
+  and their 5-day shelf life (it gives the lot an expiry; the existing _BOAR semen_ item has none). Their cost is copied
+  from _BOAR semen_, not invented.
+- **Open — where semen is kept.** A lot goes to the farm's first active STORE by code (MUL100/STORE-001, _Demo Medicine
+  Store_). A store has only `STORE` or `SILO` as its type, so a dedicated semen/cold store would need that distinction
   added; not done.
 
 ## 2026-10-10 — Feed fulfilment measures against the mill-approved quantity
@@ -3994,6 +4076,7 @@ truck-target alert fires on a part load (order > 0 and < target); after release,
 lot/serial; serial-tracked lines ship whole (partial serial shipments stay refused).
 
 Changed by Rishi:
+
 1. The delivery note no. on feed TO receipts is **optional**.
 2. A shortfall reason is required on **every short receipt**: any receipt where the quantity received now is less than
    the quantity still outstanding on the shipment line, even if more is still coming. This replaces the
@@ -4073,7 +4156,7 @@ A dead animal is not brought back: the Reverse action is gone from both sides.
 - **Changed:** reopening a posted data-entry day already kept a death posted; its reason no longer sends the user to a
   Reverse button that does not exist ("it recorded a death, which is final"). Lowering a posted
   mortality count in data entry still corrects the stage count only and revives no one.
-- **Kept, deliberately:** the code that *reads* a reversal — `reversed_at` on MORTALITY transactions in the batch head
+- **Kept, deliberately:** the code that _reads_ a reversal — `reversed_at` on MORTALITY transactions in the batch head
   count, and `MORTALITY_REVERSED` in the animal's movement history. `nf_devco` holds none, but a database where C7 was
   used may, and dropping the readers would count those deaths twice.
 - **Open, for Rishi:** with no reversal, a death recorded against the wrong animal or batch has no correction path in
@@ -4141,7 +4224,7 @@ other stages created too. **Wanted: select a batch and a stage, and only that ba
 This reverses the 9 Oct decision above ("Every stage a live animal holds has a scheduler", asked by Arun). Two places
 were creating them behind the user's back, both for an animal-wise batch, for every stage its live animals stood in:
 
-- `BatchService.getDataEntryByStage()` — reached by `GET /batch/:id/data-entry`, so merely *opening* the Daily Data
+- `BatchService.getDataEntryByStage()` — reached by `GET /batch/:id/data-entry`, so merely _opening_ the Daily Data
   Entry screen created a scheduler per occupied stage with `scheduler_auto_create`. A read that writes.
 - `SchedulerHeaderService.syncAnimalWiseCounts()` → `openOccupiedStageSchedulers()` — every death, transfer and stage
   move ends in the count sync, so an animal moving into a stage opened a scheduler there.
@@ -4161,3 +4244,212 @@ same run added CULLED and PRODUCTIVE_SOW.
 
 Not changed: the BATCH_WISE data-entry path still auto-creates for the batch's **own current stage** only
 (`batch.service.ts`, gated on `effectiveStageId === batch.stage_id`) — one stage, the one the batch is in.
+
+## 19 Oct 2026 — A batch is closed by a user, never by a posting; an empty batch takes no entries (Rishi)
+
+- **No automatic close.** Removed: closing a batch when a transfer takes its last head, when a disposal takes its
+  last head, and when weaning empties a piglet lot. Such a batch stays ACTIVE at nil head until a user closes it.
+  Batches already closed stay closed (no reopen feature).
+- **A user closes a bio-asset batch** through POST /batch/:id/close once it holds no head (no head on its
+  bio-asset state, no live animal). No output lines are taken — its value left with its animals. The batch screen
+  shows Close on such a batch.
+- **No data entry on an empty batch:** an animal-wise batch with no live animal, or a batch-wise batch whose head
+  count is 0. Posting refuses it and the Data Entry screen shows why and disables Save/Post (`entry-blocked.ts`).
+
+## 18 Oct 2026 — Reports: R07 Farrowing Report first, built like Voucher (Rishi)
+
+Source: `Triple-C_reports COMMENTS.xlsx`, sheet R07. Rishi's answers, 18 Oct:
+
+- **Reports** is its own sidebar item with a flyout, in company and operational-area scope, right after Voucher.
+  Each report gets its own view permission (`REPORTS` / `FARROWING` for this one), set in Role Permissions.
+- The page shows nothing until the filters are chosen and **Generate** is pressed. Export is **PDF**.
+- Filters: **Farm** (required), **Date From / Date To** (required — no Week filter), Batch, Parity, Per Sow (one sow's
+  figures). **Parity means parity at farrowing** (the litter number).
+- Week and Month columns and the lone "Day" cell are left out for now.
+- Actuals come from **batch data entry**. Posting a farrowing or weaning in data entry writes `farrowing_record`
+  (and a service writes `breeding_record`), so the report reads those; stillborn, mummified and birth weight come
+  from the Breeding screen onto the same litter.
+- **Targets** come from the breed lifecycle stages' KPI thresholds; none set → "Not available". The report reads
+  metric codes SERVICE_TARGET, FARROWING_TARGET, FARROWING_RATE, TOTAL_BORN, BORN_ALIVE, BORN_DEAD, MUMMIFIED,
+  ACTIVE_WEEK_MORTALITY, PRE_WEAN_MORTALITY, WEANING_WEIGHT, LITTER_MASS (the codes are ours; a target shows as the
+  lower–upper range).
+- **Prior year:** no data → "No data". Batches do not repeat across years, so prior year is the same farm and dates a
+  year earlier and is shown on the farm total row (ours).
+- Left out until the client explains them: Average Wean per Sow, Gilt Maternal Body Loss, Target Gilt Service,
+  2nd Parity Service Target, Prior Year Rate, YoY % Change.
+- **Total Litter Mass "ALL OR ONE"**: All = total mass of all weaned litters; One = the average litter.
+- **Active Week Mortality** = piglet deaths in the current week — taken as the Monday–Sunday week holding Date To (ours).
+- Farrowing Rate % follows the sheet's formula literally: sows farrowed ÷ sows served, both within the dates. Across a
+  date boundary this compares different cohorts (a batch served before Date From shows farrowings and no services).
+
+## 19 Oct 2026 — Farrowing Report prior year per batch; "N/A" for missing figures (Rishi)
+
+- **Prior year per batch row: the matching batch last year.** A batch's place is its first service date; its
+  prior-year batch is the farm's batch whose first service falls nearest the same date a year earlier, within a
+  week either side (`matchPriorBatch`). Its figures are read over the report's dates shifted back a year. The
+  farm total keeps the whole farm over those dates. No match → N/A. The matched batch is named under each batch.
+- **"N/A", never "—", where a figure is not available** — application-wide (Rishi: "for things where data is not
+  available … show N/A").
+- **Feed Forecast stays forward-only** from the Planning Date, and its date pickers must not offer dates before
+  the Planning Date.
+
+## 20 Oct 2026 — Farrowing Report: YoY on every group; Wean per Sow and Gilt Maternal Body Loss (Rishi)
+
+- **Change vs Prior YR and YoY % Change on every group that has a Prior YR** (sheet AY5 comment: "Year on Year
+  Change must be on every parameter"). Change = actual − prior (percentage points for the % metrics); YoY % =
+  (actual − prior) ÷ prior × 100. N/A when either is missing or the prior is 0. Rishi counts these as the sheet's
+  Prior Year Rate (AX) and YoY % Change (AY).
+- **Average Wean per Sow** (AK–AM) = piglets weaned ÷ litters weaned, over the litters whose **weaning date** falls in
+  the dates, whenever they farrowed. Target KPI `WEAN_PER_SOW`.
+- **Gilt Maternal Body Loss %** (AN–AP) = (weight before farrowing − weight at weaning) ÷ weight before farrowing × 100,
+  **gilts only** (parity 1), averaged over the gilt litters weaned in the dates that have both weights. Before
+  farrowing = the gilt's latest posted BODY_WEIGHT entry in the GESTATION stage on or before the farrowing date; at
+  weaning = her latest in LACTATION from farrowing to the weaning date. Target KPI `GILT_BODY_LOSS`.
+- A batch that only **weaned** litters in the dates now has a row (it used to need a service or a farrowing in them).
+- The PDF is at 4pt so the 72 columns fit one A3 page without values wrapping.
+
+## 20 Oct 2026 — Report targets from Average and Tolerance; service-target KPIs; client answers (Rishi)
+
+- **Report targets read the KPIs & Alerts row the way the form saves it:** Average Value and Tolerance (%) with its
+  side — upper = average × (1 + tolerance), lower = average × (1 − tolerance); Upper sets only the upper, Lower only
+  the lower. Rows that still store lower/upper limits keep working. One function (`production/lifecycle/kpi-limits.ts`)
+  serves both the scheduler's data-entry alerts and the reports, so they cannot disagree. Shown as a range, `≤ x`,
+  `≥ x`, or the average alone.
+- **Gilt Service Target and 2nd Parity Service Target are KPIs:** `GILT_SERVICE_TARGET` and
+  `SECOND_PARITY_SERVICE_TARGET` (HEAD), set on the breed's Insemination stage, shown as the Target of Gilts Served
+  and 2nd Parity Served. Week and Month columns stay out of R07.
+- **Litter Mass target belongs to the average litter**, not the farm's total litter mass.
+- **The report has its own farm list** (`GET /reports/farrowing/farms`, the feed screens' rule via
+  `farmPickerConditions`): a tenant administrator in the tenant-wide workspace was refused by the location master.
+- **Weaning is the stage in which the sow suckles her litter** — the piglets live on the sow's milk until they are
+  weaned. It is the Lactation stage; the weaning date ends it.
+- **Residual value is a per-kg rate** (currency per kg), not a percentage. Not built yet.
+- **Currency:** Base Currency (Settings → Finance) is the currency the application posts and reports in; Local
+  Currency maps it to the country's currency, at the exchange rate held in the Currency master.
+- **Kill Sheet and DOA are deferred.** They belong to the slaughter Transfer Order (BBP §10.1).
+
+## 20 Oct 2026 — Mill Production Output (Rishi)
+
+- **What it is:** the feed the mill produced into a loading BIN — production date, the BIN's diet assignment for that
+  date (which names the BIN and the feed), KG, lot when the feed is lot-tracked without a number series. Numbered
+  `MPO-000001`, posted when saved, not editable afterwards (a mistake is corrected by a stock adjustment). Inventory →
+  Feed Forecast → **Mill Production**. Spec 2026-10-03 §4.2 step 1 (R5), with the later rulings: stock sits in the BIN
+  (5 Oct), no production slots (11 Oct).
+- **Posting:** a positive inventory-ledger entry in the BIN (`MILL_PRODUCTION_OUTPUT` / `MILL_OUTPUT`) at the feed's
+  **standard cost** (refused when it has none; feeds are STANDARD-valued) and a journal through a **new `MILL_OUTPUT`
+  GL mapping** that finance sets under Master Data → GL Mappings. Without the mapping the posting is refused and
+  nothing is written. No raw-material consumption.
+- **Checks:** the assignment is active and for that date; its BIN is an active BIN of the company under an active
+  MILL; the feed is active, kept in KG, not serial-tracked; the posting period is open.
+- **Who:** permission `INVENTORY / MILL_OUTPUT` (view, create), granted to the Feed Mill Manager. A farm-bound login
+  acts for its farm's company, as on the consolidation and loading screens.
+- Until now frtest's BINs were stocked by GRNs referenced `MILL-PROD-…` (52 receipts, 8 Sep – 14 Oct); this replaces
+  that workaround.
+- Migration **0208** (Arun's unmerged branches already use 0205–0207).
+
+## 20 Oct 2026 — Physical stock count: transferred feed counts; posting on the count's own day (Rishi)
+
+Found testing the count in frtest:
+
+- **The count's system balance left out `TRANSFER` ledger rows** — feed a silo received by Transfer Order (and stock
+  shipped from a source). KINTYRE's silos read negative (Grower −24,993.9 KG against a true +23,506.1) and a posted
+  count added the transferred feed a second time. The balance now counts `POSITIVE`, `NEGATIVE` and `TRANSFER`, as
+  every other balance in the ledger service does.
+- **A count posted on the next day.** `counted_at` is written with `FROM_UNIXTIME` (the session's wall clock) but was
+  read back as UTC, so on a non-UTC database a count taken on 20 Oct posted its adjustments on 21 Oct. It is now read
+  back with `UNIX_TIMESTAMP`.
+- The three adjustments the faulty test count posted in frtest (ADJ-000037/38/39, +31,840.1 KG) were reversed by
+  ADJ-000040/41/42 on the same date. Dry Sow's genuine −223 KG (ADJ-000036) stays, dated 21 Oct.
+- **Count number:** a weekly physical count is numbered `PC-<FarmCode>-YYYY-NNNNN` (year of the count day), read like
+  the monthly take's `ST-…` (NAVFarm design; the workbook numbers only the monthly take). It replaced
+  `FSC-<farm uuid>-<epoch>`, which was cut short on the approval request. Counts already numbered `FSC-…` keep it.
+- **Reason category:** a count variance takes an `ADJUSTMENT` reason; another category is refused by name
+  ("MASTITIS is a MORTALITY reason; choose an ADJUSTMENT reason.").
+- Still open: a company needs its own ADJUSTMENT reasons — frtest had only the tenant templates until ADJ-001 and
+  ADJ-002 were added to it on 20 Oct.
+
+## 20 Oct 2026 — Each company owns its masters; the menu follows permissions (Rishi)
+
+**Companies are separate.** A company reads only its own master rows — never a tenant template, never another
+company's. Tenant template rows stay for the tenant workspace only; new companies still start blank (12 Oct).
+
+- Existing companies were given their own copy of the tenant rows they relied on, once (option a), by
+  `scripts/adopt-tenant-masters.ts` (`planTemplateAdoption`): rows a company already had (same code; a stage by line
+  of business and code) were matched, the rest copied, and the company's records moved off tenant rows (frtest: 557
+  bio-asset ledger rows, 22 inventory ledger rows, batch lines; tcdemo: 17 batches and schedulers on a tenant
+  QUARANTINE stage). Afterwards no company record references a tenant row in any of the five local tenants.
+- The "own rows or tenant rows" fallbacks were removed: item kinds, breeds on the Animal Register, exchange rates,
+  feed forecast stages and lifecycle, feed alert rules and periods, batch stage lookup, period close, item templates,
+  an item's GL account, location occupancy, alert-rule clashes, the number-series list, the Farrowing Report targets.
+- **Production and QC Parameters** are masters now (`MASTER_TABLES`): scoped list, record check by id, created in the
+  workspace's company. They had been read and updated by id alone, across companies.
+- **The Item list carried no company filter at all**: its controller is mounted on two paths
+  (`@Controller(['item','items'])`) and the guard only scoped single-path controllers (`masterControllerPath`).
+
+**The menu shows only what the user's role can open** (`utils/nav-permissions.ts`): each link carries the grant its
+page's API reads; groups keep their open children; an empty group is hidden. Admins see everything. In frtest the
+storekeeper's and mill manager's menus lost 17 and 18 entries that led to "no permission".
+
+**The dashboard is for every user, by their permissions.** It loads batches and animals only for a role that may see
+them (it used to stop at "Insufficient permissions" for the storekeeper and mill manager); each card, chart, quick
+action and the Piggery GM view shows only when the user may open what it links to. A role with neither batches nor
+animals gets **Your work** — a tile for each page it may open.
+
+## 21 Oct 2026 — Farrowing Report matches the client's column list (Rishi)
+
+- **The report follows the client's column list**: each group is Actual, Target and Prior YR, and every group with a
+  Prior YR keeps its Change vs Prior YR and YoY % columns (20 Oct; Rishi, 21 Oct: "for all groups to have these two
+  columns"). The Average Litter Mass group is taken out. "BA per Sow" reads **Born Alive**. A thicker
+  line opens each group, on screen and in the PDF; Sow Batch stays in view when the table scrolls.
+- **Total Litter Mass has a target**: the new KPI `TOTAL_LITTER_MASS` (KG) — the weaned mass of all of a batch's
+  litters together — set on the breed's Farrowing stage. This replaces the per-litter `LITTER_MASS` target in the
+  report. frtest: average 850 kg with a 10 % Lower tolerance, so the target shows as ≥ 765.
+
+## 21 Oct 2026 — Data entry follows who was in the batch on the day (Rishi)
+
+Rishi: "Some batches are never going to close, so even when there are no animals, no auto close — only the user closes
+a batch. On data entry for a batch, if there is no animal, do not allow the data entry; and if on any previous day
+there was no animal in the batch, then do not ask for that previous date's data entry; and if there were some, then
+only for the animals which were in the batch on those previous days."
+
+- **Membership is read for the date, not for today.** `animalsInBatchOn` / `animalPlacementOn`
+  (`batch-daily-data/animal-membership.ts`) replay `animal_movement_log`: the latest move on or before the date decides
+  the batch (a move into a batch counts from its own day; a cull, disposal, death or unassignment ends it), and the
+  latest move that set a stage decides the stage. Before an animal's first move it was where that move says it came
+  from; an animal the log never mentions is where the register has it while it is live. A stage change never decides the
+  batch, so a stage change dated after a transfer cannot put an animal back. Replayed for today, it reproduces the
+  register for every live animal of every animal-wise batch in frtest.
+- **Owed days** (`getNextPendingDate`): a day on which an animal-wise batch had no animal is not owed. A day with
+  animals is owed for the stages those animals were at then (a stage nobody was in that day is not asked for), and only
+  for stages the batch has a scheduler for - a stage without one has no entry screen, so its day could never complete.
+  A batch emptied since owes nothing after it emptied; days before still count.
+- **The entry form** (`GET /batch/:id/data-entry?date=`) lists the animals the batch had on that date, at their stage
+  that day. **POST STAGE DATA** for a past date checks the mandatory lines for those animals.
+- **Posting an entry** for an animal is accepted when it was in this batch and at the line's stage ON the entry date,
+  even if it has since moved stage or batch (a gestation weight dated before farrowing on a gilt now in Flush); it is
+  refused, naming the animal and the date, when it was not.
+- **`entryBlockedReason` takes the date**: a past date is blocked only if the batch had no animal that day, so an emptied
+  batch still takes entries for the days it had animals; today is judged as before.
+- **Batch-wise batches are unchanged.** They keep no head count by date, so they are judged on the head count as it stands.
+
+## 21 Oct 2026 — Truck target and bulk multiple: farm, else company, else default (Rishi)
+
+- A feed requisition takes its Bulk Truck Target and Bulk Order Multiple from the farm's own override in Company
+  Settings → Feed Planning, else the company's Feed Planning value, else the default (30,000 kg / 3,000 kg). The
+  New Requisition header now says which: "(farm)", "(company)" or "(default)" (`GET /feed-settings` returns
+  `sources.truckTargetKg` / `sources.bulkMultipleKg`).
+- Feed Planning: the company fields say a blank uses the default; each farm override has "Use company value",
+  which clears it so the farm inherits again.
+- The farm record's old `feed_truck_target_kg` / `feed_bulk_multiple_kg` columns stay unused (requisitions stopped
+  reading them on 8 Oct); no screen shows them.
+- Next (after 24 Oct): Loading Instructions record compartments as lines under each loading sheet — compartment, kg,
+  loaded by, loaded at — grouped by truck; the sheet's own fields become totals so nothing reading them changes.
+
+## 21 Oct 2026 — Follow-up implementation decisions (Rishi)
+
+- The current uncommitted 21 Oct feed-settings, requisition, farrowing-report and master-data changes are retained and should be finished, reviewed, and tested.
+- Animal codes use the Number Series master. The current format is `PIG-YYYY-SEQ`; it must remain configurable through the number-series mechanism rather than being hardcoded into animal creation.
+- The local currency is **ZWL**. Base Currency remains the posted base currency, and Local Currency is mapped through the Currency master's rate.
+- The next feature priority is Loading Instructions compartment lines: compartment, quantity in kg, loaded by, and loaded at, grouped by truck, while preserving the existing loading-sheet totals.
+- Add regression tests for the compartment-line design before implementing it.
+- Bio-asset GRN migration 0200 requires regression coverage before live verification.

@@ -1,10 +1,22 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull } from 'drizzle-orm';
+import { eq, and, like, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateQcParameterDto, UpdateQcParameterDto, QueryQcParameterDto } from './dto/qc-parameter.dto';
+import {
+  MasterScope,
+  masterScopeConditions,
+} from '../../../common/master-data-scope';
+import {
+  CreateQcParameterDto,
+  UpdateQcParameterDto,
+  QueryQcParameterDto,
+} from './dto/qc-parameter.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 
 @Injectable()
@@ -13,6 +25,12 @@ export class QcParameterService {
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
   ) {}
+
+  /** The workspace's company for a new row; a tenant template only from the tenant workspace. */
+  private workspaceCompany(requested?: string | null): string | null {
+    const scope = this.cls.get<MasterScope>('masterScope');
+    return scope?.kind ? scope.companyId : requested || null;
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -29,13 +47,15 @@ export class QcParameterService {
       .where(
         and(
           eq(schema.qcParameterMaster.tenant_id, tenantId),
-          eq(schema.qcParameterMaster.param_code, dto.param_code.toUpperCase())
-        )
+          eq(schema.qcParameterMaster.param_code, dto.param_code.toUpperCase()),
+        ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`QC parameter code '${dto.param_code}' already exists.`);
+      throw new ConflictException(
+        `QC parameter code '${dto.param_code}' already exists.`,
+      );
     }
 
     const paramId = randomUUID();
@@ -43,7 +63,7 @@ export class QcParameterService {
     await this.db.insert(schema.qcParameterMaster).values({
       param_id: paramId,
       tenant_id: tenantId,
-      company_id: dto.company_id || null,
+      company_id: this.workspaceCompany(dto.company_id),
       lob_id: dto.lob_id,
       param_code: dto.param_code.toUpperCase(),
       param_name: dto.param_name,
@@ -75,7 +95,13 @@ export class QcParameterService {
     const [param] = await this.db
       .select()
       .from(schema.qcParameterMaster)
-      .where(eq(schema.qcParameterMaster.param_id, id))
+      // A company reads and changes only its own rows (Rishi, 20 Oct): never a tenant template or another company's.
+      .where(
+        and(
+          eq(schema.qcParameterMaster.param_id, id),
+          ...masterScopeConditions(this.cls, schema.qcParameterMaster),
+        ),
+      )
       .limit(1);
 
     if (!param) {
@@ -86,18 +112,25 @@ export class QcParameterService {
   }
 
   async findAll(query: QueryQcParameterDto, tenantId: string) {
-    const conditions: any[] = [eq(schema.qcParameterMaster.tenant_id, tenantId)];
+    const conditions: any[] = [
+      eq(schema.qcParameterMaster.tenant_id, tenantId),
+    ];
 
-    if (query.companyId) {
-      conditions.push(or(eq(schema.qcParameterMaster.company_id, query.companyId), isNull(schema.qcParameterMaster.company_id))!);
-    }
-    if (query.lobId) conditions.push(eq(schema.qcParameterMaster.lob_id, query.lobId));
+    conditions.push(
+      ...masterScopeConditions(
+        this.cls,
+        schema.qcParameterMaster,
+        query.companyId,
+      ),
+    );
+    if (query.lobId)
+      conditions.push(eq(schema.qcParameterMaster.lob_id, query.lobId));
     if (query.search) {
       conditions.push(
         or(
           like(schema.qcParameterMaster.param_code, `%${query.search}%`),
-          like(schema.qcParameterMaster.param_name, `%${query.search}%`)
-        )!
+          like(schema.qcParameterMaster.param_name, `%${query.search}%`),
+        )!,
       );
     }
 
@@ -112,7 +145,12 @@ export class QcParameterService {
       .offset(offset);
   }
 
-  async update(id: string, dto: UpdateQcParameterDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateQcParameterDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const param = await this.findOne(id);
 
     await this.db
@@ -120,8 +158,14 @@ export class QcParameterService {
       .set({
         param_name: dto.param_name ?? param.param_name,
         uom: dto.uom ?? param.uom,
-        min_value: dto.min_value !== undefined ? dto.min_value.toString() : param.min_value,
-        max_value: dto.max_value !== undefined ? dto.max_value.toString() : param.max_value,
+        min_value:
+          dto.min_value !== undefined
+            ? dto.min_value.toString()
+            : param.min_value,
+        max_value:
+          dto.max_value !== undefined
+            ? dto.max_value.toString()
+            : param.max_value,
         pass_criteria: dto.pass_criteria ?? param.pass_criteria,
         fail_criteria: dto.fail_criteria ?? param.fail_criteria,
         grade_scale: dto.grade_scale ?? param.grade_scale,
@@ -162,6 +206,9 @@ export class QcParameterService {
       oldValues: param,
     });
 
-    return { success: true, message: `QC parameter '${param.param_code}' has been deactivated.` };
+    return {
+      success: true,
+      message: `QC parameter '${param.param_code}' has been deactivated.`,
+    };
   }
 }

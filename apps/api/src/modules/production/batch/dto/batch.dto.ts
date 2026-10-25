@@ -62,12 +62,18 @@ export class BatchInputLineInput {
   @IsOptional()
   rate?: number;
 
-  @ApiProperty({ description: 'Lot number — required when item is lot-tracked', required: false })
+  @ApiProperty({
+    description: 'Lot number — required when item is lot-tracked',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   lot_no?: string;
 
-  @ApiProperty({ description: 'Serial number — required when item is serial-tracked', required: false })
+  @ApiProperty({
+    description: 'Serial number — required when item is serial-tracked',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   serial_no?: string;
@@ -543,7 +549,8 @@ export class AddBatchTransactionDto {
   rate?: number;
 
   @ApiProperty({
-    description: 'Lot No. — required when item_id is a lot-tracked item (CONSUMPTION/OUTPUT)',
+    description:
+      'Lot No. — required when item_id is a lot-tracked item (CONSUMPTION/OUTPUT)',
     required: false,
   })
   @IsString()
@@ -551,7 +558,8 @@ export class AddBatchTransactionDto {
   lot_no?: string;
 
   @ApiProperty({
-    description: 'Serial No. — required when item_id is a serial-tracked item (CONSUMPTION/OUTPUT)',
+    description:
+      'Serial No. — required when item_id is a serial-tracked item (CONSUMPTION/OUTPUT)',
     required: false,
   })
   @IsString()
@@ -669,7 +677,8 @@ export class RecordMortalityDto {
   animal_ids?: string[];
 
   @ApiProperty({
-    description: 'Head count — batch-wise batches only; ignored when animal_ids is given',
+    description:
+      'Head count — batch-wise batches only; ignored when animal_ids is given',
     required: false,
   })
   @IsNumber()
@@ -748,14 +757,14 @@ export class CloseBatchDto {
 
   @ApiProperty({
     description:
-      'Output lines — cost_split_pct must sum to 100 across all lines',
+      'Output lines — cost_split_pct must sum to 100 across all lines. Not taken for a bio-asset batch, which closes only once it holds no head.',
     type: [BatchOutputLineInput],
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => BatchOutputLineInput)
-  output_lines: BatchOutputLineInput[];
+  output_lines?: BatchOutputLineInput[];
 }
 
 export class QueryBatchDto {
@@ -777,6 +786,21 @@ export class QueryBatchDto {
   @IsOptional()
   @IsString()
   lobId?: string;
+
+  @ApiProperty({ description: 'Filter by breed UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  breedId?: string;
+
+  @ApiProperty({
+    description: 'Filter by tracking mode',
+    required: false,
+    enum: ['BATCH_WISE', 'ANIMAL_WISE'],
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(TRACKING_MODES)
+  trackingMode?: string;
 
   @ApiProperty({
     description:
@@ -917,6 +941,14 @@ export class DisposeBioAssetDto {
   @IsNumber()
   @IsOptional()
   sale_proceeds?: number;
+
+  @ApiProperty({
+    description: 'Customer UUID — who bought the animals on a SOLD exit',
+    required: false,
+  })
+  @IsUUID()
+  @IsOptional()
+  customer_id?: string;
 }
 
 export class BulkDailyEntryRowDto {
@@ -1107,12 +1139,12 @@ export class CreateBatchTransferDto {
   @IsOptional()
   @IsBoolean()
   skip_movement_log?: boolean;
-
 }
 
 export class ReverseBatchTransferDto {
   @ApiProperty({
-    description: 'Date the animals moved back. Omit for today; not before the transfer being reversed, not in the future.',
+    description:
+      'Date the animals moved back. Omit for today; not before the transfer being reversed, not in the future.',
     required: false,
     example: '2026-10-10',
   })
@@ -1199,7 +1231,11 @@ export class QueryBatchTransferDto {
 
 /** D21: set, change or clear a batch's shed at any status before it closes. */
 export class UpdateBatchShedDto {
-  @ApiProperty({ description: 'Shed (a SHED location of the batch farm), or null to clear', nullable: true, required: true })
+  @ApiProperty({
+    description: 'Shed (a SHED location of the batch farm), or null to clear',
+    nullable: true,
+    required: true,
+  })
   @IsOptional()
   @IsUUID()
   shed_id: string | null;
