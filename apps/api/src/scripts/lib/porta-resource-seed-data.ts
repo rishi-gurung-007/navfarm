@@ -1,0 +1,44 @@
+/**
+ * PORTA's resources, from `Porta - Resource Master Template_REVIEWED BY MANAGEMENT-DRAFT-FOR-SUBMISSION.xlsx`.
+ *
+ * DO NOT EDIT BY HAND. Regenerated from the template (24 Oct 2026). Every row is farm equipment; as on
+ * MULTIPLIER's template, Cost Per Unit and Cost UOM are empty on every row, so none carries a rate.
+ * The six heat lamps share the code PIRL in the sheet; they are numbered PIRL-01 to PIRL-06 here.
+ */
+export const PORTA_RESOURCES: Array<{ sourceRow: number; resource_code: string; resource_name: string; resource_type: 'EQUIPMENT' | 'MANPOWER'; capacity?: number; capacity_uom?: string; department?: string; next_service_date?: string }> = [
+  {sourceRow: 6,resource_code: "PWP-01",resource_name: "Water pump",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 7,resource_code: "PWP-02",resource_name: "Water pump",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 8,resource_code: "PWP-03",resource_name: "Water pump",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 9,resource_code: "PWP-04",resource_name: "Water pump",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 10,resource_code: "PWP-05",resource_name: "Water pump",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 13,resource_code: "PBH - 01",resource_name: "Borehole Pumps",resource_type: "EQUIPMENT",capacity: 5,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-11-30"},
+  {sourceRow: 14,resource_code: "PBH - 02",resource_name: "Borehole Pumps",resource_type: "EQUIPMENT",capacity: 2,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-10-30"},
+  {sourceRow: 15,resource_code: "PBH - 03",resource_name: "Borehole Pumps",resource_type: "EQUIPMENT",capacity: 1,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-10-30"},
+  {sourceRow: 16,resource_code: "PBH - 04",resource_name: "Borehole Pumps",resource_type: "EQUIPMENT",capacity: 1,capacity_uom: "HP",department: "Farm Operations",next_service_date: "2026-10-30"},
+  {sourceRow: 18,resource_code: "PGEN - 01",resource_name: "Generator",resource_type: "EQUIPMENT",capacity: 165,capacity_uom: "KVA",department: "Farm Operations"},
+  {sourceRow: 20,resource_code: "PWH - 01",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 21,resource_code: "PWH - 02",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 22,resource_code: "PWH - 03",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 23,resource_code: "PWH - 04",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 24,resource_code: "PWH - 05",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 25,resource_code: "PWH - 06",resource_name: "Heaters",resource_type: "EQUIPMENT",capacity: 80,capacity_uom: "KW",department: "Farm Operations",next_service_date: "2027-01-03"},
+  {sourceRow: 27,resource_code: "PIRL-01",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 28,resource_code: "PIRL-02",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 29,resource_code: "PIRL-03",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 30,resource_code: "PIRL-04",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 31,resource_code: "PIRL-05",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 32,resource_code: "PIRL-06",resource_name: "INFRA-RED HEAT LAMPS",resource_type: "EQUIPMENT",department: "Farm Operations"},
+  {sourceRow: 35,resource_code: "PCP1",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 36,resource_code: "PCP2",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-09-30"},
+  {sourceRow: 37,resource_code: "PCP3",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-31"},
+  {sourceRow: 38,resource_code: "PCP4",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-31"},
+  {sourceRow: 39,resource_code: "PCP5",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-11-30"},
+  {sourceRow: 40,resource_code: "PCP6",resource_name: "Cooling Pad",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-11-30"},
+  {sourceRow: 44,resource_code: "PS1",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 45,resource_code: "PS2",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 46,resource_code: "PS3",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 47,resource_code: "PS4",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 48,resource_code: "PS5",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 49,resource_code: "PS6",resource_name: "Scales",resource_type: "EQUIPMENT",department: "Farm Operations",next_service_date: "2026-10-15"},
+  {sourceRow: 51,resource_code: "PUVS",resource_name: "UV System",resource_type: "EQUIPMENT",department: "Farm Operations"},
+];

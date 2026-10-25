@@ -3941,6 +3941,9 @@ export class BatchService {
   }): Promise<string> {
     const today = new Date().toISOString().slice(0, 10);
     const startDate = batch.start_date || today;
+    // Walk every day from the start to today: a fixed cap of 365 made a batch more than a year old report
+    // its 366th day as pending for ever, so no later day could be posted.
+    const maxDays = Math.max(365, Math.ceil((Date.parse(today) - Date.parse(String(startDate).slice(0, 10))) / 86400000) + 2);
 
     try {
       if (typeof this.db?.select !== 'function') return startDate;
@@ -4002,7 +4005,7 @@ export class BatchService {
 
         let cursor = startDate;
         let count = 0;
-        while (count < 365) {
+        while (count < maxDays) {
           const owedStages = new Set<string>();
           for (const m of membership.on(cursor)) {
             if (!m.stage_id) continue;
@@ -4032,7 +4035,7 @@ export class BatchService {
         const lockedDates = new Set(locks.map((l: any) => l.entry_date));
         let cursor = startDate;
         let count = 0;
-        while (count < 365) {
+        while (count < maxDays) {
           if (!lockedDates.has(cursor)) {
             return cursor;
           }

@@ -1,0 +1,164 @@
+/**
+ * MULTIPLIER's item catalogue.
+ *
+ * DO NOT EDIT BY HAND. The first 98 rows are regenerated from
+ * `MASTER TEMPLATES - TRIPLE C SUBMISSIONS/ITEM MASTER/Item Master Template.xlsx`;
+ * the last five are ours, and are marked by having no sourceRow.
+ *
+ * The template types every feed item as CONSUMABLE with Category FEED. In this
+ * app FEED is itself an item type and `itemKindOf()` reads the TYPE's code and
+ * name only — category never enters it — so a CONSUMABLE item is invisible to
+ * the feed forecast, requisitions, formulas and silo diets. On Rishi's ruling
+ * of 2026-10-24 the type is loaded as FEED and the category stays FEED too,
+ * which is also what item_category_master expects: a category declares which
+ * item type it belongs to. DRUGS becomes MEDICINE the same way.
+ *
+ * The five living-asset items exist because `animal_register.item_id` is NOT
+ * NULL and no submitted template contains a living asset — the Item Master is
+ * feed and medicine only. They follow the catalogue convention already in this
+ * repo: UOM HEAD, valuation BIO_ASSET, carried in the Assets Ledger, not stock.
+ */
+
+export interface MultiplierItemRow {
+  /** Row in the submitted template; absent on the five we create. */
+  sourceRow?: number;
+  code: string;
+  name: string;
+  type: 'FEED' | 'MEDICINE' | 'LIVING_ASSET';
+  category: string;
+  uom: string;
+  uomSecondary?: string;
+  valuation: string;
+  standardCost?: number;
+  lotTracked?: boolean;
+  serialTracked?: boolean;
+  shelfLifeDays?: number;
+  minStock?: number;
+  reorderLevel?: number;
+  /**
+   * BULK or BAGGED. A BIN diet assignment refuses a feed item without one, and
+   * Triple C's own naming says which is which — every bagged line has "Bagged"
+   * in its name.
+   */
+  feedForm?: string;
+  /** Medicines and vaccines: days before the animal may enter the food chain. */
+  withdrawalDays?: number;
+  /** Living assets only: carried as a biological asset. */
+  bio?: boolean;
+}
+
+/** The categories the items above hang off, with the item type each belongs to. */
+export const MULTIPLIER_ITEM_CATEGORIES = [
+  { name: 'Feed', itemType: 'FEED' },
+  { name: 'Medicine', itemType: 'MEDICINE' },
+  { name: 'Breeding Stock', itemType: 'LIVING_ASSET' },
+  { name: 'Grower Finisher', itemType: 'LIVING_ASSET' },
+] as const;
+
+export const MULTIPLIER_ITEMS: MultiplierItemRow[] = [
+
+
+  { sourceRow: 5, code: "FEED000001", name: "Grower1", type: "FEED", category: "Feed", uom: "KG", uomSecondary: "T", valuation: "STANDARD", standardCost: 0.3831, lotTracked: true, serialTracked: false, feedForm: "BULK" },
+  { sourceRow: 6, code: "FEED000002", name: "Grower 2", type: "FEED", category: "Feed", uom: "KG", uomSecondary: "kg", valuation: "STANDARD", standardCost: 0.4421, lotTracked: true, serialTracked: false, feedForm: "BULK" },
+  { sourceRow: 7, code: "FEED000003", name: "Creep- 3 Lacto", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.664, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 8, code: "FEED000004", name: "Creep1-Lacto", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.7545, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 9, code: "FEED000005", name: "Creep2-Lacto", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.6751, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 10, code: "FEED000006", name: "Creep 1 Nosilac", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.7931, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 11, code: "FEED000007", name: "Creep 2 Nosilac", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.8002, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 12, code: "FEED000008", name: "Creep 3 Nosilac", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.6415, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 13, code: "FEED000009", name: "Dry Gilt", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3809, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 14, code: "FEED000010", name: "Drysow", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3524, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 15, code: "FEED000011", name: "Gilt 1 OTC", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4428, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 16, code: "FEED000012", name: "Gilt 2", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.416, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 17, code: "FEED000013", name: "Gilt 3", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3906, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 18, code: "FEED000014", name: "Gilt 4", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3751, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 19, code: "FEED000015", name: "Gilt 5", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3727, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 20, code: "FEED000016", name: "Grower 1", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4134, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 21, code: "FEED000017", name: "Grower 2", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4057, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 22, code: "FEED000018", name: "Grower 3", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3794, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 23, code: "FEED000019", name: "Grower Finisher", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4044, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 24, code: "FEED000020", name: "Lactating Gilt", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.499, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 25, code: "FEED000021", name: "Lactating Sow", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4816, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 26, code: "FEED000022", name: "Super Flush", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4589, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 27, code: "FEED000023", name: "Transition", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3789, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 28, code: "FEED000024", name: "Weaner O.T.C", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5227, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 29, code: "FEED000025", name: "Weaner Caramel", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5199, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 30, code: "FEED000026", name: "FINISHER PROMOTE", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4129, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 31, code: "FEED000027", name: "CREEP 2 NOSILAC -BACTOFOS", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.9164, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 32, code: "FEED000029", name: "FINISHER/AI BOAR", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3716, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 33, code: "FEED000030", name: "DRY GILT/ALTERNATIVE", type: "FEED", category: "Feed", uom: "KG", valuation: "AVG", standardCost: 0.0, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 34, code: "FEED000031", name: "FINISHER/GILT 2", type: "FEED", category: "Feed", uom: "KG", valuation: "AVG", standardCost: 0.0, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 35, code: "FEED000032", name: "90 Plus V2 No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3935, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 36, code: "FEED000033", name: "90 Plus V2 Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4006, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 37, code: "FEED000034", name: "Creep 2 Nosilac No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.7326, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 38, code: "FEED000035", name: "Creep 3 Nosilac No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4921, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 39, code: "FEED000036", name: "Dry Gilt Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4135, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 40, code: "FEED000037", name: "Dry Sow Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3892, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 41, code: "FEED000038", name: "Gilt 1 No S Dy", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.45, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 42, code: "FEED000039", name: "Gilt 2 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4013, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 43, code: "FEED000040", name: "Gilt 3 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3943, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 44, code: "FEED000041", name: "Gilt 4 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.358, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 45, code: "FEED000042", name: "Gilt 5 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3816, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 46, code: "FEED000043", name: "Grower 1 No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4174, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 47, code: "FEED000044", name: "Grower 2 No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.41, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 48, code: "FEED000045", name: "Grower 3 No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3947, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 49, code: "FEED000046", name: "Grower Finisher No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4282, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 50, code: "FEED000047", name: "Grower Finisher Promote No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4198, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 51, code: "FEED000048", name: "Weaner OTC No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5277, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 52, code: "FEED000049", name: "Weaner Caramel No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5246, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 53, code: "FEED000050", name: "Creep 1 Nosilac No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.7438, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 54, code: "FEED000051", name: "Transition No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3836, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 55, code: "FEED000052", name: "Transition Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3907, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 56, code: "FEED000053", name: "Lactate Sow No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4869, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 57, code: "FEED000054", name: "Lactate Sow Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5031, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 58, code: "FEED000055", name: "Lactate Gilt No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4922, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 59, code: "FEED000056", name: "Lactate Gilt Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5187, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 60, code: "FEED000057", name: "Dry Gilt No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3737, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 61, code: "FEED000058", name: "Dry Sow No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3575, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 62, code: "FEED000059", name: "Supa Flush No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4647, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 63, code: "FEED000060", name: "Supa Flush Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4749, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 64, code: "FEED000061", name: "Lactate Zline Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4516, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 65, code: "FEED000062", name: "AI Boar Medicated", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4562, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 66, code: "FEED000063", name: "Creep 2 Bactofos No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.8447, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 67, code: "FEED000064", name: "Lactation -Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5397, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 68, code: "FEED000065", name: "Lactate Gilt -Trial No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5576, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 69, code: "FEED000066", name: "Lactate Gilt - Trial Medicated No S Dry", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5659, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 70, code: "FEED000067", name: "GROWER 2 CTC", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4055, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 71, code: "FEED000068", name: "WEANER CTC", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.5201, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 72, code: "FEED000069", name: "Grower 2 OTC Sorghum", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3995, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 73, code: "FEED000070", name: "Grower 2 CTC Sorghum", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3995, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 74, code: "FEED000071", name: "Lactate Z Line", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4716, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 75, code: "FEED000072", name: "Grower 3 Sorghum", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3772, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 76, code: "FEED000073", name: "Gilt 4.1", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.3393, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 77, code: "FEED000074", name: "Grower 1 OTC", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4035, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 78, code: "FEED000075", name: "Grower Finisher Sorghum", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4035, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 79, code: "FEED000076", name: "Grower Finisher Promote Sorghum", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4035, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 80, code: "FEED000077", name: "Gilt 1", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4251, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 81, code: "FEED000078", name: "Gilt 1 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.4441, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 82, code: "FEED000079", name: "Gilt 2 Trial", type: "FEED", category: "Feed", uom: "KG", valuation: "AVG", standardCost: 0.41, lotTracked: true, serialTracked: true, feedForm: "BULK" },
+  { sourceRow: 83, code: "FEED000080", name: "90Plus Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 84, code: "FEED000081", name: "AI Boar Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 85, code: "FEED000082", name: "Creep 1 Nosilac Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 86, code: "FEED000083", name: "Creep 2 Nosilac Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 87, code: "FEED000084", name: "Creep 3 Nosilac Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 88, code: "FEED000085", name: "Dry Gilt Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 89, code: "FEED000086", name: "Dry Sow Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 90, code: "FEED000087", name: "Gilt 1 OTC Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 91, code: "FEED000088", name: "Gilt 2 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 92, code: "FEED000089", name: "Gilt 3 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 93, code: "FEED000090", name: "Gilt 4 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 94, code: "FEED000091", name: "Gilt 5 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 95, code: "FEED000092", name: "Grower 1 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 96, code: "FEED000093", name: "Grower 2 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 97, code: "FEED000094", name: "Grower 3 Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 98, code: "FEED000095", name: "Grower Finisher Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 99, code: "FEED000096", name: "Lactating Gilt Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 100, code: "FEED000097", name: "Lactating Sow Bagged", type: "FEED", category: "Feed", uom: "KG", valuation: "STANDARD", standardCost: 0.0, lotTracked: false, serialTracked: false, feedForm: "BAGGED" },
+  { sourceRow: 101, code: "DRG000018", name: "FARROWSURE 250ML", type: "MEDICINE", category: "Medicine", uom: "ML", uomSecondary: "L", valuation: "AVG", standardCost: 128.2, lotTracked: true, serialTracked: false, withdrawalDays: 28.0 },
+  { sourceRow: 102, code: "DRG000025", name: "LITTERGUARD 100ML", type: "MEDICINE", category: "Medicine", uom: "ML", uomSecondary: "L", valuation: "AVG", standardCost: 85.32, lotTracked: true, serialTracked: false, withdrawalDays: 28.0 },
+  { code: "BIO-SWINE-SOW", name: "Mature Parity Breeding Sow", type: "LIVING_ASSET", category: "Breeding Stock", uom: "HEAD", valuation: "BIO_ASSET", bio: true },
+  { code: "BIO-SWINE-GILT", name: "Replacement Breeding Gilt", type: "LIVING_ASSET", category: "Breeding Stock", uom: "HEAD", valuation: "BIO_ASSET", bio: true },
+  { code: "BIO-SWINE-BOAR", name: "Mature Herd Sire Boar", type: "LIVING_ASSET", category: "Breeding Stock", uom: "HEAD", valuation: "BIO_ASSET", bio: true },
+  { code: "BIO-SWINE-PIGLET", name: "Suckling Live Piglet (0-4 Wks)", type: "LIVING_ASSET", category: "Grower Finisher", uom: "HEAD", valuation: "BIO_ASSET", bio: true },
+  { code: "BIO-SWINE-GROWER", name: "Grower / Finisher Pig", type: "LIVING_ASSET", category: "Grower Finisher", uom: "HEAD", valuation: "BIO_ASSET", bio: true },
+];
