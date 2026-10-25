@@ -49,6 +49,7 @@ import {
   OPEN_TRANSFER_STATUSES,
   transferStatusFor,
   assertTrackingForShipment,
+  pickOldestLot,
   serialsForReceipt,
   splitAmount,
   assertFeedReceiptLine,
@@ -99,6 +100,7 @@ export interface FeedReceiptControls {
 }
 import { syncRequisitionFulfilment } from '../../procurement/requisition/requisition-fulfilment';
 import { assertNoBiologicalAssets } from '../../../common/biological-assets';
+import { lotBalances } from '../inventory-ledger/lot-balance';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -1785,6 +1787,32 @@ export class StockTransferService {
       // WP4a fix round 1: the ONE tracking rule (also the requisition's Item
       // Tracking route's) — a serial-tracked line ships its whole balance with
       // exactly one serial per unit.
+      // A requisition's shipment (feed or store) cannot name a lot — its dialog has none — so a lot-tracked
+      // line without one takes the From location's oldest lot. A transfer raised on the Stock Transfer page
+      // still assigns its own.
+      for (const e of eventLines) {
+        const flags = itemFlags.get(e.line.item_id ?? '');
+        if (
+          !flags?.isLotTracked ||
+          flags.isSerialTracked ||
+          e.lotNo ||
+          !e.line.requisition_line_id
+        )
+          continue;
+        const rows = await lotBalances(this.db, {
+          tenantId,
+          companyId: transfer.company_id,
+          itemId: e.line.item_id!,
+          warehouseId: transfer.from_warehouse_id ?? undefined,
+        });
+        const lot = pickOldestLot(rows, e.qty);
+        if (!lot) continue;
+        e.lotNo = lot;
+        await this.db
+          .update(schema.stockTransferLine)
+          .set({ lot_no: lot })
+          .where(eq(schema.stockTransferLine.line_id, e.line.line_id));
+      }
       for (const { line, qty, balance, lotNo, serialNo } of eventLines) {
         const flags = itemFlags.get(line.item_id ?? '');
         if (flags?.isLotTracked || flags?.isSerialTracked) {
