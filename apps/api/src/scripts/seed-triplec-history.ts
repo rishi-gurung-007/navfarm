@@ -46,6 +46,7 @@ import { SchedulerHeaderService } from '../modules/production/scheduler-header/s
 import { GoodsReceiptService } from '../modules/inventory/goods-receipt/goods-receipt.service';
 import { lotBalances } from '../modules/inventory/inventory-ledger/lot-balance';
 import { BatchTransferService } from '../modules/production/batch/batch-transfer.service';
+import { StockTransferService } from '../modules/inventory/stock-transfer/stock-transfer.service';
 import { PORTA_ANIMALS } from './lib/porta-animal-seed-data';
 
 // No default: this writes a year and more of history, so the tenant is always named (24 Oct: a bare
@@ -81,6 +82,18 @@ const COHORT_WINDOW = 28;
  * Report reads, and the one a year later is matched to. Each is housed in its farm's service line.
  */
 const SERVICE_SHED: Record<string, string> = { MUL100: 'MU1', POR100: 'PSL' };
+/**
+ * Where a MULTIPLIER service batch's sows are for each stage — the houses the old stage batches used.
+ * A stage's scheduler is placed there, so data entry and the Feed Forecast find the house's silo;
+ * left at the service shed, the farrowing and gestation silos had no batch to feed.
+ */
+const STAGE_HOUSE: Record<string, string> = {
+  REARING: 'MUGR1',
+  FLUSH: 'MUGR2',
+  GESTATION: 'MUDSW 1-1',
+  FARROWING: 'MUFHE1',
+  LACTATION: 'MUFHE2',
+};
 const SOW_STAGES = [
   'REARING',
   'FLUSH',
@@ -275,6 +288,7 @@ async function simulate(
   const schedulers = app.get(SchedulerHeaderService);
   const receipts = app.get(GoodsReceiptService);
   const transfers = app.get(BatchTransferService);
+  const stockTransfers = app.get(StockTransferService);
   const t = db();
 
   const [admin] = await t
@@ -322,10 +336,16 @@ async function simulate(
     throw new Error(
       'The piglet living-asset item BIO-SWINE-PIGLET is missing.',
     );
+  // MULTIPLIER's store: with Porta's store (PST1) in the tenant, "the first store" could be Porta's.
   const [store] = await t
     .select()
     .from(schema.locationMaster)
-    .where(eq(schema.locationMaster.location_type, 'STORE'))
+    .where(
+      and(
+        eq(schema.locationMaster.location_type, 'STORE'),
+        eq(schema.locationMaster.location_code, 'MST1'),
+      ),
+    )
     .limit(1);
   if (!store) throw new Error('The farm store is missing.');
   const reasons = (await t.select().from(schema.reasonMaster)).filter(
@@ -340,6 +360,11 @@ async function simulate(
   };
 
   // ---------------------------------------------------------------- the plan
+  // Porta is held where it is on a top-up: its five animals were played from the wrong dates
+  // (seed-triplec-history.ts before 25 Oct), and more days would only add to that.
+  const portaFarmId = locationByCode.get('POR100');
+  const frozen = (b: { farm_id: string | null }) =>
+    !!portaFarmId && b.farm_id === portaFarmId;
   let FROM = START;
   if (RESUME) {
     const open = (
@@ -347,7 +372,7 @@ async function simulate(
         .select()
         .from(schema.batchHeader)
         .where(eq(schema.batchHeader.status, 'ACTIVE'))
-    ).filter((b) => !b.deleted_at && iso(b.start_date) <= END);
+    ).filter((b) => !b.deleted_at && iso(b.start_date) <= END && !frozen(b));
     let first = '9999-12-31';
     for (const b of open) {
       const pending = await batches.getNextPendingDate(b as any);
@@ -475,9 +500,13 @@ async function simulate(
     const matings = await t.select().from(schema.breedingRecord);
     const farrows = await t.select().from(schema.farrowingRecord);
     const later = (date: string) => (date < FROM ? addDays(FROM, 1) : date);
+    const frozenBatches = new Set(
+      herdBatches.filter(frozen).map((b) => b.batch_id),
+    );
     for (const a of herd.filter(
       (x) =>
         x.current_batch_id &&
+        !frozenBatches.has(x.current_batch_id) &&
         ['SOW', 'GILT'].includes(x.animal_type) &&
         x.status !== 'DISPOSED',
     )) {
@@ -726,7 +755,10 @@ async function simulate(
     // The cohorts still on the farm, each dated from the weaning that opened it.
     const farrows = await t.select().from(schema.farrowingRecord);
     for (const b of herdBatches.filter(
-      (x) => x.tracking_mode === 'BATCH_WISE' && x.status === 'ACTIVE',
+      (x) =>
+        x.tracking_mode === 'BATCH_WISE' &&
+        x.status === 'ACTIVE' &&
+        !(RESUME && frozen(x)),
     )) {
       const stage = stageCode.get(b.stage_id ?? '') ?? '';
       if (!['WEANER', 'DOUBLE_STOCK', 'GROWER'].includes(stage)) continue;
@@ -787,6 +819,20 @@ async function simulate(
       if (!sid) continue;
       try {
         await schedulers.createForStage(id, sid, tenantId, actor);
+        const house =
+          farm === 'MUL100'
+            ? locationByCode.get(STAGE_HOUSE[code] ?? '')
+            : undefined;
+        if (house)
+          await t
+            .update(schema.schedulerHeader)
+            .set({ location_id: house } as any)
+            .where(
+              and(
+                eq(schema.schedulerHeader.batch_id, id),
+                eq(schema.schedulerHeader.stage_id, sid),
+              ),
+            );
       } catch (error) {
         fail(`scheduler service batch ${code}`, error);
       }
@@ -1149,15 +1195,34 @@ async function simulate(
   ) {
     const run = receiving.then(async () => {
       const item = itemById.get(itemId);
+      // Feed reaches a silo only by transfer order: it is received into the store and moved on.
+      const silo = warehouseId !== store!.location_id;
+      let room = Infinity;
+      if (silo) {
+        // A transfer may not overfill the silo: it is topped up to its capacity, no further.
+        const cap = Number(
+          locationRows.find((l) => l.location_id === warehouseId)
+            ?.silo_capacity_kg ?? 0,
+        );
+        const [held] = await t
+          .select({
+            kg: sql<number>`COALESCE(SUM(${schema.inventoryLedger.quantity}), 0)`,
+          })
+          .from(schema.inventoryLedger)
+          .where(eq(schema.inventoryLedger.warehouse_id, warehouseId));
+        room = cap > 0 ? Math.floor(cap - Number(held?.kg ?? 0)) : Infinity;
+        if (room < Math.ceil(needed))
+          throw new Error(`silo full: ${room} kg free, ${needed} kg needed`);
+      }
       // A silo is filled a few days ahead, the store a month.
       const qty =
         warehouseId === store!.location_id
           ? Math.max(20000, Math.ceil(needed * 40))
-          : Math.max(2000, Math.ceil(needed * 10));
+          : Math.min(room, Math.max(2000, Math.ceil(needed * 10)));
       const made: any = await receipts.create(
         {
           company_id: companyId,
-          warehouse_id: warehouseId,
+          warehouse_id: store!.location_id,
           posting_date: day,
           remarks: 'Triple C showcase — feed bought in',
           lines: [
@@ -1179,6 +1244,38 @@ async function simulate(
         actor,
       );
       stats.receipts += 1;
+      if (silo) {
+        const moved: any = await stockTransfers.create(
+          {
+            company_id: companyId,
+            from_warehouse_id: store!.location_id,
+            to_warehouse_id: warehouseId,
+            posting_date: day,
+            remarks: 'Triple C showcase — silo filled',
+            lines: [
+              {
+                item_id: itemId,
+                quantity: qty,
+                uom: item?.uom_primary || 'KG',
+                lot_no: `LOT-${day}-${item?.item_code}`,
+              },
+            ],
+          } as any,
+          tenantId,
+          actor,
+        );
+        const transfer = moved?.data ?? moved;
+        const lineId = (transfer?.lines ?? [])[0]?.line_id;
+        await stockTransfers.postDirectTransfer(
+          transfer.transfer_id ?? transfer.stock_transfer_id ?? transfer.id,
+          {
+            posting_date: day,
+            lines: [{ line_id: lineId, quantity: qty }],
+          } as any,
+          tenantId,
+          actor,
+        );
+      }
     });
     receiving = run.catch(() => undefined);
     await run;
@@ -1284,6 +1381,19 @@ async function simulate(
         for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
             const qty = Number(body.entered_value) || 1;
+            // The refusal names the warehouse the app draws from ("... at MWH4: 0 available"):
+            // buy in there, since the house's silo may differ from the one resolved for the batch.
+            const named = (
+              attempt === 0 ? msg : String((error as any)?.message ?? msg)
+            )
+              .match(/ at ([^:]+): /)?.[1]
+              ?.trim();
+            const namedId = named
+              ? (locationByCode.get(named) ??
+                locationByCode.get(named.toUpperCase()))
+              : undefined;
+            if (namedId)
+              warehouseOf.set(`${b.batch_id}:${line.item_id}`, namedId);
             const lots = await lotsFor(b, line, day, qty);
             await buyIn(line.item_id, day, qty * 3, lots.warehouseId);
             const again = await lotsFor(b, line, day, qty);
@@ -1292,7 +1402,21 @@ async function simulate(
             stats.entries += 1;
             return;
           } catch (retry) {
-            if (attempt === 2) fail(where, retry);
+            if (attempt === 2) {
+              // No room for the right feed in the house's silo: the day is entered without that feed,
+              // so the batch keeps posting instead of blocking every later day.
+              try {
+                await entries.postEntry(
+                  b.batch_id,
+                  { ...dto, entered_value: 0, lot_no: undefined } as any,
+                  tenantId,
+                  actor,
+                );
+                stats.entries += 1;
+              } catch {
+                fail(where, retry);
+              }
+            }
           }
         }
         return;
@@ -1517,6 +1641,7 @@ async function simulate(
     }
   }
 
+  const stuck = new Map<string, { on: string; days: number }>();
   // ---------------------------------------------------------------- the days
   const t0 = Date.now();
   let cursor = 0;
@@ -1535,28 +1660,45 @@ async function simulate(
         .select()
         .from(schema.batchHeader)
         .where(eq(schema.batchHeader.status, 'ACTIVE'))
-    ).filter((b) => !b.deleted_at && iso(b.start_date) <= day);
+    ).filter(
+      (b) =>
+        !b.deleted_at && iso(b.start_date) <= day && !(RESUME && frozen(b)),
+    );
     // Each batch runs in a context of its own: a service that opens a transaction keeps it in the
     // context, and two batches sharing one would write inside each other's transaction.
-    await pool(live, CONCURRENCY, (b) =>
-      isolated(async () => {
-        const runDay = (d: string) =>
-          b.tracking_mode === 'ANIMAL_WISE'
-            ? animalWiseDay(b, d)
-            : batchWiseDay(b, d);
-        // A day left unposted (a refusal) would block every later one, so it is finished first.
-        for (let guard = 0; guard < 5; guard += 1) {
-          let pending: string;
-          try {
-            pending = await batches.getNextPendingDate(b as any);
-          } catch {
-            break;
+    await pool(
+      live.filter((b) => (stuck.get(b.batch_id)?.days ?? 0) < 3),
+      CONCURRENCY,
+      (b) =>
+        isolated(async () => {
+          const runDay = (d: string) =>
+            b.tracking_mode === 'ANIMAL_WISE'
+              ? animalWiseDay(b, d)
+              : batchWiseDay(b, d);
+          // A day left unposted (a refusal) would block every later one, so it is finished first.
+          let pending = '';
+          for (let guard = 0; guard < 5; guard += 1) {
+            try {
+              pending = await batches.getNextPendingDate(b as any);
+            } catch {
+              break;
+            }
+            if (!pending || pending >= day || pending < iso(b.start_date))
+              break;
+            await runDay(pending);
           }
-          if (!pending || pending >= day || pending < iso(b.start_date)) break;
-          await runDay(pending);
-        }
-        await runDay(day);
-      }),
+          // A batch stuck on one day for three days running (its house's silo full of another feed)
+          // is left there, rather than retried every day and slowing the whole farm.
+          const was = stuck.get(b.batch_id);
+          if (pending && pending < day) {
+            stuck.set(b.batch_id, {
+              on: pending,
+              days: was?.on === pending ? was.days + 1 : 1,
+            });
+            if ((stuck.get(b.batch_id)?.days ?? 0) >= 3) return;
+          } else stuck.delete(b.batch_id);
+          await runDay(day);
+        }),
     );
 
     // A batch every sow has left is closed on the day she left, once that day is behind it.

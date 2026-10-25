@@ -133,6 +133,24 @@ async function main() {
     rowCount += await dumpRows(tenantDb, t, '1=1', [], write);
   }
 
+  // The triggers after the rows: inventory_ledger.entry_no is numbered by one (0139), and an
+  // import without it posts every new stock entry as 0, so the second one is refused as a duplicate.
+  // The DEFINER is left out so the importing login owns them.
+  const [triggers] = await tenantDb.query<any[]>(
+    `SELECT trigger_name n FROM information_schema.triggers WHERE trigger_schema = ? ORDER BY trigger_name`,
+    [tenant.db_name],
+  );
+  for (const { n } of triggers) {
+    const [[trigger]] = await tenantDb.query<any[]>(
+      `SHOW CREATE TRIGGER \`${n}\``,
+    );
+    const ddl = String(trigger['SQL Original Statement']).replace(
+      /^CREATE\s+DEFINER=\S+\s+TRIGGER/i,
+      'CREATE TRIGGER',
+    );
+    await write(`-- @@trigger ${n}\n${ddl}${STATEMENT_END}`);
+  }
+
   // The master registry rows a login goes through.
   await write(`-- @@master\n`);
   await dumpRows(
