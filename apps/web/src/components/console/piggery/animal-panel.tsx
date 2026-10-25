@@ -469,7 +469,9 @@ export default function AnimalPanel() {
               <TableHead className="text-left">{t('anpColGender')}</TableHead>
               <TableHead className="text-left">{t('anpColBreed')}</TableHead>
               <TableHead className="text-left">{t('anpColStatus')}</TableHead>
-              <TableHead className="text-left">{t('anpColEntryDate')}</TableHead>
+              <TableHead className="text-left">
+                {t('anpColEntryDate')}
+              </TableHead>
               <TableHead className="text-left">{t('anpRfidTag')}</TableHead>
               <TableHead />
             </TableRow>
