@@ -23,7 +23,11 @@ import {
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
-import { headsAt, loadBatchDeaths } from '../../production/batch-heads';
+import {
+  entryHeads,
+  loadBatchDeaths,
+  loadHeadMoves,
+} from '../../production/batch-heads';
 import {
   activeFarmOfCompany,
   batchScopeConditions,
@@ -1618,6 +1622,7 @@ export class FeedForecastService {
         qtyBasis: schema.schedulerLine.qty_basis,
         batchId: schema.batchHeader.batch_id,
         openingQty: schema.batchHeader.opening_quantity,
+        animalId: schema.batchDailyData.animal_id,
       })
       .from(schema.batchDailyData)
       .innerJoin(
@@ -1645,6 +1650,12 @@ export class FeedForecastService {
       [...new Set(historyRows.map((row) => row.batchId))],
       sourceTo,
     );
+    // Litters joining a cohort and sows joining a service batch arrive by transfer, not in the opening quantity.
+    const moves = await loadHeadMoves(
+      this.db,
+      [...new Set(historyRows.map((row) => row.batchId))],
+      sourceTo,
+    );
 
     const historyByItem = new Map<
       string,
@@ -1667,11 +1678,15 @@ export class FeedForecastService {
         (week) => row.entryDate >= week.from && row.entryDate <= week.to,
       );
       if (weekIndex < 0) continue;
-      const heads = headsAt(
-        row.openingQty,
+      const heads = entryHeads(
+        {
+          batchId: row.batchId,
+          animalId: row.animalId,
+          date: String(row.entryDate).slice(0, 10),
+          opening: row.openingQty,
+        },
         mortalities.get(row.batchId),
-        row.entryDate,
-        true,
+        moves,
       );
       const standard = Math.max(0, Number(row.standardQty) || 0);
       const expected =
