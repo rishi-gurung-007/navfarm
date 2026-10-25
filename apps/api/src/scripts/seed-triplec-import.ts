@@ -5,6 +5,8 @@
  * Replaces the tenant if it exists: its database is dropped and recreated from
  * the file, and its master registry rows (tenant_master, tenant_subscription,
  * user_auth_index) are swapped for the exported ones, so the same logins work.
+ * The tenant's connection (db_host, db_port, db_user, db_password) is not taken
+ * from the file but from a tenant that already connects here, or logins fail.
  * A tenant with the same code but another id (one signed up on this machine) is
  * removed first, the way seed-triplec.ts --recreate removes it.
  *
@@ -91,8 +93,9 @@ async function main() {
 
   const master = await connect(MASTER_DB);
   // Remove whatever tenant holds this code or id now, database and registry rows both.
+  // Its connection is read first: it is the one known to work on this machine.
   const [present] = await master.query<any[]>(
-    'SELECT tenant_id, db_name FROM tenant_master WHERE tenant_code = ? OR tenant_id = ?',
+    'SELECT tenant_id, tenant_code, db_name, db_host, db_port, db_user, db_password FROM tenant_master WHERE tenant_code = ? OR tenant_id = ?',
     [meta.tenant_code, meta.tenant_id],
   );
   for (const t of present) {
@@ -144,6 +147,38 @@ async function main() {
   console.log(
     `  ${tenantStatements} tenant statements and ${masterStatements} registry statements loaded in ${((Date.now() - t0) / 1000).toFixed(0)} s`,
   );
+
+  // The exported row carries the source machine's connection; on a server whose
+  // MySQL root has a password the API could not reach the tenant and every login
+  // would fail. Keep the connection of the row this code had here, else the system tenant's.
+  let kept = present.find((t) => t.tenant_code === meta.tenant_code);
+  let keptFrom = `the earlier ${meta.tenant_code} row`;
+  if (!kept) {
+    const [system] = await master.query<any[]>(
+      `SELECT db_host, db_port, db_user, db_password FROM tenant_master WHERE tenant_code = 'system' LIMIT 1`,
+    );
+    kept = system[0];
+    keptFrom = `the system tenant row`;
+  }
+  if (kept) {
+    await master.query(
+      'UPDATE tenant_master SET db_host = ?, db_port = ?, db_user = ?, db_password = ? WHERE tenant_id = ?',
+      [
+        kept.db_host,
+        kept.db_port,
+        kept.db_user,
+        kept.db_password,
+        meta.tenant_id,
+      ],
+    );
+    console.log(
+      `  connection kept from ${keptFrom} (${kept.db_user}@${kept.db_host}:${kept.db_port})`,
+    );
+  } else {
+    console.log(
+      `  no earlier ${meta.tenant_code} row and no system tenant: the exported connection was left as it is`,
+    );
+  }
 
   // Is the imported schema the one this machine's code expects? Compared with the platform tenant's.
   const latest = async (db: string) => {
