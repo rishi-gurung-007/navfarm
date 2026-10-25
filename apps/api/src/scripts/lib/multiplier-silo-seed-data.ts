@@ -37,34 +37,34 @@ export interface MultiplierSiloRow {
 }
 
 export const MULTIPLIER_SILOS: MultiplierSiloRow[] = [
-  { code: "MDS-DG1", capacityKg: 6480, headFed: 216, derived: true },
-  { code: "MDS-DG2", capacityKg: 6480, headFed: 216, derived: true },
-  { code: "MDS-DS1", capacityKg: 6480, headFed: 216, derived: true },
-  { code: "MDS-DS2", capacityKg: 6480, headFed: 216, derived: true },
-  { code: "MDST1", capacityKg: 4575, headFed: 183, derived: true },
-  { code: "MDST2", capacityKg: 4575, headFed: 183, derived: true },
-  { code: "MDST3", capacityKg: 9150, headFed: 366, derived: true },
-  { code: "MFH Trans - 1", capacityKg: 5040, headFed: 72, derived: true },
-  { code: "MFH Trans - 2", capacityKg: 3360, headFed: 48, derived: true },
-  { code: "MFHLZ - 1 & 2", capacityKg: 5040, headFed: 72, derived: true },
-  { code: "MFHLZ - 3 & 4", capacityKg: 3360, headFed: 48, derived: true },
-  { code: "MGH1", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH10", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH2", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH3", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH4", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH5", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH6", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH7", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH8", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MGH9", capacityKg: 5800, headFed: 229, derived: false },
-  { code: "MSL1", capacityKg: 1225, headFed: 49, derived: true },
-  { code: "MWH1", capacityKg: 2700, headFed: 229, derived: false },
-  { code: "MWH2", capacityKg: 2700, headFed: 229, derived: false },
-  { code: "MWH3", capacityKg: 2700, headFed: 240, derived: false },
-  { code: "MWH4", capacityKg: 2700, headFed: 240, derived: false },
-  { code: "MWH5", capacityKg: 2700, headFed: 229, derived: false },
-  { code: "MWH6", capacityKg: 2700, headFed: 229, derived: false },
+  { code: 'MDS-DG1', capacityKg: 6480, headFed: 216, derived: true },
+  { code: 'MDS-DG2', capacityKg: 6480, headFed: 216, derived: true },
+  { code: 'MDS-DS1', capacityKg: 6480, headFed: 216, derived: true },
+  { code: 'MDS-DS2', capacityKg: 6480, headFed: 216, derived: true },
+  { code: 'MDST1', capacityKg: 4575, headFed: 183, derived: true },
+  { code: 'MDST2', capacityKg: 4575, headFed: 183, derived: true },
+  { code: 'MDST3', capacityKg: 9150, headFed: 366, derived: true },
+  { code: 'MFH Trans - 1', capacityKg: 5040, headFed: 72, derived: true },
+  { code: 'MFH Trans - 2', capacityKg: 3360, headFed: 48, derived: true },
+  { code: 'MFHLZ - 1 & 2', capacityKg: 5040, headFed: 72, derived: true },
+  { code: 'MFHLZ - 3 & 4', capacityKg: 3360, headFed: 48, derived: true },
+  { code: 'MGH1', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH10', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH2', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH3', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH4', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH5', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH6', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH7', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH8', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MGH9', capacityKg: 5800, headFed: 229, derived: false },
+  { code: 'MSL1', capacityKg: 1225, headFed: 49, derived: true },
+  { code: 'MWH1', capacityKg: 2700, headFed: 229, derived: false },
+  { code: 'MWH2', capacityKg: 2700, headFed: 229, derived: false },
+  { code: 'MWH3', capacityKg: 2700, headFed: 240, derived: false },
+  { code: 'MWH4', capacityKg: 2700, headFed: 240, derived: false },
+  { code: 'MWH5', capacityKg: 2700, headFed: 229, derived: false },
+  { code: 'MWH6', capacityKg: 2700, headFed: 229, derived: false },
 ];
 
 /**
@@ -74,7 +74,11 @@ export const MULTIPLIER_SILOS: MultiplierSiloRow[] = [
  * houses, MWH the weaners and MDST the double stock houses. The item codes are
  * Triple C's own, from their Item Master.
  */
-export const SILO_DIET: Array<{ prefix: string; itemCode: string; diet: string }> = [
+export const SILO_DIET: Array<{
+  prefix: string;
+  itemCode: string;
+  diet: string;
+}> = [
   { prefix: 'MDS-DS', itemCode: 'FEED000010', diet: 'Drysow' },
   { prefix: 'MDS-DG', itemCode: 'FEED000009', diet: 'Dry Gilt' },
   { prefix: 'MFHLZ', itemCode: 'FEED000021', diet: 'Lactating Sow' },
@@ -109,16 +113,72 @@ export const MULTIPLIER_MILL = {
 };
 
 export const MULTIPLIER_BINS = [
-  { code: 'MUBIN-GR1', name: 'Grower 1 Bin', itemCode: 'FEED000016', capacityTon: 8, feedType: 'BULK', priority: 1 },
-  { code: 'MUBIN-WOTC', name: 'Weaner OTC Bin', itemCode: 'FEED000024', capacityTon: 8, feedType: 'BULK', priority: 2 },
-  { code: 'MUBIN-DRYSOW', name: 'Dry Sow Bin', itemCode: 'FEED000010', capacityTon: 8, feedType: 'BULK', priority: 3 },
-  { code: 'MUBIN-DRYGILT', name: 'Dry Gilt Bin', itemCode: 'FEED000009', capacityTon: 8, feedType: 'BULK', priority: 4 },
-  { code: 'MUBIN-LACTSOW', name: 'Lactating Sow Bin', itemCode: 'FEED000021', capacityTon: 8, feedType: 'BULK', priority: 5 },
-  { code: 'MUBIN-TRANS', name: 'Transition Bin', itemCode: 'FEED000023', capacityTon: 8, feedType: 'BULK', priority: 6 },
+  {
+    code: 'MUBIN-GR1',
+    name: 'Grower 1 Bin',
+    itemCode: 'FEED000016',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 1,
+  },
+  {
+    code: 'MUBIN-WOTC',
+    name: 'Weaner OTC Bin',
+    itemCode: 'FEED000024',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 2,
+  },
+  {
+    code: 'MUBIN-DRYSOW',
+    name: 'Dry Sow Bin',
+    itemCode: 'FEED000010',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 3,
+  },
+  {
+    code: 'MUBIN-DRYGILT',
+    name: 'Dry Gilt Bin',
+    itemCode: 'FEED000009',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 4,
+  },
+  {
+    code: 'MUBIN-LACTSOW',
+    name: 'Lactating Sow Bin',
+    itemCode: 'FEED000021',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 5,
+  },
+  {
+    code: 'MUBIN-TRANS',
+    name: 'Transition Bin',
+    itemCode: 'FEED000023',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 6,
+  },
   // A bin's form has to match its feed's. Super Flush is a bulk diet, so its
   // bin is bulk; the bagged bin carries the bagged Creep 3 line.
-  { code: 'MUBIN-FLUSH', name: 'Super Flush Bin', itemCode: 'FEED000022', capacityTon: 8, feedType: 'BULK', priority: 7 },
-  { code: 'MUBIN-CREEP3', name: 'Creep 3 Bin', itemCode: 'FEED000084', capacityTon: 8, feedType: 'BAGGED', priority: 8 },
+  {
+    code: 'MUBIN-FLUSH',
+    name: 'Super Flush Bin',
+    itemCode: 'FEED000022',
+    capacityTon: 8,
+    feedType: 'BULK',
+    priority: 7,
+  },
+  {
+    code: 'MUBIN-CREEP3',
+    name: 'Creep 3 Bin',
+    itemCode: 'FEED000084',
+    capacityTon: 8,
+    feedType: 'BAGGED',
+    priority: 8,
+  },
 ];
 
 /** Rishi, 2026-10-24: every silo stands at four fifths full, a fifth left to fill. */

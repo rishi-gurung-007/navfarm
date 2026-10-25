@@ -3943,7 +3943,13 @@ export class BatchService {
     const startDate = batch.start_date || today;
     // Walk every day from the start to today: a fixed cap of 365 made a batch more than a year old report
     // its 366th day as pending for ever, so no later day could be posted.
-    const maxDays = Math.max(365, Math.ceil((Date.parse(today) - Date.parse(String(startDate).slice(0, 10))) / 86400000) + 2);
+    const maxDays = Math.max(
+      365,
+      Math.ceil(
+        (Date.parse(today) - Date.parse(String(startDate).slice(0, 10))) /
+          86400000,
+      ) + 2,
+    );
 
     try {
       if (typeof this.db?.select !== 'function') return startDate;

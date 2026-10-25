@@ -31,30 +31,49 @@ function connect(database?: string) {
     dateStrings: true,
     supportBigNumbers: true,
     bigNumberStrings: true,
-    ssl: process.env.DATABASE_SSL === 'true' ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true } : undefined,
+    ssl:
+      process.env.DATABASE_SSL === 'true'
+        ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+        : undefined,
   });
 }
 
 /** A value as SQL: binaries as hex, JSON columns (read back as objects) as their text. */
 function literal(value: unknown): string {
   if (value === null || value === undefined) return 'NULL';
-  if (Buffer.isBuffer(value)) return value.length ? `X'${value.toString('hex')}'` : "''";
+  if (Buffer.isBuffer(value))
+    return value.length ? `X'${value.toString('hex')}'` : "''";
   if (typeof value === 'object') return mysql.escape(JSON.stringify(value));
   return mysql.escape(value as any);
 }
 
-async function dumpRows(db: mysql.Connection, table: string, where: string, args: unknown[], write: (s: string) => Promise<void> | void) {
+async function dumpRows(
+  db: mysql.Connection,
+  table: string,
+  where: string,
+  args: unknown[],
+  write: (s: string) => Promise<void> | void,
+) {
   // Paged, so a large table (the audit log, the ledgers) never sits in memory whole.
   const PAGE = 5000;
   let total = 0;
   for (let offset = 0; ; offset += PAGE) {
-    const [rows] = await db.query<any[]>(`SELECT * FROM \`${table}\` WHERE ${where} LIMIT ${PAGE} OFFSET ${offset}`, args);
+    const [rows] = await db.query<any[]>(
+      `SELECT * FROM \`${table}\` WHERE ${where} LIMIT ${PAGE} OFFSET ${offset}`,
+      args,
+    );
     if (!rows.length) break;
-    const columns = Object.keys(rows[0]).map((c) => `\`${c}\``).join(', ');
+    const columns = Object.keys(rows[0])
+      .map((c) => `\`${c}\``)
+      .join(', ');
     for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
       const chunk = rows.slice(i, i + ROWS_PER_INSERT);
-      const values = chunk.map((r) => `(${Object.values(r).map(literal).join(', ')})`).join(',\n');
-      await write(`INSERT INTO \`${table}\` (${columns}) VALUES\n${values}${STATEMENT_END}`);
+      const values = chunk
+        .map((r) => `(${Object.values(r).map(literal).join(', ')})`)
+        .join(',\n');
+      await write(
+        `INSERT INTO \`${table}\` (${columns}) VALUES\n${values}${STATEMENT_END}`,
+      );
     }
     total += rows.length;
     if (rows.length < PAGE) break;
@@ -64,51 +83,103 @@ async function dumpRows(db: mysql.Connection, table: string, where: string, args
 
 async function main() {
   const master = await connect(MASTER_DB);
-  const [[tenant]] = await master.query<any[]>('SELECT * FROM tenant_master WHERE tenant_code = ?', [TENANT_CODE]);
-  if (!tenant) throw new Error(`Tenant ${TENANT_CODE} is not registered in ${MASTER_DB}.`);
+  const [[tenant]] = await master.query<any[]>(
+    'SELECT * FROM tenant_master WHERE tenant_code = ?',
+    [TENANT_CODE],
+  );
+  if (!tenant)
+    throw new Error(`Tenant ${TENANT_CODE} is not registered in ${MASTER_DB}.`);
   const tenantDb = await connect(tenant.db_name);
-  const [[lastPosted]] = await tenantDb.query<any[]>('SELECT MAX(entry_date) d FROM batch_data_entry_lock');
+  const [[lastPosted]] = await tenantDb.query<any[]>(
+    'SELECT MAX(entry_date) d FROM batch_data_entry_lock',
+  );
   const stamp = new Date().toISOString().slice(0, 10);
   const outIndex = process.argv.indexOf('--out');
-  const out = outIndex > 0 ? process.argv[outIndex + 1] : `${TENANT_CODE}-showcase-${stamp}.sql.gz`;
+  const out =
+    outIndex > 0
+      ? process.argv[outIndex + 1]
+      : `${TENANT_CODE}-showcase-${stamp}.sql.gz`;
 
   const gzip = zlib.createGzip({ level: 6 });
   const file = fs.createWriteStream(out);
   gzip.pipe(file);
   // Waits for the gzip stream to drain, so memory stays flat however big the tenant is.
-  const write = (s: string) => (gzip.write(s) ? undefined : new Promise<void>((resolve) => gzip.once('drain', () => resolve())));
+  const write = (s: string) =>
+    gzip.write(s)
+      ? undefined
+      : new Promise<void>((resolve) => gzip.once('drain', () => resolve()));
 
-  const meta = { tenant_code: TENANT_CODE, tenant_id: tenant.tenant_id, db_name: tenant.db_name, exported_on: stamp, last_posted_day: lastPosted?.d ?? null };
+  const meta = {
+    tenant_code: TENANT_CODE,
+    tenant_id: tenant.tenant_id,
+    db_name: tenant.db_name,
+    exported_on: stamp,
+    last_posted_day: lastPosted?.d ?? null,
+  };
   await write(`-- @@meta ${JSON.stringify(meta)}\n`);
   await write(`SET FOREIGN_KEY_CHECKS = 0${STATEMENT_END}`);
 
   // The tenant database, table by table.
-  const [tables] = await tenantDb.query<any[]>(`SELECT table_name t FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name`, [tenant.db_name]);
+  const [tables] = await tenantDb.query<any[]>(
+    `SELECT table_name t FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name`,
+    [tenant.db_name],
+  );
   let rowCount = 0;
   for (const { t } of tables) {
-    const [[create]] = await tenantDb.query<any[]>(`SHOW CREATE TABLE \`${t}\``);
+    const [[create]] = await tenantDb.query<any[]>(
+      `SHOW CREATE TABLE \`${t}\``,
+    );
     await write(`-- @@table ${t}\n${create['Create Table']}${STATEMENT_END}`);
     rowCount += await dumpRows(tenantDb, t, '1=1', [], write);
   }
 
   // The master registry rows a login goes through.
   await write(`-- @@master\n`);
-  await dumpRows(master, 'tenant_master', 'tenant_id = ?', [tenant.tenant_id], write);
-  await dumpRows(master, 'tenant_subscription', 'tenant_id = ?', [tenant.tenant_id], write);
-  const logins = await dumpRows(master, 'user_auth_index', 'tenant_id = ?', [tenant.tenant_id], write);
+  await dumpRows(
+    master,
+    'tenant_master',
+    'tenant_id = ?',
+    [tenant.tenant_id],
+    write,
+  );
+  await dumpRows(
+    master,
+    'tenant_subscription',
+    'tenant_id = ?',
+    [tenant.tenant_id],
+    write,
+  );
+  const logins = await dumpRows(
+    master,
+    'user_auth_index',
+    'tenant_id = ?',
+    [tenant.tenant_id],
+    write,
+  );
 
   gzip.end();
-  await new Promise<void>((resolve, reject) => file.on('finish', () => resolve()).on('error', reject));
+  await new Promise<void>((resolve, reject) =>
+    file.on('finish', () => resolve()).on('error', reject),
+  );
   await tenantDb.end();
   await master.end();
   const size = (fs.statSync(out).size / 1048576).toFixed(1);
-  console.log(`Exported ${TENANT_CODE} (${tenant.db_name}): ${tables.length} tables, ${rowCount} rows, ${logins} logins -> ${out} (${size} MB)`);
-  console.log(`Last posted day ${meta.last_posted_day}. Import with seed-triplec-import.ts, then top up with seed-triplec-history.ts --resume.`);
+  console.log(
+    `Exported ${TENANT_CODE} (${tenant.db_name}): ${tables.length} tables, ${rowCount} rows, ${logins} logins -> ${out} (${size} MB)`,
+  );
+  console.log(
+    `Last posted day ${meta.last_posted_day}. Import with seed-triplec-import.ts, then top up with seed-triplec-history.ts --resume.`,
+  );
 }
 
 if (require.main === module) {
-  main().then(() => process.exit(0), (error) => {
-    console.error(`FAILED: ${error instanceof Error ? error.message : error}`);
-    process.exit(1);
-  });
+  main().then(
+    () => process.exit(0),
+    (error) => {
+      console.error(
+        `FAILED: ${error instanceof Error ? error.message : error}`,
+      );
+      process.exit(1);
+    },
+  );
 }
