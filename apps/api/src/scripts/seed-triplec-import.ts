@@ -59,7 +59,8 @@ async function* statements(
       target = 'master';
       continue;
     }
-    if (line.startsWith('-- @@table ')) continue;
+    if (line.startsWith('-- @@table ') || line.startsWith('-- @@trigger '))
+      continue;
     if (line === END_MARK) {
       const sql = buffer.join('\n').trim();
       buffer = [];
