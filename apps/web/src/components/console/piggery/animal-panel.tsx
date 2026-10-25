@@ -464,13 +464,13 @@ export default function AnimalPanel() {
         <table className="w-full text-sm">
           <TableHeader>
             <TableRow>
-              <TableHead>{t('anpColCode')}</TableHead>
-              <TableHead>{t('anpColType')}</TableHead>
-              <TableHead>{t('anpColGender')}</TableHead>
-              <TableHead>{t('anpColBreed')}</TableHead>
-              <TableHead>{t('anpColStatus')}</TableHead>
-              <TableHead>{t('anpColEntryDate')}</TableHead>
-              <TableHead>{t('anpRfidTag')}</TableHead>
+              <TableHead className="text-left">{t('anpColCode')}</TableHead>
+              <TableHead className="text-left">{t('anpColType')}</TableHead>
+              <TableHead className="text-left">{t('anpColGender')}</TableHead>
+              <TableHead className="text-left">{t('anpColBreed')}</TableHead>
+              <TableHead className="text-left">{t('anpColStatus')}</TableHead>
+              <TableHead className="text-left">{t('anpColEntryDate')}</TableHead>
+              <TableHead className="text-left">{t('anpRfidTag')}</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
