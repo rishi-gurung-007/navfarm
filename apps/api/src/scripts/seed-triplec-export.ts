@@ -57,19 +57,24 @@ async function dumpRows(
   // Paged, so a large table (the audit log, the ledgers) never sits in memory whole.
   const PAGE = 5000;
   let total = 0;
+  // A generated column (feed_planning_setting.active_scope_key) is computed by MySQL and refused on insert.
+  const [generated] = await db.query<any[]>(
+    `SELECT column_name c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND (extra LIKE '%VIRTUAL GENERATED%' OR extra LIKE '%STORED GENERATED%')`,
+    [table],
+  );
+  const skip = new Set(generated.map((g) => g.c));
   for (let offset = 0; ; offset += PAGE) {
     const [rows] = await db.query<any[]>(
       `SELECT * FROM \`${table}\` WHERE ${where} LIMIT ${PAGE} OFFSET ${offset}`,
       args,
     );
     if (!rows.length) break;
-    const columns = Object.keys(rows[0])
-      .map((c) => `\`${c}\``)
-      .join(', ');
+    const keys = Object.keys(rows[0]).filter((c) => !skip.has(c));
+    const columns = keys.map((c) => `\`${c}\``).join(', ');
     for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
       const chunk = rows.slice(i, i + ROWS_PER_INSERT);
       const values = chunk
-        .map((r) => `(${Object.values(r).map(literal).join(', ')})`)
+        .map((r) => `(${keys.map((k) => literal(r[k])).join(', ')})`)
         .join(',\n');
       await write(
         `INSERT INTO \`${table}\` (${columns}) VALUES\n${values}${STATEMENT_END}`,
