@@ -61,7 +61,9 @@ const END = PLAN_DAYS
   ? new Date(Date.parse(YESTERDAY) + PLAN_DAYS * 86400000)
       .toISOString()
       .slice(0, 10)
-  : process.env.SIM_END && process.env.SIM_END < YESTERDAY
+  : // SIM_END may stop earlier, or reach today (a demo whose next day is the one entered live); never later.
+    process.env.SIM_END &&
+      process.env.SIM_END <= new Date().toISOString().slice(0, 10)
     ? process.env.SIM_END
     : YESTERDAY;
 const CONCURRENCY = Number(process.env.SIM_CONCURRENCY || 6);
