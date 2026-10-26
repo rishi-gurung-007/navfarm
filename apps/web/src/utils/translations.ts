@@ -4269,6 +4269,7 @@ export const translations = {
     baapAnimalAssignedToast: '✓ Animal assigned to batch {{code}}.',
     anpSearchPlaceholder: 'Search code, RFID, ear tag…',
     anpAllStatuses: 'All statuses',
+    anpAllBreeds: 'All breeds',
     anpIncludeDisposed: 'Include disposed',
     anpRfidFastScanner: 'RFID Fast Scanner',
     anpRegisterAnimal: 'Register Animal',

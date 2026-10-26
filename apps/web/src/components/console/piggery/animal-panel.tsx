@@ -187,6 +187,7 @@ export default function AnimalPanel() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [breedFilter, setBreedFilter] = useState('');
   const [includeDisposed, setIncludeDisposed] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(PAGE_SIZE);
@@ -262,6 +263,7 @@ export default function AnimalPanel() {
       if (companyId) params.set('companyId', companyId);
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
+      if (breedFilter) params.set('breedId', breedFilter);
       if (includeDisposed) params.set('includeDisposed', 'true');
       params.set('limit', '200');
       const res = await api.get(`/animal?${params.toString()}`);
@@ -276,7 +278,7 @@ export default function AnimalPanel() {
 
   useEffect(() => {
     load();
-  }, [search, statusFilter, includeDisposed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, statusFilter, breedFilter, includeDisposed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reference data — loaded once on mount
   useEffect(() => {
@@ -428,6 +430,24 @@ export default function AnimalPanel() {
             ]}
             columnHeaders={false}
             placeholder={t('anpAllStatuses')}
+            triggerClassName="nf-input-sm min-w-[12rem] h-9"
+          />
+        </div>
+
+        <div className="min-w-[12rem]">
+          <SearchableSelect
+            id="animal-breed-filter"
+            ariaLabel={t('anpAllBreeds')}
+            value={breedFilter}
+            onChange={(val) => setBreedFilter(val)}
+            options={[
+              { value: '', label: t('anpAllBreeds') },
+              ...Object.entries(breedLookup)
+                .sort(([, a], [, b]) => a.localeCompare(b))
+                .map(([id, name]) => ({ value: id, label: name })),
+            ]}
+            columnHeaders={false}
+            placeholder={t('anpAllBreeds')}
             triggerClassName="nf-input-sm min-w-[12rem] h-9"
           />
         </div>
