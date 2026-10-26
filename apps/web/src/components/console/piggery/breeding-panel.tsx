@@ -1105,6 +1105,7 @@ export function BreedingPanel() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="-mr-4"
                             onClick={() => {
                               setSelectedMating(m);
                               setPregCheckForm({
@@ -1270,6 +1271,7 @@ export function BreedingPanel() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="-mr-4"
                             onClick={() => {
                               setSelectedFarrow(f);
                               setShowWeanModal(true);
