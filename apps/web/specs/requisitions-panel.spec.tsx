@@ -446,7 +446,7 @@ describe('RequisitionsPanel (D26)', () => {
       within(lines.querySelector('thead') as HTMLElement).getAllByRole(
         'columnheader',
       ),
-    ).toHaveLength(23); // W1 (10 Oct): + Shipped, Received, Outstanding; W2R: + Mill Loading Bin
+    ).toHaveLength(24); // W1 (10 Oct): + Shipped, Received, Outstanding; W2R: + Mill Loading Bin; 28 Oct: + Priority per line
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(
       screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' }),

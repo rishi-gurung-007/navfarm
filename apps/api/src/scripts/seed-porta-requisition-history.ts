@@ -153,12 +153,12 @@ async function run() {
             `INSERT INTO requisition
               (requisition_id, tenant_id, company_id, farm_id, req_no, doc_type, status, required_date,
                justification, approval_request_id, created_by, updated_by, created_at, updated_at,
-               requisition_type, source, purpose, supply_source, priority, production_date, submission_deadline,
+               requisition_type, source, purpose, supply_source, production_date, submission_deadline,
                remarks, approved_by, approved_at, requisition_date, requester_user_id, requester_name,
                approval_status, document_status, fulfilment_status, from_location_id, to_location_id,
                direct_transfer, released_by, released_at)
              VALUES (?, ?, ?, ?, ?, 'FEED', 'IN_CONSOLIDATION', ?, ?, NULL, ?, ?, CONCAT(?, ' 12:00:00'), CONCAT(?, ' 12:00:00'),
-                     'FEED_FORECAST', 'AUTO_FORECAST', 'INTERNAL_TRANSFER', 'MILL', 'INFO', ?, ?, ?, ?, CONCAT(?, ' 12:00:00'), ?, ?, ?,
+                     'FEED_FORECAST', 'AUTO_FORECAST', 'INTERNAL_TRANSFER', 'MILL', ?, ?, ?, ?, CONCAT(?, ' 12:00:00'), ?, ?, ?,
                      'APPROVED', 'RECEIVED', 'RECEIVED', ?, ?, 0, ?, CONCAT(?, ' 12:00:00'))`,
             [requisitionId, scope.tenant_id, scope.company_id, batch.farm_id, reqNo, requiredDate, justification,
               actor.user_id, actor.user_id, reqDate, reqDate, reqDate, requiredDate, justification, actor.user_id, periodEnd.toISOString().slice(0, 10), reqDate,
@@ -170,8 +170,8 @@ async function run() {
                destination_location_id, source_type, feed_type, is_next_diet, lifecycle_ref_id,
                system_balance_kg, daily_requirement_kg, days_remaining, unrounded_need_kg, recommended_qty_kg,
                proposed_delivery_date, needs_silo_changeover, quantity_edited, from_location_id, to_location_id,
-               qty_to_ship, qty_shipped, qty_to_receive, qty_received, recommended_delivery_date, exceeds_silo_capacity)
-             VALUES (?, ?, 10000, ?, ?, ?, 'KG', CONCAT(?, ' 12:00:00'), ?, 'SILO', 'BULK', 0, ?, 30000, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, 0)`,
+               qty_to_ship, qty_shipped, qty_to_receive, qty_received, recommended_delivery_date, exceeds_silo_capacity, priority)
+             VALUES (?, ?, 10000, ?, ?, ?, 'KG', CONCAT(?, ' 12:00:00'), ?, 'SILO', 'BULK', 0, ?, 30000, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, 0, 'INFO')`,
             [lineId, requisitionId, feed.feed_item_id, feed.item_name, quantityKg, reqDate, silo.location_id, feed.lifecycle_id,
               dailyDemand, quantityKg, quantityKg, requiredDate, bin.location_id, silo.location_id, quantityKg, quantityKg, quantityKg, quantityKg, requiredDate],
           );

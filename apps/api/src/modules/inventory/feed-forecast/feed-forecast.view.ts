@@ -102,6 +102,8 @@ export interface ReportRow {
   sourceLocationId: string | null;
   /** location_name of the silo or store (Engine §5 row 70); null for NONE or when the name is unknown. */
   sourceName: string | null;
+  /** The source silo's silo_capacity_kg; null for a store, no source, or an unset capacity. */
+  sourceCapacityKg: number | null;
   currentItemId: string | null;
   currentItemNo: string | null;
   currentItemName: string | null;
@@ -217,7 +219,7 @@ function calculateRunDownDate(
   return addDays(asOfDate, fullFeedDays);
 }
 
-export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = '', sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {}, stageNames: Record<string, string> = {}): ReportRow[] {
+export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: string, sourceNames: Record<string, string> = {}, farmId = '', sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {}, stageNames: Record<string, string> = {}, sourceCapacities: Record<string, number | null> = {}): ReportRow[] {
   const byDate = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Sums in integer micrograms, like the engine, so 7 × 17.9375 kg is exactly 125.5625 kg.
   const groups = new Map<string, {
@@ -249,6 +251,8 @@ export function groupRows(daily: DailyForecastRow[], view: ForecastView, from: s
           feedType: d.sourceCode ? sourceFeedTypes[d.sourceCode] ?? (d.sourceType === 'STORE' ? 'BAGGED' : 'BULK') : 'BULK',
           sourceLocationId: d.destinationLocationId ?? null,
           sourceName: d.sourceCode ? sourceNames[d.sourceCode] ?? null : null,
+          // Only a silo has a capacity: a row fed from the store (or from nothing) shows N/A.
+          sourceCapacityKg: d.sourceType === 'SILO' && d.sourceCode ? sourceCapacities[d.sourceCode] ?? null : null,
           currentItemId: d.currentItemId ?? null,
           currentItemNo: d.currentItemNo ?? null,
           currentItemName: d.currentItemName ?? null,

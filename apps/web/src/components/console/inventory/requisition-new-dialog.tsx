@@ -565,7 +565,6 @@ export function RequisitionNewDialog({
                     {labelOf(REQ_STATUS_LABEL, 'DRAFT', t)}
                   </Badge>
                 ),
-                priority: t('rqnDerivedOnSave'),
                 deadline: t('rqnSetOnSave'),
               }}
             />

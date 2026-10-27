@@ -359,7 +359,8 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     expect(valueOf('rqdSupply')).toContain('reqSupplyMill');
     expect(valueOf('rqdPurpose')).toContain('reqPurposeTransfer');
     expect(valueOf('rqdStatus')).toContain('reqStatusDraft');
-    expect(valueOf('rqdPriority')).toContain('rqnDerivedOnSave');
+    // Row 34 is per line (0212): the header shows no priority.
+    expect(within(dialog).queryByText('rqdPriority')).toBeNull();
     expect(valueOf('rqdDeadline')).toContain('rqnSetOnSave');
     // Required Delivery Date is derived from the lines (Rishi 4 Oct): read-only, nothing to type.
     expect(valueOf('rqdRequiredDate')).toContain('rqnFromLines');

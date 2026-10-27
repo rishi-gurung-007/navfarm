@@ -94,10 +94,6 @@ export function FeedRequisitionDetail({
   const [edits, setEdits] = useState<Record<string, FeedLineEdit>>({});
   const [options, setOptions] = useState<FeedRequisitionOptions | null>(null);
   const [remarks, setRemarks] = useState(view.remarks ?? '');
-  // Req r34: only an escalation is ever sent.
-  const [priority, setPriority] = useState(view.priority ?? '');
-  const priorityPatch = () =>
-    priority && priority !== view.priority ? { priority } : {};
   const [busy, setBusy] = useState(false);
   const [panel, setPanel] = useState<'ship' | 'receive' | null>(null);
   const [postingDate, setPostingDate] = useState(todayIso());
@@ -131,6 +127,7 @@ export function FeedRequisitionDetail({
   const lineEdits = () =>
     Object.entries(edits).map(([line_id, edit]) => ({
       line_id,
+      ...(edit.priority !== undefined ? { priority: edit.priority } : {}),
       ...(edit.quantity !== undefined
         ? { quantity_kg: Number(edit.quantity) }
         : {}),
@@ -208,7 +205,6 @@ export function FeedRequisitionDetail({
         await api.put(`/feed-requisition/${view.requisition_id}`, {
           remarks,
           lines: lineEdits(),
-          ...priorityPatch(),
         }),
       );
       setEdits({});
@@ -223,7 +219,6 @@ export function FeedRequisitionDetail({
         await api.post(`/feed-requisition/${view.requisition_id}/submit`, {
           remarks,
           lines: lineEdits(),
-          ...priorityPatch(),
         }),
       );
       setEdits({});
@@ -627,8 +622,6 @@ export function FeedRequisitionDetail({
           remarksMissing={remarksMissing}
           remarksError={remarksError}
           options={options}
-          priority={priority}
-          onPriorityChange={setPriority}
         />
       </div>
       {/* Rishi, 11 Oct: Transfer Shipment opens in its own dialog stacked on the requisition. */}

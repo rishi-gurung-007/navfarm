@@ -225,11 +225,14 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(header.values).toMatchObject({
       tenant_id: 'tenant-1', company_id: 'co-1', farm_id: 'farm-grs', req_no: `REQ-GRS-${year}-00042`, doc_type: 'FEED',
       status: 'AUTO_DRAFT', requisition_type: 'FEED_FORECAST', source: 'AUTO_FORECAST', purpose: 'INTERNAL_TRANSFER', supply_source: 'MILL',
-      // Task 3 carry: the silo's own low level (1,500 kg, balance 1,500) came through from the DB — first priority.
-      priority: 'CRITICAL_FIRST_PRIORITY', created_by: 'u-1',
+      created_by: 'u-1',
     });
+    // Row 34 is per line (0212): the header carries none.
+    expect(header.values).not.toHaveProperty('priority');
     expect(header.values.forecast_run_key).toMatch(/^RUN-GRS-\d{8}-\d{6}$/);
     const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    // Task 3 carry: the silo's own low level (1,500 kg, balance 1,500) came through from the DB — first priority, on its line.
+    expect((lines.values as any[])[0]).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY' });
     expect(lines.values).toEqual([expect.objectContaining({
       // Requisition §1 row 42: NAV-style 10000-step line numbering (Task 5), not a plain 1, 2, 3...
       line_seq: 10000, item_id: 'item-r1', destination_location_id: 'silo-1', quantity: '6000', recommended_qty_kg: '6000',
@@ -679,8 +682,10 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(siloFeed.currentItems).toHaveBeenCalledWith(['silo-1'], 'co-1', 'tenant-1');
     expect(ledger.getStockBalance).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'co-1', warehouseId: 'store-1' }), 'tenant-1');
     const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
-    expect(header.values).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY', required_date: planningDay });
+    expect(header.values).toMatchObject({ required_date: planningDay });
+    expect(header.values).not.toHaveProperty('priority');
     const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect((lines.values as any[])[0]).toMatchObject({ destination_location_id: 'silo-1', priority: 'CRITICAL_FIRST_PRIORITY' });
     expect(lines.values).toEqual([
       expect.objectContaining({ destination_location_id: 'silo-1', system_balance_kg: '1500', unrounded_need_kg: '4500', proposed_delivery_date: future(2) }),
       expect.objectContaining({ destination_location_id: 'store-1', system_balance_kg: '850', unrounded_need_kg: '100', recommended_qty_kg: '100', proposed_delivery_date: planningDay }),
@@ -1006,10 +1011,12 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     await run(service);
     const header = log.find((e) => e.op === 'insert' && e.table === schema.requisition)!;
     expect(header.values).toMatchObject({
-      doc_type: 'FEED', source: 'MANUAL_ENTRY', priority: 'CRITICAL_FIRST_PRIORITY',
+      doc_type: 'FEED', source: 'MANUAL_ENTRY',
       requester_user_id: 'u-1', requester_name: 'Requesting User', requester_department_id: 'dept-1',
     });
+    expect(header.values).not.toHaveProperty('priority');
     const inserted = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
+    expect((inserted.values as any[])[0]).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY' });
     expect(inserted.values[0]).toMatchObject({
       destination_location_id: 'silo-1', item_id: 'item-r1', quantity: '3000', proposed_delivery_date: '2026-09-30',
       system_balance_kg: '1500', daily_requirement_kg: '2000', days_remaining: '0', lifecycle_ref_id: 'row-r1',

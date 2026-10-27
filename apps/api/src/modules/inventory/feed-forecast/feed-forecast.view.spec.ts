@@ -25,6 +25,14 @@ const { daily } = buildFeedForecast(workedExample);
 const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 1e6) / 1e6;
 
 describe('groupRows — Step 6 "Build dated forecast"', () => {
+  it('carries the source silo\'s capacity, and none for a silo without one or for the store', () => {
+    const rows = groupRows(daily, 'DAILY', '2026-09-23', {}, 'farm-grs', {}, {}, { 'GRS/SILO-001': 8000, 'GRS/SILO-002': null });
+    expect(rows.find((r) => r.sourceCode === 'GRS/SILO-001')?.sourceCapacityKg).toBe(8000);
+    expect(rows.find((r) => r.sourceCode === 'GRS/SILO-002')?.sourceCapacityKg).toBeNull();
+    const storeRows = groupRows(daily.map((d) => ({ ...d, sourceType: 'STORE' as const })), 'DAILY', '2026-09-23', {}, 'farm-grs', {}, {}, { 'GRS/SILO-001': 8000 });
+    expect(storeRows.every((r) => r.sourceCapacityKg === null)).toBe(true);
+  });
+
   it('exposes every Engine row 70 field with stable ids and source evidence', () => {
     const rows = groupRows(daily, 'DAILY', '2026-09-23', { 'GRS/SILO-001': 'Weaner silo' }, 'farm-grs');
     const first = rows[0];
