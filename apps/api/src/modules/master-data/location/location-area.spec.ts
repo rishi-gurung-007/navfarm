@@ -1,4 +1,4 @@
-import { sumAreasInUnit } from './location.service';
+import { sumAreasInUnit, atStoredAreaScale } from './location.service';
 
 /**
  * TDD row 138: "the total of area of pens and sub locations should not exceed the area of
@@ -59,5 +59,32 @@ describe('location area totals (TDD row 138)', () => {
     const { total, skipped } = sumAreasInUnit([pen('A', 10, null), pen('B', 20, 'SQM')], null);
     expect(total).toBe(30);
     expect(skipped).toEqual([]);
+  });
+});
+
+/**
+ * MULTIPLIER's GROWER - H5 is a 210.68 SQM house holding six pens that add up
+ * to exactly 210.68. Loading its submitted template rejected the sixth pen:
+ * the five already there summed to 174.75000000000003 in JS floats, and adding
+ * the last 35.93 "exceeded" the house by 4e-14.
+ */
+describe('area totals compare at the precision the column stores', () => {
+  const pen = (code: string, size: number) => ({ location_code: code, area_size: size, area_unit: 'SQM' });
+
+  it('accepts the sixth pen of a house its six pens fill exactly', () => {
+    const existing = [pen('MUGR5P1', 31.03), pen('MUGR5P2', 35.93), pen('MUGR5P3', 35.93), pen('MUGR5P4', 35.93), pen('MUGR5P5', 35.93)];
+    const { total } = sumAreasInUnit(existing, 'SQM');
+    const sixth = 35.93;
+    const house = 210.68;
+
+    // The raw float sum overshoots, which is what rejected the pen.
+    expect(total + sixth).toBeGreaterThan(house);
+    // area_size is decimal(18,4), so the comparison belongs at four places.
+    expect(atStoredAreaScale(total + sixth)).toBe(house);
+    expect(atStoredAreaScale(total + sixth) > atStoredAreaScale(house)).toBe(false);
+  });
+
+  it('still rejects an area that genuinely overflows', () => {
+    expect(atStoredAreaScale(64.5) > atStoredAreaScale(64.2)).toBe(true);
   });
 });

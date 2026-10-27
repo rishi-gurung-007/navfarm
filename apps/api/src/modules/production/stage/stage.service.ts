@@ -17,6 +17,7 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import {
   listFilterConditions,
   listOrderBy,
+  runMasterList,
 } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
@@ -336,22 +337,13 @@ export class StageService {
 
     conditions.push(...listFilterConditions(schema.stageMaster, query.filter));
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
-
-    return this.db
-      .select()
-      .from(schema.stageMaster)
-      .where(and(...conditions))
-      .orderBy(
-        listOrderBy(
-          schema.stageMaster,
-          query,
-          schema.stageMaster.stage_sequence,
-        ),
-      )
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(
+      this.db,
+      schema.stageMaster,
+      conditions,
+      query,
+      schema.stageMaster.stage_sequence,
+    );
   }
 
   async update(

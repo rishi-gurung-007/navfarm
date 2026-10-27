@@ -21,7 +21,7 @@ import {
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 import {
   assertLobInScope,
   farmScope,
@@ -177,16 +177,7 @@ export class BreedService {
 
     conditions.push(...listFilterConditions(schema.speciesMaster, query.filter));
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
-
-    return this.db
-      .select()
-      .from(schema.speciesMaster)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(schema.speciesMaster, query, schema.speciesMaster.species_code))
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(this.db, schema.speciesMaster, conditions, query, schema.speciesMaster.species_code);
   }
 
   async updateSpecies(id: string, dto: UpdateSpeciesDto, tenantId: string, userPayload?: any) {
@@ -598,16 +589,7 @@ export class BreedService {
 
     conditions.push(...listFilterConditions(schema.breedMaster, query.filter));
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
-
-    return this.db
-      .select()
-      .from(schema.breedMaster)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(schema.breedMaster, query, schema.breedMaster.breed_code))
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(this.db, schema.breedMaster, conditions, query, schema.breedMaster.breed_code);
   }
 
   async updateBreed(id: string, dto: UpdateBreedDto, tenantId: string, userPayload?: any) {

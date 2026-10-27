@@ -18,7 +18,8 @@ export class BinDietAssignmentController {
   @Get()
   @RequirePermission('MASTER_DATA', 'BIN_DIET_ASSIGNMENT', 'view')
   async list(@Query() query: QueryBinDietAssignmentDto, @Req() req: any) {
-    return { data: await this.assignments.findAll(query, req.user.tenantId) };
+    const page = await this.assignments.findAll(query, req.user.tenantId);
+    return { data: page.data, total: page.total, limit: page.limit, offset: page.offset };
   }
 
   @Get(':id')

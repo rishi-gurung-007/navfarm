@@ -12,7 +12,9 @@ import { KpiMetricService } from './kpi-metric.service';
 export class KpiMetricController {
   constructor(private readonly kpiMetrics: KpiMetricService) {}
   @Get() @RequirePermission('MASTER_DATA', 'KPI_METRIC', 'view')
-  async list(@Query() query: QueryKpiMetricDto, @Req() req: any) { return { data: await this.kpiMetrics.findAll(query, req.user.tenantId) }; }
+  async list(@Query() query: QueryKpiMetricDto, @Req() req: any) { const page = await this.kpiMetrics.findAll(query, req.user.tenantId);
+    // total/limit/offset are what the list screen pages on; data stays an array.
+    return { data: page.data, total: page.total, limit: page.limit, offset: page.offset }; }
   @Get(':id') @RequirePermission('MASTER_DATA', 'KPI_METRIC', 'view')
   async get(@Param('id') id: string, @Req() req: any) { return { data: await this.kpiMetrics.findOne(id, req.user.tenantId) }; }
   @Post() @RequirePermission('MASTER_DATA', 'KPI_METRIC', 'create')

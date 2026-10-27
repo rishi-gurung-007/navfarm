@@ -16,6 +16,7 @@ import type { ReasonCategory } from '../../../core/database/reason-code-seed';
 import {
   listFilterConditions,
   listOrderBy,
+  runMasterList,
 } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
@@ -134,13 +135,7 @@ export class ReasonService {
         )!,
       );
     conditions.push(...listFilterConditions(table, query.filter));
-    return this.db
-      .select()
-      .from(table)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(table, query, table.reason_code))
-      .limit(query.limit || 50)
-      .offset(query.offset || 0);
+    return runMasterList(this.db, table, conditions, query, table.reason_code);
   }
   private async log(
     action: string,
@@ -171,18 +166,20 @@ export class ReasonService {
       dto as unknown as Record<string, unknown>,
     );
     const reason_id = randomUUID();
-    await this.db.insert(table).values({
-      ...dto,
-      reason_code,
-      reason_id,
-      tenant_id: tenantId,
-      reason_name: dto.reason_name.trim(),
-      applicable_stages: dto.applicable_stages?.length
-        ? dto.applicable_stages
-        : null,
-      created_by: user?.userId,
-      updated_by: user?.userId,
-    });
+    await this.db
+      .insert(table)
+      .values({
+        ...dto,
+        reason_code,
+        reason_id,
+        tenant_id: tenantId,
+        reason_name: dto.reason_name.trim(),
+        applicable_stages: dto.applicable_stages?.length
+          ? dto.applicable_stages
+          : null,
+        created_by: user?.userId,
+        updated_by: user?.userId,
+      });
     return this.log('CREATE', await this.findOne(reason_id, tenantId), user);
   }
   async update(id: string, dto: UpdateReasonDto, tenantId: string, user?: any) {

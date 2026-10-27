@@ -9,7 +9,7 @@ import { CreateSupplierDto, UpdateSupplierDto, QuerySupplierDto } from './dto/su
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { EncryptionService } from '../../system/encryption/encryption.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -207,15 +207,11 @@ export class SupplierService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    const rows = await this.db
-      .select()
-      .from(schema.supplierMaster)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(schema.supplierMaster, query, schema.supplierMaster.supplier_code))
-      .limit(limit)
-      .offset(offset);
+    const page = await runMasterList(this.db, schema.supplierMaster, conditions, query, schema.supplierMaster.supplier_code);
 
-    return rows.map((row) => this.maskSupplier(row));
+    // Masking is applied to the page, not to the count: the total is how many
+    // suppliers match, which is the same whether or not a field is hidden.
+    return { ...page, data: page.data.map((row) => this.maskSupplier(row as never)) };
   }
 
   async update(id: string, dto: UpdateSupplierDto, tenantId: string, userPayload?: any) {

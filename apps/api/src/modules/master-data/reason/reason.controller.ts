@@ -24,7 +24,9 @@ export class ReasonAdministrationGuard implements CanActivate {
 export class ReasonController {
   constructor(private readonly reasons: ReasonService) {}
   @Get() @RequirePermission('MASTER_DATA', 'REASON', 'view')
-  async list(@Query() query: QueryReasonDto, @Req() req: any) { return { data: await this.reasons.findAll(query, req.user.tenantId) }; }
+  async list(@Query() query: QueryReasonDto, @Req() req: any) { const page = await this.reasons.findAll(query, req.user.tenantId);
+    // total/limit/offset are what the list screen pages on; data stays an array.
+    return { data: page.data, total: page.total, limit: page.limit, offset: page.offset }; }
   @Get(':id') @RequirePermission('MASTER_DATA', 'REASON', 'view')
   async get(@Param('id') id: string, @Req() req: any) { return { data: await this.reasons.findOne(id, req.user.tenantId) }; }
   @Post() @RequirePermission('MASTER_DATA', 'REASON', 'create')

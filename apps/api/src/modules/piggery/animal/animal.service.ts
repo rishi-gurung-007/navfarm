@@ -40,6 +40,7 @@ import { assertStageFitsAnimal } from '../../production/stage/stage-gender';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
 import {
   listFilterConditions,
+  runMasterList,
   listOrderBy,
 } from '../../../common/master-list-query';
 
@@ -1270,22 +1271,16 @@ export class AnimalService {
       ...listFilterConditions(schema.animalRegister, query.filter),
     );
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
-
-    return this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(and(...conditions))
-      .orderBy(
-        listOrderBy(
-          schema.animalRegister,
-          query,
-          schema.animalRegister.animal_code,
-        ),
-      )
-      .limit(limit)
-      .offset(offset);
+    // The register reports its total the way every other master list does, so
+    // the list screen can page the whole table. Without it MasterDataTable has
+    // only its "rows + 1" fallback, which showed a 65-animal register as 26.
+    return runMasterList(
+      this.db,
+      schema.animalRegister,
+      conditions,
+      query,
+      schema.animalRegister.animal_code,
+    );
   }
 
   async update(
