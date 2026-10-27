@@ -1840,14 +1840,27 @@ export class BatchService {
       conditions.push(eq(schema.batchHeader.tracking_mode, query.trackingMode));
     if (query.search)
       conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
+    if (query.batchId)
+      conditions.push(eq(schema.batchHeader.batch_id, query.batchId));
+    if (query.animalTracking)
+      conditions.push(
+        eq(schema.batchHeader.animal_tracking, query.animalTracking),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    // Newest first, with the id as tie-break: without an order MySQL may return
+    // any rows for a given offset, so a picker's second page could repeat or
+    // skip batches from its first.
     const rows = await this.db
       .select()
       .from(schema.batchHeader)
       .where(and(...conditions))
+      .orderBy(
+        desc(schema.batchHeader.created_at),
+        asc(schema.batchHeader.batch_id),
+      )
       .limit(limit)
       .offset(offset);
 

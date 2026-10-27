@@ -812,10 +812,28 @@ export class QueryBatchDto {
   @Type(() => Boolean)
   isActive?: boolean;
 
+  @ApiProperty({
+    description: 'Filter by animal tracking',
+    required: false,
+    enum: ['REGISTERED', 'COUNT_ONLY'],
+  })
+  @IsOptional()
+  @IsIn(['REGISTERED', 'COUNT_ONLY'])
+  animalTracking?: string;
+
   @ApiProperty({ description: 'Search batch no.', required: false })
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiProperty({
+    description:
+      'One batch by id, in the same shape as the list — a paged picker reads the batch it shows but has not loaded this way.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  batchId?: string;
 
   @ApiProperty({
     description: 'Results per page',
