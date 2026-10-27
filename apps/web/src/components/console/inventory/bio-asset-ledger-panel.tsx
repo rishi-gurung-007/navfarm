@@ -448,7 +448,7 @@ export default function BioAssetLedgerPanel() {
                 </TableHead>
                 <TableHead className="whitespace-nowrap">Item No.</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[210px]">
-                  Item Description
+                  Item Name
                 </TableHead>
                 <TableHead className="whitespace-nowrap min-w-[150px]">
                   {t('ilpLocation')}

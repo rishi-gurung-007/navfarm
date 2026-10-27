@@ -1480,7 +1480,7 @@ export default function SchedulerDetailPanel({
                     className="mb-1 block text-[11px] font-semibold"
                     style={S.sub}
                   >
-                    Item Description
+                    Item Name
                   </label>
                   <input
                     placeholder={t('scPlaceholderItemDescription')}

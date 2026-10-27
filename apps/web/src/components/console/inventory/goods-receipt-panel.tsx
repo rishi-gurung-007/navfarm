@@ -1216,7 +1216,7 @@ export default function GoodsReceiptPanel() {
                     Item Code
                   </TableHead>
                   <TableHead className="h-auto px-3 py-2 min-w-[220px]">
-                    Item Description
+                    Item Name
                   </TableHead>
                   <TableHead className="h-auto px-3 py-2 w-28 min-w-[105px]">
                     {t('grpColQty')}
@@ -1253,7 +1253,7 @@ export default function GoodsReceiptPanel() {
                       onFocusCapture={() => setActiveIdx(idx)}
                       onClick={() => setActiveIdx(idx)}
                     >
-                      {/* Item Code (Disabled, Auto-filled from selected Item Description) */}
+                      {/* Item Code (Disabled, Auto-filled from selected Item Name) */}
                       <TableCell className="px-2 py-1.5 w-32 min-w-[120px]">
                         <input
                           type="text"
@@ -1267,7 +1267,7 @@ export default function GoodsReceiptPanel() {
                         />
                       </TableCell>
 
-                      {/* Item Description: SearchableSelect */}
+                      {/* Item Name: SearchableSelect */}
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
                         <SearchableSelect
                           options={selectableItems}
@@ -1277,7 +1277,7 @@ export default function GoodsReceiptPanel() {
                           placeholder={t('grpSelectItemOptions', {
                             count: selectableItems.length,
                           })}
-                          searchPlaceholder="Search item description…"
+                          searchPlaceholder="Search item name…"
                           columnHeaders={['Description', 'Tracking']}
                           getLabelParts={(itemRow: any) => [
                             itemRow.item_name || itemRow.item_code || '',
@@ -1561,7 +1561,7 @@ export default function GoodsReceiptPanel() {
                       Item Code
                     </TableHead>
                     <TableHead className="h-auto px-3 py-2 min-w-[220px]">
-                      Item Description
+                      Item Name
                     </TableHead>
                     <TableHead className="h-auto px-3 py-2 w-28 min-w-[90px]">
                       {t('grpColQty')}

@@ -1243,7 +1243,7 @@ export default function StockAdjustmentPanel() {
                       <TableHead className="px-3 py-2 w-10">#</TableHead>
                       <TableHead className="px-3 py-2">Item Code</TableHead>
                       <TableHead className="px-3 py-2">
-                        Item Description
+                        Item Name
                       </TableHead>
                       <TableHead className="px-3 py-2 text-center">
                         Type
@@ -1689,7 +1689,7 @@ export default function StockAdjustmentPanel() {
                       Item Code
                     </TableHead>
                     <TableHead className="h-auto px-3 py-2">
-                      Item Description
+                      Item Name
                     </TableHead>
                     <TableHead className="h-auto px-3 py-2">
                       {t('sapQty')}

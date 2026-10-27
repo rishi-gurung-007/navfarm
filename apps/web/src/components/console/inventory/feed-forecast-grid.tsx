@@ -4,7 +4,6 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { Inbox, Loader2 } from "lucide-react";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { Dialog } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateShort } from "./feed-format";
 import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
@@ -96,7 +95,7 @@ type Translate = (key: any, vars?: any) => string;
 
 export const GRID_COLUMNS = [
   "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
-  "ffColHeadCount", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
+  "ffColHeadCount", "ffColUom", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
   "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
 
@@ -392,9 +391,11 @@ export function fmtKg(value: number | null | undefined): string {
 }
 
 // Batch, Stage and House stay pinned; the offsets are the widths of the pinned columns before each.
+// UOM pins beside them once it is scrolled to, so House needs a fixed width for its offset.
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
 const STAGE_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
 const HOUSE_COL = { "--sticky-left": "17rem" } as CSSProperties;
+const UOM_COL = { "--sticky-left": "28rem" } as CSSProperties;
 
 /** The batch number alone — a stage group's composite label is cut back when an older response has no plainBatchNo. */
 function batchNoOnly(row: ReportRow): string {
@@ -458,12 +459,13 @@ export function FeedForecastGrid({
         <tr>
           <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColBatch")}</th>
           <th scope="col" data-sticky-col="true" style={STAGE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColStage")}</th>
-          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "min-w-[11rem]")}>{t("ffColHouse")}</th>
+          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "w-[11rem] min-w-[11rem] max-w-[11rem]")}>{t("ffColHouse")}</th>
           <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
           <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
           <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColHeadCount")}</th>
+          <th scope="col" data-sticky-col="last" style={UOM_COL} className={TH}>{t("ffColUom")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColFeedRate")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColOpeningSystemBalance")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColConfirmedReceipts")}</th>
@@ -486,12 +488,13 @@ export function FeedForecastGrid({
           <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
             <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}><RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} /></td>
             <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
-            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED)}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
+            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED, "w-[11rem] max-w-[11rem] truncate")} title={row.shedCode}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
             <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
             <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
             <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
+            <td data-sticky-col="last" style={UOM_COL} className={TD}>KG</td>
             <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
             <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.openingSystemBalanceKg))}</td>
             <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.confirmedReceiptsKg))}</td>
@@ -537,7 +540,6 @@ export function FeedForecastGrid({
       title={selectedBalance ? t("ffBalanceExplainTitle", { date: selectedBalance.column.label }) : ""}
       description={selectedBalance ? `${selectedBalance.row.sourceCode ?? t("ffNoSource")} · ${selectedBalance.row.itemName}` : undefined}
       maxWidth="sm"
-      footer={<Button type="button" onClick={() => setSelectedBalance(null)}>{t("close")}</Button>}
     >
       {selectedBalance && <div className="space-y-4 text-sm">
         <p className="text-[var(--text-secondary)]">{t("ffBalanceExplainBody")}</p>

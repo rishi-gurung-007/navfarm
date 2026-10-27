@@ -617,7 +617,7 @@ export function CommonRequisitionDocument({
                             />
                           )}
                         </td>
-                        {/* Item Description is the Item Master's name, never typed here. */}
+                        {/* Item Name is the Item Master's name, never typed here. */}
                         <td className={TD}>
                           {line.item_name ??
                             items.find((x) => x.item_id === line.item_id)

@@ -2692,7 +2692,7 @@ export default function StockTransferPanel() {
                           Item Code
                         </TableHead>
                         <TableHead className="h-auto px-3 py-2.5 min-w-[220px]">
-                          Item Description
+                          Item Name
                         </TableHead>
                         <TableHead className="h-auto px-2 py-2.5 w-44 min-w-[160px]">
                           Quantity (Ordered)
@@ -2846,12 +2846,12 @@ export default function StockTransferPanel() {
                               )}
                             </TableCell>
 
-                            {/* Item Description: Multi-column SearchableSelect with Stock Count or Display */}
+                            {/* Item Name: Multi-column SearchableSelect with Stock Count or Display */}
                             <TableCell className="align-top px-3 py-2 min-w-[220px]">
                               <div className="flex flex-col gap-1">
                                 {!editingTransfer ? (
                                   <SearchableSelect
-                                    ariaLabel={`Select Item Description ${idx + 1}`}
+                                    ariaLabel={`Select Item Name ${idx + 1}`}
                                     value={line.item_id}
                                     onChange={(val) =>
                                       setLineField(idx, 'item_id', val)
@@ -2883,7 +2883,7 @@ export default function StockTransferPanel() {
                                           ? 'Loading stock balances…'
                                           : itemOptions.length === 0
                                             ? 'No items in stock at this location'
-                                            : 'Search item description or code…'
+                                            : 'Search item name or code…'
                                     }
                                     disabled={
                                       !header.from_warehouse_id ||

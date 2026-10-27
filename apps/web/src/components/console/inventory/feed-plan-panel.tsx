@@ -178,12 +178,12 @@ export default function FeedPlanPanel() {
       ) : (
         <ScrollTable label={t("feedPlanTableLabel")}>
           <thead><tr>
-            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity", "feedPlanColCapacityStatus"] as const).map((key) => <th key={key} scope="col" className={PLAN_NUMERIC.has(key) ? `${PLAN_TH} text-right` : PLAN_TH}>{t(key)}</th>)}
+            {(["feedPlanColFarm", "feedPlanColPeriod", "feedPlanColItemNo", "feedPlanColItemName", "feedPlanColUom", "feedPlanColTentative", "feedPlanColApproved", "feedPlanColShipped", "feedPlanColReceived", "feedPlanColRemaining", "feedPlanColVariance", "feedPlanColCapacity", "feedPlanColCapacityStatus"] as const).map((key) => <th key={key} scope="col" className={PLAN_NUMERIC.has(key) ? `${PLAN_TH} text-right` : PLAN_TH}>{t(key)}</th>)}
           </tr></thead>
           <tbody>{rows.map((row) => (
             <tr key={`${row.period}:${row.item.id}`}>
               <td className={PLAN_TD}><RecordLink code={row.farm.code} href={row.farm.id ? locationHref(row.farm.id) : null} /></td><td className={PLAN_TD}>{formatDateShort(row.period)}</td>
-              <td className={PLAN_TD}><RecordLink code={row.item.code} href={row.item.id ? itemHref(row.item.id) : null} /></td><td className={PLAN_TD_TEXT}>{row.item.name}</td>
+              <td className={PLAN_TD}><RecordLink code={row.item.code} href={row.item.id ? itemHref(row.item.id) : null} /></td><td className={PLAN_TD_TEXT}>{row.item.name}</td><td className={PLAN_TD}>KG</td>
               <td className={PLAN_TD_NUM}>{kg(row.tentativeKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.approvedRequisitionKg, t("feedPlanUnavailable"))}</td>
               <td className={PLAN_TD_NUM}>{kg(row.shippedKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.receivedKg, t("feedPlanUnavailable"))}</td>
               <td className={PLAN_TD_NUM}>{kg(row.remainingKg, t("feedPlanUnavailable"))}</td><td className={PLAN_TD_NUM}>{kg(row.varianceKg, t("feedPlanUnavailable"))}</td>
@@ -207,7 +207,6 @@ export default function FeedPlanPanel() {
         presentation="compact"
         maxWidth="xl"
         className="max-h-[85vh] w-[95vw] max-w-5xl"
-        footer={<Button type="button" variant="outline" onClick={() => setViewing(null)}>{t("close")}</Button>}
       >
         {viewing && (() => {
           const lines = viewing.lines ?? [];
@@ -222,12 +221,13 @@ export default function FeedPlanPanel() {
           const cell = (v: number | null) => kg(v, na);
           const optional = (v: string | null) => (v === null ? na : cell(Number(v)));
           const summary: Array<[string, string, boolean?]> = [
-            [t("feedPlanTableLabel"), viewing.plan_code],
+            [t("feedPlanNo"), viewing.plan_code],
             ...(farmText ? [[t("feedPlanColFarm"), farmText] as [string, string]] : []),
             [t("feedPlanProductionDate"), `${formatDateShort(viewing.production_date)} · ${viewing.plan_week}`],
             ["Status", viewing.plan_type === "ACTUAL" ? t("feedPlanActual") : t("feedPlanTentative")],
             [t("feedPlanProjected"), cell(sum((l) => l.projected_target_kg)), true],
             [t("feedPlanColTentative"), cell(sum((l) => l.tentative_qty_kg)), true],
+            [t("feedPlanColUom"), "KG"],
           ];
           return (
             <div className="space-y-6">
@@ -245,6 +245,7 @@ export default function FeedPlanPanel() {
                     <thead className="bg-[var(--surface-raised)] text-xs text-[var(--text-secondary)]"><tr>
                       <th className={`${head} min-w-[6rem]`}>{t("feedPlanColItemNo")}</th>
                       <th className={`${head} min-w-[12rem]`}>{t("feedPlanColItemName")}</th>
+                      <th className={head}>{t("feedPlanColUom")}</th>
                       <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanProjected")}</th>
                       <th className={`${headNum} min-w-[6rem]`}>{t("feedPlanFactor")} (×)</th>
                       <th className={`${headNum} min-w-[7rem]`}>{t("feedPlanColTentative")}</th>
@@ -255,6 +256,7 @@ export default function FeedPlanPanel() {
                     <tbody className="divide-y divide-[var(--border-subtle)]">{lines.map((line) => <tr key={line.plan_line_id}>
                       <td className="px-3 py-2 align-top whitespace-nowrap" title={line.item_code}><RecordLink code={line.item_code} href={line.item_id ? itemHref(line.item_id) : null} /></td>
                       <td className="px-3 py-2 align-top break-words" title={line.item_name}>{line.item_name}</td>
+                      <td className="px-3 py-2 align-top">KG</td>
                       <td className={num}>{cell(Number(line.projected_target_kg))}</td>
                       <td className={num}>×{Number(line.adjustment_factor).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
                       <td className={num}>{cell(Number(line.tentative_qty_kg))}</td>
@@ -276,14 +278,16 @@ export default function FeedPlanPanel() {
                   <table className="w-full min-w-[32rem] border-collapse text-sm" aria-label={t("feedPlanHistory")}>
                     <thead className="bg-[var(--surface-raised)] text-xs text-[var(--text-secondary)]"><tr>
                       <th className={`${head} min-w-[8rem]`}>{t("feedPlanHistoryWeek")}</th>
+                      <th className={head}>{t("feedPlanColUom")}</th>
                       <th className={`${headNum} min-w-[8rem]`}>{t("feedPlanHistoryActual")}</th>
                       <th className={`${headNum} min-w-[8rem]`}>{t("feedPlanHistoryExpected")}</th>
                     </tr></thead>
                     {lines.map((line) => (
                       <tbody key={line.plan_line_id} className="divide-y divide-[var(--border-subtle)] border-t border-[var(--border-subtle)]">
-                        <tr className="bg-[var(--surface-raised)]"><th scope="colgroup" colSpan={3} className="px-3 py-2 text-left font-medium break-words" title={`${line.item_code} ${line.item_name}`}>{line.item_code} · {line.item_name}</th></tr>
+                        <tr className="bg-[var(--surface-raised)]"><th scope="colgroup" colSpan={4} className="px-3 py-2 text-left font-medium break-words" title={`${line.item_code} ${line.item_name}`}>{line.item_code} · {line.item_name}</th></tr>
                         {line.history_snapshot.map((week) => <tr key={`${line.plan_line_id}:${week.from}`}>
                           <td className="px-3 py-2 whitespace-nowrap">{formatDateShort(week.from)} – {formatDateShort(week.to)}</td>
+                          <td className="px-3 py-2">KG</td>
                           <td className={num}>{cell(Number(week.actualKg))}</td>
                           <td className={num}>{cell(Number(week.expectedKg))}</td>
                         </tr>)}

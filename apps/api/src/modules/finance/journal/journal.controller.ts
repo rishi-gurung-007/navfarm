@@ -31,6 +31,15 @@ export class JournalController {
     return { success: true, message: 'Journal Entries retrieved successfully.', data: result };
   }
 
+  @Get(':id/source-document')
+  @RequirePermission('FINANCE', 'JOURNAL', 'view')
+  @ApiOperation({ summary: 'The document a system Journal Entry was posted from, read-only, with names filled in' })
+  @ApiParam({ name: 'id', description: 'Journal Entry UUID' })
+  async findSourceDocument(@Param('id') id: string) {
+    const result = await this.journalService.findSourceDocument(id);
+    return { success: true, message: 'Source document retrieved.', data: result };
+  }
+
   @Get(':id')
   @RequirePermission('FINANCE', 'JOURNAL', 'view')
   @ApiOperation({ summary: 'Fetch a single Journal Entry with its lines' })

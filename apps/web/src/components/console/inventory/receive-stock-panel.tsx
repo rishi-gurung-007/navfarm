@@ -385,7 +385,7 @@ export default function ReceiveStockPanel({
                   Item Code
                 </TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5">
-                  Item Description
+                  Item Name
                 </TableHead>
                 <TableHead className="whitespace-nowrap px-3 py-2.5 text-right">
                   Qty Received
@@ -739,7 +739,7 @@ export default function ReceiveStockPanel({
                     <tr className="border-b border-(--row-border)">
                       <TableHead className="px-3 py-2">Item Code</TableHead>
                       <TableHead className="px-3 py-2">
-                        Item Description
+                        Item Name
                       </TableHead>
                       <TableHead className="px-3 py-2 text-right">
                         Good Qty Received

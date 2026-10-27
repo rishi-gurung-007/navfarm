@@ -3327,7 +3327,7 @@ export default function BatchPanel() {
                             Item No.
                           </TableHead>
                           <TableHead className="h-auto px-3 py-2">
-                            Item Description
+                            Item Name
                           </TableHead>
                           <TableHead className="h-auto px-3 py-2">
                             {t('blColSourceBatch')}
@@ -3530,7 +3530,7 @@ export default function BatchPanel() {
                                 Item No.
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
-                                Item Description
+                                Item Name
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColStage')}
@@ -3649,7 +3649,7 @@ export default function BatchPanel() {
                                 Item No.
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
-                                Item Description
+                                Item Name
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColType')}
@@ -3756,7 +3756,7 @@ export default function BatchPanel() {
                                 Item No.
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
-                                Item Description
+                                Item Name
                               </TableHead>
                               <TableHead className="h-auto px-3 py-2">
                                 {t('blColStdValue')}

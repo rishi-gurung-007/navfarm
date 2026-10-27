@@ -479,7 +479,7 @@ export default function InventoryLedgerPanel() {
                 {/* Code and name are two columns (Rishi, 14 Oct). */}
                 <TableHead className="whitespace-nowrap">Item No.</TableHead>
                 <TableHead className="whitespace-nowrap min-w-[210px]">
-                  Item Description
+                  Item Name
                 </TableHead>
                 <TableHead className="whitespace-nowrap min-w-[150px]">
                   {t('ilpLocation')}

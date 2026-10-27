@@ -1214,7 +1214,7 @@ export class ItemService {
       const effectiveName =
         dto.item_name !== undefined ? dto.item_name : item.item_name;
       if (!effectiveName || !effectiveName.trim()) {
-        throw new BadRequestException('Item Description is mandatory.');
+        throw new BadRequestException('Item Name is mandatory.');
       }
 
       const effectiveUom =

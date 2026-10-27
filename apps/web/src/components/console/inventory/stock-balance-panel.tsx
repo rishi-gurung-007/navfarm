@@ -234,7 +234,7 @@ export default function StockBalancePanel() {
                 {/* Code and name are two columns (Rishi, 14 Oct). */}
                 <TableHead className="whitespace-nowrap">Item Code</TableHead>
                 <TableHead className="whitespace-nowrap">
-                  Item Description
+                  Item Name
                 </TableHead>
                 <TableHead className="whitespace-nowrap">
                   Location Code

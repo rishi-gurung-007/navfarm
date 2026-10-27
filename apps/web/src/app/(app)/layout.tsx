@@ -445,7 +445,7 @@ export default function ConsoleLayout({
       href: '/inventory/feed-forecast?tab=feed-requisition',
     },
     {
-      label: t('invFeedConsolidations'),
+      label: t('fftTabMillConsolidation'),
       href: '/inventory/feed-forecast?tab=mill-consolidation',
     },
     {
@@ -453,7 +453,7 @@ export default function ConsoleLayout({
       href: '/inventory/feed-forecast?tab=mill-production',
     },
     {
-      label: t('invFeedLoading'),
+      label: t('fftTabLoadingInstructions'),
       href: '/inventory/feed-forecast?tab=loading-instructions',
     },
     {
