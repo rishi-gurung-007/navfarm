@@ -47,7 +47,16 @@ export class AnimalController {
   async findAll(@Query() query: QueryAnimalDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.animalService.findAll(query, tenantId);
-    return { success: true, message: 'Animals retrieved successfully.', data: result.map(withExitDates) };
+    return {
+      success: true,
+      message: 'Animals retrieved successfully.',
+      // `data` stays the array every caller already reads; total/limit/offset
+      // are the siblings the list screen pages on, matching the other masters.
+      data: result.data.map(withExitDates),
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
+    };
   }
 
   @Get('lookup/tag')

@@ -5,7 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { companyCondition, masterScopeConditions, MasterScope } from '../../../common/master-data-scope';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
@@ -51,9 +51,7 @@ export class ReportingPeriodService {
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.businessYear) conditions.push(eq(table.business_year, query.businessYear));
     conditions.push(...listFilterConditions(table, query.filter));
-    return this.db.select().from(table).where(and(...conditions))
-      .orderBy(listOrderBy(table, { ...query, sort: query.sort ?? 'start_date' }, table.start_date))
-      .limit(query.limit || 50).offset(query.offset || 0);
+    return runMasterList(this.db, table, conditions, { ...query, sort: query.sort ?? 'start_date' }, table.start_date);
   }
 
   /** Every period of the company (active or not) — codes are unique across all of them, overlaps only matter among active ones. */

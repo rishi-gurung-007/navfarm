@@ -174,7 +174,7 @@ describe('FeedSiloDashboard', () => {
     expect(within(table).getByRole('link', { name: 'reqStatusDraft' }).getAttribute('href')).toContain('/requisitions?id=req-1');
   });
 
-  it('W2D W6: shows the first shortage date, a linked Shed row, and links BIN, current and next diet items and the next-diet silo', async () => {
+  it('W2D W6: shows the first shortage date, a linked Shed row, and links BIN, current and next diet items', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
       const query = new URL(url, 'http://navfarm.local').searchParams;
       const routed: any = response(query.get('shedId'), query.get('siloId'));
@@ -196,7 +196,8 @@ describe('FeedSiloDashboard', () => {
     expect(within(table).getByRole('link', { name: 'Diet R1' }).getAttribute('href')).toBe('/master-data/item?recordId=r1');
     expect(within(table).getByRole('link', { name: 'Diet R2' }).getAttribute('href')).toBe('/master-data/item?recordId=r2');
     expect(within(table).getByRole('link', { name: 'BIN-001' }).getAttribute('href')).toBe('/master-data/location?recordId=bin-1');
-    expect(within(table).getByRole('link', { name: 'GRS/SILO-002' }).getAttribute('href')).toBe('/master-data/location?recordId=silo-b');
+    // The next-diet silo is no longer linked beside "Yes".
+    expect(within(table).queryByRole('link', { name: 'GRS/SILO-002' })).toBeNull();
   });
 
   it('uses explanatory text for unavailable dashboard values', async () => {

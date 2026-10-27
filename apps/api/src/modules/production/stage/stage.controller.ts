@@ -28,7 +28,7 @@ export class StageController {
   async findAll(@Query() query: QueryStageDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const result = await this.stageService.findAll(query, tenantId);
-    return { success: true, message: 'Stages retrieved successfully.', data: result };
+    return { success: true, message: 'Stages retrieved successfully.', data: result.data, total: result.total, limit: result.limit, offset: result.offset };
   }
 
   @Get(':id')

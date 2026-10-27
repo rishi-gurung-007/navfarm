@@ -44,7 +44,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
 
     expect(headers).toEqual([
       'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
-      'ffColHeadCount', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
+      'ffColHeadCount', 'ffColUom', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
       'ffColOpenTransfers', 'ffColPlannedFeedAdded', 'ffColPlannedFeedReference', 'ffColDailyUse',
       '23/09/26', 'ffColFirstShortage', 'ffColRecommendedQty', 'ffColDeliveryDate',
     ]);
@@ -186,7 +186,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
     expect(cells).toEqual([
       'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', 'Weaner Diet R1', 'Weaner Diet R1',
-      '1,000', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
+      '1,000', 'KG', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
     ]);
   });
 

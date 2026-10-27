@@ -8,7 +8,7 @@ import { MasterScope } from '../../../common/master-data-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { CreateKpiMetricDto, QueryKpiMetricDto, UpdateKpiMetricDto } from './kpi-metric.dto';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 
 const table = schema.kpiMetricMaster;
 
@@ -49,7 +49,7 @@ export class KpiMetricService {
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.search) conditions.push(or(like(table.metric_code, `%${query.search}%`), like(table.metric_name, `%${query.search}%`))!);
     conditions.push(...listFilterConditions(table, query.filter));
-    return this.db.select().from(table).where(and(...conditions)).orderBy(listOrderBy(table, query, table.metric_name)).limit(query.limit || 50).offset(query.offset || 0);
+    return runMasterList(this.db, table, conditions, query, table.metric_name);
   }
 
   private async log(action: string, row: typeof table.$inferSelect, user: any, oldValues?: unknown) {

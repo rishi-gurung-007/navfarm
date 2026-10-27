@@ -22,7 +22,8 @@ export class LocationTypeController {
   @Get()
   @RequirePermission('MASTER_DATA', 'LOCATION', 'view')
   async findAll(@Query() query: QueryLocationTypeDto, @Req() req: any) {
-    return { success: true, data: await this.service.findAll(query, req.user?.tenantId || req.tenantId) };
+    const page = await this.service.findAll(query, req.user?.tenantId || req.tenantId);
+    return { success: true, data: page.data, total: page.total, limit: page.limit, offset: page.offset };
   }
 
   @Get(':id')

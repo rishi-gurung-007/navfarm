@@ -34,10 +34,15 @@ export class ItemTemplateController {
     const result = activeOnly === 'true'
       ? await this.itemTemplateService.findAllActive(tenantId, companyId)
       : await this.itemTemplateService.findAll(tenantId, companyId);
+    // findAllActive still answers with a bare array; findAll reports a total.
+    const rows = Array.isArray(result) ? result : result.data;
     return {
       success: true,
       message: 'Item templates retrieved successfully.',
-      data: result,
+      data: rows,
+      total: Array.isArray(result) ? rows.length : result.total,
+      limit: Array.isArray(result) ? rows.length : result.limit,
+      offset: Array.isArray(result) ? 0 : result.offset,
     };
   }
 

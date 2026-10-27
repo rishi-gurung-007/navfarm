@@ -65,7 +65,6 @@ export function FeedConsolidationsPanel() {
   useEffect(() => { const id = deepLinkIdFor("mill-consolidation"); if (id) void open(id); }, []);
   const markReviewed = async () => { if (!selected) return; try { setSelected(unwrap<SheetDetail>(await api.post(`/feed-requisition/consolidations/${selected.consolidation_id}/review`, {}))); showToast.success(t("fcsMarkedReviewed")); load(); } catch (err: any) { showToast.error(err?.message || t("fcsMarkReviewedFailed")); } };
   const finalize = async () => { if (!selected) return; try { setSelected(unwrap<SheetDetail>(await api.post(`/feed-requisition/consolidations/${selected.consolidation_id}/finalize`, {}))); showToast.success(t("fcsFinalized")); load(); } catch (err: any) { showToast.error(err?.message || t("fcsFinalizeFailed")); } };
-  const closeButton = <Button variant="outline" onClick={() => setSelected(null)}>{t("fcsClose")}</Button>;
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9">
@@ -110,7 +109,7 @@ export function FeedConsolidationsPanel() {
           </table>
         </div>
       )}
-      <Dialog open={!!selected} onClose={() => setSelected(null)} title={selected?.consolidation_no || t("fcsSheetTitle")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={selected && ["DRAFT", "REVIEWED"].includes(selected.status) ? <>{closeButton}{selected.status === "DRAFT" && <Button variant="outline" onClick={markReviewed}>{t("fcsMarkReviewed")}</Button>}<Button onClick={finalize}>{t("fcsFinalize")}</Button></> : closeButton}>
+      <Dialog open={!!selected} onClose={() => setSelected(null)} title={selected?.consolidation_no || t("fcsSheetTitle")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={selected && ["DRAFT", "REVIEWED"].includes(selected.status) ? <>{selected.status === "DRAFT" && <Button variant="outline" onClick={markReviewed}>{t("fcsMarkReviewed")}</Button>}<Button onClick={finalize}>{t("fcsFinalize")}</Button></> : null}>
         {selected && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 rounded-md border border-(--border) p-3 text-sm sm:grid-cols-4">

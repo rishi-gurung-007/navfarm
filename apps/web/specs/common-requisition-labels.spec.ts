@@ -29,7 +29,7 @@ describe("common requisition labels are Rishi's (4 Oct list)", () => {
   it.each([
     ["crqColLine", "Line No."],
     ["crqColItem", "Item No."],
-    ["crqColItemDescription", "Item Description"],
+    ["crqColItemDescription", "Item Name"],
     ["crqColFaServiceDescription", "Fixed Asset or Service Description"],
     ["crqColQty", "Qty"],
     ["crqColFrom", "From Location"],

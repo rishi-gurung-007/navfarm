@@ -318,9 +318,9 @@ describe('RequisitionNewDialog — farm chosen on the header when the caller has
 // mock, since that mock answers with the key name regardless of its value.
 describe('RequisitionNewDialog — manual line labels match the workbook (gap #16, Req r43-r56)', () => {
   const en = translations.en;
-  it("uses the workbook's own words for Silo Code, Feed Item No. to Order, Requested Qty KG and Proposed Delivery Date", () => {
+  it("uses the workbook's own words for Silo Code, Item No. to Order, Requested Qty KG and Proposed Delivery Date", () => {
     expect(en.rqNewDestination).toBe('Silo Code, line {{line}}');
-    expect(en.rqNewItem).toBe('Feed Item No. to Order, line {{line}}');
+    expect(en.rqNewItem).toBe('Item No. to Order, line {{line}}');
     expect(en.rqNewKg).toBe('Requested Qty KG, line {{line}}');
     expect(en.rqNewDate).toBe('Proposed Delivery Date, line {{line}}');
   });

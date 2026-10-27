@@ -47,7 +47,10 @@ export class SpeciesController {
     return {
       success: true,
       message: 'Species retrieved successfully.',
-      data: result
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

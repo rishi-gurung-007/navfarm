@@ -166,7 +166,7 @@ export class ItemTemplateService {
         eq(schema.itemTemplate.no_series_id, schema.noSeries.id),
       );
 
-    return conditions.length > 0
+    const rows = conditions.length > 0
       ? query
           .leftJoin(
             schema.itemCategoryMaster,
@@ -186,6 +186,11 @@ export class ItemTemplateService {
             ),
           )
           .orderBy(desc(schema.itemTemplate.created_at));
+
+    // Every template is returned — this list is not paged — so its total is
+    // the row count, which is what the list screen's pager needs to read.
+    const data = await rows;
+    return { data, total: data.length, limit: data.length, offset: 0 };
   }
 
   /**

@@ -47,9 +47,9 @@ export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   'feed-plan': 'fftTabFeedPlan',
   'compare-report': 'fftTabCompareReport',
   'feed-requisition': 'fftTabFeedRequisition',
-  'mill-consolidation': 'invFeedConsolidations',
+  'mill-consolidation': 'fftTabMillConsolidation',
   'mill-production': 'mpoTab',
-  'loading-instructions': 'invFeedLoading',
+  'loading-instructions': 'fftTabLoadingInstructions',
   'physical-count': 'fftTabPhysicalCount',
 };
 

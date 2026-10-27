@@ -4252,7 +4252,7 @@ const binDietAssignment: MasterDataConfig = {
     { key: 'bin_code', label: 'BIN Code' },
     { key: 'bin_name', label: 'BIN Name' },
     { key: 'feed_item_no', label: 'Feed Item No.' },
-    { key: 'feed_item_description', label: 'Feed Item Description' },
+    { key: 'feed_item_description', label: 'Feed Item Name' },
     { key: 'production_date', label: 'Production Date', format: 'date' },
     { key: 'diet_priority', label: 'Diet Priority' },
     { key: 'status', label: 'Status' },

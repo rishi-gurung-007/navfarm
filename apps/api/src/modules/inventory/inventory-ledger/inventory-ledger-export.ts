@@ -55,7 +55,7 @@ export const LEDGER_EXPORT_COLUMNS: LedgerExportColumn[] = [
   { key: 'entry_type', header: 'Entry Type', kind: 'text', width: 12 },
   { key: 'transaction_type', header: 'Transaction Type', kind: 'text', width: 18 },
   { key: 'item_code', header: 'Item Code', kind: 'text', width: 16 },
-  { key: 'item_description', header: 'Item Description', kind: 'text', width: 32 },
+  { key: 'item_description', header: 'Item Name', kind: 'text', width: 32 },
   { key: 'category_code', header: 'Category Code', kind: 'text', width: 16 },
   { key: 'category_name', header: 'Category', kind: 'text', width: 22 },
   { key: 'quantity', header: 'Quantity', kind: 'number', width: 14 },

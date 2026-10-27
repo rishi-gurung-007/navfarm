@@ -110,8 +110,8 @@ async function run() {
           assert.equal((await reasons.setActive(manual.reason_id, false, tenant)).is_active, false);
           await assert.rejects(() => reasons.create({ ...dto, reason_code: manual.reason_code }, tenant), /already exists/);
           assert.equal((await reasons.setActive(manual.reason_id, true, tenant)).is_active, true);
-          assert((await reasons.findAll({ stageCode: 'GILT_GROWER', category: 'CULL', isActive: true }, tenant)).some((r) => r.reason_id === automatic.reason_id));
-          assert(!(await reasons.findAll({ stageCode: 'GESTATION' }, tenant)).some((r) => r.reason_id === automatic.reason_id));
+          assert((await reasons.findAll({ stageCode: 'GILT_GROWER', category: 'CULL', isActive: true }, tenant)).data.some((r) => r.reason_id === automatic.reason_id));
+          assert(!(await reasons.findAll({ stageCode: 'GESTATION' }, tenant)).data.some((r) => r.reason_id === automatic.reason_id));
           await assert.rejects(() => reasons.create({ ...dto, applicable_stages: ['NONEXISTENT_STAGE'] }, tenant), /Select active stages/);
           if (kind === 'COMPANY') {
             context.set('masterScope', { kind: 'TENANT', tenantId: tenant, companyId: null });

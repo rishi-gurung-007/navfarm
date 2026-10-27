@@ -61,6 +61,11 @@ const number = (value: number | null | undefined, unavailable: string) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? unavailable
     : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+/** A KG quantity where the label no longer carries the unit; "Not available" stays bare. */
+const kg = (value: number | null | undefined, unavailable: string) => {
+  const shown = number(value, unavailable);
+  return shown === unavailable ? shown : `${shown} kg`;
+};
 /** Silo r9: Days of Feed Remaining is shown to one decimal. */
 const oneDecimal = (value: number | null | undefined, unavailable: string) =>
   value === null || value === undefined || !Number.isFinite(value) ? unavailable : value.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -113,26 +118,24 @@ export function FeedSiloDashboardCards({
   const yesNo: ReactNode = silo.siloAvailableForNextDiet === null
     ? unavailable
     : silo.siloAvailableForNextDiet
-      ? silo.nextDietSiloCode
-        ? <>{t("fsdYes")} · <RecordLink code={silo.nextDietSiloName || silo.nextDietSiloCode} href={silo.nextDietSiloId ? locationHref(silo.nextDietSiloId) : null} /></>
-        : t("fsdYes")
+      ? t("fsdYes")
       : t("fsdNo");
   const nextDiet: ReactNode = silo.nextDietItemName || silo.nextDietItemCode
-    ? <><ItemValue id={silo.nextDietItemId} code={silo.nextDietItemCode} name={silo.nextDietItemName} unavailable={unavailable} />{silo.nextDietDate ? ` · ${date(silo.nextDietDate, unavailable)}` : ""}</>
+    ? <ItemValue id={silo.nextDietItemId} code={silo.nextDietItemCode} name={silo.nextDietItemName} unavailable={unavailable} />
     : silo.nextDietNote
       ? <>{unavailable}<span className="block text-xs font-normal text-(--text-muted)">{silo.nextDietNote}</span></>
       : unavailable;
+  const nextDietStarts = date(silo.nextDietDate, unavailable);
   // Current diet: the item eaten today, else Feed in Silo — the same fallback the API uses for the name.
   const currentDiet: ReactNode = silo.currentDietItemCode
     ? <ItemValue id={silo.currentDietItemId} code={silo.currentDietItemCode} name={silo.currentDietItemName} unavailable={unavailable} />
     : <ItemValue id={silo.feedInSiloItemId} code={silo.feedInSiloItemCode} name={silo.currentDietItemName} unavailable={unavailable} />;
   const firstShortage = date(silo.firstShortageDate, t("fsdNoShortage"));
-  const daysRemaining = silo.daysRemaining === null || !Number.isFinite(silo.daysRemaining)
-    ? unavailable
-    : silo.firstShortageDate ? `${oneDecimal(silo.daysRemaining, unavailable)} · ${formatDateShort(silo.firstShortageDate)}` : oneDecimal(silo.daysRemaining, unavailable);
+  // The date has its own First Shortage row below, so the count stands alone here.
+  const daysRemaining = oneDecimal(silo.daysRemaining, unavailable);
   const projectedNeed = silo.nextProjectedNeedKg > 0
-    ? `${number(silo.projectedNeedKg, unavailable)} (${number(silo.currentProjectedNeedKg, unavailable)} + ${number(silo.nextProjectedNeedKg, unavailable)})`
-    : number(silo.projectedNeedKg, unavailable);
+    ? `${kg(silo.projectedNeedKg, unavailable)} (${number(silo.currentProjectedNeedKg, unavailable)} + ${number(silo.nextProjectedNeedKg, unavailable)})`
+    : kg(silo.projectedNeedKg, unavailable);
   const requisitionLabel = silo.requisitionStatus ? labelOf(REQ_STATUS_LABEL, silo.requisitionStatus, t as never) : null;
   const requisition = silo.requisitionId && requisitionLabel
     ? <a className="text-(--accent) hover:underline" href={`/requisitions?id=${encodeURIComponent(silo.requisitionId)}`}>{requisitionLabel}</a>
@@ -147,18 +150,19 @@ export function FeedSiloDashboardCards({
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
     { label: "fsdCurrentDietFeedItem", value: currentDiet },
     { label: "fsdMillLoadingBin", value: binValue },
-    { label: "fsdSiloCapacityKg", value: number(silo.capacityKg, unavailable) },
-    { label: "fsdSystemBalanceKg", value: number(silo.systemBalanceKg, unavailable) },
-    { label: "fsdDailyRequirementKg", value: number(silo.dailyRequirementKg, unavailable) },
+    { label: "fsdSiloCapacityKg", value: kg(silo.capacityKg, unavailable) },
+    { label: "fsdSystemBalanceKg", value: kg(silo.systemBalanceKg, unavailable) },
+    { label: "fsdDailyRequirementKg", value: kg(silo.dailyRequirementKg, unavailable) },
     { label: "fsdDaysFeedRemaining", value: daysRemaining },
     { label: "fsdFirstShortageDate", value: firstShortage },
     { label: "fsdProjectedNeedRangeKg", value: projectedNeed },
     { label: "fsdCurrentDietDaysRemaining", value: number(silo.currentDietDaysRemaining, unavailable) },
     { label: "fsdNextDietFeedItem", value: nextDiet },
+    { label: "fsdNextDietStarts", value: nextDietStarts },
     { label: "fsdSiloAvailableNextDiet", value: yesNo },
-    { label: "fsdProjectedShortfallKg", value: number(silo.projectedShortfallKg, unavailable) },
-    { label: "fsdRecommendedOrderKg", value: number(silo.recommendedOrderKg, unavailable) },
-    { label: "fsdFarmTotalOrderKg", value: number(farmTotalOrderKg, unavailable) },
+    { label: "fsdProjectedShortfallKg", value: kg(silo.projectedShortfallKg, unavailable) },
+    { label: "fsdRecommendedOrderKg", value: kg(silo.recommendedOrderKg, unavailable) },
+    { label: "fsdFarmTotalOrderKg", value: kg(farmTotalOrderKg, unavailable) },
     { label: "fsdRequisitionStatus", value: requisition },
     { label: "fsdSubmissionDeadline", value: date(silo.submissionDeadline, unavailable) },
   ];
@@ -187,8 +191,9 @@ export function FeedSiloDashboardCards({
             <Summary label={t("fsdProjectedNeedRangeKg")} value={projectedNeed} />
             <Summary label={t("fsdCurrentDietDaysRemaining")} value={number(silo.currentDietDaysRemaining, unavailable)} />
             <Summary label={t("fsdNextDietFeedItem")} value={nextDiet} />
+            <Summary label={t("fsdNextDietStarts")} value={nextDietStarts} />
             <Summary label={t("fsdSiloAvailableNextDiet")} value={yesNo} />
-            <Summary label={t("fsdProjectedShortfallKg")} value={<span className="tabular-nums">{number(silo.projectedShortfallKg, unavailable)}</span>} />
+            <Summary label={t("fsdProjectedShortfallKg")} value={<span className="tabular-nums">{kg(silo.projectedShortfallKg, unavailable)}</span>} />
           </CardContent>
         </Card>
         <Card>

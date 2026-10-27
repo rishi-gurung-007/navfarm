@@ -147,7 +147,7 @@ describe("FeedRequisitionDocument — semantic code, name and reason fields", ()
   it("an editable line offers each silo as code and name", async () => {
     render(<FeedRequisitionDocument view={view} editable options={options} edits={{}} onLineEdit={jest.fn()} remarks="" onRemarksChange={jest.fn()} />);
     expect(screen.getByRole("button", { name: "Silo Code, line 10000" }).textContent).toBe("GRS/SILO-001");
-    expect(screen.getByRole("button", { name: "Feed Item No., line 10000" }).textContent).toBe("R1");
+    expect(screen.getByRole("button", { name: "Item No., line 10000" }).textContent).toBe("R1");
     fireEvent.click(screen.getByRole("button", { name: "Silo Code, line 10000" }));
     expect(await screen.findByRole("option", { name: "GRS/SILO-001 — Weaner silo" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "GRS/SILO-002 — Grower silo" })).toBeTruthy();
@@ -246,7 +246,7 @@ describe("FeedRequisitionDocument — lines sub-form (Requisition §2)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Silo Code, line 10000" }));
     fireEvent.click(await screen.findByRole("option", { name: "GRS/SILO-002 — Grower silo" }));
     expect(onLineEdit).toHaveBeenCalledWith("L1", { destinationId: "s2" });
-    fireEvent.click(screen.getByRole("button", { name: "Feed Item No., line 10000" }));
+    fireEvent.click(screen.getByRole("button", { name: "Item No., line 10000" }));
     fireEvent.click(await screen.findByRole("option", { name: "R2 — Weaner Diet R2" }));
     expect(onLineEdit).toHaveBeenCalledWith("L1", { itemId: "r2" });
     expect(screen.queryByLabelText("Exception reason, line 10000")).toBeNull();

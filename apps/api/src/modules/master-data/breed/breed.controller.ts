@@ -62,7 +62,10 @@ export class BreedController {
     return {
       success: true,
       message: 'Breeds retrieved successfully.',
-      data: result
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

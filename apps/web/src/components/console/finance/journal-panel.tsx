@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/table';
 import { useLanguage } from '@/hooks/useLanguage';
 import { formatAmount } from '@/lib/utils';
+import { JournalSourceDialog } from './journal-source-dialog';
 
 const PAGE_SIZE = 25;
 
@@ -84,6 +85,7 @@ export default function JournalPanel() {
   );
   const [search, setSearch] = useState(openNo);
   const [statusFilter, setStatusFilter] = useState('');
+  const [sourceOf, setSourceOf] = useState<Row | null>(null);
 
   const [glAccounts, setGlAccounts] = useState<Row[]>([]);
 
@@ -260,17 +262,6 @@ export default function JournalPanel() {
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label={t('jpFilterByStatus')}
-            className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
-          >
-            <option value="">{t('jpAllStatuses')}</option>
-            <option value="DRAFT">{t('jpDraft')}</option>
-            <option value="POSTED">{t('jpPosted')}</option>
-            <option value="CANCELLED">{t('jpCancelled')}</option>
-          </Select>
           <div className="relative min-w-0 flex-1 sm:flex-none">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -284,6 +275,18 @@ export default function JournalPanel() {
               className="h-9 w-full pl-8 text-[13px] sm:w-44"
             />
           </div>
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            aria-label={t('jpFilterByStatus')}
+            fullWidth={false}
+            className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
+          >
+            <option value="">{t('jpAllStatuses')}</option>
+            <option value="DRAFT">{t('jpDraft')}</option>
+            <option value="POSTED">{t('jpPosted')}</option>
+            <option value="CANCELLED">{t('jpCancelled')}</option>
+          </Select>
           <Button onClick={openCreate} size="sm" className="shrink-0">
             <Plus className="h-3.5 w-3.5" /> {t('jpNewJournalEntry')}
           </Button>
@@ -361,10 +364,19 @@ export default function JournalPanel() {
                       {row.posting_date}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
-                      {row.source}
-                      {row.source_document_no
-                        ? ` · ${row.source_document_no}`
-                        : ''}
+                      {row.source_document_no ? (
+                        <button
+                          type="button"
+                          onClick={() => setSourceOf(row)}
+                          className="font-medium hover:underline"
+                          style={S.accent}
+                          title={t('jsdOpenSource', { no: row.source_document_no })}
+                        >
+                          {row.source_document_no}
+                        </button>
+                      ) : (
+                        row.source
+                      )}
                     </TableCell>
                     <TableCell
                       className="whitespace-nowrap text-right"
@@ -728,6 +740,12 @@ export default function JournalPanel() {
           </div>
         )}
       </Dialog>
+
+      <JournalSourceDialog
+        journalId={sourceOf?.journal_id ?? null}
+        documentNo={sourceOf?.source_document_no ?? ''}
+        onClose={() => setSourceOf(null)}
+      />
     </div>
   );
 }

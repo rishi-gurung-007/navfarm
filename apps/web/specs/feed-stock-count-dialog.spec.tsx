@@ -63,7 +63,7 @@ it("opens an existing draft in the same document dialog and puts Submit in its f
   await waitFor(() => expect(within(dialog).getByText("FSC-00001")).toBeTruthy());
   const footer = dialog.querySelector("footer") as HTMLElement;
   expect(within(footer).getByRole("button", { name: "fscSubmit" })).toBeTruthy();
-  expect(within(footer).getByRole("button", { name: "close" })).toBeTruthy();
+  expect(within(footer).queryByRole("button", { name: "close" })).toBeNull();
 });
 
 it("shows semantic values rather than internal IDs in an existing count", async () => {

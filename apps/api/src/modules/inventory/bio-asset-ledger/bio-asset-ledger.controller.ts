@@ -86,7 +86,7 @@ const BIO_EXPORT_COLUMNS: LedgerExportColumn<BioExportRow>[] = [
   { key: 'source_grn_no', header: 'Source GRN', kind: 'text', width: 14 },
   { key: 'transaction_type', header: 'Transaction Type', kind: 'text', width: 20 },
   { key: 'item_code', header: 'Item No.', kind: 'text', width: 18 },
-  { key: 'item_description', header: 'Item Description', kind: 'text', width: 32 },
+  { key: 'item_description', header: 'Item Name', kind: 'text', width: 32 },
   { key: 'warehouse_code', header: 'Location Code', kind: 'text', width: 22 },
   { key: 'warehouse_name', header: 'Location', kind: 'text', width: 26 },
   { key: 'quantity', header: 'Quantity', kind: 'number', width: 12 },

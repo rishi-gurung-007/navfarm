@@ -19,6 +19,7 @@ import {
 import {
   listFilterConditions,
   listOrderBy,
+  runMasterList,
 } from '../../../common/master-list-query';
 
 export interface ExchangeRateWriteScope {
@@ -134,19 +135,13 @@ export class CurrencyService {
         ),
       );
     }
-    return this.db
-      .select()
-      .from(schema.currencyMaster)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(
-        listOrderBy(
-          schema.currencyMaster,
-          query,
-          schema.currencyMaster.iso_code,
-        ),
-      )
-      .limit(query.limit || 50)
-      .offset(query.offset || 0);
+    return runMasterList(
+      this.db,
+      schema.currencyMaster,
+      conditions,
+      query,
+      schema.currencyMaster.iso_code,
+    );
   }
 
   /**

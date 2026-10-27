@@ -20,6 +20,7 @@ import {
 import {
   listFilterConditions,
   listOrderBy,
+  runMasterList,
 } from '../../../common/master-list-query';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { alertRuleProblems } from './alert-rule.rules';
@@ -441,13 +442,13 @@ export class AlertRuleService {
       conditions.push(eq(table.is_active, query.isActive));
     if (query.eventType) conditions.push(eq(table.event_type, query.eventType));
     conditions.push(...listFilterConditions(table, query.filter));
-    return this.db
-      .select()
-      .from(table)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(table, query, table.notification_code))
-      .limit(query.limit || 50)
-      .offset(query.offset || 0);
+    return runMasterList(
+      this.db,
+      table,
+      conditions,
+      query,
+      table.notification_code,
+    );
   }
 
   private assertShape(rule: Parameters<typeof alertRuleProblems>[0]) {

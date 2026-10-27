@@ -71,6 +71,15 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
  * - the location being edited, when `excludeLocationId` is given, or updating a location
  *   without changing its area would count it twice and reject a valid save.
  */
+/**
+ * `area_size` is decimal(18,4): the database stores four places and nothing
+ * finer. Adding the children in JS floats does not — 31.03 + 35.93 * 4 comes
+ * out as 174.75000000000003, so a sixth pen of 35.93 "exceeds" a 210.68 house
+ * by 4e-14 and is rejected although the six fill it exactly. Rounding to the
+ * stored scale compares the numbers the database actually holds.
+ */
+export const atStoredAreaScale = (value: number): number => Math.round(value * 10_000) / 10_000;
+
 export function sumAreasInUnit(
   rows: {
     location_id?: string;
@@ -1285,8 +1294,8 @@ export class LocationService {
       tenantId,
       excludeLocationId,
     );
-    const combined = siblingTotal + childSize;
-    if (combined > parentSize) {
+    const combined = atStoredAreaScale(siblingTotal + childSize);
+    if (combined > atStoredAreaScale(parentSize)) {
       const u = unit ? ' ' + unit : '';
       const withSiblings = counted.length
         ? ` (${childSize}${u} here plus ${siblingTotal}${u} already used by ${counted.length} other location${counted.length === 1 ? '' : 's'}: ${counted.slice(0, 3).join(', ')}${counted.length > 3 ? '…' : ''})`
