@@ -1830,8 +1830,18 @@ export class BatchService {
 
     if (query.companyId)
       conditions.push(eq(schema.batchHeader.company_id, query.companyId));
-    if (query.status)
-      conditions.push(eq(schema.batchHeader.status, query.status));
+    if (query.status) {
+      // One status, or several comma-separated (a transfer's destination is ACTIVE or DRAFT).
+      const statuses = query.status
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      conditions.push(
+        statuses.length > 1
+          ? inArray(schema.batchHeader.status, statuses)
+          : eq(schema.batchHeader.status, statuses[0]),
+      );
+    }
     if (query.lobId)
       conditions.push(eq(schema.batchHeader.lob_id, query.lobId));
     if (query.breedId)
@@ -1840,14 +1850,27 @@ export class BatchService {
       conditions.push(eq(schema.batchHeader.tracking_mode, query.trackingMode));
     if (query.search)
       conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
+    if (query.batchId)
+      conditions.push(eq(schema.batchHeader.batch_id, query.batchId));
+    if (query.animalTracking)
+      conditions.push(
+        eq(schema.batchHeader.animal_tracking, query.animalTracking),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    // Batch number order — the order the list already came back in — with the
+    // id as tie-break: without an explicit order MySQL may return any rows for
+    // a given offset, so a picker's second page could repeat or skip batches.
     const rows = await this.db
       .select()
       .from(schema.batchHeader)
       .where(and(...conditions))
+      .orderBy(
+        asc(schema.batchHeader.batch_no),
+        asc(schema.batchHeader.batch_id),
+      )
       .limit(limit)
       .offset(offset);
 

@@ -28,6 +28,7 @@ import { getActiveCompanyId } from '@/hooks/useAuth';
 import { findConflictingSchedulerLine } from './scheduler-line-overlap';
 import { toApiLine } from './scheduler-line-payload';
 import { toInputNumber } from '@/lib/utils';
+import { usePagedOptions, usePickedRow } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import CopyActivitiesDialog, { CopySourceType } from './copy-activities-dialog';
@@ -270,13 +271,20 @@ export default function CreateSchedulerModal({
   companyId,
 }: CreateSchedulerModalProps) {
   const { t } = useLanguage();
-  const [batches, setBatches] = useState<Row[]>([]);
+  // Read only while the modal is open, a page at a time.
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId },
+    idKey: 'batch_id',
+    enabled: open,
+  });
+  const batches = pagedBatches.options;
   const [stages, setStages] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
   const [resources, setResources] = useState<Row[]>([]);
   const [activities, setActivities] = useState<Row[]>([]);
 
-  const [loadingBatches, setLoadingBatches] = useState(false);
+  const loadingBatches = pagedBatches.loading;
   const [loadingStages, setLoadingStages] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -302,7 +310,17 @@ export default function CreateSchedulerModal({
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [linesCollapsed, setLinesCollapsed] = useState(false);
 
-  const selectedBatch = batches.find((b) => b.batch_id === batchId) || null;
+  // The picked batch stays known after a search moves past it.
+  const selectedBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: batchId,
+    loaded: batches,
+  });
+  useEffect(() => {
+    if (pagedBatches.error) setError(pagedBatches.error || 'Failed to load batches.');
+  }, [pagedBatches.error]);
   const selectedStage = stages.find((s) => s.stage_id === stageId) || null;
 
   // Load initial lookups
@@ -317,16 +335,6 @@ export default function CreateSchedulerModal({
     setLines([]);
     setCopiedSystemSchedulerId(null);
     setShowLineModal(false);
-
-    setLoadingBatches(true);
-    const params = new URLSearchParams();
-    if (companyId) params.set('companyId', companyId);
-    params.set('limit', '100');
-    api
-      .get(`/batch?${params.toString()}`)
-      .then((res) => setBatches(unwrap<Row[]>(res) || []))
-      .catch((err) => setError(err?.message || 'Failed to load batches.'))
-      .finally(() => setLoadingBatches(false));
 
     // Items and resources for lines
     const itemParams = new URLSearchParams();
@@ -824,6 +832,7 @@ export default function CreateSchedulerModal({
                         }))}
                         placeholder="— Select a batch —"
                         searchPlaceholder="Search batches…"
+                        remote={pagedBatches}
                       />
                     )}
                   </div>

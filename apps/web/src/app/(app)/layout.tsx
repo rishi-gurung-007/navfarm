@@ -448,10 +448,7 @@ export default function ConsoleLayout({
       label: t('fftTabMillConsolidation'),
       href: '/inventory/feed-forecast?tab=mill-consolidation',
     },
-    {
-      label: t('mpoTab'),
-      href: '/inventory/feed-forecast?tab=mill-production',
-    },
+    // Mill Production stays a tab on the page; it is hidden from the sidebar only (Rishi, 28 Oct).
     {
       label: t('fftTabLoadingInstructions'),
       href: '/inventory/feed-forecast?tab=loading-instructions',

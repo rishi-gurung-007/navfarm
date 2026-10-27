@@ -65,6 +65,12 @@ import { useLanguage } from '@/hooks/useLanguage';
 import AnimalStageTransitionModal from '@/components/console/piggery/animal-stage-transition-modal';
 import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
 import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
+import {
+  fetchAllPages,
+  usePagedOptions,
+  usePickedRow,
+  withPicked,
+} from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import {
@@ -207,9 +213,40 @@ export default function OperationalBatchDataEntry() {
   const { t } = useLanguage();
   const searchParams = useSearchParams();
   // ── Live data state ──
-  const [batches, setBatches] = useState<BatchMeta[]>([]);
-  const [batchesLoading, setBatchesLoading] = useState(true);
-  const [batchesError, setBatchesError] = useState('');
+  const companyIdForBatches = getActiveCompanyId();
+  // ACTIVE batches, paged; when the company has none, every batch instead.
+  const [allStatuses, setAllStatuses] = useState(false);
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: {
+      companyId: companyIdForBatches,
+      status: allStatuses ? undefined : 'ACTIVE',
+    },
+    idKey: 'batch_id',
+    enabled: !!companyIdForBatches,
+  });
+  useEffect(() => {
+    if (!allStatuses && pagedBatches.ready && !pagedBatches.searching && pagedBatches.options.length === 0 && !pagedBatches.error)
+      setAllStatuses(true);
+  }, [allStatuses, pagedBatches.ready, pagedBatches.searching, pagedBatches.options.length, pagedBatches.error]);
+  // A deep link from Batches may name a batch past the loaded pages.
+  const linkedBatchId = searchParams.get('batchId');
+  const linkedBatchRow = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: linkedBatchId,
+    loaded: pagedBatches.options,
+    params: { companyId: companyIdForBatches, status: 'ACTIVE' },
+  });
+  // Stage, counts and mortality read back from the batch on screen, laid over its list row.
+  const [batchPatches, setBatchPatches] = useState<Record<string, Partial<BatchMeta>>>({});
+  const batchesLoading = !!companyIdForBatches && !pagedBatches.ready;
+  const batchesError = !companyIdForBatches
+    ? 'No active company — please select a company workspace first.'
+    : pagedBatches.error
+      ? `Failed to load batches: ${pagedBatches.error || 'API unavailable'}`
+      : '';
   const [dataEntryLoading, setDataEntryLoading] = useState(false);
   const [dataEntryError, setDataEntryError] = useState('');
   const [noScheduler, setNoScheduler] = useState(false);
@@ -230,6 +267,100 @@ export default function OperationalBatchDataEntry() {
     stages: PiggeryStage[];
     currentStageId: number;
   }>({ stages: [], currentStageId: 0 });
+
+  const [breeds, setBreeds] = useState<Row[]>([]);
+  // Helper to map a batch to a specific lifecycle stage (BATCH_WISE only)
+  const resolvePiggeryStage = (b: any) => {
+    const resolved = resolvePiggeryStageId(
+      b.current_stage_code || b.stage_code || b.stage_name,
+    );
+    const log: any[] = Array.isArray(b.stage_log) ? b.stage_log : [];
+    const enteredCurrentStage = log
+      .filter((l) => l.to_stage_code === (b.current_stage_code || ''))
+      .map((l) => String(l.transferred_at || ''))
+      .sort()
+      .pop();
+    return {
+      id: resolved.id,
+      name: resolved.name,
+      day: computeStageDay(
+        enteredCurrentStage || b.start_date,
+        resolved.standardDays,
+      ),
+      totalDays: resolved.standardDays,
+    };
+  };
+
+  // ── Step 1: Active batch list from DB (paged) and the breeds that name it ──
+  useEffect(() => {
+    const companyId = getActiveCompanyId();
+    if (!companyId) return;
+    // /batch returns breed_id but not breed_name, so resolve it here.
+    api
+      .get(`/breed?companyId=${companyId}&limit=500`)
+      .then((breedRes: any) =>
+        setBreeds(Array.isArray(breedRes) ? breedRes : (breedRes?.data ?? [])),
+      )
+      .catch(() => setBreeds([]));
+  }, []);
+
+  const batches: BatchMeta[] = useMemo(() => {
+    const breedNameById = new Map<string, string>(
+      breeds.map((br: any) => [br.breed_id, br.breed_name]),
+    );
+      const toMeta = (b: any): BatchMeta => {
+          const st = resolvePiggeryStage(b);
+          return {
+            id: b.batch_id,
+            parentBatchId: b.parent_batch_id ?? null,
+            code: b.batch_no,
+            name: b.remarks || b.batch_no,
+            breed:
+              b.breed_name ||
+              breedNameById.get(b.breed_id) ||
+              b.breed_code ||
+              NA,
+            type: b.lob_name || b.nob_name || 'Piggery Production Batch',
+            startDate: b.start_date || '',
+            currentStage: st.name,
+            currentStageCode: b.current_stage_code ?? null,
+            currentStageId: st.id,
+            stageDay: st.day,
+            stageTotalDays: st.totalDays,
+            stageDates: b.start_date
+              ? `${b.start_date} – ${b.expected_end_date || 'ongoing'}`
+              : '',
+            assignedCount: Number(b.opening_quantity) || 0,
+            currentCount:
+              Number(b.closing_quantity ?? b.opening_quantity ?? 0) || 0,
+            closingKept: b.closing_quantity != null,
+            mortalityCount: 0,
+            transferredCount: 0,
+            lobId: b.lob_id ?? null,
+            breedId: b.breed_id ?? null,
+            trackingMode: b.tracking_mode || 'BATCH_WISE',
+          };
+        };
+    return withPicked(pagedBatches.options, linkedBatchRow, 'batch_id').map(
+      (b: any) => ({ ...toMeta(b), ...batchPatches[b.batch_id] }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagedBatches.options, linkedBatchRow, breeds, batchPatches]);
+
+  // The linked batch when it is ACTIVE, otherwise the first loaded one; a
+  // linked batch that arrives after the default was chosen still wins.
+  const autoPickedRef = React.useRef(false);
+  useEffect(() => {
+    if (linkedBatchId && linkedBatchRow && (!selectedBatchId || autoPickedRef.current)) {
+      autoPickedRef.current = false;
+      if (selectedBatchId !== linkedBatchId) setSelectedBatchId(linkedBatchId);
+      return;
+    }
+    if (!selectedBatchId && batches.length) {
+      autoPickedRef.current = true;
+      setSelectedBatchId(batches[0].id);
+    }
+  }, [linkedBatchId, linkedBatchRow, selectedBatchId, batches]);
 
   const currentBatch = useMemo(
     () => batches.find((b) => b.id === selectedBatchId) || batches[0],
@@ -536,9 +667,14 @@ export default function OperationalBatchDataEntry() {
   const [activeTab, setActiveTab] = useState<'entry' | 'overview'>('entry');
 
   // ── Master data used by the animal-list popup and the stage-change modals ──
-  const [breeds, setBreeds] = useState<Row[]>([]);
   const [stageMasterList, setStageMasterList] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
+  // The bulk move's destination picker pages and searches every location.
+  const pagedLocations = usePagedOptions({
+    path: '/location',
+    params: { companyId: getActiveCompanyId() },
+    idKey: 'location_id',
+  });
   const [batchAnimalRoster, setBatchAnimalRoster] = useState<Row[]>([]);
   const [batchAnimalRosterLoading, setBatchAnimalRosterLoading] =
     useState(false);
@@ -771,119 +907,6 @@ export default function OperationalBatchDataEntry() {
     );
   };
 
-  // Helper to map a batch to a specific lifecycle stage (BATCH_WISE only)
-  const resolvePiggeryStage = (b: any) => {
-    const resolved = resolvePiggeryStageId(
-      b.current_stage_code || b.stage_code || b.stage_name,
-    );
-    const log: any[] = Array.isArray(b.stage_log) ? b.stage_log : [];
-    const enteredCurrentStage = log
-      .filter((l) => l.to_stage_code === (b.current_stage_code || ''))
-      .map((l) => String(l.transferred_at || ''))
-      .sort()
-      .pop();
-    return {
-      id: resolved.id,
-      name: resolved.name,
-      day: computeStageDay(
-        enteredCurrentStage || b.start_date,
-        resolved.standardDays,
-      ),
-      totalDays: resolved.standardDays,
-    };
-  };
-
-  // ── Step 1: Fetch active batch list from DB ──
-  useEffect(() => {
-    const companyId = getActiveCompanyId();
-    if (!companyId) {
-      setBatchesLoading(false);
-      setBatchesError(
-        'No active company — please select a company workspace first.',
-      );
-      return;
-    }
-    setBatchesLoading(true);
-    setBatchesError('');
-    api
-      .get(`/batch?companyId=${companyId}&status=ACTIVE&limit=50`)
-      .then(async (res) => {
-        let list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        if (list.length === 0) {
-          const fallbackRes = await api
-            .get(`/batch?companyId=${companyId}&limit=50`)
-            .catch(() => []);
-          list = Array.isArray(fallbackRes)
-            ? fallbackRes
-            : (fallbackRes?.data ?? []);
-        }
-        // /batch returns breed_id but not breed_name, so resolve it here.
-        const breedRes = await api
-          .get(`/breed?companyId=${companyId}&limit=500`)
-          .catch(() => []);
-        const breedList: any[] = Array.isArray(breedRes)
-          ? breedRes
-          : (breedRes?.data ?? []);
-        setBreeds(breedList);
-        const breedNameById = new Map<string, string>(
-          breedList.map((br: any) => [br.breed_id, br.breed_name]),
-        );
-        const mapped: BatchMeta[] = list.map((b: any) => {
-          const st = resolvePiggeryStage(b);
-          return {
-            id: b.batch_id,
-            parentBatchId: b.parent_batch_id ?? null,
-            code: b.batch_no,
-            name: b.remarks || b.batch_no,
-            breed:
-              b.breed_name ||
-              breedNameById.get(b.breed_id) ||
-              b.breed_code ||
-              NA,
-            type: b.lob_name || b.nob_name || 'Piggery Production Batch',
-            startDate: b.start_date || '',
-            currentStage: st.name,
-            currentStageCode: b.current_stage_code ?? null,
-            currentStageId: st.id,
-            stageDay: st.day,
-            stageTotalDays: st.totalDays,
-            stageDates: b.start_date
-              ? `${b.start_date} – ${b.expected_end_date || 'ongoing'}`
-              : '',
-            assignedCount: Number(b.opening_quantity) || 0,
-            currentCount:
-              Number(b.closing_quantity ?? b.opening_quantity ?? 0) || 0,
-            closingKept: b.closing_quantity != null,
-            mortalityCount: 0,
-            transferredCount: 0,
-            lobId: b.lob_id ?? null,
-            breedId: b.breed_id ?? null,
-            trackingMode: b.tracking_mode || 'BATCH_WISE',
-          };
-        });
-        setBatches(mapped);
-        if (mapped.length > 0) {
-          // A deep link from Batches → Data Entry ("Batches → Data Entry"
-          // single-page path) pre-selects that specific batch when present
-          // and still in this ACTIVE list.
-          const linkedId = searchParams.get('batchId');
-          const preselect =
-            linkedId && mapped.some((b) => b.id === linkedId)
-              ? linkedId
-              : mapped[0].id;
-          setSelectedBatchId(preselect);
-        }
-        setBatchesLoading(false);
-      })
-      .catch((err) => {
-        setBatchesLoading(false);
-        setBatchesError(
-          `Failed to load batches: ${err?.message || 'API unavailable'}`,
-        );
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // ── Step 2: Fetch scheduled entry lines (or stage groups) + batch/stage
   // master data for the selected batch + date ──
   const loadDataEntry = (overrideStageId?: string) => {
@@ -909,9 +932,10 @@ export default function OperationalBatchDataEntry() {
         .catch(() => ({ lines: [] })),
       api.get(`/batch/${selectedBatchId}`).catch(() => null),
       api.get(`/stage`).catch(() => []),
-      api
-        .get(`/location?companyId=${getActiveCompanyId()}&limit=200`)
-        .catch(() => []),
+      // Every location: animals' locations are named from this list.
+      fetchAllPages('/location', { companyId: getActiveCompanyId() }).catch(
+        () => [],
+      ),
     ])
       .then(([schedRes, batchRes, stageRes, locationRes]) => {
         const schedData = schedRes?.data ?? schedRes;
@@ -1141,27 +1165,28 @@ export default function OperationalBatchDataEntry() {
         // Dynamically update the batch stage from latest database record
         if (batchData?.batch_id) {
           const st = resolvePiggeryStage(batchData);
-          setBatches((prev) =>
-            prev.map((b) =>
-              b.id === batchData.batch_id
-                ? {
-                    ...b,
-                    currentStage: st.name,
-                    currentStageCode: batchData.current_stage_code ?? null,
-                    currentStageId: st.id,
-                    stageDay: st.day,
-                    stageTotalDays: st.totalDays,
-                    currentCount:
-                      Number(
-                        batchData.closing_quantity ??
-                          batchData.opening_quantity ??
-                          b.currentCount,
-                      ) || b.currentCount,
-                    closingKept: batchData.closing_quantity != null,
-                  }
-                : b,
-            ),
-          );
+          setBatchPatches((prev) => {
+            const b = batches.find((x) => x.id === batchData.batch_id);
+            const count = b?.currentCount ?? 0;
+            return {
+              ...prev,
+              [batchData.batch_id]: {
+                ...prev[batchData.batch_id],
+                currentStage: st.name,
+                currentStageCode: batchData.current_stage_code ?? null,
+                currentStageId: st.id,
+                stageDay: st.day,
+                stageTotalDays: st.totalDays,
+                currentCount:
+                  Number(
+                    batchData.closing_quantity ??
+                      batchData.opening_quantity ??
+                      count,
+                  ) || count,
+                closingKept: batchData.closing_quantity != null,
+              },
+            };
+          });
         }
 
         if (batchData?.batch_id && Array.isArray(stageMaster)) {
@@ -1184,17 +1209,14 @@ export default function OperationalBatchDataEntry() {
         const stageMoves = Array.isArray(batchData?.stage_log)
           ? batchData.stage_log.length
           : 0;
-        setBatches((prev) =>
-          prev.map((bm) =>
-            bm.id === selectedBatchId
-              ? {
-                  ...bm,
-                  mortalityCount: cumulativeMortality,
-                  transferredCount: stageMoves,
-                }
-              : bm,
-          ),
-        );
+        setBatchPatches((prev) => ({
+          ...prev,
+          [selectedBatchId]: {
+            ...prev[selectedBatchId],
+            mortalityCount: cumulativeMortality,
+            transferredCount: stageMoves,
+          },
+        }));
 
         setDataEntryLoading(false);
         setStockVersion((v) => v + 1);
@@ -2335,6 +2357,7 @@ export default function OperationalBatchDataEntry() {
                 placeholder={t('blPlaceholderDestBatch')}
                 searchPlaceholder="Search batches…"
                 disabled={rowLocked}
+                remote={pagedBatches}
               />
             </div>
           )}
@@ -2365,6 +2388,7 @@ export default function OperationalBatchDataEntry() {
                   placeholder="Keep in their lot, or move to…"
                   searchPlaceholder="Search batches…"
                   disabled={rowLocked}
+                  remote={pagedBatches}
                 />
               </div>
             )}
@@ -2578,6 +2602,7 @@ export default function OperationalBatchDataEntry() {
                     }))}
                     placeholder={t('activeProductionBatch')}
                     searchPlaceholder="Search batches…"
+                    remote={pagedBatches}
                   />
                 </div>
                 <span
@@ -4120,12 +4145,13 @@ export default function OperationalBatchDataEntry() {
                     to_location_id: val,
                   }))
                 }
-                options={locations.map((l: Row) => ({
+                options={pagedLocations.options.map((l: Row) => ({
                   value: l.location_id,
                   label: l.location_name,
                 }))}
                 placeholder="Keep current location"
                 searchPlaceholder="Search locations…"
+                remote={pagedLocations}
                 onClear={
                   bulkStageTransitionForm.to_location_id
                     ? () =>

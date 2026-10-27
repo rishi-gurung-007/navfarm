@@ -18,6 +18,7 @@ import { Toast } from '@/components/ui/toast';
 import { useLanguage } from '@/hooks/useLanguage';
 import AnimalStageTransitionModal from './animal-stage-transition-modal';
 import AnimalDetailsModal from './animal-details-modal';
+import { usePagedOptions, usePickedRow, withPicked } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import { confirmAction } from '@/components/ui/confirm-dialog';
@@ -83,9 +84,48 @@ const ENTRY_TYPES = [
 
 export default function BatchAnimalAssignmentPanel() {
   const { t } = useLanguage();
-  const [batches, setBatches] = useState<BatchOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  const companyId = getActiveCompanyId();
+  // Only animal-wise batches (animal_tracking REGISTERED) take assignments.
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId, status: 'ACTIVE', animalTracking: 'REGISTERED' },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const pickedBatchRow = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: selectedBatchId,
+    loaded: pagedBatches.options,
+  });
+  const batches: BatchOption[] = useMemo(
+    () =>
+      withPicked(pagedBatches.options, pickedBatchRow, 'batch_id')
+        .filter(
+          (b: any) =>
+            b.animal_tracking === 'REGISTERED' ||
+            b.tracking_mode === 'ANIMAL_WISE',
+        )
+        .map((b: any) => ({
+          id: b.batch_id,
+          code: b.batch_no,
+          breed: b.breed_name || b.breed_code || NA,
+          stage: b.current_stage_code || 'ACTIVE',
+          period: b.start_date
+            ? `${b.start_date} to ${b.expected_end_date || 'ongoing'}`
+            : '',
+          lobId: b.lob_id || undefined,
+          nobId: b.nob_id || undefined,
+          breedId: b.breed_id || undefined,
+          locationId: b.location_id || b.shed_id || undefined,
+          stageId: b.stage_id || undefined,
+          animalTracking: b.animal_tracking || 'REGISTERED',
+        })),
+    [pagedBatches.options, pickedBatchRow],
+  );
+  const loading = !!companyId && !pagedBatches.ready;
 
   const currentBatch = useMemo(
     () => batches.find((b) => b.id === selectedBatchId) || batches[0],
@@ -202,57 +242,12 @@ export default function BatchAnimalAssignmentPanel() {
     return Array.from(stageCountMap.values());
   }, [animals]);
 
-  // 1. Fetch live batches (only animal-wise batches: animal_tracking === 'REGISTERED')
-  const loadBatches = (preserveSelectedId?: string) => {
-    const companyId = getActiveCompanyId();
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    api
-      .get(`/batch?companyId=${companyId}&status=ACTIVE&limit=50`)
-      .then((res) => {
-        const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        // Strictly filter to Animal-Wise batches
-        const registeredOnly = list.filter(
-          (b: any) =>
-            b.animal_tracking === 'REGISTERED' ||
-            b.tracking_mode === 'ANIMAL_WISE',
-        );
-        const mapped: BatchOption[] = registeredOnly.map((b: any) => ({
-          id: b.batch_id,
-          code: b.batch_no,
-          breed: b.breed_name || b.breed_code || NA,
-          stage: b.current_stage_code || 'ACTIVE',
-          period: b.start_date
-            ? `${b.start_date} to ${b.expected_end_date || 'ongoing'}`
-            : '',
-          lobId: b.lob_id || undefined,
-          nobId: b.nob_id || undefined,
-          breedId: b.breed_id || undefined,
-          locationId: b.location_id || b.shed_id || undefined,
-          stageId: b.stage_id || undefined,
-          animalTracking: b.animal_tracking || 'REGISTERED',
-        }));
-        setBatches(mapped);
-        if (mapped.length > 0) {
-          const currentId = preserveSelectedId || selectedBatchId;
-          const match = mapped.find((b) => b.id === currentId);
-          setSelectedBatchId(match ? match.id : mapped[0].id);
-        } else {
-          setSelectedBatchId('');
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-  };
-
+  // 1. The first loaded batch is the one shown until another is picked; after
+  // a change the list is read again and the picked batch stays picked.
   useEffect(() => {
-    loadBatches();
-  }, []);
+    if (!selectedBatchId && batches.length) setSelectedBatchId(batches[0].id);
+  }, [batches, selectedBatchId]);
+  const loadBatches = (_preserveSelectedId?: string) => pagedBatches.reload();
 
   // 2. Fetch animals actually assigned to the selected batch (real filter, real fields)
   const loadAssignedAnimals = () => {
@@ -709,6 +704,7 @@ export default function BatchAnimalAssignmentPanel() {
                 }))}
                 placeholder={t('baapTargetBatch')}
                 searchPlaceholder="Search batches…"
+                remote={pagedBatches}
               />
             </div>
             <span

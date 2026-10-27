@@ -53,6 +53,7 @@ import {
   formatRate,
   toInputNumber,
 } from '@/lib/utils';
+import { usePagedOptions } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
@@ -129,6 +130,12 @@ export default function BatchPanel() {
   const [warehouses, setWarehouses] = useState<Row[]>([]);
   const [customers, setCustomers] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
+  // A pack's input line draws from a CLOSED batch, paged so none is out of reach.
+  const pagedSourceBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId: getActiveCompanyId(), status: 'CLOSED' },
+    idKey: 'batch_id',
+  });
   const [stages, setStages] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
 
@@ -1413,7 +1420,9 @@ export default function BatchPanel() {
   };
   const itemLabel = itemName;
   const batchLabel = (id: string) => {
-    const b = batches.find((x) => x.batch_id === id);
+    const b = [...batches, ...pagedSourceBatches.options].find(
+      (x) => x.batch_id === id,
+    );
     return b ? b.batch_no : NA;
   };
 
@@ -2449,7 +2458,7 @@ export default function BatchPanel() {
                               onChange={(val) =>
                                 setInputLineField(idx, 'source_batch_id', val)
                               }
-                              options={batches
+                              options={pagedSourceBatches.options
                                 .filter((b) => b.status === 'CLOSED')
                                 .map((b) => ({
                                   value: b.batch_id,
@@ -2457,6 +2466,7 @@ export default function BatchPanel() {
                                 }))}
                               placeholder={t('blNone')}
                               searchPlaceholder="Search batch…"
+                              remote={pagedSourceBatches}
                               onClear={
                                 line.source_batch_id
                                   ? () =>

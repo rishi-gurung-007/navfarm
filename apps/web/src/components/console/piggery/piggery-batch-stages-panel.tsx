@@ -1,7 +1,7 @@
 'use client';
 
 import { NA } from '@/utils/na';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Plus,
   Edit2,
@@ -17,6 +17,7 @@ import { buildLifecycleStages, StageMasterRow } from './build-lifecycle-stages';
 import { resolvePiggeryStageId } from './resolve-piggery-stage';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
+import { usePagedOptions, usePickedRow } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 
 import { api } from '@/services/api-client';
@@ -39,13 +40,56 @@ interface BatchLifecycleMeta {
 
 export default function PiggeryBatchStagesPanel() {
   const { t } = useLanguage();
-  const [batches, setBatches] = useState<BatchLifecycleMeta[]>([]);
-  const [loading, setLoading] = useState(true);
+  const companyId = getActiveCompanyId();
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId, status: 'ACTIVE' },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
+  // A stage advanced here shows at once, before the list is read again.
+  const [stageMoves, setStageMoves] = useState<
+    Record<string, Pick<BatchLifecycleMeta, 'currentStageCode' | 'currentStageId'>>
+  >({});
+  const toMeta = useCallback(
+    (b: any): BatchLifecycleMeta => {
+      const matchedStage = resolvePiggeryStageId(b.current_stage_code);
+      const meta: BatchLifecycleMeta = {
+        id: b.batch_id,
+        code: b.batch_no,
+        name: b.remarks || b.batch_no,
+        breed: b.breed_name || b.breed_code || NA,
+        type: b.lob_name || 'Piggery Batch',
+        startDate: b.start_date || '',
+        currentStageId: matchedStage.id,
+        currentStageCode: b.current_stage_code,
+        lobId: b.lob_id ?? null,
+        breedId: b.breed_id ?? null,
+      };
+      return { ...meta, ...stageMoves[b.batch_id] };
+    },
+    [stageMoves],
+  );
+  const batches = useMemo(
+    () => pagedBatches.options.map(toMeta),
+    [pagedBatches.options, toMeta],
+  );
+  const loading = !!companyId && !pagedBatches.ready;
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const pickedBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: selectedBatchId,
+    loaded: pagedBatches.options,
+  });
 
   const currentBatch = useMemo(
-    () => batches.find((b) => b.id === selectedBatchId) || batches[0],
-    [batches, selectedBatchId],
+    () =>
+      batches.find((b) => b.id === selectedBatchId) ||
+      (pickedBatch ? toMeta(pickedBatch) : undefined) ||
+      batches[0],
+    [batches, selectedBatchId, pickedBatch, toMeta],
   );
 
   const [stages, setStages] = useState<PiggeryStage[]>([]);
@@ -75,48 +119,21 @@ export default function PiggeryBatchStagesPanel() {
 
   // Fetch live batches from DB
   useEffect(() => {
-    const companyId = getActiveCompanyId();
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    if (!companyId) return;
     api
       .get(`/stage?companyId=${companyId}&limit=200`)
       .then((r: any) =>
         setStageMaster(Array.isArray(r) ? r : (r?.data?.data ?? r?.data ?? [])),
       )
       .catch(() => setStageMaster([]));
-    api
-      .get(`/batch?companyId=${companyId}&status=ACTIVE&limit=50`)
-      .then((res) => {
-        const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        const mapped: BatchLifecycleMeta[] = list.map((b: any) => {
-          const matchedStage = resolvePiggeryStageId(b.current_stage_code);
-          return {
-            id: b.batch_id,
-            code: b.batch_no,
-            name: b.remarks || b.batch_no,
-            breed: b.breed_name || b.breed_code || NA,
-            type: b.lob_name || 'Piggery Batch',
-            startDate: b.start_date || '',
-            currentStageId: matchedStage.id,
-            currentStageCode: b.current_stage_code,
-            lobId: b.lob_id ?? null,
-            breedId: b.breed_id ?? null,
-          };
-        });
-        setBatches(mapped);
-        if (mapped.length > 0) {
-          setSelectedBatchId(mapped[0].id);
-          setCurrentStageId(mapped[0].currentStageId);
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-  }, []);
+  }, [companyId]);
+
+  // The first loaded batch is the one shown until another is picked.
+  useEffect(() => {
+    if (selectedBatchId || !batches.length) return;
+    setSelectedBatchId(batches[0].id);
+    setCurrentStageId(batches[0].currentStageId);
+  }, [batches, selectedBatchId]);
 
   // Build the selected batch's real lifecycle matching its Data Entry stages:
   // loads scheduled stages from `/batch/:id/data-entry` alongside batch stage_log,
@@ -291,13 +308,10 @@ export default function PiggeryBatchStagesPanel() {
         remarks: override?.reason || undefined,
         scheduler_source: schedulerSource,
       });
-      setBatches((prev) =>
-        prev.map((b) =>
-          b.id === currentBatch.id
-            ? { ...b, currentStageCode: nextStage.code, currentStageId: nextId }
-            : b,
-        ),
-      );
+      setStageMoves((prev) => ({
+        ...prev,
+        [currentBatch.id]: { currentStageCode: nextStage.code, currentStageId: nextId },
+      }));
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'The stage could not be advanced.';
@@ -407,6 +421,7 @@ export default function PiggeryBatchStagesPanel() {
                   label: `${b.code} — ${b.name} (${b.breed})`,
                 }))}
                 searchPlaceholder="Search batches…"
+                remote={pagedBatches}
               />
             </div>
             <span

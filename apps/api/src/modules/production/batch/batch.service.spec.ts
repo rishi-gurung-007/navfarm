@@ -2930,15 +2930,17 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockReturnValue({
-                offset: jest.fn().mockResolvedValue([
-                  {
-                    ...activeBatch,
-                    batch_id: 'b1',
-                    total_cost: null,
-                    closing_quantity: '20.0000',
-                  },
-                ]),
+              orderBy: jest.fn().mockReturnValue({
+                limit: jest.fn().mockReturnValue({
+                  offset: jest.fn().mockResolvedValue([
+                    {
+                      ...activeBatch,
+                      batch_id: 'b1',
+                      total_cost: null,
+                      closing_quantity: '20.0000',
+                    },
+                  ]),
+                }),
               }),
             }),
           }),
@@ -2975,15 +2977,17 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockReturnValue({
-                offset: jest.fn().mockResolvedValue([
-                  {
-                    ...activeBatch,
-                    batch_id: 'b1',
-                    total_cost: null,
-                    closing_quantity: '20.0000',
-                  },
-                ]),
+              orderBy: jest.fn().mockReturnValue({
+                limit: jest.fn().mockReturnValue({
+                  offset: jest.fn().mockResolvedValue([
+                    {
+                      ...activeBatch,
+                      batch_id: 'b1',
+                      total_cost: null,
+                      closing_quantity: '20.0000',
+                    },
+                  ]),
+                }),
               }),
             }),
           }),
@@ -3013,15 +3017,17 @@ describe('BatchService', () => {
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             where: jest.fn().mockReturnValue({
-              limit: jest.fn().mockReturnValue({
-                offset: jest.fn().mockResolvedValue([
-                  {
-                    ...activeBatch,
-                    batch_id: 'b2',
-                    status: 'CLOSED',
-                    total_cost: '999999.0000',
-                  },
-                ]),
+              orderBy: jest.fn().mockReturnValue({
+                limit: jest.fn().mockReturnValue({
+                  offset: jest.fn().mockResolvedValue([
+                    {
+                      ...activeBatch,
+                      batch_id: 'b2',
+                      status: 'CLOSED',
+                      total_cost: '999999.0000',
+                    },
+                  ]),
+                }),
               }),
             }),
           }),

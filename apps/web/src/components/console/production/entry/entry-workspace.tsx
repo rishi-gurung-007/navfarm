@@ -12,6 +12,7 @@ import {
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { usePagedOptions, usePickedRow, withPicked } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { EmptyState, LoadingState } from '@/components/ui/states';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -64,14 +65,27 @@ export default function EntryWorkspace() {
   const dateParam = searchParams.get('date') ?? '';
   const stageParam = searchParams.get('stage') ?? '';
 
-  const [batches, setBatches] = useState<BatchOption[]>([]);
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { status: 'ACTIVE' },
+    idKey: 'batch_id',
+  });
   const [farms, setFarms] = useState<FarmRef[]>([]);
   const [form, setForm] = useState<EntryFormResponse | null>(null);
   const [history, setHistory] = useState<HistoryDay[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = !pagedBatches.ready;
   const [error, setError] = useState('');
 
-  const batchId = batchParam || batches[0]?.batch_id || '';
+  const batchId = batchParam || pagedBatches.options[0]?.batch_id || '';
+  // The batch in the URL may sit past the pages loaded so far.
+  const pickedBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: batchId,
+    loaded: pagedBatches.options,
+  });
+  const batches = withPicked(pagedBatches.options, pickedBatch, 'batch_id') as BatchOption[];
 
   /** Change the URL, which is the only place this screen keeps its state. */
   const navigate = useCallback(
@@ -86,24 +100,9 @@ export default function EntryWorkspace() {
     [pathname, router, searchParams],
   );
 
-  /* ── The batch list ──────────────────────────────────────────────────── */
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await api.get('/batch?limit=200&status=ACTIVE');
-        if (cancelled) return;
-        setBatches(res?.data ?? []);
-      } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (pagedBatches.error) setError(pagedBatches.error);
+  }, [pagedBatches.error]);
 
   /* ── The farm list, to resolve a batch's farm_id to a code/name ───────── */
   // Only fetched for non-standard users: a STANDARD_USER's farm is fixed and
@@ -219,6 +218,7 @@ export default function EntryWorkspace() {
                 }))}
                 placeholder={t('deSelectBatch')}
                 searchPlaceholder="Search batch…"
+                remote={pagedBatches}
               />
             </div>
             <div className="min-w-[170px]">

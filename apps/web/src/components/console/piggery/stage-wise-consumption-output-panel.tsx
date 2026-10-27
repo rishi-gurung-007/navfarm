@@ -34,6 +34,7 @@ import { apportionToAnimal } from './apportion-to-animal';
 import { getActiveCompanyId } from '@/hooks/useAuth';
 import type { AnimalOption } from '../production/animal-multi-select';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
+import { usePagedOptions, usePickedRow, withPicked } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import { formatQuantity } from '@/lib/utils';
@@ -468,9 +469,45 @@ export default function StageWiseConsumptionOutputPanel() {
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [batches, setBatches] = useState<BatchProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const companyId = getActiveCompanyId();
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
   const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const pickedBatchRow = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: selectedBatchId,
+    loaded: pagedBatches.options,
+  });
+  const listRows = useMemo(
+    () => withPicked(pagedBatches.options, pickedBatchRow, 'batch_id'),
+    [pagedBatches.options, pickedBatchRow],
+  );
+  // Full profiles (stages, transactions) are read only for the batch on screen
+  // and its split groups, not for every batch the picker has loaded.
+  const [profiles, setProfiles] = useState<Record<string, BatchProfile>>({});
+  const batches: BatchProfile[] = useMemo(
+    () =>
+      listRows.map(
+        (b: any) =>
+          profiles[b.batch_id] ?? {
+            id: b.batch_id,
+            code: b.batch_no,
+            name: b.remarks || b.batch_no,
+            breed: b.breed_name || b.breed_code || NA,
+            batchType: b.lob_name || 'Piggery Production Batch',
+            startCount: Number(b.opening_quantity) || 0,
+            stages: [],
+          },
+      ),
+    [listRows, profiles],
+  );
+  const loading = !!companyId && !pagedBatches.ready;
 
   // Data entry stages for the currently selected batch
   const [batchDataEntryStages, setBatchDataEntryStages] = useState<
@@ -575,94 +612,70 @@ export default function StageWiseConsumptionOutputPanel() {
     [batches, selectedBatchId, t],
   );
 
-  // Load batch list and initial metadata
-  const loadBatches = (preserveSelection?: boolean) => {
-    const companyId = getActiveCompanyId();
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    api
-      .get(`/batch?companyId=${companyId}&limit=50`)
-      .then(async (res) => {
-        const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        if (list.length === 0) {
-          setBatches([]);
-          setLoading(false);
-          return;
-        }
-
-        const rawTxs: Record<string, any[]> = {};
-        const rawMeta: Record<string, any> = {};
-
-        const detailedBatches: BatchProfile[] = await Promise.all(
-          list.map(async (b: any) => {
-            try {
-              const detailsRes = await api
-                .get(`/batch/${b.batch_id}`)
-                .catch(() => null);
-              const details = detailsRes?.data ?? detailsRes ?? b;
-              const txs: any[] = details.transactions || [];
-              const stageLog: any[] = details.stage_log || [];
-              const atts: any[] = details.attachments || [];
-              rawTxs[b.batch_id] = txs;
-              rawMeta[b.batch_id] = {
-                ...b,
-                stage_log: stageLog,
-                attachments: atts,
-              };
-
-              const stageProfiles = buildStageProfiles(b, txs, stageLog, atts);
-
-              return {
-                id: b.batch_id,
-                code: b.batch_no,
-                name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || NA,
-                batchType: b.lob_name || 'Piggery Production Batch',
-                startCount:
-                  stageProfiles[0]?.startAnimals ??
-                  (b.opening_quantity != null ? Number(b.opening_quantity) : 0),
-                stages: stageProfiles,
-              };
-            } catch {
-              return {
-                id: b.batch_id,
-                code: b.batch_no,
-                name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || NA,
-                batchType: b.lob_name || 'Piggery Production Batch',
-                startCount: Number(b.opening_quantity) || 20,
-                stages: [],
-              };
-            }
-          }),
-        );
-
-        setRawTxsByBatch(rawTxs);
-        setRawBatchMeta(rawMeta);
-        setBatches(detailedBatches);
-
-        if (detailedBatches.length > 0) {
-          const existingMatch = preserveSelection
-            ? detailedBatches.find((b) => b.id === selectedBatchId)
-            : undefined;
-          const target = existingMatch || detailedBatches[0];
-          if (!preserveSelection || !existingMatch) {
-            setSelectedBatchId(target.id);
-          }
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-  };
-
+  // The first loaded batch is the one shown until another is picked.
   useEffect(() => {
-    loadBatches();
-  }, []);
+    if (!selectedBatchId && pagedBatches.options.length)
+      setSelectedBatchId(pagedBatches.options[0].batch_id);
+  }, [selectedBatchId, pagedBatches.options]);
+
+  // Split groups of the batch on screen, among the batches the picker knows.
+  const childBatchIds = useMemo(
+    () =>
+      listRows
+        .filter((m: any) => m?.parent_batch_id === selectedBatchId)
+        .map((m: any) => m.batch_id as string),
+    [listRows, selectedBatchId],
+  );
+
+  // Details for the batch on screen and its split groups, each read once.
+  useEffect(() => {
+    const wanted = [selectedBatchId, ...childBatchIds].filter(
+      (id) => id && !rawBatchMeta[id],
+    );
+    if (!wanted.length) return;
+    let live = true;
+    (async () => {
+      const rawTxs: Record<string, any[]> = {};
+      const rawMeta: Record<string, any> = {};
+      const built: Record<string, BatchProfile> = {};
+      await Promise.all(
+        wanted.map(async (id) => {
+          const b: any = listRows.find((r: any) => r.batch_id === id);
+          if (!b) return;
+          try {
+            const detailsRes = await api.get(`/batch/${b.batch_id}`).catch(() => null);
+            const details = detailsRes?.data ?? detailsRes ?? b;
+            const txs: any[] = details.transactions || [];
+            const stageLog: any[] = details.stage_log || [];
+            const atts: any[] = details.attachments || [];
+            rawTxs[b.batch_id] = txs;
+            rawMeta[b.batch_id] = { ...b, stage_log: stageLog, attachments: atts };
+            const stageProfiles = buildStageProfiles(b, txs, stageLog, atts);
+            built[b.batch_id] = {
+              id: b.batch_id,
+              code: b.batch_no,
+              name: b.remarks || b.batch_no,
+              breed: b.breed_name || b.breed_code || NA,
+              batchType: b.lob_name || 'Piggery Production Batch',
+              startCount:
+                stageProfiles[0]?.startAnimals ??
+                (b.opening_quantity != null ? Number(b.opening_quantity) : 0),
+              stages: stageProfiles,
+            };
+          } catch {
+            rawMeta[b.batch_id] = { ...b };
+          }
+        }),
+      );
+      if (!live) return;
+      setRawTxsByBatch((prev) => ({ ...prev, ...rawTxs }));
+      setRawBatchMeta((prev) => ({ ...prev, ...rawMeta }));
+      setProfiles((prev) => ({ ...prev, ...built }));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [selectedBatchId, childBatchIds, listRows, rawBatchMeta]);
 
   // When a batch is selected, load its stages as per data entry on that batch
   useEffect(() => {
@@ -811,14 +824,6 @@ export default function StageWiseConsumptionOutputPanel() {
     }
   }, [selectedBatchId, rawBatchMeta]);
 
-  // Child batches from split cohort
-  const childBatchIds = useMemo(
-    () =>
-      Object.values(rawBatchMeta)
-        .filter((m: any) => m?.parent_batch_id === selectedBatchId)
-        .map((m: any) => m.batch_id),
-    [rawBatchMeta, selectedBatchId],
-  );
 
   // Selected stage details
   const activeStageInfo = useMemo(() => {
@@ -1151,10 +1156,11 @@ export default function StageWiseConsumptionOutputPanel() {
                 onChange={(val) => handleBatchChange(val)}
                 options={batches.map((b) => ({
                   value: b.id,
-                  label: `${b.code}${(rawBatchMeta as any)[b.id]?.parent_batch_id ? ' ↳ split group' : ''} — ${b.name} (${b.breed})`,
+                  label: `${b.code}${listRows.find((r: any) => r.batch_id === b.id)?.parent_batch_id ? ' ↳ split group' : ''} — ${b.name} (${b.breed})`,
                 }))}
                 placeholder={t('swBatch')}
                 searchPlaceholder="Search batches…"
+                remote={pagedBatches}
               />
             </div>
           </div>

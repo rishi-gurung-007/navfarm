@@ -1,7 +1,7 @@
 'use client';
 
 import { NA } from '@/utils/na';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   HeartPulse,
   Skull,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Field, ReadField } from '@/components/ui/field';
+import { usePagedOptions } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
 import { Button } from '@/components/ui/button';
@@ -162,7 +163,28 @@ export default function MortalityHealthPanel() {
   // hardcoded to show nothing. The plan lives on breed_lifecycle_stages
   // (vaccination_protocol / medication_protocol), keyed by breed and stage.
   const [vaccineList, setVaccineList] = useState<VaccinationItem[]>([]);
-  const [batches, setBatches] = useState<{ id: string; no: string }[]>([]);
+  // The summary reads its own first batches; the two batch pickers page the
+  // whole list, and a lookup by number sees both.
+  const [summaryBatches, setBatches] = useState<{ id: string; no: string }[]>([]);
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId: getActiveCompanyId() },
+    idKey: 'batch_id',
+    enabled: !!getActiveCompanyId(),
+  });
+  const batches = useMemo(() => {
+    const seen = new Set(summaryBatches.map((b) => b.id));
+    return [
+      ...summaryBatches,
+      ...pagedBatches.options
+        .filter((b) => !seen.has(b.batch_id))
+        .map((b) => ({ id: b.batch_id as string, no: b.batch_no as string })),
+    ];
+  }, [summaryBatches, pagedBatches.options]);
+  const pickerBatches = pagedBatches.options.map((b) => ({
+    value: b.batch_no as string,
+    label: b.batch_no as string,
+  }));
   // Denominator for the mortality rate, and the pen hygiene dates behind the
   // biosecurity card — both were fixed strings before.
   const [openingHead, setOpeningHead] = useState(0);
@@ -1259,8 +1281,9 @@ export default function MortalityHealthPanel() {
                   setMortalityAnimalIds(new Set());
                   loadModalAnimals(bNo);
                 }}
-                options={batches.map((b) => ({ value: b.no, label: b.no }))}
+                options={pickerBatches}
                 columnHeaders={false}
+                remote={pagedBatches}
               />
             </div>
           </div>
@@ -1494,8 +1517,9 @@ export default function MortalityHealthPanel() {
                     setTreatmentAnimalIds(new Set());
                     loadModalAnimals(bNo);
                   }}
-                  options={batches.map((b) => ({ value: b.no, label: b.no }))}
+                  options={pickerBatches}
                   columnHeaders={false}
+                  remote={pagedBatches}
                 />
               </Field>
             </div>

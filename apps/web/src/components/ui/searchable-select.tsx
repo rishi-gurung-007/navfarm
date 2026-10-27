@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { SearchableEntitySelect } from '@/modules/master-data/SearchableEntitySelect';
+import {
+  SearchableEntitySelect,
+  type RemoteOptions,
+} from '@/modules/master-data/SearchableEntitySelect';
 
 type Row = Record<string, unknown>;
 
@@ -29,6 +32,8 @@ export interface SearchableSelectProps {
   fullWidth?: boolean;
   triggerClassName?: string;
   triggerStyle?: React.CSSProperties;
+  /** Pages and searches on the server (usePagedOptions) instead of filtering `options` here. */
+  remote?: RemoteOptions;
 }
 
 /**
@@ -60,6 +65,7 @@ export function SearchableSelect({
   fullWidth = true,
   triggerClassName,
   triggerStyle,
+  remote,
 }: SearchableSelectProps) {
   // Normalize options array so strings and objects both work seamlessly
   const normalizedOptions: Row[] = useMemo(() => {
@@ -197,6 +203,7 @@ export function SearchableSelect({
       fullWidth={fullWidth}
       triggerClassName={triggerClassName}
       triggerStyle={triggerStyle}
+      remote={remote}
     />
   );
 }

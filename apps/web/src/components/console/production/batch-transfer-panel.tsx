@@ -18,6 +18,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
+import { usePagedOptions, usePickedRow } from '@/hooks/usePagedOptions';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ReasonSelect } from '@/components/ui/reason-select';
 import { Toast } from '@/components/ui/toast';
@@ -55,7 +56,6 @@ export default function BatchTransferPanel() {
   const areaId = getActiveOperationalAreaId();
 
   const [rows, setRows] = useState<Row[]>([]);
-  const [batches, setBatches] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -101,13 +101,27 @@ export default function BatchTransferPanel() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    if (!companyId) return;
-    api
-      .get(`/batch?companyId=${companyId}&limit=200`)
-      .then((r) => setBatches(unwrap<Row[]>(r) || []))
-      .catch(() => setBatches([]));
-  }, [companyId]);
+  // Each picker pages its own list: the source takes ACTIVE batches only, the
+  // destination ACTIVE or DRAFT.
+  const pagedSources = usePagedOptions({
+    path: '/batch',
+    params: { companyId, status: 'ACTIVE' },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
+  const pagedDestinations = usePagedOptions({
+    path: '/batch',
+    params: { companyId, status: 'ACTIVE,DRAFT' },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
+  const fromBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: fromBatchId,
+    loaded: pagedSources.options,
+  });
 
   // The transferable pool is per-source-batch and always refetched — a batch's
   // membership changes with every mortality, sale or earlier transfer, so a
@@ -127,24 +141,22 @@ export default function BatchTransferPanel() {
     setSelected(new Set());
   }, [fromBatchId]);
 
-  const areaBatches = useMemo(
-    () =>
-      areaId
-        ? batches.filter((b) => b.operational_area_id === areaId)
-        : batches,
-    [batches, areaId],
+  const inArea = useCallback(
+    (list: Row[]) =>
+      areaId ? list.filter((b) => b.operational_area_id === areaId) : list,
+    [areaId],
   );
   const sourceBatches = useMemo(
-    () => areaBatches.filter((b) => b.status === 'ACTIVE'),
-    [areaBatches],
+    () => inArea(pagedSources.options).filter((b) => b.status === 'ACTIVE'),
+    [pagedSources.options, inArea],
   );
   const destinationBatches = useMemo(
     () =>
-      areaBatches.filter(
+      inArea(pagedDestinations.options).filter(
         (b) =>
           b.batch_id !== fromBatchId && ['ACTIVE', 'DRAFT'].includes(b.status),
       ),
-    [areaBatches, fromBatchId],
+    [pagedDestinations.options, inArea, fromBatchId],
   );
 
   const animalOptions: AnimalOption[] = useMemo(
@@ -257,9 +269,10 @@ export default function BatchTransferPanel() {
   };
 
   const batchNo = (id: string) =>
-    batches.find((b) => b.batch_id === id)?.batch_no || NA;
+    [...pagedSources.options, ...pagedDestinations.options].find(
+      (b) => b.batch_id === id,
+    )?.batch_no || NA;
   const poolCount = pool.length;
-  const fromBatch = batches.find((b) => b.batch_id === fromBatchId);
   const headcountMode =
     Boolean(fromBatchId) &&
     fromBatch?.tracking_mode === 'BATCH_WISE' &&
@@ -435,6 +448,7 @@ export default function BatchTransferPanel() {
                 }))}
                 placeholder={t('btSelectSource')}
                 searchPlaceholder="Search source batch…"
+                remote={pagedSources}
               />
             </label>
             <label className="block">
@@ -450,6 +464,7 @@ export default function BatchTransferPanel() {
                 placeholder={t('btSelectDestination')}
                 searchPlaceholder="Search destination batch…"
                 disabled={!fromBatchId}
+                remote={pagedDestinations}
               />
             </label>
             <label className="block">
