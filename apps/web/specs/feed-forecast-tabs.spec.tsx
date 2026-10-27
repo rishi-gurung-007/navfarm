@@ -273,8 +273,8 @@ describe('WP1d — Feed Forecast tab names follow the workbook', () => {
     ]).toEqual([
       'Dashboard',
       'Calculation',
-      'Feed Plan',
-      'Feed Comparison Report',
+      'Plan',
+      'Comparison Report',
       'Feed Requisition',
       'Feed Mill Consolidation',
       'Mill Production',
