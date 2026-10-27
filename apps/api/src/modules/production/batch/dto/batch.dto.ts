@@ -774,9 +774,9 @@ export class QueryBatchDto {
   companyId?: string;
 
   @ApiProperty({
-    description: 'Filter by status',
+    description:
+      'Filter by status: one of DRAFT, ACTIVE, CLOSED, CANCELLED, or several comma-separated',
     required: false,
-    enum: ['DRAFT', 'ACTIVE', 'CLOSED', 'CANCELLED'],
   })
   @IsOptional()
   @IsString()

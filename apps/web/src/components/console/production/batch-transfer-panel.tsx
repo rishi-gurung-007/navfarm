@@ -102,7 +102,7 @@ export default function BatchTransferPanel() {
   }, [load]);
 
   // Each picker pages its own list: the source takes ACTIVE batches only, the
-  // destination ACTIVE or DRAFT (filtered below, as the API takes one status).
+  // destination ACTIVE or DRAFT.
   const pagedSources = usePagedOptions({
     path: '/batch',
     params: { companyId, status: 'ACTIVE' },
@@ -111,7 +111,7 @@ export default function BatchTransferPanel() {
   });
   const pagedDestinations = usePagedOptions({
     path: '/batch',
-    params: { companyId },
+    params: { companyId, status: 'ACTIVE,DRAFT' },
     idKey: 'batch_id',
     enabled: !!companyId,
   });
