@@ -1,7 +1,7 @@
 'use client';
 
 import { NA } from '@/utils/na';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Heart,
   Baby,
@@ -17,6 +17,7 @@ import {
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { fetchAllPages, usePagedOptions } from '@/hooks/usePagedOptions';
 import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
 import { Toast } from '@/components/ui/toast';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -136,13 +137,47 @@ export function BreedingPanel() {
   const [farrowings, setFarrowings] = useState<Row[]>([]);
   const [semenBatches, setSemenBatches] = useState<Row[]>([]);
   const [animals, setAnimals] = useState<Row[]>([]);
-  const [batches, setBatches] = useState<Row[]>([]);
+  // The first open batches name animals' batches; each picker pages its own list.
+  const [lookupBatches, setBatches] = useState<Row[]>([]);
+  const pagedBreedingBatches = usePagedOptions({
+    path: '/batch',
+    params: { status: 'ACTIVE', trackingMode: 'ANIMAL_WISE' },
+    idKey: 'batch_id',
+  });
+  const pagedWeanBatches = usePagedOptions({
+    path: '/batch',
+    params: { trackingMode: 'BATCH_WISE' },
+    idKey: 'batch_id',
+  });
+  const batches = useMemo(() => {
+    const byId = new Map<string, Row>();
+    for (const b of [...lookupBatches, ...pagedBreedingBatches.options, ...pagedWeanBatches.options])
+      if (!byId.has(b.batch_id)) byId.set(b.batch_id, b);
+    return [...byId.values()];
+  }, [lookupBatches, pagedBreedingBatches.options, pagedWeanBatches.options]);
   // The piglet item is picked where the farrowing is recorded (any bio-asset item the farm uses for piglets), and the
   // weaned piglets are sent on to a batch or a stage: nothing about either is fixed.
-  const [pigletItems, setPigletItems] = useState<Row[]>([]);
+  // Paged pickers; the chosen item is kept for the summary lines below.
+  const pagedPigletItems = usePagedOptions({
+    path: '/item',
+    params: { itemType: 'LIVING_ASSET', isActive: true, isBlocked: false },
+    idKey: 'item_id',
+  });
+  const pigletItems = pagedPigletItems.options.filter(
+    (i) => i.is_biological_asset && !i.is_blocked && i.is_active !== false,
+  );
+  const [pickedPigletItem, setPickedPigletItem] = useState<Row | null>(null);
   const [stages, setStages] = useState<Row[]>([]);
   // Any item the farm uses for semen: nothing is fixed.
-  const [semenItems, setSemenItems] = useState<Row[]>([]);
+  const pagedSemenItems = usePagedOptions({
+    path: '/item',
+    params: { isActive: true, isBlocked: false },
+    idKey: 'item_id',
+  });
+  const semenItems = pagedSemenItems.options.filter(
+    (i) => !i.is_blocked && i.is_active !== false,
+  );
+  const [pickedSemenItem, setPickedSemenItem] = useState<Row | null>(null);
 
   // Modals
   const [showMatingModal, setShowMatingModal] = useState(false);
@@ -248,7 +283,8 @@ export function BreedingPanel() {
         api.get('/piggery/breeding/mating').catch(() => []),
         api.get('/piggery/breeding/farrowing').catch(() => []),
         api.get('/piggery/breeding/semen-collection').catch(() => []),
-        api.get('/animal').catch(() => []),
+        // Every animal: the sow and boar pickers and the batch counts are worked out from this list.
+        fetchAllPages('/animal').catch(() => []),
         // The API bounds this to the active farm; the service write checks
         // again that the batch is on the sow's own farm.
         api.get('/batch?limit=100').catch(() => []),
@@ -263,32 +299,9 @@ export function BreedingPanel() {
         ),
       );
       api
-        .get(
-          '/item?itemType=LIVING_ASSET&isActive=true&isBlocked=false&limit=100',
-        )
-        .then((r) =>
-          setPigletItems(
-            (unwrap<Row[]>(r) || []).filter(
-              (i) =>
-                i.is_biological_asset && !i.is_blocked && i.is_active !== false,
-            ),
-          ),
-        )
-        .catch(() => setPigletItems([]));
-      api
         .get('/stage?limit=100')
         .then((r) => setStages(unwrap<Row[]>(r) || []))
         .catch(() => setStages([]));
-      api
-        .get('/item?isActive=true&isBlocked=false&limit=200')
-        .then((r) =>
-          setSemenItems(
-            (unwrap<Row[]>(r) || []).filter(
-              (i) => !i.is_blocked && i.is_active !== false,
-            ),
-          ),
-        )
-        .catch(() => setSemenItems([]));
     } catch (e: any) {
       setError(e.message || t('brpErrorLoadFailed'));
     } finally {
@@ -369,7 +382,11 @@ export function BreedingPanel() {
   const openFarrowModal = () => {
     setFarrowForm({
       ...emptyFarrowForm(),
-      piglet_item_id: pigletItems.length === 1 ? pigletItems[0].item_id : '',
+      // Pre-picked only when the whole list is that one item.
+      piglet_item_id:
+        pigletItems.length === 1 && !pagedPigletItems.hasMore
+          ? pigletItems[0].item_id
+          : '',
     });
     setShowFarrowModal(true);
   };
@@ -581,7 +598,7 @@ export function BreedingPanel() {
   );
 
   // ── Batch-first entry: what each form offers, and the checks it shows ──
-  const breedingBatches = batches.filter(isBreedingBatch);
+  const breedingBatches = pagedBreedingBatches.options.filter(isBreedingBatch);
   const inBatch = (list: Row[], batchId: string) =>
     list.filter((a) => a.current_batch_id === batchId);
 
@@ -652,9 +669,11 @@ export function BreedingPanel() {
       (Number(farrowForm.foster_received) || 0) -
       (Number(farrowForm.fostered_out) || 0),
   );
-  const pigletItem = pigletItems.find(
-    (i) => i.item_id === farrowForm.piglet_item_id,
-  );
+  const pigletItem =
+    pigletItems.find((i) => i.item_id === farrowForm.piglet_item_id) ??
+    (pickedPigletItem?.item_id === farrowForm.piglet_item_id
+      ? pickedPigletItem
+      : undefined);
 
   const semenBatchBoars = inBatch(boars, semenForm.batch_id);
   const semenChosenBoars = boars.filter((b) =>
@@ -665,9 +684,11 @@ export function BreedingPanel() {
     boars: semenChosenBoars,
     lots: semenBatches,
   });
-  const semenItem = semenItems.find(
-    (i) => i.item_id === semenForm.output_item_id,
-  );
+  const semenItem =
+    semenItems.find((i) => i.item_id === semenForm.output_item_id) ??
+    (pickedSemenItem?.item_id === semenForm.output_item_id
+      ? pickedSemenItem
+      : undefined);
 
   return (
     <div className="space-y-6">
@@ -1477,6 +1498,7 @@ export function BreedingPanel() {
             <BatchPicker
               id="mating-batch"
               batches={breedingBatches}
+              remote={pagedBreedingBatches}
               value={matingForm.batch_id}
               onChange={pickMatingBatch}
               countOf={(id) => inBatch(sows, id).length}
@@ -2020,6 +2042,7 @@ export function BreedingPanel() {
             <BatchPicker
               id="farrow-batch"
               batches={breedingBatches}
+              remote={pagedBreedingBatches}
               value={farrowForm.batch_id}
               onChange={(id) =>
                 setFarrowForm((f) => ({
@@ -2381,18 +2404,22 @@ export function BreedingPanel() {
                 <SearchableSelect
                   id="piglet-item"
                   value={farrowForm.piglet_item_id}
-                  onChange={(val) =>
+                  onChange={(val) => {
+                    setPickedPigletItem(
+                      pigletItems.find((i) => i.item_id === String(val)) ?? null,
+                    );
                     setFarrowForm({
                       ...farrowForm,
                       piglet_item_id: String(val),
-                    })
-                  }
+                    });
+                  }}
                   placeholder="Choose the piglet item"
                   options={pigletItems.map((i) => ({
                     value: i.item_id,
                     label: i.item_name,
                   }))}
                   columnHeaders={false}
+                  remote={pagedPigletItems}
                 />
               </Field>
               <Field
@@ -2558,9 +2585,12 @@ export function BreedingPanel() {
                           })
                         }
                         placeholder="Stay in the lot’s batch"
-                        options={batches
+                        remote={pagedWeanBatches}
+                        options={pagedWeanBatches.options
                           .filter(
                             (b) =>
+                              b.status !== 'CLOSED' &&
+                              b.status !== 'CANCELLED' &&
                               b.tracking_mode === 'BATCH_WISE' &&
                               b.costing_method === 'BIO_ASSET' &&
                               b.batch_id !== selectedFarrow.piglet_batch_id,
@@ -2678,6 +2708,7 @@ export function BreedingPanel() {
             <BatchPicker
               id="semen-batch"
               batches={breedingBatches}
+              remote={pagedBreedingBatches}
               value={semenForm.batch_id}
               onChange={(id) =>
                 setSemenForm((f) => ({
@@ -2829,15 +2860,19 @@ export function BreedingPanel() {
               <SearchableSelect
                 id="semen-item"
                 value={semenForm.output_item_id}
-                onChange={(val) =>
-                  setSemenForm({ ...semenForm, output_item_id: String(val) })
-                }
+                onChange={(val) => {
+                  setPickedSemenItem(
+                    semenItems.find((i) => i.item_id === String(val)) ?? null,
+                  );
+                  setSemenForm({ ...semenForm, output_item_id: String(val) });
+                }}
                 placeholder="Choose the semen item"
                 options={semenItems.map((i) => ({
                   value: i.item_id,
                   label: i.item_name,
                 }))}
                 columnHeaders={false}
+                remote={pagedSemenItems}
               />
             </Field>
           </Step>

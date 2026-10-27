@@ -12,6 +12,16 @@ import { Popover, usePopoverSurface } from '@/components/ui/popover';
 
 type Row = Record<string, any>;
 
+/** Server-side paging for a long list (usePagedOptions): the typed text is sent
+ * as the search, and reaching the foot of the list asks for the next page. */
+export interface RemoteOptions {
+  search: (query: string) => void;
+  loadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  searching?: boolean;
+}
+
 /**
  * The panel content of a searchable select. Split out from the trigger/anchor
  * so it can call `usePopoverSurface()` — it only exists (and only mounts) while
@@ -33,6 +43,7 @@ function SearchableEntityPanel({
   onClear,
   onCreate,
   onViewAll,
+  remote,
 }: {
   options: Row[];
   valueKey: string;
@@ -48,6 +59,7 @@ function SearchableEntityPanel({
   onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
+  remote?: RemoteOptions;
 }) {
   const { close } = usePopoverSurface();
   const [query, setQuery] = useState('');
@@ -61,9 +73,11 @@ function SearchableEntityPanel({
     return parts && parts.length ? parts : [getLabel(row)];
   };
 
+  // A remote list is already the server's answer to the query, which may match
+  // fields the label does not show, so it is not filtered a second time here.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return options;
+    if (!q || remote) return options;
     // Matched against every column as well as the joined label, so typing the
     // farm name still finds a breed whose only match is in the last column.
     return options.filter((o) =>
@@ -72,7 +86,43 @@ function SearchableEntityPanel({
         .toLowerCase()
         .includes(q),
     );
-  }, [options, query, getLabel, getLabelParts]);
+  }, [options, query, getLabel, getLabelParts, remote]);
+
+  // The server is asked once typing pauses, and the list goes back to the
+  // unfiltered one when the panel closes on a search.
+  const remoteSearch = remote?.search;
+  const searchedRef = useRef(false);
+  useEffect(() => {
+    if (!remoteSearch) return;
+    const q = query.trim();
+    if (!q && !searchedRef.current) return;
+    const timer = setTimeout(() => {
+      searchedRef.current = !!q;
+      remoteSearch(q);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query, remoteSearch]);
+  useEffect(
+    () => () => {
+      if (searchedRef.current) remoteSearch?.('');
+    },
+    [remoteSearch],
+  );
+
+  // A page that fills less than the list (or that a screen filters down to
+  // nothing) leaves no scroll to reach the foot by, so the next one is asked
+  // for straight away until the list can scroll or the server has no more.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !remote?.hasMore || remote.loadingMore || remote.searching) return;
+    if (el.scrollHeight <= el.clientHeight + 48) remote.loadMore();
+  });
+
+  const onListScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (!remote?.hasMore || remote.loadingMore) return;
+    const el = event.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) remote.loadMore();
+  };
 
   // The widest row decides the column count, so a row missing its last value
   // still lines its first columns up with the rows around it.
@@ -185,6 +235,7 @@ function SearchableEntityPanel({
       <div
         ref={listRef}
         role="listbox"
+        onScroll={remote ? onListScroll : undefined}
         aria-label={ariaLabel}
         className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? 'grid' : 'flex flex-col'}`}
         style={
@@ -221,7 +272,7 @@ function SearchableEntityPanel({
               <span className="w-4 shrink-0" aria-hidden="true" />
             </div>
           )}
-        {loading ? (
+        {loading || remote?.searching ? (
           <div
             role="status"
             aria-live="polite"
@@ -311,6 +362,20 @@ function SearchableEntityPanel({
             </button>
           );
         })}
+        {remote?.loadingMore && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="px-2.5 py-2 text-xs"
+            style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
+          >
+            <Loader2
+              className="mr-1.5 inline h-3.5 w-3.5 animate-spin"
+              aria-hidden
+            />
+            Loading more…
+          </div>
+        )}
       </div>
       {(onClear || onCreate || onViewAll) && (
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--border-subtle) px-1 pt-2">
@@ -398,6 +463,7 @@ export interface SearchableEntitySelectProps {
   fullWidth?: boolean;
   triggerClassName?: string;
   triggerStyle?: React.CSSProperties;
+  remote?: RemoteOptions;
 }
 
 /** A single-select entity dropdown with an in-panel text filter, for catalogs long enough that
@@ -426,6 +492,7 @@ export function SearchableEntitySelect({
   fullWidth = true,
   triggerClassName,
   triggerStyle,
+  remote,
 }: SearchableEntitySelectProps) {
   const [open, setOpen] = useState(false);
   const unavailable = disabled || loading;
@@ -436,7 +503,16 @@ export function SearchableEntitySelect({
     if (unavailable) setOpen(false);
   }, [unavailable]);
 
-  const selected = options.find((o) => String(o[valueKey]) === String(value));
+  // A remote list holds one search's page at a time, so the chosen row is
+  // remembered to keep the trigger's text when a later search leaves it out.
+  const pickedRef = useRef<Row | null>(null);
+  const found = options.find((o) => String(o[valueKey]) === String(value));
+  if (found) pickedRef.current = found;
+  const selected =
+    found ??
+    (remote && pickedRef.current && String(pickedRef.current[valueKey]) === String(value)
+      ? pickedRef.current
+      : undefined);
   const selectedText = selected
     ? (() => {
         if (getSelectedLabel) return getSelectedLabel(selected);
@@ -523,7 +599,10 @@ export function SearchableEntitySelect({
         getLabelParts={getLabelParts}
         columnHeaders={columnHeaders}
         value={value}
-        onPick={(row) => onChange(String(row[valueKey]))}
+        onPick={(row) => {
+          pickedRef.current = row;
+          onChange(String(row[valueKey]));
+        }}
         searchPlaceholder={searchPlaceholder}
         noMatchesLabel={noMatchesLabel}
         ariaLabel={ariaLabel}
@@ -531,6 +610,7 @@ export function SearchableEntitySelect({
         onClear={onClear}
         onCreate={onCreate}
         onViewAll={onViewAll}
+        remote={remote}
       />
     </Popover>
   );
