@@ -207,15 +207,18 @@ describe('FeedRequisitionDetail draft document', () => {
     expect(showToast.success).toHaveBeenCalledWith('rqSaved');
   });
 
-  it('Submit sends an escalated priority with the submit call, not as a separate PUT', async () => {
+  it('Submit sends an escalated line priority with the submit call, not as a separate PUT', async () => {
     post.mockResolvedValue({ data: draftView });
     render(
       <FeedRequisitionDetail
         view={{
           ...draftView,
           submission_deadline: '2099-01-01',
-          priority: 'WARNING',
-          priority_options: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING'],
+          lines: draftView.lines.map((l: any, i: number) =>
+            i === 0
+              ? { ...l, priority: 'WARNING', priority_options: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING'] }
+              : l,
+          ),
         }}
         onView={jest.fn()}
         onBack={jest.fn()}
@@ -225,15 +228,13 @@ describe('FeedRequisitionDetail draft document', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    fireEvent.change(screen.getByRole('combobox', { name: 'rqdPriority' }), {
-      target: { value: 'CRITICAL' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'rqdPriorityFor:{"line":10000}' }));
+    fireEvent.click(screen.getAllByRole('option')[1]);
     fireEvent.click(screen.getByRole('button', { name: 'rqSubmit' }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/submit', {
         remarks: '',
-        lines: [],
-        priority: 'CRITICAL',
+        lines: [{ line_id: 'L1', priority: 'CRITICAL' }],
       }),
     );
     expect(put).not.toHaveBeenCalled();

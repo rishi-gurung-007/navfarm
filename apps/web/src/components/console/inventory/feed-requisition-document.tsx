@@ -93,6 +93,10 @@ export interface FeedRequisitionLine {
   daily_requirement_kg: string | null;
   days_remaining: string | number | null;
   first_shortage_date: string | null;
+  /** Req r34, per line: how urgently the mill should prepare this feed. */
+  priority?: string | null;
+  /** The levels this line may be escalated to: its own and every higher one. */
+  priority_options?: string[];
   unrounded_need_kg: string | null;
   recommended_qty_kg: string | null;
   recommended_delivery_date?: string | null;
@@ -265,6 +269,8 @@ export interface FeedRequisitionTransfer {
 
 /** What the farm changed on one line, before Save or Submit. */
 export interface FeedLineEdit {
+  /** Req r34, per line: only an escalation is ever sent. */
+  priority?: string;
   quantity?: string;
   date?: string;
   itemId?: string;
@@ -402,6 +408,7 @@ const LINE_COLUMNS = [
   'rqdColSystemBalance',
   'rqdColDaily',
   'rqdColDaysRemaining',
+  'rqdColPriority',
   'rqdColRecommended',
   'rqdColRequested',
   'rqdColMillRequested',
@@ -512,8 +519,6 @@ export function FeedRequisitionDocument({
   remarksMissing = false,
   remarksError = null,
   options,
-  priority,
-  onPriorityChange,
 }: {
   view: FeedRequisitionDocumentView;
   editable: boolean;
@@ -530,10 +535,6 @@ export function FeedRequisitionDocument({
    */
   remarksError?: string | null;
   options?: FeedRequisitionOptions | null;
-  /** Req r34: the priority as currently chosen; the saved one when absent. */
-  priority?: string | null;
-  /** Req r34: when given on an editable document, the priority can be escalated (never lowered). */
-  onPriorityChange?: (value: string) => void;
 }) {
   const { t } = useLanguage();
   const lines = Array.isArray(view.lines) ? view.lines : [];
@@ -624,41 +625,6 @@ export function FeedRequisitionDocument({
                 {labelOf(REQ_STATUS_LABEL, requisitionWorkflowStatus(view), t)}
               </Badge>
             ),
-            priority:
-              editable &&
-              onPriorityChange &&
-              view.priority &&
-              (view.priority_options?.length ?? 0) > 1 ? (
-                <div className="relative w-full">
-                  <SearchableSelect
-                    value={priority ?? view.priority}
-                    onChange={(val) => onPriorityChange(val)}
-                    options={(view.priority_options ?? []).map((p) => ({
-                      value: p,
-                      label: labelOf(PRIORITY_LABEL, p, t),
-                    }))}
-                    columnHeaders={false}
-                    triggerClassName="nf-input w-full h-8 px-2 py-1"
-                  />
-                  <select
-                    aria-label={t('rqdPriority')}
-                    className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-                    tabIndex={-1}
-                    value={priority ?? view.priority}
-                    onChange={(e) => onPriorityChange(e.target.value)}
-                  >
-                    {(view.priority_options ?? []).map((p) => (
-                      <option key={p} value={p}>
-                        {labelOf(PRIORITY_LABEL, p, t)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : view.priority ? (
-                <Badge variant={variantOf(PRIORITY_LABEL, view.priority)}>
-                  {labelOf(PRIORITY_LABEL, view.priority, t)}
-                </Badge>
-              ) : null,
             deadline: view.submission_deadline
               ? formatDateShort(view.submission_deadline)
               : null,
@@ -999,6 +965,32 @@ export function FeedRequisitionDocument({
                         <div className={MUTED}>
                           {formatDateShort(line.first_shortage_date)}
                         </div>
+                      )}
+                    </td>
+                    <td className={TD}>
+                      {canEdit &&
+                      line.priority &&
+                      (line.priority_options?.length ?? 0) > 1 ? (
+                        <SearchableSelect
+                          ariaLabel={t('rqdPriorityFor', { line: line.line_seq })}
+                          value={edits[line.line_id]?.priority ?? line.priority}
+                          onChange={(val) =>
+                            onLineEdit!(line.line_id, { priority: val })
+                          }
+                          options={(line.priority_options ?? []).map((p) => ({
+                            value: p,
+                            label: labelOf(PRIORITY_LABEL, p, t),
+                          }))}
+                          columnHeaders={false}
+                          fullWidth={false}
+                          triggerClassName="nf-input-sm h-8 min-w-[9rem]"
+                        />
+                      ) : line.priority ? (
+                        <Badge variant={variantOf(PRIORITY_LABEL, line.priority)}>
+                          {labelOf(PRIORITY_LABEL, line.priority, t)}
+                        </Badge>
+                      ) : (
+                        notAvailable
                       )}
                     </td>
                     <td className={cn(TD, NUM)}>

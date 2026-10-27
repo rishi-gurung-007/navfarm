@@ -40,7 +40,6 @@ export interface FeedRequisitionHeaderValues {
   supply: ReactNode;
   purpose: ReactNode;
   status: ReactNode;
-  priority: ReactNode;
   deadline: ReactNode;
   /** Approval, linked transfer and forecast run: only a saved requisition has them. */
   saved?: { approvedBy: ReactNode; approvedAt: ReactNode; linkedTransfer: ReactNode; forecastRun: ReactNode };
@@ -80,7 +79,6 @@ export function FeedRequisitionHeaderFields({ values: v }: { values: FeedRequisi
       <ReadField className={HALF} label={t("rqdSupply")} value={v.supply} />
       <ReadField className={HALF} label={t("rqdPurpose")} value={v.purpose} />
       <ReadField className={HALF} label={t("rqdStatus")} value={v.status} />
-      <ReadField className={HALF} label={t("rqdPriority")} value={v.priority} />
       <ReadField className={HALF} label={t("rqdDeadline")} value={v.deadline} />
       {v.saved && (
         <>

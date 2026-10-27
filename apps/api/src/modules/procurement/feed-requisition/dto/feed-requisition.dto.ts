@@ -37,6 +37,8 @@ export class FeedConsolidationQueryDto {
   requisitionIds?: string[];
   @ApiPropertyOptional() @IsOptional() @IsDateString() fromDate?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() toDate?: string;
+  /** The consolidate sheet's ranking figures (stored, or a live forecast for a manual requisition); a count needs none. */
+  @ApiPropertyOptional() @IsOptional() @IsIn(['true', 'false']) withPriority?: string;
 }
 
 export class FeedConsolidationLineDto {
@@ -207,6 +209,13 @@ export class CreateFeedRequisitionFromRunDto {
  */
 export class FeedLineEditInput {
   @ApiProperty() @IsUUID() line_id: string;
+  @ApiPropertyOptional({
+    description: 'Requisition §1 row 34, per line: escalate only',
+    enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'],
+  })
+  @IsOptional()
+  @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'])
+  priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
@@ -245,13 +254,6 @@ export class UpdateFeedRequisitionDto {
   @IsString()
   @MaxLength(2000)
   remarks?: string;
-  @ApiPropertyOptional({
-    description: 'Requisition §1 row 34: escalate only',
-    enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'],
-  })
-  @IsOptional()
-  @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'])
-  priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
   @ApiPropertyOptional({ type: [FeedLineEditInput] })
   @IsOptional()
   @IsArray()

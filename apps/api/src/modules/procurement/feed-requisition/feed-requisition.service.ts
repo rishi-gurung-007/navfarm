@@ -110,6 +110,7 @@ import {
   feedListStatusFilter,
   priorityChangeProblem,
   priorityEscalations,
+  mostUrgentPriority,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto,
@@ -217,7 +218,8 @@ export function requisitionListFields() {
     status: R.status,
     document_status: R.document_status,
     fulfilment_status: R.fulfilment_status,
-    priority: R.priority,
+    // The most urgent line's priority (row 34 lives on the lines): CFP, then CRITICAL, WARNING, INFO.
+    priority: sql<string | null>`(SELECT rl.priority FROM requisition_line rl WHERE rl.requisition_id = ${outer} AND rl.priority IS NOT NULL ORDER BY FIELD(rl.priority, 'CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO') LIMIT 1)`,
     required_date: R.required_date,
     submission_deadline: R.submission_deadline,
     created_at: R.created_at,
@@ -494,7 +496,6 @@ export class FeedRequisitionService implements OnModuleInit {
         req_no: schema.requisition.req_no,
         status: schema.requisition.status,
         requisition_type: schema.requisition.requisition_type,
-        priority: schema.requisition.priority,
       })
       .from(schema.requisition)
       .where(
@@ -515,9 +516,17 @@ export class FeedRequisitionService implements OnModuleInit {
       .for('update');
   }
 
-  /** The draft-time snapshot columns of a line (Requisition §2). */
-  private lineValues(line: DraftLine, forecastRunLineIds?: string[] | null) {
+  /**
+   * The draft-time snapshot columns of a line (Requisition §2). The line carries its own priority
+   * (row 34), worked out from its own shortage and low level, so the mill can prepare each feed in turn.
+   */
+  private lineValues(
+    line: DraftLine,
+    forecastRunLineIds: string[] | null | undefined,
+    planningDate: string,
+  ) {
     return {
+      priority: requisitionPriority(planningDate, [line]),
       item_id: line.itemId,
       description: line.itemName.slice(0, 200),
       uom: 'KG',
@@ -1311,13 +1320,9 @@ export class FeedRequisitionService implements OnModuleInit {
             const drafted = [...plan.insert, ...plan.update.map((u) => u.line)];
             const header = {
               // A rerun that drafts nothing new but keeps the farm's own lines leaves
-              // priority and required date as they were rather than blanking them.
+              // the required date as it was rather than blanking it.
               ...(drafted.length
                 ? {
-                    priority: keepHigherPriority(
-                      draft?.priority,
-                      requisitionPriority(forecast.planningDate, drafted),
-                    ),
                     required_date:
                       [
                         ...plan.insert.map((l) => l.proposedDeliveryDate),
@@ -1367,7 +1372,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line)),
+                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
               }));
               await this.db.insert(schema.requisitionLine).values(inserted);
               for (const [i, line] of plan.insert.entries())
@@ -1387,13 +1392,43 @@ export class FeedRequisitionService implements OnModuleInit {
                 .delete(schema.requisitionLine)
                 .where(inArray(schema.requisitionLine.line_id, plan.remove));
             }
+            // A rerun may raise a line's priority but never lower it: the farm's escalation outranks a recomputed one.
+            const priorPriority = new Map(
+              plan.update.length
+                ? (
+                    await this.db
+                      .select({
+                        line_id: schema.requisitionLine.line_id,
+                        priority: schema.requisitionLine.priority,
+                      })
+                      .from(schema.requisitionLine)
+                      .where(
+                        inArray(
+                          schema.requisitionLine.line_id,
+                          plan.update.map((u) => u.lineId),
+                        ),
+                      )
+                  ).map((l) => [l.line_id, l.priority])
+                : [],
+            );
             for (const u of plan.update) {
-              const { proposed_delivery_date: draftedDate, ...refreshed } =
-                this.lineValues(u.line, runLinesFor(u.line));
+              const {
+                proposed_delivery_date: draftedDate,
+                priority: draftedPriority,
+                ...refreshed
+              } = this.lineValues(
+                u.line,
+                runLinesFor(u.line),
+                forecast.planningDate,
+              );
               await this.db
                 .update(schema.requisitionLine)
                 .set({
                   ...refreshed,
+                  priority: keepHigherPriority(
+                    priorPriority.get(u.lineId),
+                    draftedPriority,
+                  ),
                   // Req. row 29: a date the farm moved is not written back; only the recommendation beside it is refreshed.
                   ...(u.keepDeliveryDate
                     ? {}
@@ -1446,7 +1481,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: maxSeq + (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line)),
+                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
               }));
               await this.db.insert(schema.requisitionLine).values(appended);
               for (const [i, line] of plan.insert.entries())
@@ -1867,10 +1902,6 @@ export class FeedRequisitionService implements OnModuleInit {
               source: 'MANUAL_ENTRY',
               purpose: 'INTERNAL_TRANSFER',
               supply_source: 'MILL',
-              priority: requisitionPriority(
-                demand.planningDate,
-                manualEvidence,
-              ),
               remarks: dto.remarks?.trim() || null,
               requisition_date: reqDate, // Req. §1 row 6
               required_date: dto.lines
@@ -1895,7 +1926,9 @@ export class FeedRequisitionService implements OnModuleInit {
                   lineKey(line.destination_location_id, line.item_id),
                 );
                 return {
-                  ...(evidence ? this.lineValues(evidence) : {}),
+                  ...(evidence
+                    ? this.lineValues(evidence, null, demand.planningDate)
+                    : {}),
                   requisition_id: id,
                   // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
                   line_seq: (i + 1) * 10000,
@@ -2851,6 +2884,7 @@ export class FeedRequisitionService implements OnModuleInit {
             schema.requisitionLine.destination_location_id,
           lifecycle_ref_id: schema.requisitionLine.lifecycle_ref_id,
           description: schema.requisitionLine.description,
+          priority: schema.requisitionLine.priority,
         })
         .from(schema.requisitionLine)
         .where(
@@ -2864,6 +2898,12 @@ export class FeedRequisitionService implements OnModuleInit {
         throw new BadRequestException(
           `Line ${edit.line_id} is not on this requisition.`,
         );
+      // A1 (10 Oct), Requisition §1 row 34 "can escalate": whoever may edit the line may raise its priority.
+      if (edit.priority !== undefined) {
+        const problem = priorityChangeProblem(line.priority, edit.priority);
+        if (problem)
+          throw new BadRequestException(`Line ${line.line_seq}: ${problem}`);
+      }
       const target = await this.changeLineTarget(
         requisitionId,
         line,
@@ -2892,6 +2932,7 @@ export class FeedRequisitionService implements OnModuleInit {
           ...(edit.proposed_delivery_date
             ? { proposed_delivery_date: edit.proposed_delivery_date }
             : {}),
+          ...(edit.priority !== undefined ? { priority: edit.priority } : {}),
         })
         .where(eq(schema.requisitionLine.line_id, edit.line_id));
     }
@@ -3118,12 +3159,7 @@ export class FeedRequisitionService implements OnModuleInit {
     const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
     return this.forecast.withFarmScope(farmId, companyId, async () => {
       await withTenantTransaction(this.cls, async () => {
-        const row = await this.lockOpen(id, tenantId, farmId, companyId);
-        // A1 (10 Oct), Requisition §1 row 34 "can escalate": whoever may edit the document may raise its priority.
-        if (dto.priority !== undefined) {
-          const problem = priorityChangeProblem(row.priority, dto.priority);
-          if (problem) throw new BadRequestException(problem);
-        }
+        await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         await this.db
           .update(schema.requisition)
@@ -3131,7 +3167,6 @@ export class FeedRequisitionService implements OnModuleInit {
             ...(dto.remarks !== undefined
               ? { remarks: dto.remarks?.trim() || null }
               : {}),
-            ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
             updated_by: user?.userId ?? null,
           })
           .where(eq(schema.requisition.requisition_id, id));
@@ -3210,14 +3245,17 @@ export class FeedRequisitionService implements OnModuleInit {
     await this.forecast.withFarmScope(farmId, companyId, () =>
       withTenantTransaction(this.cls, async () => {
         const row = await this.lockOpen(id, tenantId, farmId, companyId);
-        // Same escalate-only rule as update(), applied in this transaction so the web needs no separate PUT.
-        if (dto.priority !== undefined) {
-          const problem = priorityChangeProblem(row.priority, dto.priority);
-          if (problem) throw new BadRequestException(problem);
-        }
-        const priority = dto.priority ?? row.priority;
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         const lines = await this.linesForCheck(id);
+        // The approval's urgency follows the most urgent line (row 34 lives on the lines).
+        const priority = mostUrgentPriority(
+          (
+            await this.db
+              .select({ priority: schema.requisitionLine.priority })
+              .from(schema.requisitionLine)
+              .where(eq(schema.requisitionLine.requisition_id, id))
+          ).map((l) => l.priority),
+        );
         const remarks =
           dto.remarks !== undefined
             ? dto.remarks?.trim() || null
@@ -3265,7 +3303,6 @@ export class FeedRequisitionService implements OnModuleInit {
             status: 'PENDING_APPROVAL',
             approval_request_id: requestId,
             remarks,
-            ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
             updated_by: user?.userId ?? null,
           })
           .where(eq(schema.requisition.requisition_id, id));
@@ -4268,7 +4305,8 @@ export class FeedRequisitionService implements OnModuleInit {
       approval_status: approvalStatus,
       document_status: documentStatus,
       fulfilment_status: fulfilmentStatus,
-      priority_options: priorityEscalations(row.req.priority),
+      // Row 34 is per line now; the header shows the most urgent line's, derived, never stored.
+      priority: mostUrgentPriority(lines.map((l) => l.line.priority)),
       actions: {
         release: { enabled: releaseEnabled, reason: releaseReason },
         shipment: {
@@ -4329,6 +4367,7 @@ export class FeedRequisitionService implements OnModuleInit {
       },
       lines: lines.map((l) => ({
         ...l.line,
+        priority_options: priorityEscalations(l.line.priority),
         item_code: l.item_code,
         item_name: l.item_name,
         item_description: l.item_name ?? null,

@@ -309,6 +309,8 @@ export interface FeedForecastResponse {
   sourceNames: Record<string, string>;
   /** location_code -> configured fulfilment form; only explicit feed_in_bags is BAGGED for a silo. */
   sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'>;
+  /** silo location_code -> silo_capacity_kg (null when unset); the store has no entry. Display only. */
+  sourceCapacities?: Record<string, number | null>;
   /** stage_id -> stage_name for the report's Stage column. Display only: not engine input, not part of any snapshot hash. */
   stageNames?: Record<string, string>;
   /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
@@ -1079,6 +1081,7 @@ export class FeedForecastService {
       result.farm.id,
       result.sourceFeedTypes ?? {},
       result.stageNames ?? {},
+      result.sourceCapacities ?? {},
     );
 
     const reportSourceBalances = displayDaily(
@@ -2352,6 +2355,7 @@ export class FeedForecastService {
         stageBlocks,
         sourceNames,
         sourceFeedTypes,
+        sourceCapacities,
         stageNames,
         nextStageDiets,
       } = await this.loadInput(farm, planningDate, from, to, tenantId, {
@@ -2405,6 +2409,7 @@ export class FeedForecastService {
         stages: stageBlocks,
         sourceNames: sourceNames ?? {},
         sourceFeedTypes: sourceFeedTypes ?? {},
+        sourceCapacities: sourceCapacities ?? {},
         stageNames: stageNames ?? {},
         nextStageDiets: nextStageDiets ?? [],
         sourceSnapshot,
@@ -3077,6 +3082,7 @@ export class FeedForecastService {
     stageBlocks: StageBlock[];
     sourceNames?: Record<string, string>;
     sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>;
+    sourceCapacities?: Record<string, number | null>;
     stageNames?: Record<string, string>;
     nextStageDiets?: NextStageDiet[];
   }> {
@@ -3098,6 +3104,7 @@ export class FeedForecastService {
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
         low_level_kg: schema.locationMaster.low_level_kg,
+        silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
         feed_in_bags: schema.locationMaster.feed_in_bags,
       })
       .from(schema.locationMaster)
@@ -3304,6 +3311,11 @@ export class FeedForecastService {
     if (storeRow)
       sourceFeedTypes[storeRow.location_code] =
         storeRow.feed_in_bags === false ? 'BULK' : 'BAGGED';
+    // Silo code -> its configured capacity, for the report's Silo Capacity column; a store has none.
+    const sourceCapacities: Record<string, number | null> = {};
+    for (const l of siloRows)
+      sourceCapacities[l.location_code] =
+        l.silo_capacity_kg == null ? null : Number(l.silo_capacity_kg);
 
     // stage_id -> name for the report's Stage column; display only, kept out of the engine input (and so its snapshot hash).
     const stageNames: Record<string, string> = {};
@@ -3343,6 +3355,7 @@ export class FeedForecastService {
     return {
       sourceNames,
       sourceFeedTypes,
+      sourceCapacities,
       stageNames,
       nextStageDiets,
       input: {

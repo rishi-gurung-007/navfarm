@@ -7975,7 +7975,7 @@ export const requisition = mysqlTable(
     purpose: varchar('purpose', { length: 30 }), // FEED: INTERNAL_TRANSFER (row 31). Common requisitions: STORE | PURCHASE (Task 8).
     supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)
     linked_transfer_id: varchar('linked_transfer_id', { length: 36 }), // Req. §1 row 39: the Transfer Order created for this requisition
-    priority: varchar('priority', { length: 30 }), // row 34
+    // Priority (row 34) lives on requisition_line since 0212/0213: the mill prepares each feed line in turn.
     forecast_run_key: varchar('forecast_run_key', { length: 64 }), // Engine Step 9 "Preserve run ID"
     feed_forecast_run_id: varchar('feed_forecast_run_id', {
       length: 36,
@@ -8099,6 +8099,8 @@ export const requisitionLine = mysqlTable('requisition_line', {
   }),
   days_remaining: decimal('days_remaining', { precision: 10, scale: 1 }), // Silo Balance row 9: "Displayed to 1 decimal" (0143 widened INT; 0144 widened 6,1 -> 10,1, range regression)
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
+  // Requisition §1 row 34, per line (0212): the urgency of this feed for this silo; escalate only.
+  priority: varchar('priority', { length: 30 }),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', {
     precision: 18,

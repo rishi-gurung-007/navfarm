@@ -396,6 +396,15 @@ export function keepHigherPriority(stored: string | null | undefined, computed: 
   return s < PRIORITY_ORDER.indexOf(computed) ? (stored as Priority) : computed;
 }
 
+/** The most urgent of the lines' priorities (row 34 is per line), or null when none has one. */
+export function mostUrgentPriority(priorities: Array<string | null | undefined>): Priority | null {
+  const ranked = priorities
+    .map((p) => PRIORITY_ORDER.indexOf(p as Priority))
+    .filter((i) => i >= 0)
+    .sort((x, y) => x - y);
+  return ranked.length ? PRIORITY_ORDER[ranked[0]] : null;
+}
+
 /** The levels the farm may choose now: the saved one and every higher one, highest first (what priorityChangeProblem allows). */
 export function priorityEscalations(current: string | null | undefined): Priority[] {
   const at = PRIORITY_ORDER.indexOf(current as Priority);

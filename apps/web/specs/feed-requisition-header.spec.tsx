@@ -32,7 +32,7 @@ const view: FeedRequisitionDocumentView = {
 };
 
 const HEADER_LABELS = ["rqdReqNo", "rqdReqDate", "rqdReqType", "rqdSource", "rqdFarmCode", "rqdFarmName", "rqdNextDiet", "rqdFarmTotal", "rqdTruckTarget",
-  "rqdBaggedTotal", "rqdBulkMultiple", "rqdRequiredDate", "rqdSupply", "rqdPurpose", "rqdStatus", "rqdPriority", "rqdDeadline"];
+  "rqdBaggedTotal", "rqdBulkMultiple", "rqdRequiredDate", "rqdSupply", "rqdPurpose", "rqdStatus", "rqdDeadline"];
 const shownHeaderLabels = () => Array.from(document.querySelectorAll("span.nf-text-label"))
   .map((e) => e.textContent ?? "").filter((x) => HEADER_LABELS.includes(x));
 

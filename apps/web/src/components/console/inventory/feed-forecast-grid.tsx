@@ -5,6 +5,7 @@ import { Inbox, Loader2 } from "lucide-react";
 import { ScrollTable } from "@/components/ui/scroll-table";
 import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { NA } from "@/utils/na";
 import { formatDateShort } from "./feed-format";
 import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
 
@@ -33,6 +34,8 @@ export interface ReportRow {
   feedType: "BULK" | "BAGGED";
   sourceCode: string | null;
   sourceName: string | null;
+  /** The source silo's capacity; null for the store, no source, or an unset capacity. */
+  sourceCapacityKg?: number | null;
   sourceLocationId: string | null;
   currentItemId: string | null;
   currentItemNo: string | null;
@@ -94,7 +97,7 @@ export interface SourceBalancePoint {
 type Translate = (key: any, vars?: any) => string;
 
 export const GRID_COLUMNS = [
-  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
+  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColSiloCapacity", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
   "ffColHeadCount", "ffColUom", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
   "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
@@ -462,6 +465,7 @@ export function FeedForecastGrid({
           <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "w-[11rem] min-w-[11rem] max-w-[11rem]")}>{t("ffColHouse")}</th>
           <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
+          <th scope="col" className={cn(TH, NUM)}>{t("ffColSiloCapacity")}</th>
           <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
           <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColHeadCount")}</th>
@@ -491,6 +495,7 @@ export function FeedForecastGrid({
             <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED, "w-[11rem] max-w-[11rem] truncate")} title={row.shedCode}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
             <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
+            <td className={cn(TD, NUM)}>{row.sourceType === "SILO" && row.sourceCapacityKg != null ? fmtKg(row.sourceCapacityKg) : NA}</td>
             <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
             <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
